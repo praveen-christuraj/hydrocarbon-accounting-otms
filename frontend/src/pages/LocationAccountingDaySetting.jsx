@@ -23,12 +23,26 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
   const [selectedLocationCode, setSelectedLocationCode] = useState('')
   const [editId, setEditId] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [successMsg, setSuccessMsg] = useState('')
+  const [errorMsg, setErrorMsg] = useState('')
+  const [validationErrors, setValidationErrors] = useState({})
+  const [confirmDeleteItem, setConfirmDeleteItem] = useState(null)
 
   const activeLocations = useMemo(() => {
     return (locations || []).filter((location) => location.status === 'Active')
   }, [locations])
 
   const canManage = useMemo(() => {
+    if (
+      loggedInUser &&
+      loggedInUser.userCode === 'admin' &&
+      loggedInUser.permissions &&
+      loggedInUser.permissions.length > 0 &&
+      loggedInUser.permissions[0].permissionName === 'isAdminBootstrap'
+    ) {
+      return true
+    }
+
     if (!loggedInUser || !loggedInUser.permissions) {
       return false
     }
@@ -44,6 +58,8 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
   const reloadSettings = async (locationCode = selectedLocationCode) => {
     try {
       setLoading(true)
+      setSuccessMsg('')
+      setErrorMsg('')
 
       const filters = {}
 
@@ -54,7 +70,7 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
       const data = await getLocationAccountingDaySettings(filters)
       setSettings(data)
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
     } finally {
       setLoading(false)
     }
@@ -87,29 +103,26 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
   }
 
   const validateBeforeSave = () => {
+    const errors = {}
+
     if (setting.locationCode.trim() === '') {
-      alert('Location is required')
-      return false
+      errors.locationCode = 'Location is required'
     }
 
     if (setting.dayStartTime.trim() === '') {
-      alert('Day Start Time is required')
-      return false
+      errors.dayStartTime = 'Day Start Time is required'
     }
 
     if (setting.dayEndTime.trim() === '') {
-      alert('Day End Time is required')
-      return false
+      errors.dayEndTime = 'Day End Time is required'
     }
 
-    if (setting.dayStartTime === setting.dayEndTime) {
-      alert('Day Start Time and Day End Time cannot be same')
-      return false
+    if (setting.dayStartTime && setting.dayEndTime && setting.dayStartTime === setting.dayEndTime) {
+      errors.dayEndTime = 'Day Start Time and Day End Time cannot be same'
     }
 
     if (setting.effectiveFrom.trim() === '') {
-      alert('Effective From is required')
-      return false
+      errors.effectiveFrom = 'Effective From is required'
     }
 
     if (
@@ -117,23 +130,25 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
       setting.effectiveTo.trim() !== '' &&
       setting.effectiveTo < setting.effectiveFrom
     ) {
-      alert('Effective To cannot be earlier than Effective From')
-      return false
+      errors.effectiveTo = 'Effective To cannot be earlier than Effective From'
     }
 
     if (setting.timezoneName.trim() === '') {
-      alert('Timezone is required')
-      return false
+      errors.timezoneName = 'Timezone is required'
     }
 
-    return true
+    setValidationErrors(errors)
+    return Object.keys(errors).length === 0
   }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    setSuccessMsg('')
+    setErrorMsg('')
+    setValidationErrors({})
 
     if (!canManage) {
-      alert('You do not have permission to manage Location Accounting Day Settings.')
+      setErrorMsg('You do not have permission to manage Location Accounting Day Settings.')
       return
     }
 
@@ -146,10 +161,10 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
 
       if (editId === null) {
         await createLocationAccountingDaySetting(setting)
-        alert('Location Accounting Day Setting saved successfully')
+        setSuccessMsg('Location Accounting Day Setting saved successfully')
       } else {
         await updateLocationAccountingDaySetting(editId, setting)
-        alert('Location Accounting Day Setting updated successfully')
+        setSuccessMsg('Location Accounting Day Setting updated successfully')
       }
 
       const locationToReload = selectedLocationCode || setting.locationCode
@@ -162,7 +177,7 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
 
       await reloadSettings(locationToReload)
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
     } finally {
       setLoading(false)
     }
@@ -184,16 +199,11 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
   }
 
   const handleDelete = async (item) => {
+    setSuccessMsg('')
+    setErrorMsg('')
+
     if (!canManage) {
-      alert('You do not have permission to manage Location Accounting Day Settings.')
-      return
-    }
-
-    const confirmDelete = window.confirm(
-      `Are you sure you want to delete accounting day setting for ${item.locationCode}?`
-    )
-
-    if (confirmDelete === false) {
+      setErrorMsg('You do not have permission to manage Location Accounting Day Settings.')
       return
     }
 
@@ -201,7 +211,8 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
       setLoading(true)
 
       await deleteLocationAccountingDaySetting(item.id)
-      alert('Location Accounting Day Setting deleted successfully')
+      setConfirmDeleteItem(null)
+      setSuccessMsg('Location Accounting Day Setting deleted successfully')
 
       if (editId === item.id) {
         setSetting({
@@ -213,7 +224,7 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
 
       await reloadSettings(selectedLocationCode)
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
     } finally {
       setLoading(false)
     }
@@ -273,6 +284,30 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
         </div>
       )}
 
+      {successMsg && (
+        <div className="success-box">{successMsg}</div>
+      )}
+
+      {errorMsg && (
+        <div className="error-box">{errorMsg}</div>
+      )}
+
+      {confirmDeleteItem && (
+        <div className="confirm-overlay">
+          <div className="confirm-box">
+            <p>Are you sure you want to delete accounting day setting for <strong>{confirmDeleteItem.locationCode}</strong>?</p>
+            <div className="confirm-actions">
+              <button onClick={() => handleDelete(confirmDeleteItem)} disabled={loading}>
+                {loading ? 'Deleting...' : 'Yes, Delete'}
+              </button>
+              <button onClick={() => setConfirmDeleteItem(null)} disabled={loading}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="filter-panel">
         <div>
           <label>Filter by Location</label>
@@ -308,8 +343,9 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
           <select
             name="locationCode"
             value={setting.locationCode}
-            onChange={handleChange}
+            onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, locationCode: '' }) }}
             disabled={!canManage || loading}
+            className={validationErrors.locationCode ? 'input-error' : ''}
           >
             <option value="">Select Location</option>
 
@@ -319,6 +355,9 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
               </option>
             ))}
           </select>
+          {validationErrors.locationCode && (
+            <span className="field-error">{validationErrors.locationCode}</span>
+          )}
         </div>
 
         <div>
@@ -327,9 +366,13 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
             name="dayStartTime"
             type="time"
             value={setting.dayStartTime}
-            onChange={handleChange}
+            onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, dayStartTime: '' }) }}
             disabled={!canManage || loading}
+            className={validationErrors.dayStartTime ? 'input-error' : ''}
           />
+          {validationErrors.dayStartTime && (
+            <span className="field-error">{validationErrors.dayStartTime}</span>
+          )}
         </div>
 
         <div>
@@ -338,9 +381,13 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
             name="dayEndTime"
             type="time"
             value={setting.dayEndTime}
-            onChange={handleChange}
+            onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, dayEndTime: '' }) }}
             disabled={!canManage || loading}
+            className={validationErrors.dayEndTime ? 'input-error' : ''}
           />
+          {validationErrors.dayEndTime && (
+            <span className="field-error">{validationErrors.dayEndTime}</span>
+          )}
         </div>
 
         <div>
@@ -349,10 +396,14 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
             name="timezoneName"
             type="text"
             value={setting.timezoneName}
-            onChange={handleChange}
+            onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, timezoneName: '' }) }}
             placeholder="Example: Africa/Lagos"
             disabled={!canManage || loading}
+            className={validationErrors.timezoneName ? 'input-error' : ''}
           />
+          {validationErrors.timezoneName && (
+            <span className="field-error">{validationErrors.timezoneName}</span>
+          )}
         </div>
 
         <div>
@@ -361,9 +412,13 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
             name="effectiveFrom"
             type="date"
             value={setting.effectiveFrom}
-            onChange={handleChange}
+            onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, effectiveFrom: '' }) }}
             disabled={!canManage || loading}
+            className={validationErrors.effectiveFrom ? 'input-error' : ''}
           />
+          {validationErrors.effectiveFrom && (
+            <span className="field-error">{validationErrors.effectiveFrom}</span>
+          )}
         </div>
 
         <div>
@@ -372,9 +427,13 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
             name="effectiveTo"
             type="date"
             value={setting.effectiveTo}
-            onChange={handleChange}
+            onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, effectiveTo: '' }) }}
             disabled={!canManage || loading}
+            className={validationErrors.effectiveTo ? 'input-error' : ''}
           />
+          {validationErrors.effectiveTo && (
+            <span className="field-error">{validationErrors.effectiveTo}</span>
+          )}
         </div>
 
         <div>
@@ -482,7 +541,7 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
 
                   <button
                     type="button"
-                    onClick={() => handleDelete(item)}
+                    onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteItem(item) }}
                     disabled={loading}
                   >
                     Delete

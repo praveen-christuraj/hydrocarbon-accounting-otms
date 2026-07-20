@@ -6,19 +6,42 @@ function RolePermissionAssignment({
   permissions,
   rolePermissionAssignments,
   reloadRolePermissions,
+  loggedInUser,
 }) {
   const [selectedRoleId, setSelectedRoleId] = useState('')
   const [selectedPermissions, setSelectedPermissions] = useState([])
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+
+  const isAdminBootstrap =
+    String(loggedInUser?.username || '').toLowerCase() === 'admin'
 
   const activeRoles = roles.filter((role) => role.status === 'Active')
   const activePermissions = permissions.filter(
     (permission) => permission.status === 'Active'
   )
 
+  const hasPermission = (permissionName) => {
+    if (isAdminBootstrap) return true
+    if (!loggedInUser || !Array.isArray(loggedInUser.permissions)) return false
+    return loggedInUser.permissions.some(
+      (p) => p.permissionName === permissionName
+    )
+  }
+
+  const canManageRolePermission = hasPermission(
+    'Manage Role Permission Assignment'
+  )
+
+  const clearError = () => setError('')
+  const clearSuccess = () => setSuccess('')
+
   const handleRoleChange = (e) => {
     const roleId = e.target.value
     setSelectedRoleId(roleId)
+    clearError()
+    clearSuccess()
 
     const existingAssignment = rolePermissionAssignments.find(
       (item) => String(item.roleId) === String(roleId)
@@ -35,33 +58,42 @@ function RolePermissionAssignment({
 
   const handlePermissionChange = (permissionId) => {
     if (selectedPermissions.includes(permissionId)) {
-      const updatedPermissions = selectedPermissions.filter(
-        (item) => item !== permissionId
-      )
-
-      setSelectedPermissions(updatedPermissions)
+      setSelectedPermissions(selectedPermissions.filter((id) => id !== permissionId))
     } else {
       setSelectedPermissions([...selectedPermissions, permissionId])
     }
   }
 
+  const handleSelectAll = () => {
+    setSelectedPermissions(activePermissions.map((p) => p.id))
+  }
+
+  const handleDeselectAll = () => {
+    setSelectedPermissions([])
+  }
+
   const handleSave = async (e) => {
     e.preventDefault()
+    clearError()
+    clearSuccess()
+
+    if (!canManageRolePermission) {
+      setError('You do not have permission to manage role permission assignments.')
+      return
+    }
 
     if (selectedRoleId === '') {
-      alert('Please select a role')
+      setError('Please select a role')
       return
     }
 
     try {
       setLoading(true)
-
       await saveRolePermissions(Number(selectedRoleId), selectedPermissions)
       await reloadRolePermissions()
-
-      alert('Permissions assigned successfully')
-    } catch (error) {
-      alert(error.message)
+      setSuccess('Permissions assigned successfully')
+    } catch (err) {
+      setError(err.message)
     } finally {
       setLoading(false)
     }
@@ -80,6 +112,28 @@ function RolePermissionAssignment({
         </span>
       </div>
 
+      {success && (
+        <div className="error-box" style={{ background: '#f0fdf4', color: '#166534', borderColor: '#bbf7d0' }}>
+          {success}
+          <button className="error-close" onClick={clearSuccess} type="button">&times;</button>
+        </div>
+      )}
+
+      {error && (
+        <div className="error-box">
+          {error}
+          <button className="error-close" onClick={clearError} type="button">&times;</button>
+        </div>
+      )}
+
+      {!canManageRolePermission && (
+        <div className="info-box">
+          You have View Role Permission Assignment permission only. Create, edit,
+          and delete actions are disabled.
+        </div>
+      )}
+
+      {canManageRolePermission && (
       <form onSubmit={handleSave}>
         <div>
           <label>Select Role</label>
@@ -97,10 +151,25 @@ function RolePermissionAssignment({
         <div className="full-width-field">
           <label>Permissions</label>
 
+          {activePermissions.length > 0 && selectedRoleId && (
+            <div style={{ marginBottom: 10, display: 'flex', gap: 8 }}>
+              <button type="button" onClick={handleSelectAll} style={{ background: '#2563eb', color: '#fff', padding: '4px 10px', fontSize: 12 }}>
+                Select All
+              </button>
+              <button type="button" onClick={handleDeselectAll} style={{ background: '#64748b', color: '#fff', padding: '4px 10px', fontSize: 12 }}>
+                Deselect All
+              </button>
+            </div>
+          )}
+
           <div className="permission-grid">
             {activePermissions.length === 0 ? (
               <div className="info-box">
                 Please create active permissions first.
+              </div>
+            ) : !selectedRoleId ? (
+              <div className="info-box">
+                Select a role to view permissions.
               </div>
             ) : (
               activePermissions.map((permission) => {
@@ -124,11 +193,12 @@ function RolePermissionAssignment({
         </div>
 
         <div className="form-actions">
-          <button type="submit" disabled={loading}>
+          <button type="submit" disabled={loading || !selectedRoleId}>
             {loading ? 'Please wait...' : 'Save Assignment'}
           </button>
         </div>
       </form>
+      )}
 
       <div className="section-title">
         <h3>Assigned Role Permissions</h3>

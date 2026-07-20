@@ -1,14 +1,22 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { apiPost } from '../api/apiClient'
-import { createTripEvent, createTripComparison } from '../api/convoyTrackerApi'
 import {
   createOperationEntry,
   deleteOperationEntry,
   updateOperationEntry,
 } from '../api/operationEntryApi'
+import { getOperationTemplateLayouts } from '../api/operationTemplateApi'
 import TankGaugingLayout from '../components/operationLayouts/TankGaugingLayout'
 import MultiTankBeforeAfterLayout from '../components/operationLayouts/MultiTankBeforeAfterLayout'
+import TankerTruckLayout from '../components/operationLayouts/TankerTruckLayout'
+import TankerPayloadPreview from '../components/operationLayouts/TankerPayloadPreview'
+import { getTankerSenderReference } from '../api/tankerTrackingApi'
+import StockMovementLayout from '../components/operationLayouts/StockMovementLayout'
+import VesselCycleLayout from '../components/operationLayouts/VesselCycleLayout'
+import ShuttleTrackingLayout from '../components/operationLayouts/ShuttleTrackingLayout'
+import FSOTrackingLayout from '../components/operationLayouts/FSOTrackingLayout.jsx'
+import FlowmeterReadingLayout from '../components/operationLayouts/FlowmeterReadingLayout'
 
 function LayoutSummaryPanel({ selectedTemplate }) {
   if (!selectedTemplate) {
@@ -152,16 +160,136 @@ function OperationTemplateFields({
   )
 }
 
+function OperationTemplateStructuredFields({
+  entry,
+  selectedTemplateFields,
+  templateLayout,
+  handleValueChange,
+  getInputType,
+}) {
+  if (!templateLayout || !Array.isArray(templateLayout.items)) {
+    return null
+  }
+
+  const valueByFieldCode = new Map((entry.values || []).map((v) => [v.fieldCode, v]))
+  const fieldById = new Map((selectedTemplateFields || []).map((f) => [Number(f.id), f]))
+  const sectionBuckets = (templateLayout.sections || []).map((section) => {
+    return {
+      ...section,
+      items: [],
+    }
+  })
+  const sectionBucketById = new Map(sectionBuckets.map((s) => [Number(s.id), s]))
+
+  ;(templateLayout.items || []).forEach((item) => {
+    const sectionBucket = sectionBucketById.get(Number(item.sectionId))
+    const field = fieldById.get(Number(item.fieldId))
+    if (!sectionBucket || !field) return
+    const value = valueByFieldCode.get(field.fieldCode)
+    if (!value) return
+    sectionBucket.items.push({ item, field, value })
+  })
+
+  const renderedSections = sectionBuckets
+    .map((section) => ({
+      ...section,
+      items: section.items.sort((a, b) => {
+        const rowDiff = Number(a.item.rowNo || 0) - Number(b.item.rowNo || 0)
+        if (rowDiff !== 0) return rowDiff
+        const colDiff = Number(a.item.colStart || 0) - Number(b.item.colStart || 0)
+        if (colDiff !== 0) return colDiff
+        return Number(a.item.sortOrder || 0) - Number(b.item.sortOrder || 0)
+      }),
+    }))
+    .filter((section) => section.items.length > 0)
+
+  if (renderedSections.length === 0) return null
+
+  return (
+    <div className="full-width-field">
+      <div className="operation-special-layout">
+        <div className="operation-special-layout-header">
+          <h3>Structured Template Fields</h3>
+          <p>Rendered from saved operation template layout configuration.</p>
+        </div>
+
+        {renderedSections.map((section) => {
+          const rows = new Map()
+          section.items.forEach((wrapped) => {
+            const rowNo = Number(wrapped.item.rowNo || 1)
+            if (!rows.has(rowNo)) rows.set(rowNo, [])
+            rows.get(rowNo).push(wrapped)
+          })
+          const sortedRows = [...rows.entries()].sort((a, b) => a[0] - b[0])
+
+          return (
+            <div key={section.id} className="full-width-field">
+              <div className="section-title compact-section-title">
+                <h3>{section.title || section.sectionKey}</h3>
+                <p>Section fields arranged by configured row and column.</p>
+              </div>
+
+              {sortedRows.map(([rowNo, rowItems]) => (
+                <div key={`${section.id}-${rowNo}`} className="layout-preview-grid">
+                  {rowItems
+                    .sort((a, b) => Number(a.item.colStart || 0) - Number(b.item.colStart || 0))
+                    .map(({ item, field, value }) => {
+                      const isRequiredManual =
+                        field?.isRequired === 'Yes' && value.inputMode === 'Manual'
+                      const span = Math.min(Math.max(Number(item.colSpan || 1), 1), 3)
+                      return (
+                        <div key={item.id || `${field.fieldCode}-${rowNo}`} className={`layout-preview-cell span-${span}`}>
+                          <label>
+                            {item.labelOverride || value.fieldName}
+                            {value.unit ? ` (${value.unit})` : ''}
+                            {isRequiredManual ? ' *' : ''}
+                          </label>
+                          <input
+                            type={getInputType(value.dataType)}
+                            value={
+                              typeof value.fieldValue === 'object'
+                                ? JSON.stringify(value.fieldValue)
+                                : value.fieldValue
+                            }
+                            onChange={(e) => handleValueChange(value.fieldCode, e.target.value)}
+                            disabled={value.inputMode !== 'Manual'}
+                            placeholder={
+                              item.placeholderOverride ||
+                              (value.inputMode === 'Manual'
+                                ? `Enter ${value.fieldName}`
+                                : `${value.inputMode} field - populated by system`)
+                            }
+                          />
+                        </div>
+                      )
+                    })}
+                </div>
+              ))}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function OperationLayoutRenderer({
   entry,
   editId,
   selectedTemplate,
   selectedTemplateFields,
   selectedAsset,
+  assets = [],
+  locations = [],
   assetCalibrationTables,
   calibrationTemplates,
   handleValueChange,
   getInputType,
+  senderReference = null,
+  senderReferenceLoading = false,
+  receiverMode = false,
+  setEntryField,
+  templateLayout = null,
 }) {
   if (!selectedTemplate) {
     return (
@@ -225,33 +353,12 @@ function OperationLayoutRenderer({
   if (layoutType === 'Stock Movement') {
     return (
       <>
-        <LayoutPlaceholder
-          title="Stock Movement Layout"
-          description="Designed for FSO, storage, or stock movement operations using opening and closing stock values."
-          sections={[
-            {
-              title: 'Movement Details',
-              items: [
-                'Reference / shuttle number',
-                'Counterparty asset',
-                'Reference quantity',
-                'Product / cargo',
-              ],
-            },
-            {
-              title: 'Stock Details',
-              items: [
-                'Opening stock',
-                'Opening water',
-                'Closing stock',
-                'Closing water',
-              ],
-            },
-            {
-              title: 'Live Results',
-              items: ['Net stock', 'Net water', 'Variance', 'Warning status'],
-            },
-          ]}
+        <StockMovementLayout
+          entry={entry}
+          editId={editId}
+          selectedAsset={selectedAsset}
+          assets={assets}
+          handleValueChange={handleValueChange}
         />
 
         <OperationTemplateFields
@@ -260,6 +367,18 @@ function OperationLayoutRenderer({
           selectedTemplateFields={selectedTemplateFields}
           handleValueChange={handleValueChange}
           getInputType={getInputType}
+          excludedFieldCodes={[
+            'vessel_operation_code',
+            'movement_reference',
+            'reference_number',
+            'opening_stock',
+            'opening_water',
+            'closing_stock',
+            'closing_water',
+            'net_stock',
+            'net_water',
+            'net_nsv',
+          ]}
         />
       </>
     )
@@ -284,7 +403,7 @@ function OperationLayoutRenderer({
           selectedTemplateFields={selectedTemplateFields}
           handleValueChange={handleValueChange}
           getInputType={getInputType}
-          excludedFieldCodes={['multi_tank_payload']}
+          excludedFieldCodes={['multi_tank_payload', 'barge_event_type']}
         />
       </>
     )
@@ -293,33 +412,13 @@ function OperationLayoutRenderer({
   if (layoutType === 'Vessel Cycle') {
     return (
       <>
-        <LayoutPlaceholder
-          title="Vessel Cycle Layout"
-          description="Designed for vessel loading, sailing, STS, unloading and cycle completion workflow."
-          sections={[
-            {
-              title: 'Cycle Header',
-              items: [
-                'Vessel asset',
-                'Shuttle number',
-                'Cycle status',
-                'Current stage',
-              ],
-            },
-            {
-              title: 'Stages',
-              items: ['Loading', 'STS optional', 'Unloading', 'Completed'],
-            },
-            {
-              title: 'Cycle Results',
-              items: [
-                'Loaded quantity',
-                'STS quantity',
-                'Discharged quantity',
-                'Final balance',
-              ],
-            },
-          ]}
+        <VesselCycleLayout
+          entry={entry}
+          editId={editId}
+          selectedAsset={selectedAsset}
+          assets={assets}
+          locations={locations}
+          handleValueChange={handleValueChange}
         />
 
         <OperationTemplateFields
@@ -328,42 +427,29 @@ function OperationLayoutRenderer({
           selectedTemplateFields={selectedTemplateFields}
           handleValueChange={handleValueChange}
           getInputType={getInputType}
+          excludedFieldCodes={[
+            'vessel_operation_code',
+            'movement_reference',
+            'shuttle_number',
+            'reference_number',
+            'counterparty_asset_code',
+            'quantity_bbl',
+            'gross_qty_bbl',
+            'water_bbl',
+            'nsv_bbl',
+          ]}
         />
       </>
     )
   }
 
-  if (layoutType === 'Tanker Loading') {
+  if (layoutType === 'Shuttle Tracking') {
     return (
       <>
-        <LayoutPlaceholder
-          title="Tanker Loading Layout"
-          description="Designed for road tanker loading or receipt with compartment dip, quality, volume and seal details."
-          sections={[
-            {
-              title: 'Tanker Details',
-              items: [
-                'Tanker asset',
-                'Prime mover',
-                'Convoy number',
-                'Destination',
-              ],
-            },
-            {
-              title: 'Dip & Quality',
-              items: [
-                'Compartment',
-                'Total dip',
-                'Water dip',
-                'API/density',
-                'Temperature',
-              ],
-            },
-            {
-              title: 'Seal & Results',
-              items: ['Seal numbers', 'GOV', 'GSV', 'NSV', 'MT', 'LT'],
-            },
-          ]}
+        <ShuttleTrackingLayout
+          entry={entry}
+          selectedAsset={selectedAsset}
+          handleValueChange={handleValueChange}
         />
 
         <OperationTemplateFields
@@ -372,36 +458,101 @@ function OperationLayoutRenderer({
           selectedTemplateFields={selectedTemplateFields}
           handleValueChange={handleValueChange}
           getInputType={getInputType}
+          excludedFieldCodes={['shuttle_payload']}
         />
       </>
     )
   }
+
+  if (layoutType === 'FSO Tracking') {
+    return (
+      <>
+        <FSOTrackingLayout
+          entry={entry}
+          selectedAsset={selectedAsset}
+          handleValueChange={handleValueChange}
+          setEntryField={setEntryField}
+        />
+
+        <OperationTemplateFields
+          entry={entry}
+          selectedTemplate={selectedTemplate}
+          selectedTemplateFields={selectedTemplateFields}
+          handleValueChange={handleValueChange}
+          getInputType={getInputType}
+          excludedFieldCodes={['fso_payload']}
+        />
+      </>
+    )
+  }
+
+    const hasTankerPayloadField = entry.values.some((value) => {
+      return value.fieldCode === 'tanker_payload'
+    })
+
+    const isTankerLayout =
+      normalizedLayoutType === 'tanker loading' ||
+      normalizedCalculationEngine === 'tanker quantity' ||
+      hasTankerPayloadField
+
+    if (isTankerLayout) {
+      const isLockedForReview =
+        entry.status === 'Submitted' ||
+        entry.status === 'Approved' ||
+        entry.status === 'Cancelled'
+
+      if (isLockedForReview) {
+        return (
+          <>
+            <TankerPayloadPreview entry={entry} title="Tanker Ticket Preview" />
+
+            <OperationTemplateFields
+              entry={entry}
+              selectedTemplate={selectedTemplate}
+              selectedTemplateFields={selectedTemplateFields}
+              handleValueChange={handleValueChange}
+              getInputType={getInputType}
+              excludedFieldCodes={['tanker_payload']}
+            />
+          </>
+        )
+      }
+
+      return (
+        <>
+          <TankerTruckLayout
+            key={`tanker-truck-${editId ?? 'new'}-${entry.operationTemplateId}-${entry.primaryAssetCode}`}
+            entry={entry}
+            editId={editId}
+            selectedAsset={selectedAsset}
+            assetCalibrationTables={assetCalibrationTables}
+            calibrationTemplates={calibrationTemplates}
+            handleValueChange={handleValueChange}
+            senderReference={senderReference}
+            senderReferenceLoading={senderReferenceLoading}
+            receiverMode={receiverMode}
+          />
+
+          <OperationTemplateFields
+            entry={entry}
+            selectedTemplate={selectedTemplate}
+            selectedTemplateFields={selectedTemplateFields}
+            handleValueChange={handleValueChange}
+            getInputType={getInputType}
+            excludedFieldCodes={['tanker_payload']}
+          />
+        </>
+      )
+    }
 
   if (layoutType === 'Meter Reading') {
     return (
       <>
-        <LayoutPlaceholder
-          title="Meter Reading Layout"
-          description="Designed for flowmeter or metering skid entries using opening/closing meter readings and meter factor."
-          sections={[
-            {
-              title: 'Meter Details',
-              items: ['Metering asset', 'Meter stream', 'Unit', 'Meter factor'],
-            },
-            {
-              title: 'Readings',
-              items: [
-                'Opening reading',
-                'Closing reading',
-                'Corrected net',
-                'Converted net',
-              ],
-            },
-            {
-              title: 'Totalization',
-              items: ['Stream totals', 'Total net volume', 'Warning checks'],
-            },
-          ]}
+        <FlowmeterReadingLayout
+          entry={entry}
+          selectedAsset={selectedAsset}
+          handleValueChange={handleValueChange}
+          setEntryField={setEntryField}
         />
 
         <OperationTemplateFields
@@ -410,19 +561,52 @@ function OperationLayoutRenderer({
           selectedTemplateFields={selectedTemplateFields}
           handleValueChange={handleValueChange}
           getInputType={getInputType}
+          excludedFieldCodes={[
+            'flowmeter_payload',
+            'meter_label',
+            'opening_reading',
+            'closing_reading',
+            'meter_factor',
+            'meter_unit',
+            'gross_observed',
+            'net_standard',
+            'net_standard_bbl',
+          ]}
         />
       </>
     )
   }
 
   return (
-    <OperationTemplateFields
-      entry={entry}
-      selectedTemplate={selectedTemplate}
-      selectedTemplateFields={selectedTemplateFields}
-      handleValueChange={handleValueChange}
-      getInputType={getInputType}
-    />
+    <>
+      <OperationTemplateStructuredFields
+        entry={entry}
+        selectedTemplateFields={selectedTemplateFields}
+        templateLayout={templateLayout}
+        handleValueChange={handleValueChange}
+        getInputType={getInputType}
+      />
+
+      <OperationTemplateFields
+        entry={entry}
+        selectedTemplate={selectedTemplate}
+        selectedTemplateFields={selectedTemplateFields}
+        handleValueChange={handleValueChange}
+        getInputType={getInputType}
+        excludedFieldCodes={
+          templateLayout
+            ? (templateLayout.items || [])
+                .map((item) => {
+                  const field = selectedTemplateFields.find(
+                    (f) => Number(f.id) === Number(item.fieldId)
+                  )
+                  return field?.fieldCode || null
+                })
+                .filter(Boolean)
+            : []
+        }
+      />
+    </>
   )
 }
 
@@ -457,8 +641,27 @@ function OperationEntry({
   }
 
   const [entry, setEntry] = useState(emptyEntry)
+
+  const setEntryField = (field, value) => {
+    setEntry((prev) => ({
+      ...prev,
+      [field]: value,
+    }))
+  }
+
   const [editId, setEditId] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [successMsg, setSuccessMsg] = useState('')
+  const [errorMsg, setErrorMsg] = useState('')
+  const [confirmAction, setConfirmAction] = useState(null)
+  const [tankerSenderReference, setTankerSenderReference] = useState(null)
+  const [tankerSenderReferenceLoading, setTankerSenderReferenceLoading] =
+    useState(false)
+  const [editableSearch, setEditableSearch] = useState('')
+  const [editableStatusFilter, setEditableStatusFilter] = useState('ALL') // ALL | Draft | Rejected
+  const [editablePage, setEditablePage] = useState(1)
+  const [selectedTemplateLayout, setSelectedTemplateLayout] = useState(null)
+  const EDITABLE_PAGE_SIZE = 20
 
   const location = useLocation()
   const navigate = useNavigate()
@@ -467,20 +670,53 @@ function OperationEntry({
   const prefill = useMemo(() => {
     const params = new URLSearchParams(location.search)
 
+    const mode = String(params.get('mode') || '').trim()
+    const source = String(params.get('source') || '').trim()
+
+    const senderTransactionIdRaw = String(
+      params.get('sender_transaction_id') || ''
+    ).trim()
+    const senderTransactionId = senderTransactionIdRaw
+      ? Number(senderTransactionIdRaw)
+      : null
+
     const convoyNumber = String(params.get('convoy_number') || '').trim()
     const primaryAssetCode = String(params.get('primary_asset_code') || '').trim()
     const originLocationCode = String(params.get('origin_location_code') || '').trim()
+    const destinationLocationCode = String(
+      params.get('destination_location_code') || ''
+    ).trim()
+    const senderLocationCode = String(
+      params.get('sender_location_code') || ''
+    ).trim()
+    const receiverLocationCode = String(
+      params.get('receiver_location_code') || ''
+    ).trim()
     const operationTypeCode = String(params.get('operation_type_code') || '').trim()
+    const operationTemplateId = String(
+      params.get('operation_template_id') || ''
+    ).trim()
+    const productName = String(params.get('product_name') || '').trim()
+    const remarks = String(params.get('remarks') || '').trim()
 
     const autoEventType = String(params.get('auto_event_type') || '').trim()
     const leftTicketIdRaw = String(params.get('left_ticket_id') || '').trim()
     const leftTicketId = leftTicketIdRaw ? Number(leftTicketIdRaw) : null
 
     return {
+      mode,
+      source,
+      senderTransactionId,
       convoyNumber,
       primaryAssetCode,
       originLocationCode,
+      destinationLocationCode,
+      senderLocationCode,
+      receiverLocationCode,
       operationTypeCode,
+      operationTemplateId,
+      productName,
+      remarks,
       autoEventType,
       leftTicketId,
     }
@@ -490,10 +726,19 @@ function OperationEntry({
     if (prefillApplied) return
 
     const hasAny =
+      prefill.mode ||
+      prefill.source ||
+      prefill.senderTransactionId ||
       prefill.convoyNumber ||
       prefill.primaryAssetCode ||
       prefill.originLocationCode ||
+      prefill.destinationLocationCode ||
+      prefill.senderLocationCode ||
+      prefill.receiverLocationCode ||
       prefill.operationTypeCode ||
+      prefill.operationTemplateId ||
+      prefill.productName ||
+      prefill.remarks ||
       prefill.autoEventType ||
       prefill.leftTicketId
 
@@ -503,12 +748,66 @@ function OperationEntry({
       ...current,
       convoyNumber: prefill.convoyNumber || current.convoyNumber,
       primaryAssetCode: prefill.primaryAssetCode || current.primaryAssetCode,
-      originLocationCode: prefill.originLocationCode || current.originLocationCode,
+      originLocationCode:
+        prefill.originLocationCode || current.originLocationCode,
+      destinationLocationCode:
+        prefill.destinationLocationCode || current.destinationLocationCode,
+      senderLocationCode:
+        prefill.senderLocationCode || current.senderLocationCode,
+      receiverLocationCode:
+        prefill.receiverLocationCode || current.receiverLocationCode,
       operationTypeCode: prefill.operationTypeCode || current.operationTypeCode,
+      operationTemplateId:
+        prefill.operationTemplateId || current.operationTemplateId,
+      productName: prefill.productName || current.productName,
+      remarks: prefill.remarks || current.remarks,
+      status: 'Draft',
     }))
 
     setPrefillApplied(true)
   }, [prefill, prefillApplied])
+
+  useEffect(() => {
+    const shouldLoadSenderReference =
+      prefill.mode === 'tanker-receiver' &&
+      prefill.senderTransactionId
+
+    if (!shouldLoadSenderReference) {
+      setTankerSenderReference(null)
+      return
+    }
+
+    let isCancelled = false
+
+    const loadSenderReference = async () => {
+      try {
+        setTankerSenderReferenceLoading(true)
+
+        const reference = await getTankerSenderReference(
+          prefill.senderTransactionId
+        )
+
+        if (!isCancelled) {
+          setTankerSenderReference(reference)
+        }
+      } catch (error) {
+        if (!isCancelled) {
+          setTankerSenderReference(null)
+          setErrorMsg(error.message || 'Unable to load sender tanker reference')
+        }
+      } finally {
+        if (!isCancelled) {
+          setTankerSenderReferenceLoading(false)
+        }
+      }
+    }
+
+    loadSenderReference()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [prefill.mode, prefill.senderTransactionId])
 
   const activeOperationTypes = operationTypes.filter(
     (item) => item.status === 'Active'
@@ -548,6 +847,27 @@ function OperationEntry({
         .sort((a, b) => Number(a.sortOrder) - Number(b.sortOrder))
     : []
 
+  useEffect(() => {
+    const loadLayout = async () => {
+      setSelectedTemplateLayout(null)
+      if (!selectedTemplate?.id) return
+      if (String(selectedTemplate.entryLayoutType || '').trim() !== 'Standard Form') {
+        return
+      }
+      try {
+        const layouts = await getOperationTemplateLayouts(selectedTemplate.id)
+        if (!Array.isArray(layouts) || layouts.length === 0) return
+        const activeLayouts = layouts.filter((l) => l.status === 'Active')
+        const defaultActive = activeLayouts.find((l) => l.isDefault === 'Yes')
+        const chosen = defaultActive || activeLayouts[0] || layouts[0]
+        setSelectedTemplateLayout(chosen || null)
+      } catch {
+        setSelectedTemplateLayout(null)
+      }
+    }
+    loadLayout()
+  }, [selectedTemplate?.id, selectedTemplate?.entryLayoutType])
+
   const availableAssets = useMemo(() => {
     if (!selectedOperationType) {
       return []
@@ -565,6 +885,45 @@ function OperationEntry({
   const editableOperationEntries = operationEntries.filter((item) => {
     return item.status === 'Draft' || item.status === 'Rejected'
   })
+
+  const filteredEditableEntries = useMemo(() => {
+    const rows = [...(editableOperationEntries || [])]
+
+    const search = String(editableSearch || '').trim().toLowerCase()
+    const status = String(editableStatusFilter || 'ALL')
+
+    const filtered = rows.filter((item) => {
+      if (status !== 'ALL' && String(item.status || '') !== status) return false
+
+      if (!search) return true
+
+      const blob = `${item.operationNumber} ${item.operationTypeName} ${item.operationTemplateName} ${item.primaryAssetName} ${item.primaryAssetCode} ${item.originLocationName} ${item.originLocationCode} ${item.operationDate} ${item.productName} ${item.status}`.toLowerCase()
+
+      return blob.includes(search)
+    })
+
+    filtered.sort((a, b) => {
+      const da = String(a.operationDate || '')
+      const db = String(b.operationDate || '')
+      if (da !== db) return db.localeCompare(da)
+      return Number(b.id || 0) - Number(a.id || 0)
+    })
+
+    return filtered
+  }, [editableOperationEntries, editableSearch, editableStatusFilter])
+
+  const editableTotalPages = useMemo(() => {
+    return Math.max(1, Math.ceil(filteredEditableEntries.length / EDITABLE_PAGE_SIZE))
+  }, [filteredEditableEntries.length])
+
+  const pagedEditableEntries = useMemo(() => {
+    const start = (editablePage - 1) * EDITABLE_PAGE_SIZE
+    return filteredEditableEntries.slice(start, start + EDITABLE_PAGE_SIZE)
+  }, [filteredEditableEntries, editablePage])
+
+  useEffect(() => {
+    setEditablePage(1)
+  }, [editableSearch, editableStatusFilter])
 
   const initializeValuesFromTemplate = (templateId) => {
     const template = activeOperationTemplates.find((item) => {
@@ -590,6 +949,25 @@ function OperationEntry({
         sortOrder: field.sortOrder,
       }))
   }
+
+  useEffect(() => {
+    if (!prefillApplied) {
+      return
+    }
+
+    if (!prefill.operationTemplateId) {
+      return
+    }
+
+    if (entry.values && entry.values.length > 0) {
+      return
+    }
+
+    setEntry((current) => ({
+      ...current,
+      values: initializeValuesFromTemplate(prefill.operationTemplateId),
+    }))
+  }, [prefillApplied, prefill.operationTemplateId])
 
   const handleChange = (e) => {
     const { name, value } = e.target
@@ -755,12 +1133,40 @@ function OperationEntry({
     return missing
   }
 
-  const validateAssetSpecificMandatory = (entryValues) => {
-    const tankPayloadRaw = entryValues.find((v) => v.fieldCode === 'tank_gauging_payload')?.fieldValue
-    const multiTankPayloadRaw = entryValues.find((v) => v.fieldCode === 'multi_tank_payload')?.fieldValue
+  const validateTankerMandatory = (tankerPayload) => {
+    const inputs = tankerPayload?.inputs || {}
 
-    const tankPayload = parseFieldObject(tankPayloadRaw)
-    const multiTankPayload = parseFieldObject(multiTankPayloadRaw)
+    const missing = []
+
+    if (isBlank(inputs.tankerTransactionDate)) missing.push('Tanker Date')
+    if (isBlank(inputs.tankerTransactionTime)) missing.push('Tanker Time')
+    if (isBlank(inputs.convoyNumber)) missing.push('Convoy Number')
+    if (isBlank(inputs.compartment)) missing.push('Compartment / Manhole')
+    if (isBlank(inputs.totalDipCm)) missing.push('Total Dip (cm)')
+    if (isBlank(inputs.waterDipCm)) missing.push('Water Dip (cm)')
+    if (isBlank(inputs.bswPercent)) missing.push('BS&W %')
+    if (isBlank(inputs.tankTemperature)) missing.push('Tank Temperature')
+    if (isBlank(inputs.sampleTemperature)) missing.push('Sample Temperature')
+
+    const mode = String(inputs.observedInputType || '').toLowerCase()
+
+    if (mode.includes('api')) {
+      if (isBlank(inputs.observedApi)) missing.push('Observed API')
+    } else {
+      if (isBlank(inputs.observedDensity)) missing.push('Observed Density')
+    }
+
+    return missing
+  }
+
+    const validateAssetSpecificMandatory = (entryValues) => {
+      const tankPayloadRaw = entryValues.find((v) => v.fieldCode === 'tank_gauging_payload')?.fieldValue
+      const multiTankPayloadRaw = entryValues.find((v) => v.fieldCode === 'multi_tank_payload')?.fieldValue
+      const tankerPayloadRaw = entryValues.find((v) => v.fieldCode === 'tanker_payload')?.fieldValue
+
+      const tankPayload = parseFieldObject(tankPayloadRaw)
+      const multiTankPayload = parseFieldObject(multiTankPayloadRaw)
+      const tankerPayload = parseFieldObject(tankerPayloadRaw)
 
     if (tankPayload) {
       const missing = validateTankGaugingMandatory(tankPayload)
@@ -776,6 +1182,13 @@ function OperationEntry({
       }
     }
 
+    if (tankerPayload) {
+      const missing = validateTankerMandatory(tankerPayload)
+      if (missing.length > 0) {
+        return `Tanker mandatory sections missing: ${missing.slice(0, 10).join(', ')}${missing.length > 10 ? ' ...' : ''}`
+      }
+    }
+
     return null
   }
 
@@ -783,34 +1196,42 @@ function OperationEntry({
     e.preventDefault()
 
     if (entry.operationTypeCode.trim() === '') {
-      alert('Operation Type is required')
+      setErrorMsg('Operation Type is required')
       return
     }
 
     if (String(entry.operationTemplateId).trim() === '') {
-      alert('Operation Template is required')
+      setErrorMsg('Operation Template is required')
       return
     }
 
     if (entry.primaryAssetCode.trim() === '') {
-      alert('Primary Asset is required')
+      setErrorMsg('Primary Asset is required')
       return
     }
-    const needsConvoyNumber = String(selectedTemplate?.entryLayoutType || '')
+    const selectedLayoutType = String(selectedTemplate?.entryLayoutType || '')
       .toLowerCase()
-      .includes('multi-tank')
 
-    if (needsConvoyNumber && entry.convoyNumber.trim() === '') {
-      alert('Convoy Number is required for Multi-Tank operations')
+    const isMultiTank = selectedLayoutType.includes('multi-tank')
+    const isTanker = selectedLayoutType.includes('tanker')
+    const isShuttleTracking = selectedLayoutType.includes('shuttle tracking')
+
+    if ((isMultiTank || isTanker) && entry.convoyNumber.trim() === '') {
+      setErrorMsg('Convoy Number is required for Multi-Tank / Tanker operations')
+      return
+    }
+
+    if (isShuttleTracking && entry.convoyNumber.trim() === '') {
+      setErrorMsg('Shuttle Number is required for Shuttle Tracking')
       return
     }
     if (entry.originLocationCode.trim() === '') {
-      alert('Origin Location is required')
+      setErrorMsg('Origin Location is required')
       return
     }
 
     if (entry.operationDate.trim() === '') {
-      alert('Operation Date is required')
+      setErrorMsg('Operation Date is required')
       return
     }
 
@@ -818,7 +1239,7 @@ function OperationEntry({
       selectedOperationType?.requiresSenderLocation === 'Yes' &&
       entry.senderLocationCode.trim() === ''
     ) {
-      alert('Sender Location is required for this operation type')
+      setErrorMsg('Sender Location is required for this operation type')
       return
     }
 
@@ -826,7 +1247,7 @@ function OperationEntry({
       selectedOperationType?.requiresReceiverLocation === 'Yes' &&
       entry.receiverLocationCode.trim() === ''
     ) {
-      alert('Receiver Location is required for this operation type')
+      setErrorMsg('Receiver Location is required for this operation type')
       return
     }
 
@@ -840,7 +1261,7 @@ function OperationEntry({
         templateField?.inputMode === 'Manual' &&
         String(value.fieldValue ?? '').trim() === ''
       ) {
-        alert(`${value.fieldName} is required`)
+        setErrorMsg(`${value.fieldName} is required`)
         return
       }
     }
@@ -850,7 +1271,7 @@ function OperationEntry({
     if (layoutType === 'Tank Gauging') {
       const hasTankPayload = (entry.values || []).some((v) => v.fieldCode === 'tank_gauging_payload')
       if (!hasTankPayload) {
-        alert('Template setup required: Add System field "tank_gauging_payload" in Operation Template.')
+        setErrorMsg('Template setup required: Add System field "tank_gauging_payload" in Operation Template.')
         return
       }
     }
@@ -858,27 +1279,129 @@ function OperationEntry({
     if (layoutType === 'Multi-Tank Before/After') {
       const hasMultiTankPayload = (entry.values || []).some((v) => v.fieldCode === 'multi_tank_payload')
       if (!hasMultiTankPayload) {
-        alert('Template setup required: Add System field "multi_tank_payload" in Operation Template.')
+        setErrorMsg('Template setup required: Add System field "multi_tank_payload" in Operation Template.')
+        return
+      }
+    }
+
+    if (layoutType === 'Tanker Loading') {
+      const hasTankerPayload = (entry.values || []).some((v) => v.fieldCode === 'tanker_payload')
+      if (!hasTankerPayload) {
+        setErrorMsg('Template setup required: Add System field "tanker_payload" in Operation Template.')
+        return
+      }
+    }
+
+    if (layoutType === 'Meter Reading') {
+      const hasFlowmeterPayload = (entry.values || []).some((v) => v.fieldCode === 'flowmeter_payload')
+      if (!hasFlowmeterPayload) {
+        setErrorMsg('Template setup required: Add System field "flowmeter_payload" in Operation Template.')
+        return
+      }
+
+      const flowmeterPayloadRow = (entry.values || []).find((v) => v.fieldCode === 'flowmeter_payload')
+      const payload =
+        typeof flowmeterPayloadRow?.fieldValue === 'object'
+          ? flowmeterPayloadRow.fieldValue
+          : (() => {
+              try {
+                return JSON.parse(String(flowmeterPayloadRow?.fieldValue || '{}'))
+              } catch {
+                return null
+              }
+            })()
+
+      const inputs = payload?.inputs || {}
+      const meters = Array.isArray(inputs.meters) ? inputs.meters : []
+      const tankTemp = Number(inputs.tank_temperature ?? NaN)
+      const sampleTemp = Number(inputs.sample_temperature ?? NaN)
+      const bsw = Number(inputs.bsw_percent ?? NaN)
+      const observedType = String(inputs.observed_input_type || '')
+      const observedApi = Number(inputs.observed_api ?? NaN)
+      const observedDensity = Number(inputs.observed_density ?? NaN)
+
+      if (!inputs.reading_date) {
+        setErrorMsg('Flowmeter Date is required.')
+        return
+      }
+      if (meters.length > 0) {
+        if (!inputs.stream_name) {
+          setErrorMsg('Flowmeter Stream is required.')
+          return
+        }
+        for (const meter of meters) {
+          const opening = Number(meter.opening_reading ?? NaN)
+          const closing = Number(meter.closing_reading ?? NaN)
+          const label = String(meter.meter_label || 'Meter')
+          if (!Number.isFinite(opening) || opening < 0) {
+            setErrorMsg(`${label}: Opening Reading cannot be negative.`)
+            return
+          }
+          if (!Number.isFinite(closing) || closing < 0) {
+            setErrorMsg(`${label}: Closing Reading cannot be negative.`)
+            return
+          }
+          if (closing < opening) {
+            setErrorMsg(`${label}: Closing Reading cannot be less than Opening Reading.`)
+            return
+          }
+        }
+      } else if (!inputs.meter_label) {
+        setErrorMsg('Flowmeter Meter Label is required.')
+        return
+      }
+      if (!Number.isFinite(tankTemp)) {
+        setErrorMsg('Tank Temperature is required.')
+        return
+      }
+      if (!Number.isFinite(sampleTemp)) {
+        setErrorMsg('Sample Temperature is required.')
+        return
+      }
+      if (!Number.isFinite(bsw) || bsw < 0 || bsw > 100) {
+        setErrorMsg('BS & W must be between 0 and 100.')
+        return
+      }
+      if (observedType === 'Observed API') {
+        if (!Number.isFinite(observedApi)) {
+          setErrorMsg('Observed API is required.')
+          return
+        }
+      } else if (observedType === 'Observed Density') {
+        if (!Number.isFinite(observedDensity)) {
+          setErrorMsg('Observed Density is required.')
+          return
+        }
+      } else {
+        setErrorMsg('Observed Input Type is required.')
+        return
+      }
+    }
+
+    if (layoutType === 'Shuttle Tracking') {
+      const hasShuttlePayload = (entry.values || []).some((v) => v.fieldCode === 'shuttle_payload')
+      if (!hasShuttlePayload) {
+        setErrorMsg('Template setup required: Add System field "shuttle_payload" in Operation Template.')
         return
       }
     }
 
     const mandatoryError = validateAssetSpecificMandatory(entry.values || [])
     if (mandatoryError) {
-      alert(mandatoryError)
+      setErrorMsg(mandatoryError)
       return
     }
 
     const actionLabel = editId === null ? 'save' : 'update'
-    const ok = window.confirm(
-      `Confirm to ${actionLabel} this Draft ticket?\n\n` +
-      `Operation Type: ${entry.operationTypeCode}\n` +
-      `Template ID: ${entry.operationTemplateId}\n` +
-      `Asset: ${entry.primaryAssetCode}\n` +
-      `Date: ${entry.operationDate}`
-    )
+    setConfirmAction({
+      type: 'submit',
+      actionLabel,
+      message: `Confirm to ${actionLabel} this Draft ticket?\n\nOperation Type: ${entry.operationTypeCode}\nTemplate ID: ${entry.operationTemplateId}\nAsset: ${entry.primaryAssetCode}\nDate: ${entry.operationDate}`,
+    })
+  }
 
-    if (!ok) return
+  const confirmSubmitAction = async () => {
+    setConfirmAction(null)
     try {
       setLoading(true)
 
@@ -886,13 +1409,13 @@ function OperationEntry({
 
       if (editId === null) {
         saved = await createOperationEntry({ ...entry, status: 'Draft' })
-        alert('Operation Entry saved successfully')
+        setSuccessMsg('Operation Entry saved successfully')
       } else {
         saved = await updateOperationEntry(editId, {
           ...entry,
           status: entry.status || 'Draft',
         })
-        alert('Operation Entry updated successfully')
+        setSuccessMsg('Operation Entry updated successfully')
       }
 
       await reloadOperationEntries()
@@ -900,42 +1423,23 @@ function OperationEntry({
         await reloadOperationTransactions()
       }
 
-      // ✅ Auto UNLOAD + Comparison only when triggered by Step 11C params
+      // ✅ Auto navigation back to Barge Tracking only (events/comparisons are created on APPROVAL in backend)
       if (saved && prefill.autoEventType) {
         const convoy = String(entry.convoyNumber || '').trim()
         if (!convoy) {
-          alert(`Auto-link skipped: Convoy Number is required for ${prefill.autoEventType}`)
+          setErrorMsg(`Auto navigation skipped: Convoy Number is required for ${prefill.autoEventType}`)
           setLoading(false)
           return
         }
 
-        await createTripEvent({
-          convoyNumber: convoy,
-          eventType: prefill.autoEventType,
-          locationCode: entry.originLocationCode || null,
-          assetCode: entry.primaryAssetCode,
-          operationTransactionId: saved.id,
-          remarks: `Auto-linked ${prefill.autoEventType} from Acknowledge Receipt`,
-        })
-
-        if (prefill.leftTicketId) {
-          await createTripComparison({
-            convoyNumber: convoy,
-            comparisonType: 'LOAD_AFTER_vs_UNLOAD_BEFORE',
-            leftTransactionId: prefill.leftTicketId,
-            rightTransactionId: saved.id,
-            remarks: 'Auto-created from Acknowledge Receipt',
-          })
-        }
-
-        navigate(`/convoy-tracker?convoy_number=${encodeURIComponent(convoy)}`)
+        navigate(`/barge-tracking?convoy_number=${encodeURIComponent(convoy)}`)
         return
       }
 
       setEntry(emptyEntry)
       setEditId(null)
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
     } finally {
       setLoading(false)
     }
@@ -943,13 +1447,16 @@ function OperationEntry({
 
   const handleEdit = (entryToEdit) => {
     if (entryToEdit.status !== 'Draft' && entryToEdit.status !== 'Rejected') {
-      alert('Only Draft or Rejected operation entries can be edited.')
+      setErrorMsg('Only Draft or Rejected operation entries can be edited.')
       return
     }
-    const ok = window.confirm(
-      'Open this ticket for editing?\n\nAny current form changes will be replaced.'
-    )
-    if (!ok) return
+    setConfirmAction({ type: 'edit', data: entryToEdit, message: 'Open this ticket for editing?\n\nAny current form changes will be replaced.' })
+  }
+
+  const confirmEditAction = () => {
+    if (!confirmAction?.data) return
+    const entryToEdit = confirmAction.data
+    setConfirmAction(null)
 
     setEntry({
       operationTypeCode: entryToEdit.operationTypeCode,
@@ -985,14 +1492,25 @@ function OperationEntry({
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  const handleDelete = async (entryId) => {
-    const confirmDelete = window.confirm(
-      'Are you sure you want to cancel this Draft/Rejected operation entry? This will preserve the audit history.'
-    )
+  const handleCloseEdit = () => {
+    setConfirmAction({ type: 'closeEdit', message: 'Close editing window?\n\nAny unsaved changes will be lost.' })
+  }
 
-    if (confirmDelete === false) {
-      return
-    }
+  const confirmCloseEditAction = () => {
+    setConfirmAction(null)
+    setEntry(emptyEntry)
+    setEditId(null)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  const handleDelete = async (entryId) => {
+    setConfirmAction({ type: 'delete', data: entryId, message: 'Are you sure you want to cancel this Draft/Rejected operation entry? This will preserve the audit history.' })
+  }
+
+  const confirmDeleteAction = async () => {
+    const entryId = confirmAction?.data
+    setConfirmAction(null)
+    if (!entryId) return
 
     try {
       setLoading(true)
@@ -1009,27 +1527,68 @@ function OperationEntry({
         setEditId(null)
       }
 
-      alert('Operation Entry cancelled successfully')
+      setSuccessMsg('Operation Entry cancelled successfully')
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
     } finally {
       setLoading(false)
     }
   }
 
   const handleCancelEdit = () => {
-    const ok = window.confirm('Cancel editing and clear the current form?')
-    if (!ok) return
+    setConfirmAction({ type: 'cancelEdit', message: 'Cancel editing and clear the current form?' })
+  }
 
+  const confirmCancelEditAction = () => {
+    setConfirmAction(null)
     setEntry(emptyEntry)
     setEditId(null)
   }
-  const showConvoyNumber = String(selectedTemplate?.entryLayoutType || '')
-    .toLowerCase()
-    .includes('multi-tank')
+  const showConvoyNumber = useMemo(() => {
+    const layout = String(selectedTemplate?.entryLayoutType || '').toLowerCase()
+
+    return (
+      layout.includes('multi-tank') ||
+      layout.includes('tanker') ||
+      layout.includes('shuttle tracking')
+    )
+  }, [selectedTemplate])
+
+  const convoyLabel = (() => {
+    const layout = String(selectedTemplate?.entryLayoutType || '').toLowerCase()
+    if (layout.includes('shuttle tracking')) return 'Shuttle Number'
+    return 'Convoy Number'
+  })()
 
   return (
     <div>
+      {successMsg && (
+        <div className="success-box" onClick={() => setSuccessMsg('')}>
+          {successMsg}
+        </div>
+      )}
+      {errorMsg && (
+        <div className="error-box" onClick={() => setErrorMsg('')}>
+          {errorMsg}
+        </div>
+      )}
+      {confirmAction && (
+        <div className="confirm-overlay">
+          <div className="confirm-dialog">
+            <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>{confirmAction.message}</pre>
+            <div className="confirm-actions">
+              <button onClick={
+                confirmAction.type === 'submit' ? confirmSubmitAction :
+                confirmAction.type === 'edit' ? confirmEditAction :
+                confirmAction.type === 'closeEdit' ? confirmCloseEditAction :
+                confirmAction.type === 'delete' ? confirmDeleteAction :
+                confirmCancelEditAction
+              }>Yes</button>
+              <button onClick={() => setConfirmAction(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="page-title">
         <div>
           <h2>Operation Entry</h2>
@@ -1040,11 +1599,25 @@ function OperationEntry({
         </div>
 
         <span className="record-count">
-          {editableOperationEntries.length} Editable Entries
+          {filteredEditableEntries.length} Editable Entries
         </span>
       </div>
 
       <form onSubmit={handleSubmit}>
+        {prefill.mode === 'tanker-receiver' && (
+          <div className="info-box full-width-field">
+            <strong>Receiver Tanker Entry</strong>
+            <div>
+              This entry was created from Tanker Tracking against sender
+              transaction ID: {prefill.senderTransactionId || '-'}.
+            </div>
+            <div>
+              Convoy, product, asset and receiver location were prefilled from
+              the sender tracking record. Enter the receiver dips, sample
+              parameters and seals, then save as a new receiver ticket.
+            </div>
+          </div>
+        )}
         <div>
           <label>Operation Type</label>
           <select
@@ -1122,7 +1695,7 @@ function OperationEntry({
         </div>
         {showConvoyNumber && (
           <div>
-            <label>Convoy Number *</label>
+            <label>{convoyLabel} *</label>
             <input
               name="convoyNumber"
               type="text"
@@ -1286,24 +1859,27 @@ function OperationEntry({
           selectedTemplate={selectedTemplate}
           selectedTemplateFields={selectedTemplateFields}
           selectedAsset={selectedAsset}
+          assets={assets}
+          locations={locations}
           assetCalibrationTables={assetCalibrationTables}
           calibrationTemplates={calibrationTemplates}
           handleValueChange={handleValueChange}
           getInputType={getInputType}
+          senderReference={tankerSenderReference}
+          senderReferenceLoading={tankerSenderReferenceLoading}
+          receiverMode={prefill.mode === 'tanker-receiver'}
+          setEntryField={setEntryField}
+          templateLayout={selectedTemplateLayout}
         />
 
         <div className="form-actions">
           <button type="submit" disabled={loading}>
-            {loading
-              ? 'Please wait...'
-              : editId === null
-                ? 'Save Operation Entry'
-                : 'Update Operation Entry'}
+            {loading ? 'Saving...' : editId === null ? 'Save Draft' : 'Update Draft'}
           </button>
 
           {editId !== null && (
-            <button type="button" onClick={handleCancelEdit} disabled={loading}>
-              Cancel Edit
+            <button type="button" onClick={handleCloseEdit} disabled={loading}>
+              Close Edit
             </button>
           )}
         </div>
@@ -1316,6 +1892,66 @@ function OperationEntry({
           be recalled to Draft before editing. Approved and Cancelled tickets are
           locked.
         </p>
+      </div>
+
+      <div className="info-box">
+        <div
+          style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}
+        >
+          <div style={{ minWidth: 200 }}>
+            <label style={{ display: 'block', fontSize: 12, opacity: 0.8 }}>
+              Status
+            </label>
+            <select
+              value={editableStatusFilter}
+              onChange={(e) => setEditableStatusFilter(e.target.value)}
+            >
+              <option value="ALL">All</option>
+              <option value="Draft">Draft</option>
+              <option value="Rejected">Rejected</option>
+            </select>
+          </div>
+
+          <div style={{ flex: 1, minWidth: 280 }}>
+            <label style={{ display: 'block', fontSize: 12, opacity: 0.8 }}>
+              Search
+            </label>
+            <input
+              value={editableSearch}
+              onChange={(e) => setEditableSearch(e.target.value)}
+              placeholder="Search ticket / asset / origin / template / product..."
+            />
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, alignItems: 'end' }}>
+            <button
+              type="button"
+              disabled={editablePage <= 1}
+              onClick={() => setEditablePage((p) => Math.max(1, p - 1))}
+            >
+              Prev
+            </button>
+
+            <span style={{ alignSelf: 'center' }}>
+              Page {editablePage} / {editableTotalPages}
+            </span>
+
+            <button
+              type="button"
+              disabled={editablePage >= editableTotalPages}
+              onClick={() =>
+                setEditablePage((p) => Math.min(editableTotalPages, p + 1))
+              }
+            >
+              Next
+            </button>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
+          Showing {pagedEditableEntries.length} of {filteredEditableEntries.length}{' '}
+          editable entries
+        </div>
       </div>
 
       <table>
@@ -1335,14 +1971,14 @@ function OperationEntry({
         </thead>
 
         <tbody>
-          {editableOperationEntries.length === 0 ? (
+          {pagedEditableEntries.length === 0 ? (
             <tr>
               <td colSpan="10" className="empty-table">
                 No Draft or Rejected operation entries available for editing.
               </td>
             </tr>
           ) : (
-            editableOperationEntries.map((item) => (
+            pagedEditableEntries.map((item) => (
               <tr key={item.id}>
                 <td>{item.operationNumber}</td>
                 <td>{item.operationTypeName}</td>

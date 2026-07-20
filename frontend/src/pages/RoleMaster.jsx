@@ -11,63 +11,81 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
   const [role, setRole] = useState(emptyRole)
   const [editId, setEditId] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+  const [confirmDelete, setConfirmDelete] = useState(null)
+  const [fieldErrors, setFieldErrors] = useState({})
+
+  const isAdminBootstrap =
+    String(loggedInUser?.username || '').toLowerCase() === 'admin'
 
   const hasPermission = (permissionName) => {
-    if (!loggedInUser || !loggedInUser.permissions) {
-      return false
-    }
-
-    return loggedInUser.permissions.some((permission) => {
-      return permission.permissionName === permissionName
-    })
+    if (isAdminBootstrap) return true
+    if (!loggedInUser || !Array.isArray(loggedInUser.permissions)) return false
+    return loggedInUser.permissions.some(
+      (p) => p.permissionName === permissionName
+    )
   }
 
   const canManageRole = hasPermission('Manage Role')
 
+  const clearError = () => setError('')
+  const clearSuccess = () => setSuccess('')
+
   const handleChange = (e) => {
-    setRole({
-      ...role,
-      [e.target.name]: e.target.value,
-    })
+    setRole({ ...role, [e.target.name]: e.target.value })
+    setFieldErrors({ ...fieldErrors, [e.target.name]: '' })
+  }
+
+  const validateRole = () => {
+    const errors = {}
+    if (role.roleName.trim() === '') errors.roleName = 'Role Name is required'
+    setFieldErrors(errors)
+    return Object.keys(errors).length === 0
   }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    clearError()
+    clearSuccess()
 
     if (!canManageRole) {
-      alert('You do not have permission to manage roles.')
+      setError('You do not have permission to manage roles.')
       return
     }
 
-    if (role.roleName.trim() === '') {
-      alert('Role Name is required')
-      return
-    }
+    if (!validateRole()) return
 
     try {
       setLoading(true)
 
       if (editId === null) {
         await createRole(role)
-        alert('Role saved successfully')
+        setSuccess('Role saved successfully')
       } else {
         await updateRole(editId, role)
-        alert('Role updated successfully')
+        setSuccess('Role updated successfully')
       }
 
+      setFieldErrors({})
       await reloadRoles()
       setRole(emptyRole)
       setEditId(null)
-    } catch (error) {
-      alert(error.message)
+    } catch (err) {
+      setError(err.message)
     } finally {
       setLoading(false)
     }
   }
 
   const handleEdit = (roleToEdit) => {
+    clearError()
+    clearSuccess()
+    setConfirmDelete(null)
+    setFieldErrors({})
+
     if (!canManageRole) {
-      alert('You do not have permission to manage roles.')
+      setError('You do not have permission to manage roles.')
       return
     }
 
@@ -80,34 +98,31 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
     setEditId(roleToEdit.id)
   }
 
-  const handleDelete = async (roleId) => {
+  const handleDeleteRequest = (id) => {
+    clearError()
+    clearSuccess()
+    setConfirmDelete(id)
+  }
+
+  const handleDeleteConfirm = async (roleId) => {
     if (!canManageRole) {
-      alert('You do not have permission to manage roles.')
-      return
-    }
-
-    const confirmDelete = window.confirm(
-      'Are you sure you want to delete this role?'
-    )
-
-    if (confirmDelete === false) {
+      setError('You do not have permission to manage roles.')
       return
     }
 
     try {
       setLoading(true)
-
       await deleteRole(roleId)
+      setConfirmDelete(null)
+      setSuccess('Role deleted successfully')
       await reloadRoles()
 
       if (editId === roleId) {
         setRole(emptyRole)
         setEditId(null)
       }
-
-      alert('Role deleted successfully')
-    } catch (error) {
-      alert(error.message)
+    } catch (err) {
+      setError(err.message)
     } finally {
       setLoading(false)
     }
@@ -116,6 +131,10 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
   const handleCancelEdit = () => {
     setRole(emptyRole)
     setEditId(null)
+    setFieldErrors({})
+    clearError()
+    clearSuccess()
+    setConfirmDelete(null)
   }
 
   return (
@@ -128,6 +147,20 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
 
         <span className="record-count">{roles.length} Roles</span>
       </div>
+
+      {success && (
+        <div className="error-box" style={{ background: '#f0fdf4', color: '#166534', borderColor: '#bbf7d0' }}>
+          {success}
+          <button className="error-close" onClick={clearSuccess} type="button">&times;</button>
+        </div>
+      )}
+
+      {error && (
+        <div className="error-box">
+          {error}
+          <button className="error-close" onClick={clearError} type="button">&times;</button>
+        </div>
+      )}
 
       {!canManageRole && (
         <div className="info-box">
@@ -146,7 +179,11 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
               value={role.roleName}
               onChange={handleChange}
               placeholder="Enter role name"
+              style={fieldErrors.roleName ? { borderColor: '#dc2626' } : {}}
             />
+            {fieldErrors.roleName && (
+              <small style={{ color: '#dc2626', marginTop: 4 }}>{fieldErrors.roleName}</small>
+            )}
           </div>
 
           <div>
@@ -230,9 +267,30 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
                       Edit
                     </button>
 
-                    <button type="button" onClick={() => handleDelete(item.id)}>
-                      Delete
-                    </button>
+                    {confirmDelete === item.id ? (
+                      <span>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteConfirm(item.id)}
+                          disabled={loading}
+                          style={{ background: '#dc2626', color: '#fff' }}
+                        >
+                          {loading ? 'Deleting...' : 'Confirm'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDelete(null)}
+                          disabled={loading}
+                          style={{ background: '#64748b', color: '#fff' }}
+                        >
+                          Cancel
+                        </button>
+                      </span>
+                    ) : (
+                      <button type="button" onClick={() => handleDeleteRequest(item.id)}>
+                        Delete
+                      </button>
+                    )}
                   </td>
                 )}
               </tr>

@@ -24,7 +24,11 @@ function BargeSealMaster({
   const [grid, setGrid] = useState({})
   const [dirty, setDirty] = useState(false)
 
+  const isAdminBootstrap =
+    String(loggedInUser?.username || '').toLowerCase() === 'admin'
+
   const canManage = useMemo(() => {
+    if (isAdminBootstrap) return true
     return Boolean(
       loggedInUser?.permissions?.some(
         (p) => p.permissionName === 'Manage Barge Seal Master'
@@ -165,7 +169,7 @@ function BargeSealMaster({
   const handleSave = async () => {
     const validation = validateBeforeSave()
     if (validation) {
-      alert(validation)
+      setError(validation)
       return
     }
 

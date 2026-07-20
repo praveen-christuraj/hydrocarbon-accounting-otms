@@ -41,9 +41,18 @@ const convertAssetToApi = (asset) => {
   }
 }
 
-export const getAssets = async () => {
-  const data = await apiGet('/assets')
-  return data.map(convertAssetFromApi)
+export const getAssets = async (params = {}) => {
+  const { skip = 0, limit = 200, search = '' } = params
+  let endpoint = `/assets?skip=${skip}&limit=${limit}`
+  if (search) endpoint += `&search=${encodeURIComponent(search)}`
+  const data = await apiGet(endpoint)
+  return {
+    items: (data.items || []).map(convertAssetFromApi),
+    total: data.total || 0,
+    skip: data.skip || 0,
+    limit: data.limit || limit,
+    has_more: data.has_more || false,
+  }
 }
 
 export const createAsset = async (asset) => {

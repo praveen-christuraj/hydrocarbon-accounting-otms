@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react'
-import * as XLSX from 'xlsx'
 import {
   bulkSaveTable11Factors,
   clearTable11Factors,
@@ -18,15 +17,20 @@ function Table11FactorMaster({ loggedInUser }) {
   const [uploadFileFormat, setUploadFileFormat] = useState('')
   const [uploadedRows, setUploadedRows] = useState([])
   const [uploadValidationErrors, setUploadValidationErrors] = useState([])
+  const [successMsg, setSuccessMsg] = useState('')
+  const [errorMsg, setErrorMsg] = useState('')
+  const [confirmClear, setConfirmClear] = useState(false)
+  const [confirmSaveRowsAction, setConfirmSaveRowsAction] = useState(null)
+
+  const isAdminBootstrap =
+    String(loggedInUser?.username || '').toLowerCase() === 'admin'
 
   const hasPermission = (permissionName) => {
-    if (!loggedInUser || !loggedInUser.permissions) {
-      return false
-    }
-
-    return loggedInUser.permissions.some((permission) => {
-      return permission.permissionName === permissionName
-    })
+    if (isAdminBootstrap) return true
+    if (!loggedInUser || !Array.isArray(loggedInUser.permissions)) return false
+    return loggedInUser.permissions.some(
+      (p) => p.permissionName === permissionName
+    )
   }
 
   const canManage = hasPermission('Manage Asset Calibration')
@@ -45,11 +49,13 @@ function Table11FactorMaster({ loggedInUser }) {
   const loadTable11Factors = async () => {
     try {
       setLoading(true)
+      setSuccessMsg('')
+      setErrorMsg('')
 
       const data = await getTable11Factors()
       setRows(data)
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
     } finally {
       setLoading(false)
     }
@@ -172,19 +178,24 @@ function Table11FactorMaster({ loggedInUser }) {
   }
 
   const handlePreview = () => {
+    setSuccessMsg('')
+    setErrorMsg('')
+
     try {
       const parsedRows = parsePastedRows()
       setRows(parsedRows)
       setUploadedRows([])
       setUploadValidationErrors([])
-      alert(`${parsedRows.length} Table 11 rows loaded for preview.`)
+      setSuccessMsg(`${parsedRows.length} Table 11 rows loaded for preview.`)
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
     }
   }
 
   const handleFileUpload = async (e) => {
     const selectedFile = e.target.files[0]
+    setSuccessMsg('')
+    setErrorMsg('')
 
     resetUploadState()
 
@@ -195,8 +206,8 @@ function Table11FactorMaster({ loggedInUser }) {
     const fileName = selectedFile.name
     const fileExtension = fileName.split('.').pop().toLowerCase()
 
-    if (fileExtension !== 'xlsx' && fileExtension !== 'csv') {
-      alert('Only XLSX and CSV files are allowed.')
+    if (fileExtension !== 'csv') {
+      setErrorMsg('XLSX upload disabled. Upload CSV.')
       e.target.value = ''
       return
     }
@@ -204,26 +215,8 @@ function Table11FactorMaster({ loggedInUser }) {
     try {
       let matrixRows = []
 
-      if (fileExtension === 'csv') {
-        const csvText = await selectedFile.text()
-        matrixRows = parseCsvTextToMatrix(csvText)
-      } else {
-        const arrayBuffer = await selectedFile.arrayBuffer()
-        const workbook = XLSX.read(arrayBuffer, { type: 'array' })
-        const firstSheetName = workbook.SheetNames[0]
-
-        if (!firstSheetName) {
-          throw new Error('Uploaded XLSX file does not contain any sheet.')
-        }
-
-        const worksheet = workbook.Sheets[firstSheetName]
-
-        matrixRows = XLSX.utils.sheet_to_json(worksheet, {
-          header: 1,
-          defval: '',
-          raw: false,
-        })
-      }
+      const csvText = await selectedFile.text()
+      matrixRows = parseCsvTextToMatrix(csvText)
 
       const validation = normalizeRowsFromMatrix(matrixRows)
 
@@ -233,62 +226,68 @@ function Table11FactorMaster({ loggedInUser }) {
       setUploadValidationErrors(validation.errors)
 
       if (validation.errors.length > 0) {
-        alert('Uploaded file has validation errors. Please review below.')
+        setErrorMsg('Uploaded file has validation errors. Please review below.')
       } else {
         setRows(validation.rows)
-        alert(`${validation.rows.length} Table 11 rows parsed successfully.`)
+        setSuccessMsg(`${validation.rows.length} Table 11 rows parsed successfully.`)
       }
     } catch (error) {
       setUploadValidationErrors([error.message])
-      alert(error.message)
+      setErrorMsg(error.message)
     } finally {
       e.target.value = ''
     }
   }
 
-  const handleSaveRows = async (sourceRows, sourceName) => {
-    if (!canManage) {
-      alert('You do not have permission to manage Table 11 factors.')
-      return
-    }
-
-    if (!Array.isArray(sourceRows) || sourceRows.length === 0) {
-      alert(`No valid ${sourceName} rows available to save.`)
-      return
-    }
-
-    const confirmSave = window.confirm(
-      `This will replace the existing Table 11 factor master with ${sourceRows.length} rows. Continue?`
-    )
-
-    if (!confirmSave) {
-      return
-    }
+  const executeSaveRows = async () => {
+    setSuccessMsg('')
+    setErrorMsg('')
 
     try {
       setLoading(true)
 
-      const savedRows = await bulkSaveTable11Factors(sourceRows)
+      const savedRows = await bulkSaveTable11Factors(confirmSaveRowsAction)
       setRows(savedRows)
       setPasteText('')
       resetUploadState()
       setLookupResult(null)
+      setConfirmSaveRowsAction(null)
 
-      alert('Table 11 factors saved successfully.')
+      setSuccessMsg('Table 11 factors saved successfully.')
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
     } finally {
       setLoading(false)
     }
   }
 
+  const handleSaveRows = async (sourceRows, sourceName) => {
+    setSuccessMsg('')
+    setErrorMsg('')
+
+    if (!canManage) {
+      setErrorMsg('You do not have permission to manage Table 11 factors.')
+      return
+    }
+
+    if (!Array.isArray(sourceRows) || sourceRows.length === 0) {
+      setErrorMsg(`No valid ${sourceName} rows available to save.`)
+      return
+    }
+
+    setConfirmSaveRowsAction(sourceRows)
+  }
+
   const handleSavePastedRows = async () => {
+    setSuccessMsg('')
+    setErrorMsg('')
+
     let parsedRows = []
 
     try {
       parsedRows = parsePastedRows()
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
       return
     }
 
@@ -299,19 +298,9 @@ function Table11FactorMaster({ loggedInUser }) {
     await handleSaveRows(uploadedRows, 'uploaded')
   }
 
-  const handleClear = async () => {
-    if (!canManage) {
-      alert('You do not have permission to clear Table 11 factors.')
-      return
-    }
-
-    const confirmClear = window.confirm(
-      'Are you sure you want to clear all Table 11 factor rows?'
-    )
-
-    if (!confirmClear) {
-      return
-    }
+  const executeClearTable = async () => {
+    setSuccessMsg('')
+    setErrorMsg('')
 
     try {
       setLoading(true)
@@ -321,18 +310,34 @@ function Table11FactorMaster({ loggedInUser }) {
       setPasteText('')
       resetUploadState()
       setLookupResult(null)
+      setConfirmClear(false)
 
-      alert('Table 11 factors cleared successfully.')
+      setSuccessMsg('Table 11 factors cleared successfully.')
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
     } finally {
       setLoading(false)
     }
   }
 
+  const handleClear = () => {
+    setSuccessMsg('')
+    setErrorMsg('')
+
+    if (!canManage) {
+      setErrorMsg('You do not have permission to clear Table 11 factors.')
+      return
+    }
+
+    setConfirmClear(true)
+  }
+
   const handleLookup = async () => {
+    setSuccessMsg('')
+    setErrorMsg('')
+
     if (String(lookupApi60).trim() === '') {
-      alert('Enter API@60 value for lookup test.')
+      setErrorMsg('Enter API@60 value for lookup test.')
       return
     }
 
@@ -342,7 +347,7 @@ function Table11FactorMaster({ loggedInUser }) {
       const data = await lookupTable11Factor(lookupApi60)
       setLookupResult(data)
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
       setLookupResult(null)
     } finally {
       setLoading(false)
@@ -368,22 +373,62 @@ function Table11FactorMaster({ loggedInUser }) {
         structure: first column API @ 60°F, second column LT Factor.
       </div>
 
+      {successMsg && (
+        <div className="success-box">{successMsg}</div>
+      )}
+
+      {errorMsg && (
+        <div className="error-box">{errorMsg}</div>
+      )}
+
+      {confirmSaveRowsAction && (
+        <div className="confirm-overlay">
+          <div className="confirm-box">
+            <p>This will replace the existing Table 11 factor master with <strong>{confirmSaveRowsAction.length}</strong> rows. Continue?</p>
+            <div className="confirm-actions">
+              <button onClick={executeSaveRows} disabled={loading}>
+                {loading ? 'Saving...' : 'Yes, Save'}
+              </button>
+              <button onClick={() => setConfirmSaveRowsAction(null)} disabled={loading}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmClear && (
+        <div className="confirm-overlay">
+          <div className="confirm-box">
+            <p>Are you sure you want to clear all Table 11 factor rows?</p>
+            <div className="confirm-actions">
+              <button onClick={executeClearTable} disabled={loading}>
+                {loading ? 'Clearing...' : 'Yes, Clear'}
+              </button>
+              <button onClick={() => setConfirmClear(false)} disabled={loading}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <form>
         <div className="full-width-field">
           <div className="section-title compact-section-title">
             <h3>Upload Table 11 File</h3>
             <p>
-              Upload CSV or XLSX. Header row is optional. The first two columns
+              Upload CSV. Header row is optional. The first two columns
               must be API @ 60°F and LT Factor.
             </p>
           </div>
         </div>
 
         <div>
-          <label>Upload CSV / XLSX</label>
+          <label>Upload CSV</label>
           <input
             type="file"
-            accept=".csv,.xlsx"
+            accept=".csv"
             onChange={handleFileUpload}
             disabled={!canManage || loading}
           />

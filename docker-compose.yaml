@@ -1,0 +1,67 @@
+services:
+
+  postgres:
+    image: postgres:16
+    container_name: hydrocarbon-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hydrocarbon}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hydrocarbon123}
+      POSTGRES_DB: ${POSTGRES_DB:-hydrocarbon_db}
+
+    ports:
+      - "127.0.0.1:5432:5432"
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hydrocarbon} -d ${POSTGRES_DB:-hydrocarbon_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+
+  backend:
+    build: ./backend
+    container_name: hydrocarbon-backend
+    restart: unless-stopped
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    ports:
+      - "8000:8000"
+
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-hydrocarbon}:${POSTGRES_PASSWORD:-hydrocarbon123}@postgres:5432/${POSTGRES_DB:-hydrocarbon_db}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+
+
+  frontend:
+    build: ./frontend
+    container_name: hydrocarbon-frontend
+    restart: unless-stopped
+
+    depends_on:
+      backend:
+        condition: service_started
+
+    ports:
+      - "5173:5173"
+
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000
+
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+
+volumes:
+  postgres_data:

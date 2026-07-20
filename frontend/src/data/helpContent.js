@@ -256,4 +256,60 @@ export const helpContent = {
       'Comparisons will be auto-generated in the next step (Load After vs Unload Before).',
     ],
   },
+  '/shuttle-tracking': {
+    title: 'Shuttle Tracking Help',
+    description:
+      'Track Shuttle vessel voyages within a single location using Approved tickets only. Create loading/top-up/STS/unloading actions from this page using soft-coded Vessel Operations.',
+    points: [
+      'Tracking key = Location + Shuttle Number + Shuttle Asset.',
+      'Only Approved tickets appear in tracking and reconciliation.',
+      'Stages are soft-coded in Vessel Operation Master (use Show In = Tracking for STS IN/OUT).',
+      'Close Voyage locks new approvals until reopened.',
+      'Use Movement Mapping (BARGE → SHUTTLE) to reconcile Barge unload totals to Shuttle loading totals.',
+    ],
+  },
+  '/out-turn-report': {
+    title: 'Out-Turn Report Help',
+    description:
+      'Out-Turn Report shows approved Tank Gauging tickets in chronological order and calculates net receipt or dispatch values from previous and current tank stock.',
+    points: [
+      'Tank Gauging quantity is treated as the stock available in the tank after the operation.',
+      'Receipt volume is calculated as current stock after receipt minus previous stock.',
+      'Dispatch volume is calculated as previous stock minus current stock after dispatch.',
+      'Opening and Closing Stock entries are stock declarations and are not treated as receipt or dispatch movement.',
+      'The report uses accounting date, so it respects the location-wise accounting day window such as 06:01 to 06:00 or 08:01 to 08:00.',
+      'The first entry for each tank/product should normally be Opening Stock so previous stock is known.',
+    ],
+  },
+
+  '/material-balance-template-master': {
+    title: 'Material Balance Template Help',
+    description:
+      'Material Balance Template allows users to configure location-wise Material Balance columns from Tank Operations without hardcoding location-specific report layouts.',
+    points: [
+      'Create one active template per location for daily Material Balance reporting.',
+      'OPENING columns use configured SET operations like Opening Stock.',
+      'MOVEMENT columns must be mapped to Tank Operation codes.',
+      'IN movement columns can represent Receipt, Production, Receipt from X/Y, or similar terms configured by the user.',
+      'OUT movement columns can represent Dispatch, Dispatch to X/Y, Draining, or similar terms configured by the user.',
+      'Internal Tank Transfer / ITT columns should be marked as internal transfer so they are excluded from Material Balance and Book Closing.',
+      'Book Closing, Actual Closing, and Loss/Gain columns are calculated by the report engine.',
+      'This configuration removes hardcoded location-specific Material Balance columns.',
+    ],
+  },
+
+  '/material-balance-report': {
+    title: 'Material Balance Report Help',
+    description:
+      'Material Balance Report gives date-wise opening, receipt, production, dispatch, draining, closing, and loss/gain values from approved Tank Stock Ledger rows.',
+    points: [
+      'Opening stock is taken from the previous accounting day closing stock.',
+      'Receipt and production are treated as IN movements.',
+      'Dispatch and draining are treated as OUT movements.',
+      'Closing stock is automatically taken from the latest approved tank stock entry of the accounting day.',
+      'If no entry exists on an accounting day, previous closing is carried forward.',
+      'The report respects the location-wise accounting day window such as 06:01 to 06:00 or 08:01 to 08:00.',
+      'CSV export, Excel export, and browser print are standard features for this report.',
+    ],
+  },
 }

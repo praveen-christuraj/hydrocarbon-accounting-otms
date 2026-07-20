@@ -5,7 +5,7 @@ import {
   updateAssetType,
 } from '../api/assetTypeApi'
 
-function AssetTypeMaster({ assetTypes, reloadAssetTypes }) {
+function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
   const emptyAssetType = {
     assetTypeName: '',
     assetTypeCode: '',
@@ -16,6 +16,23 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes }) {
   const [assetType, setAssetType] = useState(emptyAssetType)
   const [editId, setEditId] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [successMsg, setSuccessMsg] = useState('')
+  const [errorMsg, setErrorMsg] = useState('')
+  const [validationErrors, setValidationErrors] = useState({})
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null)
+
+  const isAdminBootstrap =
+    String(loggedInUser?.username || '').toLowerCase() === 'admin'
+
+  const hasPermission = (permissionName) => {
+    if (isAdminBootstrap) return true
+    if (!loggedInUser || !Array.isArray(loggedInUser.permissions)) return false
+    return loggedInUser.permissions.some(
+      (p) => p.permissionName === permissionName
+    )
+  }
+
+  const canManageAssetType = hasPermission('Manage Asset Type')
 
   const handleChange = (e) => {
     setAssetType({
@@ -26,27 +43,42 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    setSuccessMsg('')
+    setErrorMsg('')
+    setValidationErrors({})
+
+    if (!canManageAssetType) {
+      setErrorMsg('You do not have permission to manage asset types.')
+      return
+    }
+
+    const errors = {}
 
     if (assetType.assetTypeName.trim() === '') {
-      alert('Asset Type Name is required')
-      return
+      errors.assetTypeName = 'Asset Type Name is required'
     }
 
     if (assetType.assetTypeCode.trim() === '') {
-      alert('Asset Type Code is required')
-      return
+      errors.assetTypeCode = 'Asset Type Code is required'
     }
 
-    const assetTypeCodeAlreadyExists = assetTypes.some((item) => {
-      return (
-        item.assetTypeCode.toLowerCase() ===
-          assetType.assetTypeCode.toLowerCase() &&
-        item.id !== editId
-      )
-    })
+    if (!errors.assetTypeCode) {
+      const assetTypeCodeAlreadyExists = assetTypes.some((item) => {
+        return (
+          item.assetTypeCode.toLowerCase() ===
+            assetType.assetTypeCode.toLowerCase() &&
+          item.id !== editId
+        )
+      })
 
-    if (assetTypeCodeAlreadyExists) {
-      alert('Asset Type Code already exists. Please choose another code.')
+      if (assetTypeCodeAlreadyExists) {
+        errors.assetTypeCode = 'Asset Type Code already exists. Please choose another code.'
+      }
+    }
+
+    setValidationErrors(errors)
+
+    if (Object.keys(errors).length > 0) {
       return
     }
 
@@ -55,23 +87,32 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes }) {
 
       if (editId === null) {
         await createAssetType(assetType)
-        alert('Asset Type saved successfully')
+        setSuccessMsg('Asset Type saved successfully')
       } else {
         await updateAssetType(editId, assetType)
-        alert('Asset Type updated successfully')
+        setSuccessMsg('Asset Type updated successfully')
       }
 
       await reloadAssetTypes()
       setAssetType(emptyAssetType)
       setEditId(null)
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
     } finally {
       setLoading(false)
     }
   }
 
   const handleEdit = (assetTypeToEdit) => {
+    setSuccessMsg('')
+    setErrorMsg('')
+    setValidationErrors({})
+
+    if (!canManageAssetType) {
+      setErrorMsg('You do not have permission to manage asset types.')
+      return
+    }
+
     setAssetType({
       assetTypeName: assetTypeToEdit.assetTypeName,
       assetTypeCode: assetTypeToEdit.assetTypeCode,
@@ -82,29 +123,31 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes }) {
     setEditId(assetTypeToEdit.id)
   }
 
-  const handleDelete = async (assetTypeId) => {
-    const confirmDelete = window.confirm(
-      'Are you sure you want to delete this asset type?'
-    )
+  const handleDelete = async () => {
+    setSuccessMsg('')
+    setErrorMsg('')
 
-    if (confirmDelete === false) {
+    if (!canManageAssetType) {
+      setErrorMsg('You do not have permission to manage asset types.')
+      setConfirmDeleteId(null)
       return
     }
 
     try {
       setLoading(true)
 
-      await deleteAssetType(assetTypeId)
+      await deleteAssetType(confirmDeleteId)
       await reloadAssetTypes()
 
-      if (editId === assetTypeId) {
+      if (editId === confirmDeleteId) {
         setAssetType(emptyAssetType)
         setEditId(null)
       }
 
-      alert('Asset Type deleted successfully')
+      setConfirmDeleteId(null)
+      setSuccessMsg('Asset Type deleted successfully')
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
     } finally {
       setLoading(false)
     }
@@ -126,6 +169,37 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes }) {
         <span className="record-count">{assetTypes.length} Asset Types</span>
       </div>
 
+      {successMsg && (
+        <div className="success-box">{successMsg}</div>
+      )}
+
+      {errorMsg && (
+        <div className="error-box">{errorMsg}</div>
+      )}
+
+      {!canManageAssetType && (
+        <div className="info-box">
+          You are in view-only mode. Admin can manage asset types.
+        </div>
+      )}
+
+      {confirmDeleteId && (
+        <div className="confirm-overlay">
+          <div className="confirm-box">
+            <p>Are you sure you want to delete this asset type?</p>
+            <div className="confirm-actions">
+              <button onClick={handleDelete} disabled={loading}>
+                {loading ? 'Deleting...' : 'Yes, Delete'}
+              </button>
+              <button onClick={() => setConfirmDeleteId(null)} disabled={loading}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {canManageAssetType && (
       <form onSubmit={handleSubmit}>
         <div>
           <label>Asset Type Name</label>
@@ -133,9 +207,13 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes }) {
             name="assetTypeName"
             type="text"
             value={assetType.assetTypeName}
-            onChange={handleChange}
+            onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, assetTypeName: '' }) }}
             placeholder="Example: Metering Skid"
+            className={validationErrors.assetTypeName ? 'input-error' : ''}
           />
+          {validationErrors.assetTypeName && (
+            <span className="field-error">{validationErrors.assetTypeName}</span>
+          )}
         </div>
 
         <div>
@@ -144,9 +222,13 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes }) {
             name="assetTypeCode"
             type="text"
             value={assetType.assetTypeCode}
-            onChange={handleChange}
+            onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, assetTypeCode: '' }) }}
             placeholder="Example: MSKID"
+            className={validationErrors.assetTypeCode ? 'input-error' : ''}
           />
+          {validationErrors.assetTypeCode && (
+            <span className="field-error">{validationErrors.assetTypeCode}</span>
+          )}
         </div>
 
         <div>
@@ -189,6 +271,7 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes }) {
           )}
         </div>
       </form>
+      )}
 
       <div className="section-title">
         <h3>Saved Asset Types</h3>
@@ -202,14 +285,14 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes }) {
             <th>Asset Type Code</th>
             <th>Description</th>
             <th>Status</th>
-            <th>Actions</th>
+            {canManageAssetType && <th>Actions</th>}
           </tr>
         </thead>
 
         <tbody>
           {assetTypes.length === 0 ? (
             <tr>
-              <td colSpan="5" className="empty-table">
+              <td colSpan={canManageAssetType ? 5 : 4} className="empty-table">
                 No asset types added yet.
               </td>
             </tr>
@@ -224,15 +307,17 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes }) {
                     {item.status}
                   </span>
                 </td>
+                {canManageAssetType && (
                 <td>
                   <button type="button" onClick={() => handleEdit(item)}>
                     Edit
                   </button>
 
-                  <button type="button" onClick={() => handleDelete(item.id)}>
+                  <button type="button" onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteId(item.id) }}>
                     Delete
                   </button>
                 </td>
+                )}
               </tr>
             ))
           )}

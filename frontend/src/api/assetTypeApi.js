@@ -21,9 +21,18 @@ const convertAssetTypeToApi = (assetType) => {
   }
 }
 
-export const getAssetTypes = async () => {
-  const data = await apiGet('/asset-types')
-  return data.map(convertAssetTypeFromApi)
+export const getAssetTypes = async (params = {}) => {
+  const { skip = 0, limit = 200, search = '' } = params
+  let endpoint = `/asset-types?skip=${skip}&limit=${limit}`
+  if (search) endpoint += `&search=${encodeURIComponent(search)}`
+  const data = await apiGet(endpoint)
+  return {
+    items: (data.items || []).map(convertAssetTypeFromApi),
+    total: data.total || 0,
+    skip: data.skip || 0,
+    limit: data.limit || limit,
+    has_more: data.has_more || false,
+  }
 }
 
 export const createAssetType = async (assetType) => {

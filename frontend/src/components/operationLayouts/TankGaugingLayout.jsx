@@ -83,7 +83,7 @@ function TankGaugingLayout({
     return emptyTankInput
   })
 
-  const lastLoadedPayloadRef = useRef('')
+  const lastLoadedEntryRef = useRef('')
   const [table11Lookup, setTable11Lookup] = useState(null)
   const [table11Error, setTable11Error] = useState('')
   const [table11Loading, setTable11Loading] = useState(false)
@@ -92,19 +92,13 @@ function TankGaugingLayout({
   const [tankOperationsError, setTankOperationsError] = useState('')
 
   useEffect(() => {
-    const currentEditKey = editId === null ? 'new-entry' : `edit-${editId}`
+    const currentEntryKey = editId === null ? 'new-entry' : `edit-${editId}`
 
-    const currentPayloadKey = existingPayload?.inputs
-      ? JSON.stringify(existingPayload.inputs)
-      : ''
-
-    const combinedKey = `${currentEditKey}-${currentPayloadKey}`
-
-    if (lastLoadedPayloadRef.current === combinedKey) {
+    if (lastLoadedEntryRef.current === currentEntryKey) {
       return
     }
 
-    lastLoadedPayloadRef.current = combinedKey
+    lastLoadedEntryRef.current = currentEntryKey
 
     if (existingPayload?.inputs) {
       setTankInput({
@@ -114,10 +108,8 @@ function TankGaugingLayout({
       return
     }
 
-    if (editId === null) {
-      setTankInput(emptyTankInput)
-    }
-  }, [editId, existingPayload])
+    setTankInput(emptyTankInput)
+  }, [editId])
 
   useEffect(() => {
     const loadTankOperations = async () => {

@@ -28,9 +28,18 @@ const convertLocationToApi = (location) => {
   }
 }
 
-export const getLocations = async () => {
-  const data = await apiGet('/locations')
-  return data.map(convertLocationFromApi)
+export const getLocations = async (params = {}) => {
+  const { skip = 0, limit = 200, search = '' } = params
+  let endpoint = `/locations?skip=${skip}&limit=${limit}`
+  if (search) endpoint += `&search=${encodeURIComponent(search)}`
+  const data = await apiGet(endpoint)
+  return {
+    items: (data.items || []).map(convertLocationFromApi),
+    total: data.total || 0,
+    skip: data.skip || 0,
+    limit: data.limit || limit,
+    has_more: data.has_more || false,
+  }
 }
 
 export const createLocation = async (location) => {

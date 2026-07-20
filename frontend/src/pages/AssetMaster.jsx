@@ -5,7 +5,7 @@ import {
   updateAsset,
 } from '../api/assetApi'
 
-function AssetMaster({ assets, reloadAssets, assetTypes, locations }) {
+function AssetMaster({ assets, reloadAssets, assetTypes, locations, loggedInUser }) {
   const emptyAsset = {
     assetName: '',
     assetCode: '',
@@ -23,6 +23,23 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations }) {
   const [asset, setAsset] = useState(emptyAsset)
   const [editId, setEditId] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [successMsg, setSuccessMsg] = useState('')
+  const [errorMsg, setErrorMsg] = useState('')
+  const [validationErrors, setValidationErrors] = useState({})
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null)
+
+  const isAdminBootstrap =
+    String(loggedInUser?.username || '').toLowerCase() === 'admin'
+
+  const hasPermission = (permissionName) => {
+    if (isAdminBootstrap) return true
+    if (!loggedInUser || !Array.isArray(loggedInUser.permissions)) return false
+    return loggedInUser.permissions.some(
+      (p) => p.permissionName === permissionName
+    )
+  }
+
+  const canManageAsset = hasPermission('Manage Asset')
 
   const activeAssetTypes = assetTypes.filter((item) => item.status === 'Active')
   const activeLocations = locations.filter((item) => item.status === 'Active')
@@ -47,41 +64,53 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    setSuccessMsg('')
+    setErrorMsg('')
+    setValidationErrors({})
+
+    const errors = {}
 
     if (asset.assetName.trim() === '') {
-      alert('Asset Name is required')
-      return
+      errors.assetName = 'Asset Name is required'
     }
 
     if (asset.assetCode.trim() === '') {
-      alert('Asset Code is required')
-      return
+      errors.assetCode = 'Asset Code is required'
     }
 
     if (asset.assetScope.trim() === '') {
-      alert('Asset Scope is required')
-      return
+      errors.assetScope = 'Asset Scope is required'
     }
 
     if (asset.assetTypeCode.trim() === '') {
-      alert('Asset Type is required')
-      return
+      errors.assetTypeCode = 'Asset Type is required'
     }
 
     if (asset.assetScope === 'Local' && asset.locationCode.trim() === '') {
-      alert('Location is required for Local Assets')
+      errors.locationCode = 'Location is required for Local Assets'
+    }
+
+    if (!errors.assetCode) {
+      const assetCodeAlreadyExists = assets.some((item) => {
+        return (
+          item.assetCode.toLowerCase() === asset.assetCode.toLowerCase() &&
+          item.id !== editId
+        )
+      })
+
+      if (assetCodeAlreadyExists) {
+        errors.assetCode = 'Asset Code already exists. Please choose another code.'
+      }
+    }
+
+    setValidationErrors(errors)
+
+    if (Object.keys(errors).length > 0) {
       return
     }
 
-    const assetCodeAlreadyExists = assets.some((item) => {
-      return (
-        item.assetCode.toLowerCase() === asset.assetCode.toLowerCase() &&
-        item.id !== editId
-      )
-    })
-
-    if (assetCodeAlreadyExists) {
-      alert('Asset Code already exists. Please choose another code.')
+    if (!canManageAsset) {
+      setErrorMsg('You do not have permission to manage assets.')
       return
     }
 
@@ -90,23 +119,32 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations }) {
 
       if (editId === null) {
         await createAsset(asset)
-        alert('Asset saved successfully')
+        setSuccessMsg('Asset saved successfully')
       } else {
         await updateAsset(editId, asset)
-        alert('Asset updated successfully')
+        setSuccessMsg('Asset updated successfully')
       }
 
       await reloadAssets()
       setAsset(emptyAsset)
       setEditId(null)
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
     } finally {
       setLoading(false)
     }
   }
 
   const handleEdit = (assetToEdit) => {
+    setSuccessMsg('')
+    setErrorMsg('')
+    setValidationErrors({})
+
+    if (!canManageAsset) {
+      setErrorMsg('You do not have permission to manage assets.')
+      return
+    }
+
     setAsset({
       assetName: assetToEdit.assetName,
       assetCode: assetToEdit.assetCode,
@@ -124,29 +162,31 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations }) {
     setEditId(assetToEdit.id)
   }
 
-  const handleDelete = async (assetId) => {
-    const confirmDelete = window.confirm(
-      'Are you sure you want to delete this asset?'
-    )
+  const handleDelete = async () => {
+    setSuccessMsg('')
+    setErrorMsg('')
 
-    if (confirmDelete === false) {
+    if (!canManageAsset) {
+      setErrorMsg('You do not have permission to manage assets.')
+      setConfirmDeleteId(null)
       return
     }
 
     try {
       setLoading(true)
 
-      await deleteAsset(assetId)
+      await deleteAsset(confirmDeleteId)
       await reloadAssets()
 
-      if (editId === assetId) {
+      if (editId === confirmDeleteId) {
         setAsset(emptyAsset)
         setEditId(null)
       }
 
-      alert('Asset deleted successfully')
+      setConfirmDeleteId(null)
+      setSuccessMsg('Asset deleted successfully')
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
     } finally {
       setLoading(false)
     }
@@ -205,6 +245,37 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations }) {
         </div>
       )}
 
+      {successMsg && (
+        <div className="success-box">{successMsg}</div>
+      )}
+
+      {errorMsg && (
+        <div className="error-box">{errorMsg}</div>
+      )}
+
+      {!canManageAsset && (
+        <div className="info-box">
+          You are in view-only mode. Admin can manage assets.
+        </div>
+      )}
+
+      {confirmDeleteId && (
+        <div className="confirm-overlay">
+          <div className="confirm-box">
+            <p>Are you sure you want to delete this asset?</p>
+            <div className="confirm-actions">
+              <button onClick={handleDelete} disabled={loading}>
+                {loading ? 'Deleting...' : 'Yes, Delete'}
+              </button>
+              <button onClick={() => setConfirmDeleteId(null)} disabled={loading}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {canManageAsset && (
       <form onSubmit={handleSubmit}>
         <div>
           <label>Asset Name</label>
@@ -212,9 +283,13 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations }) {
             name="assetName"
             type="text"
             value={asset.assetName}
-            onChange={handleChange}
+            onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, assetName: '' }) }}
             placeholder="Example: Utapate Metering Skid"
+            className={validationErrors.assetName ? 'input-error' : ''}
           />
+          {validationErrors.assetName && (
+            <span className="field-error">{validationErrors.assetName}</span>
+          )}
         </div>
 
         <div>
@@ -223,9 +298,13 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations }) {
             name="assetCode"
             type="text"
             value={asset.assetCode}
-            onChange={handleChange}
+            onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, assetCode: '' }) }}
             placeholder="Example: UTP-MSKID-001"
+            className={validationErrors.assetCode ? 'input-error' : ''}
           />
+          {validationErrors.assetCode && (
+            <span className="field-error">{validationErrors.assetCode}</span>
+          )}
         </div>
 
         <div>
@@ -233,12 +312,16 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations }) {
           <select
             name="assetScope"
             value={asset.assetScope}
-            onChange={handleChange}
+            onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, assetScope: '' }) }}
+            className={validationErrors.assetScope ? 'input-error' : ''}
           >
             <option value="">Select Asset Scope</option>
             <option>Local</option>
             <option>Global</option>
           </select>
+          {validationErrors.assetScope && (
+            <span className="field-error">{validationErrors.assetScope}</span>
+          )}
         </div>
 
         <div>
@@ -246,7 +329,8 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations }) {
           <select
             name="assetTypeCode"
             value={asset.assetTypeCode}
-            onChange={handleChange}
+            onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, assetTypeCode: '' }) }}
+            className={validationErrors.assetTypeCode ? 'input-error' : ''}
           >
             <option value="">Select Asset Type</option>
 
@@ -256,6 +340,9 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations }) {
               </option>
             ))}
           </select>
+          {validationErrors.assetTypeCode && (
+            <span className="field-error">{validationErrors.assetTypeCode}</span>
+          )}
         </div>
 
         <div>
@@ -265,8 +352,9 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations }) {
           <select
             name="locationCode"
             value={asset.locationCode}
-            onChange={handleChange}
+            onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, locationCode: '' }) }}
             disabled={asset.assetScope === 'Global'}
+            className={validationErrors.locationCode ? 'input-error' : ''}
           >
             <option value="">
               {asset.assetScope === 'Global'
@@ -280,6 +368,9 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations }) {
               </option>
             ))}
           </select>
+          {validationErrors.locationCode && (
+            <span className="field-error">{validationErrors.locationCode}</span>
+          )}
         </div>
 
         <div>
@@ -361,6 +452,7 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations }) {
           )}
         </div>
       </form>
+      )}
 
       <div className="section-title">
         <h3>Saved Assets</h3>
@@ -383,14 +475,14 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations }) {
             <th>Model</th>
             <th>Commission Date</th>
             <th>Status</th>
-            <th>Actions</th>
+            {canManageAsset && <th>Actions</th>}
           </tr>
         </thead>
 
         <tbody>
           {assets.length === 0 ? (
             <tr>
-              <td colSpan="11" className="empty-table">
+              <td colSpan={canManageAsset ? 11 : 10} className="empty-table">
                 No assets added yet.
               </td>
             </tr>
@@ -427,15 +519,17 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations }) {
                     {item.status}
                   </span>
                 </td>
+                {canManageAsset && (
                 <td>
                   <button type="button" onClick={() => handleEdit(item)}>
                     Edit
                   </button>
 
-                  <button type="button" onClick={() => handleDelete(item.id)}>
+                  <button type="button" onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteId(item.id) }}>
                     Delete
                   </button>
                 </td>
+                )}
               </tr>
             ))
           )}

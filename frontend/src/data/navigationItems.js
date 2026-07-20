@@ -5,6 +5,12 @@ export const navigationItems = [
     type: 'link',
     permission: null,
   },
+  // {
+  //   label: 'Dashboard',
+  //   path: '/dashboard',
+  //   type: 'link',
+  //   permission: 'View Dashboard',
+  // },
   {
     label: 'User Management',
     type: 'dropdown',
@@ -40,6 +46,12 @@ export const navigationItems = [
         permission: 'View User Role Assignment',
       },
       {
+        label: 'Profile & Security',
+        path: '/profile-security',
+        disabled: false,
+        permission: 'View Own Security Settings',
+      },
+      {
         label: 'Access Summary',
         path: '/access-summary',
         disabled: false,
@@ -66,6 +78,12 @@ export const navigationItems = [
       {
         label: 'Asset Master',
         path: '/assets',
+        disabled: false,
+        permission: 'View Asset',
+      },
+      {
+        label: 'Prime Mover - Tanker Link',
+        path: '/prime-mover-tanker-links',
         disabled: false,
         permission: 'View Asset',
       },
@@ -99,6 +117,12 @@ export const navigationItems = [
         disabled: false,
         permission: 'View Asset Assignment Summary',
       },
+      {
+        label: 'Flowmeter Config',
+        path: '/flowmeter-configs',
+        disabled: false,
+        permission: 'View Flowmeter Config',
+      },
     ],
   },
   {
@@ -118,6 +142,18 @@ export const navigationItems = [
         permission: 'View Tank Operation',
       },
       {
+        label: 'Vessel Operation Master',
+        path: '/vessel-operations',
+        disabled: false,
+        permission: 'View Vessel Operation',
+      },
+      {
+        label: 'Movement Mapping',
+        path: '/movement-mappings',
+        disabled: false,
+        permission: 'View Movement Mapping',
+      },
+      {
         label: 'Location Operation Availability',
         path: '/location-operation-availability',
         disabled: false,
@@ -130,14 +166,43 @@ export const navigationItems = [
         permission: 'View Operation Template',
       },
       {
+        label: 'Operation Workflow Policy',
+        path: '/operation-workflow-policies',
+        disabled: false,
+        permission: 'View Operation Workflow Policy',
+      },
+      {
         label: 'Operation Entry',
         path: '/operation-entry',
         disabled: false,
         permission: 'Create Operation Entry',
       },
       {
-        label: 'Convoy Tracker',
-        path: '/convoy-tracker',
+        label: 'Task Manager',
+        path: '/operation-tasks',
+        disabled: false,
+        permission: 'View My Tasks',
+      },
+      {
+        label: 'Barge Tracking',
+        path: '/barge-tracking',
+        disabled: false,
+        permission: 'View Operation Transaction',
+      },
+      {
+        label: 'Tanker Tracking',
+        path: '/tanker-tracking',
+        disabled: false,
+        permission: 'View Operation Transaction',
+      },
+      {
+        label: 'Shuttle Tracking',
+        path: '/shuttle-tracking',
+        disabled: false,
+      },
+      {
+        label: 'FSO Tracking',
+        path: '/fso-tracking',
         disabled: false,
       },
       {
@@ -145,6 +210,12 @@ export const navigationItems = [
         path: '/operation-transactions',
         disabled: false,
         permission: 'View Operation Transaction',
+      },
+      {
+        label: 'Flowmeter Records',
+        path: '/flowmeter-records',
+        disabled: false,
+        permission: 'View Flowmeter Record',
       },
     ],
   },
@@ -157,6 +228,23 @@ export const navigationItems = [
         path: '/tank-stock-ledger',
         disabled: false,
         permission: 'View Tank Stock Ledger',
+      },
+      {
+        label: 'Out-Turn Report',
+        path: '/out-turn-report',
+        disabled: false,
+        permission: 'View Out-Turn Report',
+      },
+      {
+        label: 'Material Balance Report',
+        path: '/material-balance-report',
+        disabled: false,
+        permission: 'View Material Balance Report',
+      },
+      {
+        label: 'Tanker Transaction Report',
+        path: '/tanker-transaction-report',
+        disabled: false,
       },
       {
         label: 'User Access Report - Coming Soon',
@@ -193,6 +281,12 @@ export const navigationItems = [
         path: '/company-report-profiles',
         disabled: false,
       },
+      // {
+      //   label: 'Dashboard Builder',
+      //   path: '/dashboard-builder',
+      //   type: 'link',
+      //   permission: 'Manage Dashboard',
+      // },
       {
         label: 'Barge Seal Master',
         path: '/barge-seal-master',
@@ -205,10 +299,28 @@ export const navigationItems = [
         permission: 'View Admin Settings',
       },
       {
+        label: 'System Notifications',
+        path: '/system-notifications',
+        disabled: false,
+        permission: 'View System Notification',
+      },
+      {
+        label: 'Backup Recovery',
+        path: '/backup-recovery',
+        disabled: false,
+        permission: 'View Backup',
+      },
+      {
         label: 'Location Accounting Day Settings',
         path: '/location-accounting-day-settings',
         disabled: false,
         permission: 'View Location Accounting Day Setting',
+      },
+      {
+        label: 'Material Balance Template',
+        path: '/material-balance-template-master',
+        disabled: false,
+        permission: 'View Material Balance Template',
       },
       {
         label: 'Audit Logs',

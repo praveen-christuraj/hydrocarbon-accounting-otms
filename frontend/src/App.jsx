@@ -4,6 +4,7 @@ import {
   Routes,
   Route,
   Link,
+  Navigate,
   useLocation,
 } from 'react-router-dom'
 
@@ -30,6 +31,9 @@ import LocationOperationAvailability from './pages/LocationOperationAvailability
 import LocationOperationSummary from './pages/LocationOperationSummary'
 import OperationTransactionRegister from './pages/OperationTransactionRegister'
 import TankStockLedger from './pages/TankStockLedger'
+import OutTurnReport from './pages/OutTurnReport'
+import MaterialBalanceReport from './pages/MaterialBalanceReport'
+import MaterialBalanceTemplateMaster from './pages/MaterialBalanceTemplateMaster'
 import OperationTransactionDetail from './pages/OperationTransactionDetail'
 import LoginPage from './pages/LoginPage'
 import PermissionGuard from './components/PermissionGuard'
@@ -37,7 +41,24 @@ import Table11FactorMaster from './pages/Table11FactorMaster'
 import CompanyReportProfileMaster from './pages/CompanyReportProfileMaster'
 import AuditLog from './pages/AuditLog'
 import BargeSealMaster from './pages/BargeSealMaster'
-import ConvoyTracker from './pages/ConvoyTracker'
+import BargeTracking from './pages/BargeTracking'
+import TankerTransactionReport from './pages/TankerTransactionReport'
+import PrimeMoverTankerLinkMaster from './pages/PrimeMoverTankerLinkMaster'
+import TankerTracking from './pages/TankerTracking'
+import ShuttleTracking from './pages/ShuttleTracking'
+import FSOTracking from './pages/FSOTracking'
+// import Dashboard from './pages/Dashboard'
+// import DashboardBuilder from './pages/DashboardBuilder'
+import VesselOperationMaster from './pages/VesselOperationMaster'
+import MovementMapping from './pages/MovementMapping'
+import FlowmeterConfigMaster from './pages/FlowmeterConfigMaster'
+import FlowmeterRecordEntry from './pages/FlowmeterRecordEntry'
+import OperationWorkflowPolicyMaster from './pages/OperationWorkflowPolicyMaster'
+import OperationTaskManager from './pages/OperationTaskManager'
+import ProfileSecurity from './pages/ProfileSecurity'
+import SystemNotificationMaster from './pages/SystemNotificationMaster'
+import SystemNotificationCenter from './components/SystemNotificationCenter'
+import BackupRecovery from './pages/BackupRecovery'
 
 import { getCurrentUser, logoutUser } from './api/authApi'
 import { getLocationOperationAvailability } from './api/locationOperationAvailabilityApi'
@@ -58,7 +79,6 @@ import { getOperationTypes } from './api/operationTypeApi'
 import { getOperationTemplates } from './api/operationTemplateApi'
 import { getOperationEntries } from './api/operationEntryApi'
 import { getOperationTransactions } from './api/operationTransactionApi'
-import { getUserRoles } from './api/userRoleApi'
 
 function PageHelp() {
   const location = useLocation()
@@ -118,7 +138,20 @@ function PageHelp() {
 }
 
 function NavigationBar({ loggedInUser }) {
+  const currentUser = loggedInUser
+
+  const username = String(currentUser?.username || '').toLowerCase()
+
+  const isAdmin =
+    username === 'admin' ||
+    (currentUser?.roles || []).some(
+      (r) => String(r?.role_name || r?.roleName || '').toLowerCase() === 'admin'
+    ) ||
+    String(currentUser?.role_name || currentUser?.roleName || '').toLowerCase() === 'admin'
+
   const hasPermission = (permissionName) => {
+    if (isAdmin) return true
+
     if (!permissionName) {
       return true
     }
@@ -151,9 +184,11 @@ function NavigationBar({ loggedInUser }) {
   }
 
   const getVisibleDropdownItems = (items) => {
-    return items.filter((item) => {
-      return hasRequiredPermissions(item)
-    })
+    return isAdmin
+      ? items.filter((i) => !i.disabled)
+      : items.filter((item) => {
+          return hasRequiredPermissions(item)
+        })
   }
 
   return (
@@ -309,6 +344,7 @@ function AppContent({
       </header>
 
       <NavigationBar loggedInUser={loggedInUser} />
+      <SystemNotificationCenter loggedInUser={loggedInUser} />
 
       <main className="main-content">
         <PageHelp />
@@ -422,6 +458,19 @@ function AppContent({
           />
 
           <Route
+            path="/profile-security"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View Own Security Settings"
+                fallbackMessage="You do not have permission to view profile security settings."
+              >
+                <ProfileSecurity loggedInUser={loggedInUser} users={users} />
+              </PermissionGuard>
+            }
+          />
+
+          <Route
             path="/locations"
             element={
               <PermissionGuard
@@ -451,6 +500,19 @@ function AppContent({
                   locations={locations}
                   loggedInUser={loggedInUser}
                 />
+              </PermissionGuard>
+            }
+          />
+
+          <Route
+            path="/material-balance-template-master"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View Material Balance Template"
+                fallbackMessage="You do not have permission to view Material Balance Template Configuration."
+              >
+                <MaterialBalanceTemplateMaster locations={locations} />
               </PermissionGuard>
             }
           />
@@ -492,7 +554,21 @@ function AppContent({
               </PermissionGuard>
             }
           />
-
+          <Route
+            path="/prime-mover-tanker-links"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View Asset"
+                fallbackMessage="You do not have permission to view Prime Mover - Tanker links."
+              >
+                <PrimeMoverTankerLinkMaster
+                  assets={assets}
+                  loggedInUser={loggedInUser}
+                />
+              </PermissionGuard>
+            }
+          />
           <Route
             path="/calibration-templates"
             element={
@@ -589,6 +665,23 @@ function AppContent({
             }
           />
           <Route
+            path="/flowmeter-configs"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View Flowmeter Config"
+                fallbackMessage="You do not have permission to view Flowmeter Config."
+              >
+                <FlowmeterConfigMaster
+                  locations={locations}
+                  assets={assets}
+                  assetAssignments={assetAssignments}
+                  loggedInUser={loggedInUser}
+                />
+              </PermissionGuard>
+            }
+          />
+          <Route
             path="/company-report-profiles"
             element={
               <PermissionGuard
@@ -610,6 +703,37 @@ function AppContent({
                 fallbackMessage="You do not have permission to view audit logs."
               >
                 <AuditLog />
+              </PermissionGuard>
+            }
+          />
+
+          <Route
+            path="/system-notifications"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View System Notification"
+                fallbackMessage="You do not have permission to view system notifications."
+              >
+                <SystemNotificationMaster
+                  roles={roles}
+                  users={users}
+                  locations={locations}
+                  loggedInUser={loggedInUser}
+                />
+              </PermissionGuard>
+            }
+          />
+
+          <Route
+            path="/backup-recovery"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View Backup"
+                fallbackMessage="You do not have permission to view backup recovery."
+              >
+                <BackupRecovery loggedInUser={loggedInUser} />
               </PermissionGuard>
             }
           />
@@ -665,7 +789,30 @@ function AppContent({
               </PermissionGuard>
             }
           />
-
+          <Route
+            path="/vessel-operations"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View Vessel Operation"
+                fallbackMessage="You do not have permission to view Vessel Operation Master."
+              >
+                <VesselOperationMaster locations={locations} assetTypes={assetTypes} />
+              </PermissionGuard>
+            }
+          />
+          <Route
+            path="/movement-mappings"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View Movement Mapping"
+                fallbackMessage="You do not have permission to view Movement Mapping."
+              >
+                <MovementMapping locations={locations} />
+              </PermissionGuard>
+            }
+          />
           <Route
             path="/operation-templates"
             element={
@@ -679,6 +826,25 @@ function AppContent({
                   operationTemplates={operationTemplates}
                   reloadOperationTemplates={reloadOperationTemplates}
                   loggedInUser={loggedInUser}
+                />
+              </PermissionGuard>
+            }
+          />
+
+          <Route
+            path="/operation-workflow-policies"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View Operation Workflow Policy"
+                fallbackMessage="You do not have permission to view Operation Workflow Policies."
+              >
+                <OperationWorkflowPolicyMaster
+                  roles={roles}
+                  operationTypes={operationTypes}
+                  operationTemplates={operationTemplates}
+                  assets={assets}
+                  locations={locations}
                 />
               </PermissionGuard>
             }
@@ -710,14 +876,29 @@ function AppContent({
           />
 
           <Route
-            path="/convoy-tracker"
+            path="/operation-tasks"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View My Tasks"
+                fallbackMessage="You do not have permission to view assigned tasks."
+              >
+                <OperationTaskManager
+                  reloadOperationTransactions={reloadOperationTransactions}
+                />
+              </PermissionGuard>
+            }
+          />
+
+          <Route
+            path="/barge-tracking"
             element={
               <PermissionGuard
                 loggedInUser={loggedInUser}
                 requiredPermission="View Operation Transaction"
-                fallbackMessage="You do not have permission to view convoy tracker."
+                fallbackMessage="You do not have permission to view Barge Tracking."
               >
-                <ConvoyTracker
+                <BargeTracking
                   loggedInUser={loggedInUser}
                   assets={assets}
                   locations={locations}
@@ -725,7 +906,90 @@ function AppContent({
               </PermissionGuard>
             }
           />
-
+          <Route
+            path="/convoy-tracker"
+            element={<Navigate to="/barge-tracking" replace />}
+          />
+          <Route
+            path="/tanker-tracking"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View Operation Transaction"
+                fallbackMessage="You do not have permission to view Tanker Tracking."
+              >
+                <TankerTracking
+                  locations={locations}
+                  assets={assets}
+                  operationTypes={operationTypes}
+                  operationTemplates={operationTemplates}
+                />
+              </PermissionGuard>
+            }
+          />
+          <Route
+            path="/shuttle-tracking"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View Shuttle Tracking"
+                fallbackMessage="You do not have permission to view Shuttle Tracking."
+              >
+                <ShuttleTracking
+                  loggedInUser={loggedInUser}
+                  locations={locations}
+                  assets={assets}
+                  operationTemplates={operationTemplates}
+                />
+              </PermissionGuard>
+            }
+          />
+          <Route
+            path="/fso-tracking"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View FSO Tracking"
+                fallbackMessage="You do not have permission to view FSO Tracking."
+              >
+                <FSOTracking
+                  locations={locations}
+                  assets={assets}
+                  operationTemplates={operationTemplates}
+                  loggedInUser={loggedInUser}
+                />
+              </PermissionGuard>
+            }
+          />
+          {/* <Route
+            path="/dashboard"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View Dashboard"
+                fallbackMessage="You do not have permission to view Dashboard."
+              >
+                <Dashboard locations={locations} />
+              </PermissionGuard>
+            }
+          />
+          <Route
+            path="/dashboard-builder"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="Manage Dashboard"
+                fallbackMessage="You do not have permission to manage dashboard."
+              >
+                <DashboardBuilder
+                  locations={locations}
+                  assets={assets}
+                  operationTypes={operationTypes}
+                  locationOperationAvailability={locationOperationAvailability}
+                />
+              </PermissionGuard>
+            }
+          /> */}
           <Route
             path="/location-operation-availability"
             element={
@@ -779,6 +1043,21 @@ function AppContent({
               </PermissionGuard>
             }
           />
+          <Route
+            path="/flowmeter-records"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View Flowmeter Record"
+                fallbackMessage="You do not have permission to view Flowmeter Records."
+              >
+                <FlowmeterRecordEntry
+                  locations={locations}
+                  assets={assets}
+                />
+              </PermissionGuard>
+            }
+          />
 
           <Route
             path="/tank-stock-ledger"
@@ -792,7 +1071,42 @@ function AppContent({
               </PermissionGuard>
             }
           />
-
+          <Route
+            path="/out-turn-report"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View Out-Turn Report"
+                fallbackMessage="You do not have permission to view Out-Turn Report."
+              >
+                <OutTurnReport
+                  locations={locations}
+                  assets={assets}
+                />
+              </PermissionGuard>
+            }
+          />
+          <Route
+            path="/material-balance-report"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View Material Balance Report"
+                fallbackMessage="You do not have permission to view Material Balance Report."
+              >
+                <MaterialBalanceReport locations={locations} assets={assets} />
+              </PermissionGuard>
+            }
+          />
+          <Route
+            path="/tanker-transaction-report"
+            element={
+              <TankerTransactionReport
+                locations={locations}
+                assets={assets}
+              />
+            }
+          />
           <Route
             path="/operation-transactions/:transactionId"
             element={
@@ -861,7 +1175,7 @@ function App() {
   const reloadUsers = async () => {
     try {
       const usersFromApi = await getUsers()
-      setUsers(usersFromApi)
+      setUsers(usersFromApi.items)
     } catch (error) {
       console.error(error)
       alert('Unable to load users from backend')
@@ -871,7 +1185,7 @@ function App() {
   const reloadRoles = async () => {
     try {
       const rolesFromApi = await getRoles()
-      setRoles(rolesFromApi)
+      setRoles(rolesFromApi.items)
     } catch (error) {
       console.error(error)
       alert('Unable to load roles from backend')
@@ -881,7 +1195,7 @@ function App() {
   const reloadPermissions = async () => {
     try {
       const permissionsFromApi = await getPermissions()
-      setPermissions(permissionsFromApi)
+      setPermissions(permissionsFromApi.items)
     } catch (error) {
       console.error(error)
       alert('Unable to load permissions from backend')
@@ -900,7 +1214,7 @@ function App() {
 
   const reloadUserRoleAssignments = async () => {
     try {
-      const userRoleAssignmentsFromApi = await getUserRoles()
+      const userRoleAssignmentsFromApi = await getUserRoleAssignments()
       setUserRoleAssignments(userRoleAssignmentsFromApi)
     } catch (error) {
       console.error(error)
@@ -911,7 +1225,7 @@ function App() {
   const reloadLocations = async () => {
     try {
       const locationsFromApi = await getLocations()
-      setLocations(locationsFromApi)
+      setLocations(locationsFromApi.items)
     } catch (error) {
       console.error(error)
       alert('Unable to load locations from backend')
@@ -921,7 +1235,7 @@ function App() {
   const reloadAssetTypes = async () => {
     try {
       const assetTypesFromApi = await getAssetTypes()
-      setAssetTypes(assetTypesFromApi)
+      setAssetTypes(assetTypesFromApi.items)
     } catch (error) {
       console.error(error)
       alert('Unable to load asset types from backend')
@@ -931,7 +1245,7 @@ function App() {
   const reloadAssets = async () => {
     try {
       const assetsFromApi = await getAssets()
-      setAssets(assetsFromApi)
+      setAssets(assetsFromApi.items)
     } catch (error) {
       console.error(error)
       alert('Unable to load assets from backend')

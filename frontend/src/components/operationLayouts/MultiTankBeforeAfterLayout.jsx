@@ -177,6 +177,17 @@ export default function MultiTankBeforeAfterLayout({
 }) {
   const payloadFieldCode = 'multi_tank_payload'
 
+  const stageFieldCode = 'barge_event_type'
+
+  const stageValue = useMemo(() => {
+    const v = entry.values.find((x) => x.fieldCode === stageFieldCode)?.fieldValue
+    return String(v || '').trim()
+  }, [entry.values])
+
+  const setStageValue = (value) => {
+    handleValueChange(stageFieldCode, value)
+  }
+
   const payloadFieldExists = useMemo(() => {
     return entry.values.some((x) => x.fieldCode === payloadFieldCode)
   }, [entry.values])
@@ -1099,6 +1110,37 @@ export default function MultiTankBeforeAfterLayout({
               >
                 {showSeals ? 'Hide Seals' : 'Show Seals'}
               </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="full-width-field">
+          <div className="info-box">
+            <strong>Barge Movement Stage</strong>
+            <div
+              style={{
+                marginTop: 8,
+                display: 'flex',
+                gap: 10,
+                flexWrap: 'wrap',
+                alignItems: 'center',
+              }}
+            >
+              <select
+                value={stageValue}
+                onChange={(e) => setStageValue(e.target.value)}
+              >
+                <option value="">Select Stage</option>
+                <option value="LOAD_1">LOAD 1</option>
+                <option value="LOAD_2_TOPUP">LOAD 2 TOP-UP</option>
+                <option value="UNLOAD">UNLOAD</option>
+                <option value="STS">STS</option>
+              </select>
+
+              <span style={{ color: '#64748b', fontSize: 13 }}>
+                This stage controls how the ticket is tracked in Barge Tracking and how
+                comparisons are generated.
+              </span>
             </div>
           </div>
         </div>

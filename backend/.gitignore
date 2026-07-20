@@ -1,0 +1,63 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environment
+venv/
+.venv/
+env/
+.env
+.env.*
+.env.local
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+.eggs/
+wheels/
+
+# Database / local files
+*.sqlite3
+*.db
+
+# Logs
+*.log
+logs/
+
+# Testing / coverage
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+.nox/
+
+# Linting
+.mypy_cache/
+.ruff_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Generated files
+uploads/
+exports/
+reports/
+
+# Docker
+docker-compose.override.yml
+
+# Type checking
+.mypy_cache/

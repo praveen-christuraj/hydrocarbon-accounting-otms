@@ -19,9 +19,18 @@ const convertRoleToApi = (role) => {
   }
 }
 
-export const getRoles = async () => {
-  const data = await apiGet('/roles')
-  return data.map(convertRoleFromApi)
+export const getRoles = async (params = {}) => {
+  const { skip = 0, limit = 200, search = '' } = params
+  let endpoint = `/roles?skip=${skip}&limit=${limit}`
+  if (search) endpoint += `&search=${encodeURIComponent(search)}`
+  const data = await apiGet(endpoint)
+  return {
+    items: (data.items || []).map(convertRoleFromApi),
+    total: data.total || 0,
+    skip: data.skip || 0,
+    limit: data.limit || limit,
+    has_more: data.has_more || false,
+  }
 }
 
 export const createRole = async (role) => {

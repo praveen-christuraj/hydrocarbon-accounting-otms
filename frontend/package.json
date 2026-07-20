@@ -10,10 +10,14 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "echarts": "^6.1.0",
+    "echarts-for-react": "^3.0.6",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
+    "react-grid-layout": "^1.5.3",
+    "react-resizable": "^3.2.0",
     "react-router-dom": "^7.15.0",
-    "xlsx": "^0.18.5"
+    "tslib": "^2.8.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

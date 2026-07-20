@@ -1,7 +1,7 @@
-﻿import { Link } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { useEffect, useMemo, useState } from 'react'
 import {
-  getOperationTransactions,
+  getOperationTransactionsPaged,
   exportOperationTransactionsCsv,
 } from '../api/operationTransactionApi'
 
@@ -10,8 +10,17 @@ function OperationTransactionRegister({
   locations = [],
   assets = [],
 }) {
-  const [transactions, setTransactions] = useState([])
+  const [rows, setRows] = useState([])
+  const [statusCounts, setStatusCounts] = useState([])
+  const [totalRows, setTotalRows] = useState(0)
+
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(20)
+  const [hasMore, setHasMore] = useState(false)
+
   const [loading, setLoading] = useState(false)
+  const [successMsg, setSuccessMsg] = useState('')
+  const [errorMsg, setErrorMsg] = useState('')
 
   const [filters, setFilters] = useState({
     searchText: '',
@@ -23,10 +32,7 @@ function OperationTransactionRegister({
     status: '',
   })
 
-  const activeOperationTypes = operationTypes.filter(
-    (item) => item.status === 'Active'
-  )
-
+  const activeOperationTypes = operationTypes.filter((item) => item.status === 'Active')
   const activeLocations = locations.filter((item) => item.status === 'Active')
   const activeAssets = assets.filter((item) => item.status === 'Active')
 
@@ -48,13 +54,34 @@ function OperationTransactionRegister({
     })
   }, [activeAssets, filters.locationId, selectedLocation])
 
-  const loadTransactions = async (activeFilters = filters) => {
+  const statusCountMap = useMemo(() => {
+    const map = {}
+    ;(statusCounts || []).forEach((r) => {
+      const key = String(r.status || '')
+      map[key] = Number(r.count || 0)
+    })
+    return map
+  }, [statusCounts])
+
+  const allStatusTotal = useMemo(() => {
+    return Object.values(statusCountMap).reduce((sum, v) => sum + Number(v || 0), 0)
+  }, [statusCountMap])
+
+  const loadPaged = async () => {
     try {
       setLoading(true)
-      const data = await getOperationTransactions(activeFilters)
-      setTransactions(data)
+      const data = await getOperationTransactionsPaged({
+        ...filters,
+        page,
+        pageSize,
+      })
+
+      setRows(Array.isArray(data?.rows) ? data.rows : [])
+      setTotalRows(Number(data?.total_rows || 0))
+      setHasMore(Boolean(data?.has_more))
+      setStatusCounts(Array.isArray(data?.status_counts) ? data.status_counts : [])
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
     } finally {
       setLoading(false)
     }
@@ -62,31 +89,40 @@ function OperationTransactionRegister({
 
   useEffect(() => {
     const delay = setTimeout(() => {
-      loadTransactions(filters)
+      loadPaged()
     }, 300)
 
     return () => clearTimeout(delay)
-  }, [filters])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters, page, pageSize])
 
   const handleFilterChange = (e) => {
     const { name, value } = e.target
 
     if (name === 'locationId') {
-      setFilters({
-        ...filters,
+      setPage(1)
+      setFilters((c) => ({
+        ...c,
         locationId: value,
         assetId: '',
-      })
+      }))
       return
     }
 
-    setFilters({
-      ...filters,
+    setPage(1)
+    setFilters((c) => ({
+      ...c,
       [name]: value,
-    })
+    }))
   }
 
-   const clearFilters = () => {
+  const setStatusTab = (status) => {
+    setPage(1)
+    setFilters((c) => ({ ...c, status }))
+  }
+
+  const clearFilters = () => {
+    setPage(1)
     setFilters({
       searchText: '',
       dateFrom: '',
@@ -103,275 +139,32 @@ function OperationTransactionRegister({
       setLoading(true)
       await exportOperationTransactionsCsv(filters)
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
     } finally {
       setLoading(false)
     }
   }
 
-  const formatCsvValue = (value) => {
-    if (value === null || value === undefined) {
-      return ''
-    }
-
-    const text = String(value).replace(/"/g, '""')
-    return `"${text}"`
-  }
-
-  const getRegisterExportRows = () => {
-    return transactions.map((transaction) => {
-      return {
-        ticketNumber: transaction.ticketNumber || '',
-        convoyNumber: transaction.convoyNumber || '',
-        operationDate: transaction.operationDate || '',
-        operationType: transaction.operationTypeName || '',
-        location:
-          transaction.locationName && transaction.locationCode
-            ? `${transaction.locationName} (${transaction.locationCode})`
-            : '',
-        primaryAsset:
-          transaction.primaryAssetName && transaction.primaryAssetCode
-            ? `${transaction.primaryAssetName} (${transaction.primaryAssetCode})`
-            : '',
-        fieldCount: transaction.fieldCount || 0,
-        status: transaction.status || '',
-        createdAt: transaction.createdAt || '',
-      }
-    })
-  }
-
-  const handleExportRegisterCsv = () => {
-    const rows = getRegisterExportRows()
-
-    if (rows.length === 0) {
-      alert('No transactions available to export for the current filter selection.')
-      return
-    }
-
-    const headers = [
-      'Ticket Number',
-      'Convoy Number',
-      'Operation Date',
-      'Operation Type',
-      'Location',
-      'Primary Asset',
-      'Field Count',
-      'Status',
-      'Created At',
-    ]
-
-    const filterSummary = getPrintableFilterSummary()
-
-    const csvRows = [
-      [formatCsvValue('Operation Transaction Register')].join(','),
-      [
-        formatCsvValue('Generated At'),
-        formatCsvValue(new Date().toLocaleString()),
-      ].join(','),
-      [
-        formatCsvValue('Record Count'),
-        formatCsvValue(rows.length),
-      ].join(','),
-      ''.trim(),
-
-      [formatCsvValue('Applied Filters')].join(','),
-      ...filterSummary.map((filterItem) => {
-        return [
-          formatCsvValue(filterItem.label),
-          formatCsvValue(filterItem.value),
-        ].join(',')
-      }),
-      ''.trim(),
-
-      headers.map(formatCsvValue).join(','),
-      ...rows.map((row) => {
-        return [
-          row.ticketNumber,
-          row.convoyNumber,
-          row.operationDate,
-          row.operationType,
-          row.location,
-          row.primaryAsset,
-          row.fieldCount,
-          row.status,
-          row.createdAt,
-        ]
-          .map(formatCsvValue)
-          .join(',')
-      }),
-    ]
-
-    const csvContent = csvRows.join('\n')
-    const blob = new Blob([csvContent], {
-      type: 'text/csv;charset=utf-8;',
-    })
-
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-
-    link.href = url
-    link.download = `operation-transaction-register-${new Date()
-      .toISOString()
-      .slice(0, 10)}.csv`
-
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    URL.revokeObjectURL(url)
-  }
-  const getPrintableFilterSummary = () => {
-    const summary = []
-
-    if (filters.searchText) {
-      summary.push({
-        label: 'Search',
-        value: filters.searchText,
-      })
-    }
-
-    if (filters.dateFrom) {
-      summary.push({
-        label: 'Date From',
-        value: filters.dateFrom,
-      })
-    }
-
-    if (filters.dateTo) {
-      summary.push({
-        label: 'Date To',
-        value: filters.dateTo,
-      })
-    }
-
-    if (filters.operationTypeId) {
-      const operationType = operationTypes.find((item) => {
-        return String(item.id) === String(filters.operationTypeId)
-      })
-
-      summary.push({
-        label: 'Operation Type',
-        value: operationType
-          ? operationType.operationTypeName
-          : filters.operationTypeId,
-      })
-    }
-
-    if (filters.locationId) {
-      const location = locations.find((item) => {
-        return String(item.id) === String(filters.locationId)
-      })
-
-      summary.push({
-        label: 'Location',
-        value: location
-          ? `${location.locationName} (${location.locationCode})`
-          : filters.locationId,
-      })
-    }
-
-    if (filters.assetId) {
-      const asset = assets.find((item) => {
-        return String(item.id) === String(filters.assetId)
-      })
-
-      summary.push({
-        label: 'Asset',
-        value: asset
-          ? `${asset.assetName} (${asset.assetCode})`
-          : filters.assetId,
-      })
-    }
-
-    if (filters.status) {
-      summary.push({
-        label: 'Status',
-        value: filters.status,
-      })
-    }
-
-    if (summary.length === 0) {
-      summary.push({
-        label: 'Filters',
-        value: 'No filters applied - showing all loaded records',
-      })
-    }
-
-    return summary
-  }
   const handlePrintRegister = () => {
     window.print()
   }
 
+  const totalPages = useMemo(() => {
+    return Math.max(1, Math.ceil(totalRows / pageSize))
+  }, [totalRows, pageSize])
+
   return (
     <div>
-      <div className="printable-register-report">
-        <div className="print-report-header">
-          <div>
-            <h1>Operation Transaction Register</h1>
-            <p>Hydrocarbon Accounting System</p>
-            <p>Generated At: {new Date().toLocaleString()}</p>
-            <p>Record Count: {getRegisterExportRows().length}</p>
-          </div>
+      {successMsg && (
+        <div className="success-box" onClick={() => setSuccessMsg('')}>
+          {successMsg}
         </div>
-
-        <div className="print-report-section">
-          <h2>Applied Filters</h2>
-
-          <table className="print-filter-summary-table">
-            <tbody>
-              {getPrintableFilterSummary().map((filterItem, index) => (
-                <tr key={index}>
-                  <th>{filterItem.label}</th>
-                  <td>{filterItem.value}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      )}
+      {errorMsg && (
+        <div className="error-box" onClick={() => setErrorMsg('')}>
+          {errorMsg}
         </div>
-
-        <div className="print-report-section">
-          <h2>Transaction Register</h2>
-
-          <table>
-            <thead>
-              <tr>
-                <th>Ticket Number</th>
-                <th>Convoy Number</th>
-                <th>Operation Date</th>
-                <th>Operation Type</th>
-                <th>Location</th>
-                <th>Primary Asset</th>
-                <th>Field Count</th>
-                <th>Status</th>
-                <th>Created At</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {getRegisterExportRows().length === 0 ? (
-                <tr>
-                  <td colSpan="9">No transactions available.</td>
-                </tr>
-              ) : (
-                getRegisterExportRows().map((row, index) => (
-                  <tr key={index}>
-                    <td>{row.ticketNumber}</td>
-                    <td>{row.convoyNumber || '-'}</td>
-                    <td>{row.operationDate}</td>
-                    <td>{row.operationType}</td>
-                    <td>{row.location}</td>
-                    <td>{row.primaryAsset}</td>
-                    <td>{row.fieldCount}</td>
-                    <td>{row.status}</td>
-                    <td>{row.createdAt}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
+      )}
       <div className="page-title no-print">
         <div>
           <h2>Operation Transaction Register</h2>
@@ -383,20 +176,67 @@ function OperationTransactionRegister({
 
         <div className="register-title-actions">
           <span className="record-count">
-            {transactions.length} Transactions
+            {totalRows} Transactions
           </span>
 
           <button type="button" onClick={handlePrintRegister}>
             Print Register
           </button>
 
-          <button type="button" onClick={handleExportRegisterCsv}>
+          <button type="button" onClick={handleBackendExportCsv} disabled={loading}>
             Export CSV
           </button>
         </div>
       </div>
 
-      <form>
+      <div className="info-box no-print">
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          <button
+            type="button"
+            className={!filters.status ? 'active-tab-btn' : ''}
+            onClick={() => setStatusTab('')}
+          >
+            All ({allStatusTotal})
+          </button>
+          <button
+            type="button"
+            className={filters.status === 'Draft' ? 'active-tab-btn' : ''}
+            onClick={() => setStatusTab('Draft')}
+          >
+            Draft ({statusCountMap.Draft || 0})
+          </button>
+          <button
+            type="button"
+            className={filters.status === 'Submitted' ? 'active-tab-btn' : ''}
+            onClick={() => setStatusTab('Submitted')}
+          >
+            Submitted ({statusCountMap.Submitted || 0})
+          </button>
+          <button
+            type="button"
+            className={filters.status === 'Approved' ? 'active-tab-btn' : ''}
+            onClick={() => setStatusTab('Approved')}
+          >
+            Approved ({statusCountMap.Approved || 0})
+          </button>
+          <button
+            type="button"
+            className={filters.status === 'Rejected' ? 'active-tab-btn' : ''}
+            onClick={() => setStatusTab('Rejected')}
+          >
+            Rejected ({statusCountMap.Rejected || 0})
+          </button>
+          <button
+            type="button"
+            className={filters.status === 'Cancelled' ? 'active-tab-btn' : ''}
+            onClick={() => setStatusTab('Cancelled')}
+          >
+            Cancelled ({statusCountMap.Cancelled || 0})
+          </button>
+        </div>
+      </div>
+
+      <form className="no-print">
         <div>
           <label>Search</label>
           <input
@@ -436,7 +276,6 @@ function OperationTransactionRegister({
             onChange={handleFilterChange}
           >
             <option value="">All Operation Types</option>
-
             {activeOperationTypes.map((operationType) => (
               <option key={operationType.id} value={operationType.id}>
                 {operationType.operationTypeName}
@@ -453,7 +292,6 @@ function OperationTransactionRegister({
             onChange={handleFilterChange}
           >
             <option value="">All Locations</option>
-
             {activeLocations.map((location) => (
               <option key={location.id} value={location.id}>
                 {location.locationName} ({location.locationCode})
@@ -470,7 +308,6 @@ function OperationTransactionRegister({
             onChange={handleFilterChange}
           >
             <option value="">All Assets</option>
-
             {filteredAssetsForLocation.map((asset) => (
               <option key={asset.id} value={asset.id}>
                 {asset.assetName} ({asset.assetCode})
@@ -480,42 +317,55 @@ function OperationTransactionRegister({
         </div>
 
         <div>
-          <label>Status</label>
+          <label>Page Size</label>
           <select
-            name="status"
-            value={filters.status}
-            onChange={handleFilterChange}
+            value={String(pageSize)}
+            onChange={(e) => {
+              const next = Number(e.target.value || 20)
+              setPage(1)
+              setPageSize(next)
+            }}
           >
-            <option value="">All Statuses</option>
-            <option>Draft</option>
-            <option>Submitted</option>
-            <option>Approved</option>
-            <option>Rejected</option>
-            <option>Cancelled</option>
+            <option value="10">10</option>
+            <option value="20">20</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
           </select>
         </div>
 
         <div className="form-actions">
-          <button type="button" onClick={() => loadTransactions(filters)} disabled={loading}>
+          <button type="button" onClick={loadPaged} disabled={loading}>
             {loading ? 'Loading...' : 'Refresh'}
           </button>
 
           <button type="button" onClick={clearFilters} disabled={loading}>
             Clear Filters
           </button>
-
-          <button type="button" onClick={handleBackendExportCsv} disabled={loading}>
-            Export CSV
-          </button>
         </div>
       </form>
 
-      <div className="section-title">
+      <div className="section-title no-print">
         <h3>Saved Operation Tickets</h3>
         <p>
-          Filters are live. The list updates automatically when you change
-          search, date range, operation type, location, asset, or status.
+          Filters are live. The list updates automatically when you change search, date range, operation type, location, asset, or status.
         </p>
+      </div>
+
+      <div className="info-box no-print">
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button type="button" disabled={loading || page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+            Prev
+          </button>
+          <span>
+            Page {page} / {totalPages}
+          </span>
+          <button type="button" disabled={loading || !hasMore} onClick={() => setPage((p) => p + 1)}>
+            Next
+          </button>
+        </div>
+        <div style={{ marginTop: 6, fontSize: 12, opacity: 0.8 }}>
+          Showing {rows.length} of {totalRows} rows
+        </div>
       </div>
 
       <table>
@@ -541,52 +391,38 @@ function OperationTransactionRegister({
                 Loading operation transactions...
               </td>
             </tr>
-          ) : transactions.length === 0 ? (
+          ) : rows.length === 0 ? (
             <tr>
               <td colSpan="10" className="empty-table">
                 No operation transactions found.
               </td>
             </tr>
           ) : (
-            transactions.map((transaction) => (
-              <tr key={transaction.id}>
+            rows.map((r) => (
+              <tr key={r.id}>
                 <td>
-                  <strong>
-                    {transaction.ticketNumber || 'Ticket number not found'}
-                  </strong>
+                  <strong>{r.ticket_number || r.operation_number || 'Ticket number not found'}</strong>
                 </td>
-                <td>{transaction.convoyNumber || '-'}</td>
-                <td>{transaction.operationDate}</td>
-
-                <td>{transaction.operationTypeName}</td>
-
+                <td>{r.convoy_number || '-'}</td>
+                <td>{r.operation_date || '-'}</td>
+                <td>{r.operation_type_name || r.operation_type_code || '-'}</td>
                 <td>
-                  {transaction.locationName} ({transaction.locationCode})
+                  {r.location_name ? `${r.location_name} (${r.location_code || r.origin_location_code || ''})` : (r.location_code || r.origin_location_code || '-')}
                 </td>
-
                 <td>
-                  {transaction.primaryAssetName} (
-                  {transaction.primaryAssetCode})
+                  {r.primary_asset_name ? `${r.primary_asset_name} (${r.primary_asset_code || ''})` : (r.primary_asset_code || '-')}
                 </td>
-
                 <td>
-                  <span className="permission-badge">
-                    {transaction.fieldCount} Fields
+                  <span className="permission-badge">{Number(r.field_count || 0)} Fields</span>
+                </td>
+                <td>
+                  <span className={`status-badge ${String(r.status || '').toLowerCase()}`}>
+                    {r.status || '-'}
                   </span>
                 </td>
-
+                <td>{r.created_at || '-'}</td>
                 <td>
-                  <span
-                    className={`status-badge ${transaction.status.toLowerCase()}`}
-                  >
-                    {transaction.status}
-                  </span>
-                </td>
-
-                <td>{transaction.createdAt}</td>
-
-                <td>
-                  <Link to={`/operation-transactions/${transaction.id}`}>
+                  <Link to={`/operation-transactions/${r.id}`}>
                     <button type="button">View</button>
                   </Link>
                 </td>
@@ -596,10 +432,8 @@ function OperationTransactionRegister({
         </tbody>
       </table>
 
-      <div className="info-box">
-        This register uses server-side filters. Export CSV now downloads directly from
-        the backend using the selected filters, so it is suitable for larger transaction
-        volumes and future operation modules.
+      <div className="info-box no-print">
+        This register uses server-side paging and status counts. Export CSV downloads directly from the backend using the selected filters.
       </div>
     </div>
   )

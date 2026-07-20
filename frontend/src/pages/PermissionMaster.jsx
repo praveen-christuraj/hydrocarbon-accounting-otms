@@ -16,68 +16,82 @@ function PermissionMaster({ permissions, reloadPermissions, loggedInUser }) {
   const [permission, setPermission] = useState(emptyPermission)
   const [editId, setEditId] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+  const [confirmDelete, setConfirmDelete] = useState(null)
+  const [fieldErrors, setFieldErrors] = useState({})
+
+  const isAdminBootstrap =
+    String(loggedInUser?.username || '').toLowerCase() === 'admin'
 
   const hasPermission = (permissionName) => {
-    if (!loggedInUser || !loggedInUser.permissions) {
-      return false
-    }
-
-    return loggedInUser.permissions.some((item) => {
-      return item.permissionName === permissionName
-    })
+    if (isAdminBootstrap) return true
+    if (!loggedInUser || !Array.isArray(loggedInUser.permissions)) return false
+    return loggedInUser.permissions.some(
+      (p) => p.permissionName === permissionName
+    )
   }
 
   const canManagePermission = hasPermission('Manage Permission')
 
+  const clearError = () => setError('')
+  const clearSuccess = () => setSuccess('')
+
   const handleChange = (e) => {
-    setPermission({
-      ...permission,
-      [e.target.name]: e.target.value,
-    })
+    setPermission({ ...permission, [e.target.name]: e.target.value })
+    setFieldErrors({ ...fieldErrors, [e.target.name]: '' })
+  }
+
+  const validatePermission = () => {
+    const errors = {}
+    if (permission.permissionName.trim() === '') errors.permissionName = 'Permission Name is required'
+    if (permission.moduleName.trim() === '') errors.moduleName = 'Module Name is required'
+    setFieldErrors(errors)
+    return Object.keys(errors).length === 0
   }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    clearError()
+    clearSuccess()
 
     if (!canManagePermission) {
-      alert('You do not have permission to manage permissions.')
+      setError('You do not have permission to manage permissions.')
       return
     }
 
-    if (permission.permissionName.trim() === '') {
-      alert('Permission Name is required')
-      return
-    }
-
-    if (permission.moduleName.trim() === '') {
-      alert('Module Name is required')
-      return
-    }
+    if (!validatePermission()) return
 
     try {
       setLoading(true)
 
       if (editId === null) {
         await createPermission(permission)
-        alert('Permission saved successfully')
+        setSuccess('Permission saved successfully')
       } else {
         await updatePermission(editId, permission)
-        alert('Permission updated successfully')
+        setSuccess('Permission updated successfully')
       }
 
+      setFieldErrors({})
       await reloadPermissions()
       setPermission(emptyPermission)
       setEditId(null)
-    } catch (error) {
-      alert(error.message)
+    } catch (err) {
+      setError(err.message)
     } finally {
       setLoading(false)
     }
   }
 
   const handleEdit = (permissionToEdit) => {
+    clearError()
+    clearSuccess()
+    setConfirmDelete(null)
+    setFieldErrors({})
+
     if (!canManagePermission) {
-      alert('You do not have permission to manage permissions.')
+      setError('You do not have permission to manage permissions.')
       return
     }
 
@@ -91,34 +105,31 @@ function PermissionMaster({ permissions, reloadPermissions, loggedInUser }) {
     setEditId(permissionToEdit.id)
   }
 
-  const handleDelete = async (permissionId) => {
+  const handleDeleteRequest = (id) => {
+    clearError()
+    clearSuccess()
+    setConfirmDelete(id)
+  }
+
+  const handleDeleteConfirm = async (permissionId) => {
     if (!canManagePermission) {
-      alert('You do not have permission to manage permissions.')
-      return
-    }
-
-    const confirmDelete = window.confirm(
-      'Are you sure you want to delete this permission?'
-    )
-
-    if (confirmDelete === false) {
+      setError('You do not have permission to manage permissions.')
       return
     }
 
     try {
       setLoading(true)
-
       await deletePermission(permissionId)
+      setConfirmDelete(null)
+      setSuccess('Permission deleted successfully')
       await reloadPermissions()
 
       if (editId === permissionId) {
         setPermission(emptyPermission)
         setEditId(null)
       }
-
-      alert('Permission deleted successfully')
-    } catch (error) {
-      alert(error.message)
+    } catch (err) {
+      setError(err.message)
     } finally {
       setLoading(false)
     }
@@ -127,6 +138,10 @@ function PermissionMaster({ permissions, reloadPermissions, loggedInUser }) {
   const handleCancelEdit = () => {
     setPermission(emptyPermission)
     setEditId(null)
+    setFieldErrors({})
+    clearError()
+    clearSuccess()
+    setConfirmDelete(null)
   }
 
   return (
@@ -139,6 +154,20 @@ function PermissionMaster({ permissions, reloadPermissions, loggedInUser }) {
 
         <span className="record-count">{permissions.length} Permissions</span>
       </div>
+
+      {success && (
+        <div className="error-box" style={{ background: '#f0fdf4', color: '#166534', borderColor: '#bbf7d0' }}>
+          {success}
+          <button className="error-close" onClick={clearSuccess} type="button">&times;</button>
+        </div>
+      )}
+
+      {error && (
+        <div className="error-box">
+          {error}
+          <button className="error-close" onClick={clearError} type="button">&times;</button>
+        </div>
+      )}
 
       {!canManagePermission && (
         <div className="info-box">
@@ -157,7 +186,11 @@ function PermissionMaster({ permissions, reloadPermissions, loggedInUser }) {
               value={permission.permissionName}
               onChange={handleChange}
               placeholder="Example: View Asset"
+              style={fieldErrors.permissionName ? { borderColor: '#dc2626' } : {}}
             />
+            {fieldErrors.permissionName && (
+              <small style={{ color: '#dc2626', marginTop: 4 }}>{fieldErrors.permissionName}</small>
+            )}
           </div>
 
           <div>
@@ -166,6 +199,7 @@ function PermissionMaster({ permissions, reloadPermissions, loggedInUser }) {
               name="moduleName"
               value={permission.moduleName}
               onChange={handleChange}
+              style={fieldErrors.moduleName ? { borderColor: '#dc2626' } : {}}
             >
               <option value="">Select Module</option>
               <option>User Master</option>
@@ -187,6 +221,9 @@ function PermissionMaster({ permissions, reloadPermissions, loggedInUser }) {
               <option>Reports</option>
               <option>Admin</option>
             </select>
+            {fieldErrors.moduleName && (
+              <small style={{ color: '#dc2626', marginTop: 4 }}>{fieldErrors.moduleName}</small>
+            )}
           </div>
 
           <div>
@@ -279,9 +316,30 @@ function PermissionMaster({ permissions, reloadPermissions, loggedInUser }) {
                       Edit
                     </button>
 
-                    <button type="button" onClick={() => handleDelete(item.id)}>
-                      Delete
-                    </button>
+                    {confirmDelete === item.id ? (
+                      <span>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteConfirm(item.id)}
+                          disabled={loading}
+                          style={{ background: '#dc2626', color: '#fff' }}
+                        >
+                          {loading ? 'Deleting...' : 'Confirm'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDelete(null)}
+                          disabled={loading}
+                          style={{ background: '#64748b', color: '#fff' }}
+                        >
+                          Cancel
+                        </button>
+                      </span>
+                    ) : (
+                      <button type="button" onClick={() => handleDeleteRequest(item.id)}>
+                        Delete
+                      </button>
+                    )}
                   </td>
                 )}
               </tr>

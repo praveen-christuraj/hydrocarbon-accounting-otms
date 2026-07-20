@@ -16,8 +16,6 @@ export const getUserRoleAssignments = async () => {
   return data.map(convertUserRoleFromApi)
 }
 
-export const getUserRoles = getUserRoleAssignments
-
 export const saveUserRole = async (userId, roleId) => {
   const data = await apiPost('/user-roles', {
     user_id: Number(userId),

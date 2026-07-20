@@ -11,6 +11,7 @@ function AssetAssignment({
   users,
   assetAssignments,
   reloadAssetAssignments,
+  loggedInUser,
 }) {
   const emptyAssignment = {
     assetCode: '',
@@ -27,6 +28,21 @@ function AssetAssignment({
   const [assignment, setAssignment] = useState(emptyAssignment)
   const [editId, setEditId] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [successMsg, setSuccessMsg] = useState('')
+  const [errorMsg, setErrorMsg] = useState('')
+  const [validationErrors, setValidationErrors] = useState({})
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null)
+
+  const isAdminBootstrap =
+    String(loggedInUser?.username || '').toLowerCase() === 'admin'
+  const hasPermission = (permissionName) => {
+    if (isAdminBootstrap) return true
+    if (!loggedInUser || !Array.isArray(loggedInUser.permissions)) return false
+    return loggedInUser.permissions.some(
+      (p) => p.permissionName === permissionName
+    )
+  }
+  const canManageAssetAssignment = hasPermission('Manage Asset Assignment')
 
   const activeAssets = assets.filter((asset) => asset.status === 'Active')
   const activeLocations = locations.filter((location) => location.status === 'Active')
@@ -67,33 +83,46 @@ function AssetAssignment({
       ...assignment,
       [e.target.name]: e.target.value,
     })
+    setValidationErrors({ ...validationErrors, [e.target.name]: '' })
   }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
 
-    if (assignment.assetCode.trim() === '') {
-      alert('Asset is required')
+    if (!canManageAssetAssignment) {
+      setErrorMsg('You do not have permission to manage asset assignments.')
       return
+    }
+
+    setSuccessMsg('')
+    setErrorMsg('')
+    setValidationErrors({})
+
+    const errors = {}
+
+    if (assignment.assetCode.trim() === '') {
+      errors.assetCode = 'Asset is required'
     }
 
     if (assignment.assignmentLocationCode.trim() === '') {
-      alert('Assignment Location is required')
-      return
+      errors.assignmentLocationCode = 'Assignment Location is required'
     }
 
     if (assignment.assignedToType.trim() === '') {
-      alert('Assigned To Type is required')
-      return
+      errors.assignedToType = 'Assigned To Type is required'
     }
 
     if (assignment.assignedTo.trim() === '') {
-      alert('Assigned To is required')
-      return
+      errors.assignedTo = 'Assigned To is required'
     }
 
     if (assignment.assignmentDate.trim() === '') {
-      alert('Assignment Date is required')
+      errors.assignmentDate = 'Assignment Date is required'
+    }
+
+    setValidationErrors(errors)
+
+    if (Object.keys(errors).length > 0) {
       return
     }
 
@@ -102,23 +131,28 @@ function AssetAssignment({
 
       if (editId === null) {
         await createAssetAssignment(assignment)
-        alert('Asset Assignment saved successfully')
+        setSuccessMsg('Asset Assignment saved successfully')
       } else {
         await updateAssetAssignment(editId, assignment)
-        alert('Asset Assignment updated successfully')
+        setSuccessMsg('Asset Assignment updated successfully')
       }
 
       await reloadAssetAssignments()
       setAssignment(emptyAssignment)
       setEditId(null)
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
     } finally {
       setLoading(false)
     }
   }
 
   const handleEdit = (assignmentToEdit) => {
+    if (!canManageAssetAssignment) {
+      setErrorMsg('You do not have permission to manage asset assignments.')
+      return
+    }
+
     setAssignment({
       assetCode: assignmentToEdit.assetCode,
       assetScope: assignmentToEdit.assetScope,
@@ -134,29 +168,30 @@ function AssetAssignment({
     setEditId(assignmentToEdit.id)
   }
 
-  const handleDelete = async (assignmentId) => {
-    const confirmDelete = window.confirm(
-      'Are you sure you want to delete this asset assignment record?'
-    )
-
-    if (confirmDelete === false) {
+  const handleDelete = async () => {
+    if (!canManageAssetAssignment) {
+      setErrorMsg('You do not have permission to manage asset assignments.')
       return
     }
+
+    setSuccessMsg('')
+    setErrorMsg('')
 
     try {
       setLoading(true)
 
-      await deleteAssetAssignment(assignmentId)
+      await deleteAssetAssignment(confirmDeleteId)
       await reloadAssetAssignments()
 
-      if (editId === assignmentId) {
+      if (editId === confirmDeleteId) {
         setAssignment(emptyAssignment)
         setEditId(null)
       }
 
-      alert('Asset Assignment deleted successfully')
+      setConfirmDeleteId(null)
+      setSuccessMsg('Asset Assignment deleted successfully')
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
     } finally {
       setLoading(false)
     }
@@ -199,13 +234,46 @@ function AssetAssignment({
         </div>
       )}
 
+      {successMsg && (
+        <div className="success-box">{successMsg}</div>
+      )}
+
+      {errorMsg && (
+        <div className="error-box">{errorMsg}</div>
+      )}
+
+      {confirmDeleteId && (
+        <div className="confirm-overlay">
+          <div className="confirm-box">
+            <p>Are you sure you want to delete this asset assignment record?</p>
+            <div className="confirm-actions">
+              <button onClick={handleDelete} disabled={loading}>
+                {loading ? 'Deleting...' : 'Yes, Delete'}
+              </button>
+              <button onClick={() => setConfirmDeleteId(null)} disabled={loading}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!canManageAssetAssignment && (
+        <div className="info-box">
+          You are in view-only mode. Contact an administrator to create or edit
+          asset assignments.
+        </div>
+      )}
+
+      {canManageAssetAssignment && (
       <form onSubmit={handleSubmit}>
         <div>
           <label>Asset</label>
           <select
             name="assetCode"
             value={assignment.assetCode}
-            onChange={handleAssetChange}
+            onChange={(e) => { handleAssetChange(e); setValidationErrors({ ...validationErrors, assetCode: '' }) }}
+            className={validationErrors.assetCode ? 'input-error' : ''}
           >
             <option value="">Select Asset</option>
 
@@ -215,6 +283,9 @@ function AssetAssignment({
               </option>
             ))}
           </select>
+          {validationErrors.assetCode && (
+            <span className="field-error">{validationErrors.assetCode}</span>
+          )}
         </div>
 
         <div>
@@ -237,8 +308,9 @@ function AssetAssignment({
           <select
             name="assignmentLocationCode"
             value={assignment.assignmentLocationCode}
-            onChange={handleChange}
+            onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, assignmentLocationCode: '' }) }}
             disabled={selectedAsset?.assetScope === 'Local'}
+            className={validationErrors.assignmentLocationCode ? 'input-error' : ''}
           >
             <option value="">Select Location</option>
 
@@ -248,6 +320,9 @@ function AssetAssignment({
               </option>
             ))}
           </select>
+          {validationErrors.assignmentLocationCode && (
+            <span className="field-error">{validationErrors.assignmentLocationCode}</span>
+          )}
         </div>
 
         <div>
@@ -255,7 +330,8 @@ function AssetAssignment({
           <select
             name="assignedToType"
             value={assignment.assignedToType}
-            onChange={handleAssignedToTypeChange}
+            onChange={(e) => { handleAssignedToTypeChange(e); setValidationErrors({ ...validationErrors, assignedToType: '' }) }}
+            className={validationErrors.assignedToType ? 'input-error' : ''}
           >
             <option value="">Select Assigned To Type</option>
             <option>User</option>
@@ -264,6 +340,9 @@ function AssetAssignment({
             <option>Vendor</option>
             <option>Other</option>
           </select>
+          {validationErrors.assignedToType && (
+            <span className="field-error">{validationErrors.assignedToType}</span>
+          )}
         </div>
 
         <div>
@@ -273,7 +352,8 @@ function AssetAssignment({
             <select
               name="assignedTo"
               value={assignment.assignedTo}
-              onChange={handleChange}
+              onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, assignedTo: '' }) }}
+              className={validationErrors.assignedTo ? 'input-error' : ''}
             >
               <option value="">Select User</option>
 
@@ -287,7 +367,8 @@ function AssetAssignment({
             <select
               name="assignedTo"
               value={assignment.assignedTo}
-              onChange={handleChange}
+              onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, assignedTo: '' }) }}
+              className={validationErrors.assignedTo ? 'input-error' : ''}
             >
               <option value="">Select Location</option>
 
@@ -302,10 +383,14 @@ function AssetAssignment({
               name="assignedTo"
               type="text"
               value={assignment.assignedTo}
-              onChange={handleChange}
+              onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, assignedTo: '' }) }}
               placeholder="Example: Operations Department / Vendor Name"
               disabled={assignment.assignedToType === ''}
+              className={validationErrors.assignedTo ? 'input-error' : ''}
             />
+          )}
+          {validationErrors.assignedTo && (
+            <span className="field-error">{validationErrors.assignedTo}</span>
           )}
         </div>
 
@@ -315,8 +400,12 @@ function AssetAssignment({
             name="assignmentDate"
             type="date"
             value={assignment.assignmentDate}
-            onChange={handleChange}
+            onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, assignmentDate: '' }) }}
+            className={validationErrors.assignmentDate ? 'input-error' : ''}
           />
+          {validationErrors.assignmentDate && (
+            <span className="field-error">{validationErrors.assignmentDate}</span>
+          )}
         </div>
 
         <div>
@@ -366,6 +455,7 @@ function AssetAssignment({
           )}
         </div>
       </form>
+      )}
 
       <div className="section-title">
         <h3>Current Active Assignments</h3>
@@ -488,13 +578,17 @@ function AssetAssignment({
                   </span>
                 </td>
                 <td>
-                  <button type="button" onClick={() => handleEdit(item)}>
-                    Edit
-                  </button>
+                  {canManageAssetAssignment && (
+                    <button type="button" onClick={() => handleEdit(item)}>
+                      Edit
+                    </button>
+                  )}
 
-                  <button type="button" onClick={() => handleDelete(item.id)}>
-                    Delete
-                  </button>
+                  {canManageAssetAssignment && (
+                    <button type="button" onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteId(item.id) }}>
+                      Delete
+                    </button>
+                  )}
                 </td>
               </tr>
             ))

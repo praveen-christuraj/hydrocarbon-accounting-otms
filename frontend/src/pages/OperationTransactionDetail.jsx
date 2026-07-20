@@ -1,12 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
+  createOperationTransactionCorrectionRequest,
+  getOperationTransactionCorrectionRequests,
   getOperationTransactionDetail,
   updateOperationTransactionStatus,
   getOperationTransactionStatusHistory,
 } from '../api/operationTransactionApi'
 
+import { checkOperationWorkflowPolicy } from '../api/operationWorkflowPolicyApi'
+
 import { getCompanyReportProfiles } from '../api/companyReportProfileApi'
+import TankerPayloadPreview from '../components/operationLayouts/TankerPayloadPreview'
 
 const SELECTED_REPORT_PROFILE_KEY = 'tank_gauging_selected_report_profile'
 
@@ -212,6 +217,159 @@ const isMultiTankPayloadField = (field) => {
   return field.fieldCode === 'multi_tank_payload'
 }
 
+const getShuttlePayloadFromTransaction = (transaction) => {
+  if (!transaction || !Array.isArray(transaction.fieldValues)) {
+    return null
+  }
+
+  const payloadField = transaction.fieldValues.find((field) => {
+    return field.fieldCode === 'shuttle_payload'
+  })
+
+  if (!payloadField || !payloadField.fieldValue) {
+    return null
+  }
+
+  if (typeof payloadField.fieldValue === 'object') {
+    return payloadField.fieldValue
+  }
+
+  const rawValue = String(payloadField.fieldValue || '').trim()
+
+  if (rawValue === '' || rawValue === '[object Object]') {
+    return null
+  }
+
+  try {
+    return JSON.parse(rawValue)
+  } catch {
+    return null
+  }
+}
+
+const isShuttlePayloadField = (field) => {
+  return field.fieldCode === 'shuttle_payload'
+}
+
+const getFlowmeterPayloadFromTransaction = (transaction) => {
+  if (!transaction || !Array.isArray(transaction.fieldValues)) {
+    return null
+  }
+
+  const payloadField = transaction.fieldValues.find((field) => {
+    return field.fieldCode === 'flowmeter_payload'
+  })
+
+  if (!payloadField || !payloadField.fieldValue) {
+    return null
+  }
+
+  if (typeof payloadField.fieldValue === 'object') {
+    return payloadField.fieldValue
+  }
+
+  const rawValue = String(payloadField.fieldValue || '').trim()
+
+  if (rawValue === '' || rawValue === '[object Object]') {
+    return null
+  }
+
+  try {
+    return JSON.parse(rawValue)
+  } catch {
+    return null
+  }
+}
+
+const isFlowmeterPayloadField = (field) => {
+  return field.fieldCode === 'flowmeter_payload'
+}
+
+function FlowmeterCalculatedSummary({ payload }) {
+  if (!payload) return null
+
+  const inputs = payload.inputs || {}
+  const calculated = payload.calculated || {}
+  const meters = Array.isArray(inputs.meters) ? inputs.meters : []
+  const isStreamPayload = meters.length > 0
+
+  const Row = ({ label, value, unit = '' }) => (
+    <div className="live-calculation-card">
+      <span>{label}</span>
+      <strong>{formatValue(value)}{unit ? ` ${unit}` : ''}</strong>
+    </div>
+  )
+
+  return (
+    <>
+      <div className="section-title compact-section-title">
+        <h3>Flowmeter Input Review</h3>
+      </div>
+
+      <div className="approval-review-grid">
+        <div><span>Date</span><strong>{inputs.reading_date || '-'}</strong></div>
+        <div><span>Time</span><strong>{inputs.event_time || '-'}</strong></div>
+        <div><span>{isStreamPayload ? 'Stream' : 'Meter'}</span><strong>{inputs.stream_name || inputs.meter_label || '-'}</strong></div>
+        <div><span>{isStreamPayload ? 'Meters' : 'Opening'}</span><strong>{isStreamPayload ? meters.length : formatValue(inputs.opening_reading)}</strong></div>
+        <div><span>{isStreamPayload ? 'Opening Sum' : 'Closing'}</span><strong>{isStreamPayload ? formatValue(meters.reduce((s, m) => s + Number(m.opening_reading || 0), 0)) : formatValue(inputs.closing_reading)}</strong></div>
+        <div><span>{isStreamPayload ? 'Closing Sum' : 'Meter Factor'}</span><strong>{isStreamPayload ? formatValue(meters.reduce((s, m) => s + Number(m.closing_reading || 0), 0)) : formatValue(inputs.meter_factor)}</strong></div>
+        <div><span>Meter Unit</span><strong>{isStreamPayload ? 'Mixed/Configured' : (inputs.meter_unit || '-')}</strong></div>
+        <div><span>Observed Type</span><strong>{inputs.observed_input_type || '-'}</strong></div>
+        <div><span>Observed API</span><strong>{formatValue(inputs.observed_api)}</strong></div>
+        <div><span>Observed Density</span><strong>{formatValue(inputs.observed_density)} kg/m³</strong></div>
+        <div><span>Tank Temperature</span><strong>{formatValue(inputs.tank_temperature)} °{inputs.tank_temperature_unit || ''}</strong></div>
+        <div><span>Sample Temperature</span><strong>{formatValue(inputs.sample_temperature)} °{inputs.sample_temperature_unit || ''}</strong></div>
+        <div><span>BS&W</span><strong>{formatValue(inputs.bsw_percent)}%</strong></div>
+        <div><span>Remarks</span><strong>{inputs.remarks || '-'}</strong></div>
+      </div>
+
+      {isStreamPayload ? (
+        <table style={{ marginTop: 10 }}>
+          <thead>
+            <tr>
+              <th>Meter</th>
+              <th>Factor</th>
+              <th>Unit</th>
+              <th>Opening</th>
+              <th>Closing</th>
+              <th>Gross Obs</th>
+              <th>Gross (BBL)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {meters.map((m, idx) => (
+              <tr key={`${m.config_id || m.meter_label || 'm'}-${idx}`}>
+                <td>{m.meter_label || '-'}</td>
+                <td>{formatValue(m.meter_factor)}</td>
+                <td>{m.meter_unit || '-'}</td>
+                <td>{formatValue(m.opening_reading)}</td>
+                <td>{formatValue(m.closing_reading)}</td>
+                <td>{formatValue(m.gross_observed)}</td>
+                <td>{formatValue(m.gross_observed_bbl)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : null}
+
+      <div className="section-title compact-section-title">
+        <h3>Flowmeter Calculated Values</h3>
+      </div>
+
+      <div className="live-calculation-grid tank-live-grid">
+        <Row label={isStreamPayload ? 'Stream Gross Observed' : 'Delta'} value={isStreamPayload ? calculated.stream_gross_observed : calculated.delta} unit={isStreamPayload ? '' : undefined} />
+        <Row label="Gross Observed" value={calculated.gross_observed} unit={inputs.meter_unit || ''} />
+        <Row label="Gross (BBL)" value={calculated.gross_observed_bbl} unit="bbl" />
+        <Row label="API @ 60°F" value={calculated.api60} />
+        <Row label="VCF" value={calculated.vcf} />
+        <Row label="GSV (BBL)" value={calculated.gsv_bbl} unit="bbl" />
+        <Row label="BSW Vol (BBL)" value={calculated.bsw_bbl} unit="bbl" />
+        <Row label="NSV (BBL)" value={calculated.nsv_bbl} unit="bbl" />
+      </div>
+    </>
+  )
+}
+
 function TankCalculatedSummary({ calculated }) {
   return (
     <div className="live-calculation-grid tank-live-grid">
@@ -409,16 +567,80 @@ function MultiTankCalculatedSummary({ payload }) {
   )
 }
 
+function ShuttleCalculatedSummary({ payload }) {
+  if (!payload) return null
+
+  const meta = payload.meta || {}
+  const inputs = payload.inputs || {}
+  const net = (payload.calculated || {}).net || {}
+
+  const opLabel =
+    meta.vessel_operation_label ||
+    meta.vessel_operation_code ||
+    'Shuttle Operation'
+
+  const time = inputs.event_time || '-'
+
+  const openingStock = Number(inputs.opening_stock_bbl || 0)
+  const openingWater = Number(inputs.opening_water_bbl || 0)
+  const closingStock = Number(inputs.closing_stock_bbl || 0)
+  const closingWater = Number(inputs.closing_water_bbl || 0)
+
+  // Net Stock is NSV rule already applied in payload
+  const netStock = Number(net.net_stock_bbl ?? net.NSV ?? 0)
+  const netWater = Number(net.net_water_bbl ?? net.FW ?? 0)
+
+  const bargeRef = inputs.barge_reference || '-'
+  const remarks = inputs.remarks || '-'
+
+  const Row = ({ label, value }) => (
+    <div className="live-calculation-card">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  )
+
+  return (
+    <>
+      <div className="section-title compact-section-title">
+        <h3>Shuttle Ticket Summary</h3>
+      </div>
+
+      <div className="info-box">
+        <strong>Operation:</strong> {opLabel} &nbsp; | &nbsp; <strong>Time:</strong> {time}
+      </div>
+
+      <div className="live-calculation-grid tank-live-grid">
+        <Row label="Opening Stock" value={openingStock.toFixed(3)} />
+        <Row label="Opening Water" value={openingWater.toFixed(3)} />
+        <Row label="Closing Stock" value={closingStock.toFixed(3)} />
+        <Row label="Closing Water" value={closingWater.toFixed(3)} />
+        <Row label="Net Stock" value={netStock.toFixed(3)} />
+        <Row label="Net Water" value={netWater.toFixed(3)} />
+      </div>
+
+      <div className="info-box" style={{ marginTop: 10 }}>
+        <div><strong>Barge Reference:</strong> {bargeRef}</div>
+        <div style={{ marginTop: 6 }}><strong>Remarks:</strong> {remarks}</div>
+      </div>
+    </>
+  )
+}
+
 function ReviewConfirmationModal({
   transaction,
   tankPayload,
   multiTankPayload,
+  shuttlePayload,
+  flowmeterPayload,
   nextStatus,
   remarks,
   onRemarksChange,
   onClose,
   onConfirm,
   statusLoading,
+  pendingReviewConfirmed,
+  setPendingReviewConfirmed,
 }) {
   if (!transaction || !nextStatus) {
     return null
@@ -452,10 +674,13 @@ function ReviewConfirmationModal({
 
   const hasMandatoryMissing = mandatoryMissing.length > 0
 
+  const requiresReviewTick = nextStatus === 'Submitted' || nextStatus === 'Approved'
+
   const canConfirm =
     !submitHasMissingTemp &&
     !hasMandatoryMissing &&
-    (!remarksRequired || !remarksEmpty)
+    (!remarksRequired || !remarksEmpty) &&
+    (!requiresReviewTick || pendingReviewConfirmed)
 
   return (
     <div className="review-modal-backdrop">
@@ -555,60 +780,7 @@ function ReviewConfirmationModal({
         {tankPayload ? (
           <>
             <div className="section-title compact-section-title">
-              <h3>Tank Gauging Input Summary</h3>
-            </div>
-
-            <div className="approval-review-grid">
-              <div>
-                <span>Gauging Date</span>
-                <strong>{inputs.gaugingDate || '-'}</strong>
-              </div>
-              <div>
-                <span>Gauging Time</span>
-                <strong>{inputs.gaugingTime || '-'}</strong>
-              </div>
-              <div>
-                <span>Dip</span>
-                <strong>{formatValue(inputs.dipCm)} cm</strong>
-              </div>
-              <div>
-                <span>Water Level</span>
-                <strong>{formatValue(inputs.waterLevelCm)} cm</strong>
-              </div>
-              <div>
-                <span>Tank Temperature</span>
-                <strong>
-                  {formatValue(inputs.tankTemperature)} °
-                  {inputs.tankTemperatureUnit || ''}
-                </strong>
-              </div>
-              <div>
-                <span>Observed Type</span>
-                <strong>{inputs.observedInputType || '-'}</strong>
-              </div>
-              <div>
-                <span>Observed API</span>
-                <strong>{formatValue(inputs.observedApi)}</strong>
-              </div>
-              <div>
-                <span>Observed Density</span>
-                <strong>{formatValue(inputs.observedDensity)} kg/m³</strong>
-              </div>
-              <div>
-                <span>Sample Temperature</span>
-                <strong>
-                  {formatValue(inputs.sampleTemperature)} °
-                  {inputs.sampleTemperatureUnit || ''}
-                </strong>
-              </div>
-              <div>
-                <span>BS&W</span>
-                <strong>{formatValue(inputs.bswPercent)}%</strong>
-              </div>
-            </div>
-
-            <div className="section-title compact-section-title">
-              <h3>Calculated Quantity Summary</h3>
+              <h3>Tank Gauging Summary</h3>
             </div>
 
             <TankCalculatedSummary calculated={calculated} />
@@ -618,8 +790,13 @@ function ReviewConfirmationModal({
             <div className="section-title compact-section-title">
               <h3>Multi-Tank Before / After Summary</h3>
             </div>
+
             <MultiTankCalculatedSummary payload={multiTankPayload} />
           </>
+        ) : shuttlePayload ? (
+          <ShuttleCalculatedSummary payload={shuttlePayload} />
+        ) : flowmeterPayload ? (
+          <FlowmeterCalculatedSummary payload={flowmeterPayload} />
         ) : (
           <div className="info-box">
             No asset-specific payload found. Please review the saved field values below before confirming.
@@ -651,6 +828,22 @@ function ReviewConfirmationModal({
             />
           </div>
         )}
+
+        {requiresReviewTick ? (
+          <div className="info-box" style={{ marginTop: 10 }}>
+            <label style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+              <input
+                type="checkbox"
+                checked={pendingReviewConfirmed}
+                onChange={(e) => setPendingReviewConfirmed(e.target.checked)}
+              />
+              <strong>I have reviewed the entered data and calculated quantities</strong>
+            </label>
+            <div style={{ marginTop: 6, opacity: 0.85, fontSize: 12 }}>
+              Mandatory for Submit/Approve.
+            </div>
+          </div>
+        ) : null}
 
         <div className="form-actions">
           <button type="button" onClick={onConfirm} disabled={statusLoading || !canConfirm}>
@@ -1382,20 +1575,33 @@ function PrintableMultiTankReport({
 
 function OperationTransactionDetail({ loggedInUser }) {
   const { transactionId } = useParams()
+  const navigate = useNavigate()
 
   const [transaction, setTransaction] = useState(null)
   const [statusHistory, setStatusHistory] = useState([])
+  const [correctionRequests, setCorrectionRequests] = useState([])
   const [loading, setLoading] = useState(false)
   const [statusLoading, setStatusLoading] = useState(false)
+  const [correctionLoading, setCorrectionLoading] = useState(false)
+  const [showCorrectionForm, setShowCorrectionForm] = useState(false)
+  const [correctionForm, setCorrectionForm] = useState({
+    requestType: 'Data Correction',
+    suggestedAction: 'Reopen for Edit',
+    reason: '',
+  })
 
   const [pendingStatus, setPendingStatus] = useState('')
   const [pendingRemarks, setPendingRemarks] = useState('')
+  const [pendingReviewConfirmed, setPendingReviewConfirmed] = useState(false)
+  const [workflowActionAllow, setWorkflowActionAllow] = useState({})
   const [reportProfiles, setReportProfiles] = useState([])
   const [selectedReportProfileName, setSelectedReportProfileName] = useState(
     loadSelectedReportProfileName
   )
   const [reportSettings, setReportSettings] = useState(defaultReportSettings)
   const [reportProfilesLoading, setReportProfilesLoading] = useState(false)
+  const [successMsg, setSuccessMsg] = useState('')
+  const [errorMsg, setErrorMsg] = useState('')
   const reloadReportProfiles = async (preferredProfileName = '') => {
     try {
       setReportProfilesLoading(true)
@@ -1426,7 +1632,7 @@ function OperationTransactionDetail({ loggedInUser }) {
 
       return activeProfiles
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
       setReportProfiles([])
       setSelectedReportProfileName(defaultReportSettings.profileName)
       setReportSettings(defaultReportSettings)
@@ -1450,21 +1656,36 @@ function OperationTransactionDetail({ loggedInUser }) {
     setSelectedReportProfileName(profileName)
     setReportSettings(selectedProfile)
   }
-  const hasPermission = (permissionName) => {
-    if (!loggedInUser || !loggedInUser.permissions) {
-      return false
-    }
+  const isAdminBootstrap =
+    String(loggedInUser?.username || '').toLowerCase() === 'admin'
 
-    return loggedInUser.permissions.some((permission) => {
-      return permission.permissionName === permissionName
-    })
+  const hasPermission = (permissionName) => {
+    if (isAdminBootstrap) return true
+    if (!loggedInUser || !Array.isArray(loggedInUser.permissions)) return false
+    return loggedInUser.permissions.some(
+      (p) => p.permissionName === permissionName
+    )
   }
 
   const canViewTransaction = hasPermission('View Operation Transaction')
-  const canSubmitTransaction = hasPermission('Submit Operation Transaction')
-  const canApproveTransaction = hasPermission('Approve Operation Transaction')
-  const canRejectTransaction = hasPermission('Reject Operation Transaction')
-  const canCancelTransaction = hasPermission('Cancel Operation Transaction')
+  const canSubmitTransactionBase = hasPermission('Submit Operation Transaction')
+  const canApproveTransactionBase = hasPermission('Approve Operation Transaction')
+  const canRejectTransactionBase = hasPermission('Reject Operation Transaction')
+  const canCancelTransactionBase = hasPermission('Cancel Operation Transaction')
+  const canRequestApprovedCorrection =
+    hasPermission('Request Approved Transaction Correction') ||
+    canApproveTransactionBase
+
+  const canSubmitTransaction =
+    canSubmitTransactionBase && (workflowActionAllow.SUBMIT ?? true)
+  const canApproveTransaction =
+    canApproveTransactionBase && (workflowActionAllow.APPROVE ?? true)
+  const canRejectTransaction =
+    canRejectTransactionBase && (workflowActionAllow.REJECT ?? true)
+  const canCancelTransaction =
+    canCancelTransactionBase && (workflowActionAllow.CANCEL ?? true)
+  const canRecallTransaction =
+    canSubmitTransactionBase && (workflowActionAllow.RECALL ?? true)
 
   const tankPayload = useMemo(() => {
     return getTankPayloadFromTransaction(transaction)
@@ -1474,6 +1695,18 @@ function OperationTransactionDetail({ loggedInUser }) {
     return getMultiTankPayloadFromTransaction(transaction)
   }, [transaction])
 
+  const shuttlePayload = useMemo(() => {
+    return getShuttlePayloadFromTransaction(transaction)
+  }, [transaction])
+
+  const flowmeterPayload = useMemo(() => {
+    return getFlowmeterPayloadFromTransaction(transaction)
+  }, [transaction])
+
+  const hasTankerPayload = (transaction?.fieldValues || []).some((value) => {
+    return value.fieldCode === 'tanker_payload'
+  })
+
   const hasPrintablePayload = Boolean(tankPayload || multiTankPayload)
   
   const loadTransactionDetail = async () => {
@@ -1482,7 +1715,7 @@ function OperationTransactionDetail({ loggedInUser }) {
       const data = await getOperationTransactionDetail(transactionId)
       setTransaction(data)
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
     } finally {
       setLoading(false)
     }
@@ -1493,15 +1726,52 @@ function OperationTransactionDetail({ loggedInUser }) {
       const data = await getOperationTransactionStatusHistory(transactionId)
       setStatusHistory(data)
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
+    }
+  }
+
+  const loadCorrectionRequests = async () => {
+    try {
+      const data = await getOperationTransactionCorrectionRequests(transactionId)
+      setCorrectionRequests(data || [])
+    } catch (error) {
+      setCorrectionRequests([])
     }
   }
 
   useEffect(() => {
     loadTransactionDetail()
     loadStatusHistory()
+    loadCorrectionRequests()
     reloadReportProfiles()
   }, [transactionId])
+
+  useEffect(() => {
+    const loadWorkflowChecks = async () => {
+      if (!transaction?.id) return
+      const payloadBase = {
+        operation_type_code: transaction.operationTypeCode || null,
+        operation_template_id: transaction.operationTemplateId || null,
+        asset_type_code: transaction.primaryAssetTypeCode || null,
+        location_code: transaction.locationCode || null,
+      }
+      const actions = ['SUBMIT', 'APPROVE', 'REJECT', 'CANCEL', 'RECALL']
+      const out = {}
+      for (const action of actions) {
+        try {
+          const res = await checkOperationWorkflowPolicy({
+            action_code: action,
+            ...payloadBase,
+          })
+          out[action] = Boolean(res?.allowed)
+        } catch {
+          out[action] = true
+        }
+      }
+      setWorkflowActionAllow(out)
+    }
+    loadWorkflowChecks()
+  }, [transaction?.id, transaction?.operationTypeCode, transaction?.operationTemplateId, transaction?.primaryAssetTypeCode, transaction?.locationCode])
 
   const getChangedByDisplay = () => {
     if (!loggedInUser) {
@@ -1513,30 +1783,30 @@ function OperationTransactionDetail({ loggedInUser }) {
 
   const openReviewModal = (nextStatus) => {
     if (!loggedInUser) {
-      alert('Please login before changing status.')
+      setErrorMsg('Please login before changing status.')
       return
     }
 
     if (
       (nextStatus === 'Submitted' || nextStatus === 'Draft') &&
-      !canSubmitTransaction
+      !((nextStatus === 'Draft' ? canRecallTransaction : canSubmitTransaction))
     ) {
-      alert('You do not have permission to submit or recall operation transactions.')
+      setErrorMsg('You do not have permission to submit or recall operation transactions.')
       return
     }
 
     if (nextStatus === 'Approved' && !canApproveTransaction) {
-      alert('You do not have permission to approve operation transactions.')
+      setErrorMsg('You do not have permission to approve operation transactions.')
       return
     }
 
     if (nextStatus === 'Rejected' && !canRejectTransaction) {
-      alert('You do not have permission to reject operation transactions.')
+      setErrorMsg('You do not have permission to reject operation transactions.')
       return
     }
 
     if (nextStatus === 'Cancelled' && !canCancelTransaction) {
-      alert('You do not have permission to cancel operation transactions.')
+      setErrorMsg('You do not have permission to cancel operation transactions.')
       return
     }
 
@@ -1552,11 +1822,13 @@ function OperationTransactionDetail({ loggedInUser }) {
 
     setPendingStatus(nextStatus)
     setPendingRemarks(defaultRemarks)
+    setPendingReviewConfirmed(false)
   }
 
   const closeReviewModal = () => {
     setPendingStatus('')
     setPendingRemarks('')
+    setPendingReviewConfirmed(false)
   }
 
   const formatCsvValue = (value) => {
@@ -1570,7 +1842,7 @@ function OperationTransactionDetail({ loggedInUser }) {
 
   const handleExportTankGaugingCsv = () => {
     if (!transaction || !tankPayload) {
-      alert('No Tank Gauging data available to export.')
+      setErrorMsg('No Tank Gauging data available to export.')
       return
     }
 
@@ -1713,13 +1985,35 @@ function OperationTransactionDetail({ loggedInUser }) {
       return
     }
 
+    const hasTankerPayload = (transaction?.fieldValues || []).some((value) => {
+      return value.fieldCode === 'tanker_payload' && value.fieldValue
+    })
+
+    const isTankerTicket =
+      String(transaction?.entryLayoutType || '')
+        .toLowerCase()
+        .includes('tanker') ||
+      String(transaction?.calculationEngine || '')
+        .toLowerCase()
+        .includes('tanker') ||
+      (transaction?.fieldValues || []).some((value) => {
+        return value.fieldCode === 'tanker_payload'
+      })
+
+    if (pendingStatus === 'Approved' && isTankerTicket && !hasTankerPayload) {
+      setErrorMsg(
+        'Cannot approve this tanker ticket because tanker_payload is missing. Please return it to Draft and complete the tanker entry.'
+      )
+      return
+    }
+
     const reasonRequired =
       pendingStatus === 'Rejected' ||
       pendingStatus === 'Cancelled' ||
       pendingStatus === 'Draft'
 
     if (reasonRequired && pendingRemarks.trim() === '') {
-      alert('Reason / remarks is required for this action.')
+      setErrorMsg('Reason / remarks is required for this action.')
       return
     }
 
@@ -1729,18 +2023,85 @@ function OperationTransactionDetail({ loggedInUser }) {
       await updateOperationTransactionStatus(
         transaction.id,
         pendingStatus,
-        pendingRemarks
+        pendingRemarks,
+        pendingReviewConfirmed
       )
 
       await loadTransactionDetail()
       await loadStatusHistory()
 
-      alert(`Transaction status changed to ${pendingStatus}`)
+      setSuccessMsg(`Transaction status changed to ${pendingStatus}`)
       closeReviewModal()
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
     } finally {
       setStatusLoading(false)
+    }
+  }
+
+  const pendingCorrectionRequest = correctionRequests.find((request) => {
+    return request.status === 'Pending Admin Review'
+  })
+
+  const latestApprovalTime = statusHistory
+    .filter((item) => item.newStatus === 'Approved' && item.changedAt)
+    .map((item) => new Date(item.changedAt))
+    .filter((item) => !Number.isNaN(item.getTime()))
+    .sort((left, right) => right.getTime() - left.getTime())[0]
+
+  const approvedCorrectionDeadline = latestApprovalTime
+    ? new Date(latestApprovalTime.getTime() + 24 * 60 * 60 * 1000)
+    : null
+
+  const approvedCorrectionExpired =
+    transaction?.status === 'Approved' &&
+    approvedCorrectionDeadline &&
+    new Date() > approvedCorrectionDeadline
+
+  const handleCorrectionFormChange = (fieldName, value) => {
+    setCorrectionForm((current) => ({
+      ...current,
+      [fieldName]: value,
+    }))
+    if (errorMsg) setErrorMsg('')
+  }
+
+  const submitCorrectionRequest = async () => {
+    if (!transaction || transaction.status !== 'Approved') {
+      setErrorMsg('Only approved tickets can be marked for correction.')
+      return
+    }
+
+    if (!canRequestApprovedCorrection) {
+      setErrorMsg('You need approval access to request approved transaction correction.')
+      return
+    }
+
+    if (approvedCorrectionExpired) {
+      setErrorMsg('Approved transaction correction window expired after 24 hours.')
+      return
+    }
+
+    if (correctionForm.reason.trim() === '') {
+      setErrorMsg('Reason / justification is required.')
+      return
+    }
+
+    try {
+      setCorrectionLoading(true)
+      await createOperationTransactionCorrectionRequest(transaction.id, correctionForm)
+      await loadCorrectionRequests()
+      setShowCorrectionForm(false)
+      setCorrectionForm({
+        requestType: 'Data Correction',
+        suggestedAction: 'Reopen for Edit',
+        reason: '',
+      })
+      setSuccessMsg('Approved transaction correction request sent to admin.')
+    } catch (error) {
+      setErrorMsg(error.message)
+    } finally {
+      setCorrectionLoading(false)
     }
   }
 
@@ -1861,6 +2222,36 @@ function OperationTransactionDetail({ loggedInUser }) {
       )
     }
 
+    if (transaction.status === 'Approved') {
+      if (approvedCorrectionExpired) {
+        return renderDisabledMessage(
+          'Approved ticket correction window expired after 24 hours. No further correction action allowed.'
+        )
+      }
+
+      if (!canRequestApprovedCorrection) {
+        return renderDisabledMessage(
+          'Approved ticket is locked. Approval access is required to request correction.'
+        )
+      }
+
+      if (pendingCorrectionRequest) {
+        return renderDisabledMessage(
+          `Correction request ${pendingCorrectionRequest.request_number} is pending admin review.`
+        )
+      }
+
+      return (
+        <button
+          type="button"
+          onClick={() => setShowCorrectionForm((current) => !current)}
+          disabled={statusLoading || correctionLoading}
+        >
+          Mark Approved Ticket for Correction
+        </button>
+      )
+    }
+
     return (
       <span className="warning-text">
         No further action allowed for {transaction.status} transaction.
@@ -1875,6 +2266,14 @@ function OperationTransactionDetail({ loggedInUser }) {
 
     if (isMultiTankPayloadField(field)) {
       return <small>Hidden - Multi-Tank payload is shown above.</small>
+    }
+
+    if (isShuttlePayloadField(field)) {
+      return <small>Hidden - Shuttle payload is shown above.</small>
+    }
+
+    if (isFlowmeterPayloadField(field)) {
+      return <small>Hidden - Flowmeter payload is shown above.</small>
     }
 
     if (typeof field.fieldValue === 'object') {
@@ -1948,6 +2347,16 @@ function OperationTransactionDetail({ loggedInUser }) {
 
   return (
     <div>
+      {successMsg && (
+        <div className="success-box" onClick={() => setSuccessMsg('')}>
+          {successMsg}
+        </div>
+      )}
+      {errorMsg && (
+        <div className="error-box" onClick={() => setErrorMsg('')}>
+          {errorMsg}
+        </div>
+      )}
       <PrintableTankGaugingReport
         transaction={transaction}
         tankPayload={tankPayload}
@@ -1966,12 +2375,16 @@ function OperationTransactionDetail({ loggedInUser }) {
         transaction={transaction}
         tankPayload={tankPayload}
         multiTankPayload={multiTankPayload}
+        shuttlePayload={shuttlePayload}
+        flowmeterPayload={flowmeterPayload}
         nextStatus={pendingStatus}
         remarks={pendingRemarks}
         onRemarksChange={setPendingRemarks}
         onClose={closeReviewModal}
         onConfirm={confirmStatusChange}
         statusLoading={statusLoading}
+        pendingReviewConfirmed={pendingReviewConfirmed}
+        setPendingReviewConfirmed={setPendingReviewConfirmed}
       />
 
       <div className="page-title">
@@ -1983,9 +2396,20 @@ function OperationTransactionDetail({ loggedInUser }) {
           </p>
         </div>
 
-        <span className={`status-badge ${transaction.status.toLowerCase()}`}>
-          {transaction.status}
-        </span>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="no-print"
+            onClick={() => navigate(-1)}
+            title="Close and go back"
+          >
+            Close
+          </button>
+
+          <span className={`status-badge ${transaction.status.toLowerCase()}`}>
+            {transaction.status}
+          </span>
+        </div>
       </div>
 
       <div className="info-box">
@@ -2152,25 +2576,190 @@ function OperationTransactionDetail({ loggedInUser }) {
 
           <MultiTankCalculatedSummary payload={multiTankPayload} />
         </div>
+      ) : flowmeterPayload ? (
+        <div className="operation-special-layout tank-gauging-layout">
+          <div className="operation-special-layout-header">
+            <h3>Flowmeter Reading Data</h3>
+            <p>Saved flowmeter input values and calculated quantities for this ticket.</p>
+          </div>
+          <FlowmeterCalculatedSummary payload={flowmeterPayload} />
+        </div>
       ) : (
         <div className="info-box">
           No asset-specific payload found. Review the saved template field values below before taking action.
         </div>
       )}
 
+      {hasTankerPayload && (
+        <TankerPayloadPreview
+          entry={transaction}
+          values={transaction.fieldValues}
+          title="Tanker Approval Preview"
+        />
+      )}
+
       <div className="section-title">
         <h3>Status Actions</h3>
         <p>
-          Click an action to open a final review window before the status is
-          changed.
+          Change the ticket status using the actions below.
         </p>
       </div>
 
-      <div className="form-actions">
-        {renderStatusActions()}
-
-        {statusLoading && <span className="warning-text">Updating...</span>}
+      <div className="info-box">
+        <div className="form-actions" style={{ marginTop: 0 }}>
+          {renderStatusActions()}
+          {statusLoading && <span className="warning-text">Updating...</span>}
+        </div>
+        {transaction.status === 'Approved' && (
+          <div className="muted-table-text" style={{ marginTop: 8 }}>
+            Correction window:{' '}
+            {approvedCorrectionDeadline
+              ? `open until ${approvedCorrectionDeadline.toLocaleString()}`
+              : 'approval time not available'}
+          </div>
+        )}
       </div>
+
+      {showCorrectionForm && transaction.status === 'Approved' && (
+        <div className="info-box">
+          <strong>Approved Transaction Correction Request</strong>
+          <p>
+            This does not edit the approved ticket. It creates an admin revoke
+            task so approval can be safely revoked and the ticket can return to
+            the normal submitted review flow.
+          </p>
+
+          <div className="filter-panel">
+            <div>
+              <label>Correction Type</label>
+              <select
+                value={correctionForm.requestType}
+                onChange={(e) =>
+                  handleCorrectionFormChange('requestType', e.target.value)
+                }
+                disabled={correctionLoading}
+              >
+                <option>Data Correction</option>
+                <option>Quantity Correction</option>
+                <option>Wrong Asset / Location</option>
+                <option>Wrong Date / Time</option>
+                <option>Duplicate / Soft Delete Required</option>
+                <option>Other</option>
+              </select>
+            </div>
+
+            <div>
+              <label>Suggested Action</label>
+              <select
+                value={correctionForm.suggestedAction}
+                onChange={(e) =>
+                  handleCorrectionFormChange('suggestedAction', e.target.value)
+                }
+                disabled={correctionLoading}
+              >
+                <option>Reopen for Edit</option>
+                <option>Reopen for Cancellation</option>
+                <option>Reopen for Re-approval</option>
+                <option>Operational Review Required</option>
+              </select>
+            </div>
+
+            <div className="full-width-field">
+              <label>Reason / Justification</label>
+              <textarea
+                rows="4"
+                value={correctionForm.reason}
+                onChange={(e) =>
+                  handleCorrectionFormChange('reason', e.target.value)
+                }
+                placeholder="Explain why this approved ticket needs attention."
+                disabled={correctionLoading}
+              />
+            </div>
+          </div>
+
+          <div className="form-actions">
+            <button
+              type="button"
+              onClick={submitCorrectionRequest}
+              disabled={correctionLoading}
+            >
+              {correctionLoading ? 'Sending...' : 'Send to Admin'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowCorrectionForm(false)}
+              disabled={correctionLoading}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="section-title">
+        <h3>Correction / Revoke Requests</h3>
+        <p>
+          Approved-ticket correction requests and admin revoke decisions for
+          this transaction.
+        </p>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Request No.</th>
+            <th>Type</th>
+            <th>Suggested Action</th>
+            <th>Status</th>
+            <th>Requested By</th>
+            <th>Requested At</th>
+            <th>Admin Action</th>
+            <th>Reason / Remarks</th>
+          </tr>
+        </thead>
+        <tbody>
+          {correctionRequests.length === 0 ? (
+            <tr>
+              <td colSpan="8" className="empty-table">
+                No correction requests found for this transaction.
+              </td>
+            </tr>
+          ) : (
+            correctionRequests.map((request) => (
+              <tr key={request.id}>
+                <td>{request.request_number}</td>
+                <td>{request.request_type}</td>
+                <td>{request.suggested_action}</td>
+                <td>
+                  <span
+                    className={`status-badge ${String(request.status || '')
+                      .toLowerCase()
+                      .replace(/\s+/g, '-')}`}
+                  >
+                    {request.status}
+                  </span>
+                </td>
+                <td>{request.requested_by_display || '-'}</td>
+                <td>
+                  {request.requested_at
+                    ? new Date(request.requested_at).toLocaleString()
+                    : '-'}
+                </td>
+                <td>{request.admin_action || '-'}</td>
+                <td>
+                  <strong>{request.reason}</strong>
+                  {request.admin_remarks && (
+                    <div className="muted-table-text">
+                      Admin: {request.admin_remarks}
+                    </div>
+                  )}
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
 
       <div className="section-title">
         <h3>Saved Field Values</h3>

@@ -1,5 +1,4 @@
-﻿import { apiGet, apiPatch } from './apiClient'
-import { getStoredAccessToken } from './authApi'
+import { apiGet, apiPatch, apiPost } from './apiClient'
 
 const convertOperationTransactionFromApi = (item) => {
   return {
@@ -13,12 +12,14 @@ const convertOperationTransactionFromApi = (item) => {
     operationTypeId: item.operation_type_id,
     operationTypeCode: item.operation_type_code || '',
     operationTypeName: item.operation_type_name || '',
+    operationTemplateId: item.operation_template_id || null,
     locationId: item.location_id,
     locationName: item.location_name || '',
     locationCode: item.location_code || '',
     primaryAssetId: item.primary_asset_id,
     primaryAssetName: item.primary_asset_name || '',
     primaryAssetCode: item.primary_asset_code || '',
+    primaryAssetTypeCode: item.primary_asset_type_code || '',
     convoyNumber: item.convoy_number || '',
     status: item.status || '',
     fieldCount: item.field_count || 0,
@@ -104,6 +105,27 @@ export const getOperationTransactions = async (filters = {}) => {
   return data.map(convertOperationTransactionFromApi)
 }
 
+export const getOperationTransactionsPaged = async (filters = {}) => {
+  const queryParams = new URLSearchParams()
+
+  if (filters.dateFrom) queryParams.append('date_from', filters.dateFrom)
+  if (filters.dateTo) queryParams.append('date_to', filters.dateTo)
+  if (filters.operationTypeId) queryParams.append('operation_type_id', filters.operationTypeId)
+  if (filters.operationTypeCode) queryParams.append('operation_type_code', filters.operationTypeCode)
+  if (filters.locationId) queryParams.append('location_id', filters.locationId)
+  if (filters.locationCode) queryParams.append('location_code', filters.locationCode)
+  if (filters.assetId) queryParams.append('asset_id', filters.assetId)
+  if (filters.assetCode) queryParams.append('asset_code', filters.assetCode)
+  if (filters.status) queryParams.append('status', filters.status)
+  if (filters.searchText) queryParams.append('search', filters.searchText)
+
+  queryParams.append('page', String(filters.page || 1))
+  queryParams.append('page_size', String(filters.pageSize || 20))
+
+  const path = `/operation-transactions/paged?${queryParams.toString()}`
+  return apiGet(path)
+}
+
 export const getOperationTransactionDetail = async (transactionId) => {
   const data = await apiGet(`/operation-transactions/${transactionId}`)
   return convertOperationTransactionDetailFromApi(data)
@@ -112,17 +134,34 @@ export const getOperationTransactionDetail = async (transactionId) => {
 export const updateOperationTransactionStatus = async (
   transactionId,
   status,
-  remarks = ''
+  remarks = '',
+  reviewConfirmed = false
 ) => {
   return apiPatch(`/operation-transactions/${transactionId}/status`, {
     status,
     remarks,
+    review_confirmed: Boolean(reviewConfirmed),
   })
 }
 
 export const getOperationTransactionStatusHistory = async (transactionId) => {
   const data = await apiGet(`/operation-transactions/${transactionId}/status-history`)
   return data.map(convertStatusHistoryFromApi)
+}
+
+export const getOperationTransactionCorrectionRequests = async (transactionId) => {
+  return apiGet(`/operation-transactions/${transactionId}/correction-requests`)
+}
+
+export const createOperationTransactionCorrectionRequest = async (
+  transactionId,
+  payload
+) => {
+  return apiPost(`/operation-transactions/${transactionId}/correction-requests`, {
+    request_type: payload.requestType,
+    suggested_action: payload.suggestedAction,
+    reason: payload.reason,
+  })
 }
 
 export const exportOperationTransactionsCsv = async (filters = {}) => {
@@ -161,36 +200,6 @@ export const exportOperationTransactionsCsv = async (filters = {}) => {
     ? `/operation-transactions/export/csv?${queryString}`
     : '/operation-transactions/export/csv'
 
-  const token = getStoredAccessToken()
-
-  if (!token) {
-    throw new Error('Login token missing. Please logout and login again.')
-  }
-
-  const response = await fetch(`http://127.0.0.1:8000${path}`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  })
-
-  if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(errorText || 'Failed to export operation transactions')
-  }
-
-  const blob = await response.blob()
-
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-
-  link.href = url
-  link.download = `operation-transaction-register-${new Date()
-    .toISOString()
-    .slice(0, 10)}.csv`
-
-  document.body.appendChild(link)
-  link.click()
-  document.body.removeChild(link)
-
-  URL.revokeObjectURL(url)
+  const { apiDownload } = await import('./apiClient')
+  await apiDownload(path, `operation-transaction-register-${new Date().toISOString().slice(0, 10)}.csv`)
 }

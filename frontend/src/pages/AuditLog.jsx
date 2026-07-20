@@ -1,10 +1,15 @@
 import { Fragment, useEffect, useState } from 'react'
 import { getAuditLogs } from '../api/auditLogApi'
+import PaginationControls, {
+  paginateRows,
+} from '../components/common/PaginationControls'
 
 function AuditLog() {
   const [auditLogs, setAuditLogs] = useState([])
   const [loading, setLoading] = useState(false)
   const [expandedLogId, setExpandedLogId] = useState(null)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [errorMsg, setErrorMsg] = useState('')
 
   const [filters, setFilters] = useState({
     moduleName: '',
@@ -23,8 +28,10 @@ function AuditLog() {
       setLoading(true)
       const logsFromApi = await getAuditLogs(activeFilters)
       setAuditLogs(logsFromApi)
+      setCurrentPage(1)
+      setExpandedLogId(null)
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
     } finally {
       setLoading(false)
     }
@@ -80,6 +87,8 @@ function AuditLog() {
     setExpandedLogId(logId)
   }
 
+  const visibleAuditLogs = paginateRows(auditLogs, currentPage)
+
   return (
     <div>
       <div className="page-title">
@@ -93,6 +102,10 @@ function AuditLog() {
 
         <span className="record-count">{auditLogs.length} Logs</span>
       </div>
+
+      {errorMsg && (
+        <div className="error-box">{errorMsg}</div>
+      )}
 
       <form onSubmit={handleApplyFilters}>
         <div>
@@ -246,7 +259,7 @@ function AuditLog() {
               </td>
             </tr>
           ) : (
-            auditLogs.map((log) => (
+            visibleAuditLogs.map((log) => (
               <Fragment key={log.id}>
                 <tr>
                   <td>{formatDateTime(log.createdAt)}</td>
@@ -307,6 +320,12 @@ function AuditLog() {
           )}
         </tbody>
       </table>
+
+      <PaginationControls
+        currentPage={currentPage}
+        totalRows={auditLogs.length}
+        onPageChange={setCurrentPage}
+      />
 
       <div className="info-box">
         Audit Log is read-only. It records important system actions such as

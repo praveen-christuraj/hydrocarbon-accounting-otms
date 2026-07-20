@@ -27,15 +27,20 @@ function CompanyReportProfileMaster({ loggedInUser }) {
   const [editId, setEditId] = useState(null)
   const [loading, setLoading] = useState(false)
   const [showPreview, setShowPreview] = useState(false)
+  const [successMsg, setSuccessMsg] = useState('')
+  const [errorMsg, setErrorMsg] = useState('')
+  const [validationErrors, setValidationErrors] = useState({})
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null)
+
+  const isAdminBootstrap =
+    String(loggedInUser?.username || '').toLowerCase() === 'admin'
 
   const hasPermission = (permissionName) => {
-    if (!loggedInUser || !loggedInUser.permissions) {
-      return false
-    }
-
-    return loggedInUser.permissions.some((permission) => {
-      return permission.permissionName === permissionName
-    })
+    if (isAdminBootstrap) return true
+    if (!loggedInUser || !Array.isArray(loggedInUser.permissions)) return false
+    return loggedInUser.permissions.some(
+      (p) => p.permissionName === permissionName
+    )
   }
 
   const canManageProfiles = hasPermission('Manage Company Report Profile')
@@ -46,7 +51,7 @@ function CompanyReportProfileMaster({ loggedInUser }) {
       const profilesFromApi = await getCompanyReportProfiles()
       setProfiles(profilesFromApi)
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
     } finally {
       setLoading(false)
     }
@@ -70,10 +75,12 @@ function CompanyReportProfileMaster({ loggedInUser }) {
       return
     }
 
+    setErrorMsg('')
+
     const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg']
 
     if (!allowedTypes.includes(selectedFile.type)) {
-      alert('Only PNG, JPG, and JPEG logo files are allowed.')
+      setErrorMsg('Only PNG, JPG, and JPEG logo files are allowed.')
       e.target.value = ''
       return
     }
@@ -81,7 +88,7 @@ function CompanyReportProfileMaster({ loggedInUser }) {
     const maxSizeBytes = 1.5 * 1024 * 1024
 
     if (selectedFile.size > maxSizeBytes) {
-      alert('Logo is too large. Please upload an image below 1.5 MB.')
+      setErrorMsg('Logo is too large. Please upload an image below 1.5 MB.')
       e.target.value = ''
       return
     }
@@ -105,44 +112,42 @@ function CompanyReportProfileMaster({ loggedInUser }) {
     })
   }
 
-  const validateProfile = () => {
-    if (profile.profileName.trim() === '') {
-      alert('Profile Name is required.')
-      return false
-    }
-
-    if (profile.companyName.trim() === '') {
-      alert('Company Name is required.')
-      return false
-    }
-
-    if (profile.systemName.trim() === '') {
-      alert('System Name is required.')
-      return false
-    }
-
-    if (profile.reportSubtitle.trim() === '') {
-      alert('Report Subtitle is required.')
-      return false
-    }
-
-    if (profile.logoText.trim() === '') {
-      alert('Logo Placeholder Text is required.')
-      return false
-    }
-
-    return true
-  }
-
   const handleSubmit = async (e) => {
     e.preventDefault()
+    setSuccessMsg('')
+    setErrorMsg('')
+    setValidationErrors({})
 
     if (!canManageProfiles) {
-      alert('You do not have permission to manage company report profiles.')
+      setErrorMsg('You do not have permission to manage company report profiles.')
       return
     }
 
-    if (!validateProfile()) {
+    const errors = {}
+
+    if (profile.profileName.trim() === '') {
+      errors.profileName = 'Profile Name is required.'
+    }
+
+    if (profile.companyName.trim() === '') {
+      errors.companyName = 'Company Name is required.'
+    }
+
+    if (profile.systemName.trim() === '') {
+      errors.systemName = 'System Name is required.'
+    }
+
+    if (profile.reportSubtitle.trim() === '') {
+      errors.reportSubtitle = 'Report Subtitle is required.'
+    }
+
+    if (profile.logoText.trim() === '') {
+      errors.logoText = 'Logo Placeholder Text is required.'
+    }
+
+    setValidationErrors(errors)
+
+    if (Object.keys(errors).length > 0) {
       return
     }
 
@@ -161,10 +166,10 @@ function CompanyReportProfileMaster({ loggedInUser }) {
 
       if (editId === null) {
         await createCompanyReportProfile(cleanedProfile)
-        alert('Company report profile saved successfully')
+        setSuccessMsg('Company report profile saved successfully')
       } else {
         await updateCompanyReportProfile(editId, cleanedProfile)
-        alert('Company report profile updated successfully')
+        setSuccessMsg('Company report profile updated successfully')
       }
 
       await reloadProfiles()
@@ -172,15 +177,18 @@ function CompanyReportProfileMaster({ loggedInUser }) {
       setEditId(null)
       setShowPreview(false)
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
     } finally {
       setLoading(false)
     }
   }
 
   const handleEdit = (profileToEdit) => {
+    setSuccessMsg('')
+    setErrorMsg('')
+
     if (!canManageProfiles) {
-      alert('You do not have permission to manage company report profiles.')
+      setErrorMsg('You do not have permission to manage company report profiles.')
       return
     }
 
@@ -202,34 +210,31 @@ function CompanyReportProfileMaster({ loggedInUser }) {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  const handleDelete = async (profileId) => {
-    const confirmDelete = window.confirm(
-      'Are you sure you want to delete this company report profile?'
-    )
+  const handleDelete = async () => {
+    setSuccessMsg('')
+    setErrorMsg('')
 
     if (!canManageProfiles) {
-      alert('You do not have permission to manage company report profiles.')
-      return
-    }
-
-    if (!confirmDelete) {
+      setErrorMsg('You do not have permission to manage company report profiles.')
+      setConfirmDeleteId(null)
       return
     }
 
     try {
       setLoading(true)
-      await deleteCompanyReportProfile(profileId)
+      await deleteCompanyReportProfile(confirmDeleteId)
       await reloadProfiles()
 
-      if (editId === profileId) {
+      if (editId === confirmDeleteId) {
         setProfile(emptyProfile)
         setEditId(null)
         setShowPreview(false)
       }
 
-      alert('Company report profile deleted successfully')
+      setConfirmDeleteId(null)
+      setSuccessMsg('Company report profile deleted successfully')
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
     } finally {
       setLoading(false)
     }
@@ -268,6 +273,30 @@ function CompanyReportProfileMaster({ loggedInUser }) {
         </div>
       )}
 
+      {successMsg && (
+        <div className="success-box">{successMsg}</div>
+      )}
+
+      {errorMsg && (
+        <div className="error-box">{errorMsg}</div>
+      )}
+
+      {confirmDeleteId && (
+        <div className="confirm-overlay">
+          <div className="confirm-box">
+            <p>Are you sure you want to delete this company report profile?</p>
+            <div className="confirm-actions">
+              <button onClick={handleDelete} disabled={loading}>
+                {loading ? 'Deleting...' : 'Yes, Delete'}
+              </button>
+              <button onClick={() => setConfirmDeleteId(null)} disabled={loading}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {canManageProfiles && (
         <form onSubmit={handleSubmit}>
           <div>
@@ -276,10 +305,14 @@ function CompanyReportProfileMaster({ loggedInUser }) {
               name="profileName"
               type="text"
               value={profile.profileName}
-              onChange={handleChange}
+              onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, profileName: '' }) }}
               placeholder="Example: Allied Company A"
               disabled={loading}
+              className={validationErrors.profileName ? 'input-error' : ''}
             />
+            {validationErrors.profileName && (
+              <span className="field-error">{validationErrors.profileName}</span>
+            )}
           </div>
 
           <div>
@@ -288,10 +321,14 @@ function CompanyReportProfileMaster({ loggedInUser }) {
               name="companyName"
               type="text"
               value={profile.companyName}
-              onChange={handleChange}
+              onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, companyName: '' }) }}
               placeholder="Enter company name"
               disabled={loading}
+              className={validationErrors.companyName ? 'input-error' : ''}
             />
+            {validationErrors.companyName && (
+              <span className="field-error">{validationErrors.companyName}</span>
+            )}
           </div>
 
           <div>
@@ -300,10 +337,14 @@ function CompanyReportProfileMaster({ loggedInUser }) {
               name="systemName"
               type="text"
               value={profile.systemName}
-              onChange={handleChange}
+              onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, systemName: '' }) }}
               placeholder="Hydrocarbon Accounting System"
               disabled={loading}
+              className={validationErrors.systemName ? 'input-error' : ''}
             />
+            {validationErrors.systemName && (
+              <span className="field-error">{validationErrors.systemName}</span>
+            )}
           </div>
 
           <div>
@@ -312,10 +353,14 @@ function CompanyReportProfileMaster({ loggedInUser }) {
               name="reportSubtitle"
               type="text"
               value={profile.reportSubtitle}
-              onChange={handleChange}
+              onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, reportSubtitle: '' }) }}
               placeholder="Tank Gauging Quantity Report"
               disabled={loading}
+              className={validationErrors.reportSubtitle ? 'input-error' : ''}
             />
+            {validationErrors.reportSubtitle && (
+              <span className="field-error">{validationErrors.reportSubtitle}</span>
+            )}
           </div>
 
           <div>
@@ -324,10 +369,14 @@ function CompanyReportProfileMaster({ loggedInUser }) {
               name="logoText"
               type="text"
               value={profile.logoText}
-              onChange={handleChange}
+              onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, logoText: '' }) }}
               placeholder="LOGO"
               disabled={loading}
+              className={validationErrors.logoText ? 'input-error' : ''}
             />
+            {validationErrors.logoText && (
+              <span className="field-error">{validationErrors.logoText}</span>
+            )}
           </div>
 
           <div>
@@ -516,7 +565,7 @@ function CompanyReportProfileMaster({ loggedInUser }) {
                       Edit
                     </button>
 
-                    <button type="button" onClick={() => handleDelete(item.id)}>
+                    <button type="button" onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteId(item.id) }}>
                       Delete
                     </button>
                   </td>

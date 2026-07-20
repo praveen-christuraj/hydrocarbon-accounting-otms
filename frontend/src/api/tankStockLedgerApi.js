@@ -64,6 +64,53 @@ const convertLedgerSummaryFromApi = (row) => {
   }
 }
 
+const convertDailySummaryFromApi = (row) => {
+  return {
+    accountingDate: row.accounting_date || '',
+
+    locationCode: row.location_code || '',
+    locationName: row.location_name || '',
+
+    tankAssetCode: row.tank_asset_code || '',
+    tankAssetName: row.tank_asset_name || '',
+
+    productName: row.product_name || '',
+
+    openingGsvBbl: Number(row.opening_gsv_bbl || 0),
+    openingNsvBbl: Number(row.opening_nsv_bbl || 0),
+    openingLt: Number(row.opening_lt || 0),
+    openingMt: Number(row.opening_mt || 0),
+
+    totalInGsvBbl: Number(row.total_in_gsv_bbl || 0),
+    totalInNsvBbl: Number(row.total_in_nsv_bbl || 0),
+    totalInLt: Number(row.total_in_lt || 0),
+    totalInMt: Number(row.total_in_mt || 0),
+
+    totalOutGsvBbl: Number(row.total_out_gsv_bbl || 0),
+    totalOutNsvBbl: Number(row.total_out_nsv_bbl || 0),
+    totalOutLt: Number(row.total_out_lt || 0),
+    totalOutMt: Number(row.total_out_mt || 0),
+
+    bookClosingGsvBbl: Number(row.book_closing_gsv_bbl || 0),
+    bookClosingNsvBbl: Number(row.book_closing_nsv_bbl || 0),
+    bookClosingLt: Number(row.book_closing_lt || 0),
+    bookClosingMt: Number(row.book_closing_mt || 0),
+
+    actualClosingGsvBbl: Number(row.actual_closing_gsv_bbl || 0),
+    actualClosingNsvBbl: Number(row.actual_closing_nsv_bbl || 0),
+    actualClosingLt: Number(row.actual_closing_lt || 0),
+    actualClosingMt: Number(row.actual_closing_mt || 0),
+
+    lossGainGsvBbl: Number(row.loss_gain_gsv_bbl || 0),
+    lossGainNsvBbl: Number(row.loss_gain_nsv_bbl || 0),
+    lossGainLt: Number(row.loss_gain_lt || 0),
+    lossGainMt: Number(row.loss_gain_mt || 0),
+
+    rowsCount: Number(row.rows_count || 0),
+    lastTicketNumber: row.last_ticket_number || '',
+  }
+}
+
 const buildQueryString = (filters = {}) => {
   const params = new URLSearchParams()
 
@@ -114,4 +161,15 @@ export const getTankStockLedgerSummary = async (filters = {}) => {
   const data = await apiGet(path)
 
   return (data || []).map(convertLedgerSummaryFromApi)
+}
+
+export const getTankStockLedgerDailySummary = async (filters = {}) => {
+  const queryString = buildQueryString(filters)
+  const path = queryString
+    ? `/tank-stock-ledger/daily-summary?${queryString}`
+    : '/tank-stock-ledger/daily-summary'
+
+  const data = await apiGet(path)
+
+  return (data || []).map(convertDailySummaryFromApi)
 }

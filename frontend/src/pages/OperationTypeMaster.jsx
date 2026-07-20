@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   createOperationType,
   deleteOperationType,
@@ -9,7 +9,22 @@ function OperationTypeMaster({
   assetTypes,
   operationTypes,
   reloadOperationTypes,
+  loggedInUser,
 }) {
+  const isAdminBootstrap =
+    String(loggedInUser?.username || '').toLowerCase() === 'admin'
+
+  const hasPermission = (permissionName) =>
+    Boolean(
+      loggedInUser?.permissions?.some(
+        (p) => p.permissionName === permissionName
+      )
+    )
+
+  const canManageOperationType = useMemo(() => {
+    if (isAdminBootstrap) return true
+    return hasPermission('Manage Operation Type')
+  }, [loggedInUser])
   const emptyOperationType = {
     operationTypeName: '',
     operationTypeCode: '',
@@ -26,6 +41,10 @@ function OperationTypeMaster({
   const [operationType, setOperationType] = useState(emptyOperationType)
   const [editId, setEditId] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [successMsg, setSuccessMsg] = useState('')
+  const [errorMsg, setErrorMsg] = useState('')
+  const [validationErrors, setValidationErrors] = useState({})
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null)
 
   const activeAssetTypes = assetTypes.filter((item) => item.status === 'Active')
 
@@ -34,41 +53,54 @@ function OperationTypeMaster({
       ...operationType,
       [e.target.name]: e.target.value,
     })
+    setValidationErrors({ ...validationErrors, [e.target.name]: '' })
   }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    if (!canManageOperationType) {
+      setErrorMsg('You do not have permission to manage operation types')
+      return
+    }
+    setSuccessMsg('')
+    setErrorMsg('')
+    setValidationErrors({})
+
+    const errors = {}
 
     if (operationType.operationTypeName.trim() === '') {
-      alert('Operation Type Name is required')
-      return
+      errors.operationTypeName = 'Operation Type Name is required'
     }
 
     if (operationType.operationTypeCode.trim() === '') {
-      alert('Operation Type Code is required')
-      return
+      errors.operationTypeCode = 'Operation Type Code is required'
     }
 
     if (operationType.applicableAssetTypeCode.trim() === '') {
-      alert('Applicable Asset Type is required')
-      return
+      errors.applicableAssetTypeCode = 'Applicable Asset Type is required'
     }
 
     if (operationType.operationCategory.trim() === '') {
-      alert('Operation Category is required')
-      return
+      errors.operationCategory = 'Operation Category is required'
     }
 
-    const duplicateCode = operationTypes.some((item) => {
-      return (
-        item.operationTypeCode.toLowerCase() ===
-          operationType.operationTypeCode.toLowerCase() &&
-        item.id !== editId
-      )
-    })
+    if (!errors.operationTypeCode) {
+      const duplicateCode = operationTypes.some((item) => {
+        return (
+          item.operationTypeCode.toLowerCase() ===
+            operationType.operationTypeCode.toLowerCase() &&
+          item.id !== editId
+        )
+      })
 
-    if (duplicateCode) {
-      alert('Operation Type Code already exists. Please choose another code.')
+      if (duplicateCode) {
+        errors.operationTypeCode = 'Operation Type Code already exists. Please choose another code.'
+      }
+    }
+
+    setValidationErrors(errors)
+
+    if (Object.keys(errors).length > 0) {
       return
     }
 
@@ -77,23 +109,27 @@ function OperationTypeMaster({
 
       if (editId === null) {
         await createOperationType(operationType)
-        alert('Operation Type saved successfully')
+        setSuccessMsg('Operation Type saved successfully')
       } else {
         await updateOperationType(editId, operationType)
-        alert('Operation Type updated successfully')
+        setSuccessMsg('Operation Type updated successfully')
       }
 
       await reloadOperationTypes()
       setOperationType(emptyOperationType)
       setEditId(null)
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
     } finally {
       setLoading(false)
     }
   }
 
   const handleEdit = (item) => {
+    if (!canManageOperationType) {
+      setErrorMsg('You do not have permission to manage operation types')
+      return
+    }
     setOperationType({
       operationTypeName: item.operationTypeName,
       operationTypeCode: item.operationTypeCode,
@@ -110,29 +146,30 @@ function OperationTypeMaster({
     setEditId(item.id)
   }
 
-  const handleDelete = async (operationTypeId) => {
-    const confirmDelete = window.confirm(
-      'Are you sure you want to delete this operation type?'
-    )
-
-    if (confirmDelete === false) {
+  const handleDelete = async () => {
+    if (!canManageOperationType) {
+      setErrorMsg('You do not have permission to manage operation types')
+      setConfirmDeleteId(null)
       return
     }
+    setSuccessMsg('')
+    setErrorMsg('')
 
     try {
       setLoading(true)
 
-      await deleteOperationType(operationTypeId)
+      await deleteOperationType(confirmDeleteId)
       await reloadOperationTypes()
 
-      if (editId === operationTypeId) {
+      if (editId === confirmDeleteId) {
         setOperationType(emptyOperationType)
         setEditId(null)
       }
 
-      alert('Operation Type deleted successfully')
+      setConfirmDeleteId(null)
+      setSuccessMsg('Operation Type deleted successfully')
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
     } finally {
       setLoading(false)
     }
@@ -177,6 +214,30 @@ function OperationTypeMaster({
         </div>
       )}
 
+      {successMsg && (
+        <div className="success-box">{successMsg}</div>
+      )}
+
+      {errorMsg && (
+        <div className="error-box">{errorMsg}</div>
+      )}
+
+      {confirmDeleteId && (
+        <div className="confirm-overlay">
+          <div className="confirm-box">
+            <p>Are you sure you want to delete this operation type?</p>
+            <div className="confirm-actions">
+              <button onClick={handleDelete} disabled={loading}>
+                {loading ? 'Deleting...' : 'Yes, Delete'}
+              </button>
+              <button onClick={() => setConfirmDeleteId(null)} disabled={loading}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <form onSubmit={handleSubmit}>
         <div>
           <label>Operation Type Name</label>
@@ -186,7 +247,12 @@ function OperationTypeMaster({
             value={operationType.operationTypeName}
             onChange={handleChange}
             placeholder="Example: Tank Operations"
+            disabled={!canManageOperationType}
+            className={validationErrors.operationTypeName ? 'input-error' : ''}
           />
+          {validationErrors.operationTypeName && (
+            <span className="field-error">{validationErrors.operationTypeName}</span>
+          )}
         </div>
 
         <div>
@@ -197,7 +263,12 @@ function OperationTypeMaster({
             value={operationType.operationTypeCode}
             onChange={handleChange}
             placeholder="Example: TANK_OPS"
+            disabled={!canManageOperationType}
+            className={validationErrors.operationTypeCode ? 'input-error' : ''}
           />
+          {validationErrors.operationTypeCode && (
+            <span className="field-error">{validationErrors.operationTypeCode}</span>
+          )}
         </div>
 
         <div>
@@ -206,6 +277,8 @@ function OperationTypeMaster({
             name="applicableAssetTypeCode"
             value={operationType.applicableAssetTypeCode}
             onChange={handleChange}
+            disabled={!canManageOperationType}
+            className={validationErrors.applicableAssetTypeCode ? 'input-error' : ''}
           >
             <option value="">Select Asset Type</option>
 
@@ -215,6 +288,9 @@ function OperationTypeMaster({
               </option>
             ))}
           </select>
+          {validationErrors.applicableAssetTypeCode && (
+            <span className="field-error">{validationErrors.applicableAssetTypeCode}</span>
+          )}
         </div>
 
         <div>
@@ -223,6 +299,8 @@ function OperationTypeMaster({
             name="operationCategory"
             value={operationType.operationCategory}
             onChange={handleChange}
+            disabled={!canManageOperationType}
+            className={validationErrors.operationCategory ? 'input-error' : ''}
           >
             <option value="">Select Category</option>
             <option>Storage</option>
@@ -234,6 +312,9 @@ function OperationTypeMaster({
             <option>Reconciliation</option>
             <option>Other</option>
           </select>
+          {validationErrors.operationCategory && (
+            <span className="field-error">{validationErrors.operationCategory}</span>
+          )}
         </div>
 
         <div>
@@ -242,6 +323,7 @@ function OperationTypeMaster({
             name="requiresSenderLocation"
             value={operationType.requiresSenderLocation}
             onChange={handleChange}
+            disabled={!canManageOperationType}
           >
             <option>Yes</option>
             <option>No</option>
@@ -254,6 +336,7 @@ function OperationTypeMaster({
             name="requiresReceiverLocation"
             value={operationType.requiresReceiverLocation}
             onChange={handleChange}
+            disabled={!canManageOperationType}
           >
             <option>Yes</option>
             <option>No</option>
@@ -266,6 +349,7 @@ function OperationTypeMaster({
             name="requiresComparison"
             value={operationType.requiresComparison}
             onChange={handleChange}
+            disabled={!canManageOperationType}
           >
             <option>Yes</option>
             <option>No</option>
@@ -278,6 +362,7 @@ function OperationTypeMaster({
             name="requiresApproval"
             value={operationType.requiresApproval}
             onChange={handleChange}
+            disabled={!canManageOperationType}
           >
             <option>Yes</option>
             <option>No</option>
@@ -290,6 +375,7 @@ function OperationTypeMaster({
             name="status"
             value={operationType.status}
             onChange={handleChange}
+            disabled={!canManageOperationType}
           >
             <option>Active</option>
             <option>Inactive</option>
@@ -305,11 +391,12 @@ function OperationTypeMaster({
             onChange={handleChange}
             placeholder="Enter operation type description"
             rows="3"
+            disabled={!canManageOperationType}
           />
         </div>
 
         <div className="form-actions">
-          <button type="submit" disabled={loading}>
+          <button type="submit" disabled={loading || !canManageOperationType}>
             {loading
               ? 'Please wait...'
               : editId === null
@@ -324,6 +411,12 @@ function OperationTypeMaster({
           )}
         </div>
       </form>
+
+      {!canManageOperationType && (
+        <div className="info-box">
+          You have view-only access. Assign <strong>Manage Operation Type</strong> to create, edit, or delete operation types.
+        </div>
+      )}
 
       <div className="section-title">
         <h3>Saved Operation Types</h3>
@@ -376,11 +469,11 @@ function OperationTypeMaster({
                   </span>
                 </td>
                 <td>
-                  <button type="button" onClick={() => handleEdit(item)}>
+                  <button type="button" onClick={() => handleEdit(item)} disabled={!canManageOperationType}>
                     Edit
                   </button>
 
-                  <button type="button" onClick={() => handleDelete(item.id)}>
+                  <button type="button" onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteId(item.id) }} disabled={!canManageOperationType}>
                     Delete
                   </button>
                 </td>

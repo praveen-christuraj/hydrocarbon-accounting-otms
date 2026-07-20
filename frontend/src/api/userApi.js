@@ -29,9 +29,18 @@ const convertUserToApi = (user) => {
   }
 }
 
-export const getUsers = async () => {
-  const data = await apiGet('/users')
-  return data.map(convertUserFromApi)
+export const getUsers = async (params = {}) => {
+  const { skip = 0, limit = 50, search = '' } = params
+  let endpoint = `/users?skip=${skip}&limit=${limit}`
+  if (search) endpoint += `&search=${encodeURIComponent(search)}`
+  const data = await apiGet(endpoint)
+  return {
+    items: (data.items || []).map(convertUserFromApi),
+    total: data.total || 0,
+    skip: data.skip || 0,
+    limit: data.limit || limit,
+    has_more: data.has_more || false,
+  }
 }
 
 export const createUser = async (user) => {

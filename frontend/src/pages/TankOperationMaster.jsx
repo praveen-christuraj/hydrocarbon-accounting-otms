@@ -35,12 +35,24 @@ function TankOperationMaster({ locations, loggedInUser }) {
   const [selectedLocationCode, setSelectedLocationCode] = useState('')
   const [editId, setEditId] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [successMsg, setSuccessMsg] = useState('')
+  const [errorMsg, setErrorMsg] = useState('')
+  const [validationErrors, setValidationErrors] = useState({})
+  const [confirmDeleteItem, setConfirmDeleteItem] = useState(null)
 
   const activeLocations = useMemo(() => {
     return (locations || []).filter((location) => location.status === 'Active')
   }, [locations])
 
+  const isAdminBootstrap =
+    loggedInUser &&
+    loggedInUser.userCode === 'admin' &&
+    loggedInUser.permissions &&
+    loggedInUser.permissions.length > 0 &&
+    loggedInUser.permissions[0].permissionName === 'isAdminBootstrap'
+
   const canManageTankOperation = useMemo(() => {
+    if (isAdminBootstrap) return true
     if (!loggedInUser || !loggedInUser.permissions) {
       return false
     }
@@ -63,7 +75,7 @@ function TankOperationMaster({ locations, loggedInUser }) {
       const data = await getTankOperations(filters)
       setTankOperations(data)
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
     } finally {
       setLoading(false)
     }
@@ -97,34 +109,40 @@ function TankOperationMaster({ locations, loggedInUser }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    setSuccessMsg('')
+    setErrorMsg('')
+    setValidationErrors({})
 
     if (!canManageTankOperation) {
-      alert('You do not have permission to manage Tank Operations.')
+      setErrorMsg('You do not have permission to manage Tank Operations.')
       return
     }
 
+    const errors = {}
+
     if (tankOperation.locationCode.trim() === '') {
-      alert('Location is required')
-      return
+      errors.locationCode = 'Location is required'
     }
 
     if (tankOperation.operationCode.trim() === '') {
-      alert('Operation Code is required')
-      return
+      errors.operationCode = 'Operation Code is required'
     }
 
     if (tankOperation.operationLabel.trim() === '') {
-      alert('Operation Label is required')
-      return
+      errors.operationLabel = 'Operation Label is required'
     }
 
     if (tankOperation.operationCategory.trim() === '') {
-      alert('Operation Category is required')
-      return
+      errors.operationCategory = 'Operation Category is required'
     }
 
     if (tankOperation.operationSign.trim() === '') {
-      alert('Operation Sign is required')
+      errors.operationSign = 'Operation Sign is required'
+    }
+
+    setValidationErrors(errors)
+
+    if (Object.keys(errors).length > 0) {
       return
     }
 
@@ -133,10 +151,10 @@ function TankOperationMaster({ locations, loggedInUser }) {
 
       if (editId === null) {
         await createTankOperation(tankOperation)
-        alert('Tank Operation saved successfully')
+        setSuccessMsg('Tank Operation saved successfully')
       } else {
         await updateTankOperation(editId, tankOperation)
-        alert('Tank Operation updated successfully')
+        setSuccessMsg('Tank Operation updated successfully')
       }
 
       const locationToReload = selectedLocationCode || tankOperation.locationCode
@@ -149,7 +167,7 @@ function TankOperationMaster({ locations, loggedInUser }) {
 
       await reloadTankOperations(locationToReload)
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
     } finally {
       setLoading(false)
     }
@@ -170,27 +188,23 @@ function TankOperationMaster({ locations, loggedInUser }) {
     setEditId(item.id)
   }
 
-  const handleDelete = async (item) => {
+  const handleDelete = async () => {
+    setSuccessMsg('')
+    setErrorMsg('')
+
     if (!canManageTankOperation) {
-      alert('You do not have permission to manage Tank Operations.')
-      return
-    }
-
-    const confirmDelete = window.confirm(
-      `Are you sure you want to delete ${item.operationLabel}?`
-    )
-
-    if (confirmDelete === false) {
+      setErrorMsg('You do not have permission to manage Tank Operations.')
+      setConfirmDeleteItem(null)
       return
     }
 
     try {
       setLoading(true)
 
-      await deleteTankOperation(item.id)
-      alert('Tank Operation deleted successfully')
+      await deleteTankOperation(confirmDeleteItem.id)
+      setSuccessMsg('Tank Operation deleted successfully')
 
-      if (editId === item.id) {
+      if (editId === confirmDeleteItem.id) {
         setTankOperation({
           ...emptyTankOperation,
           locationCode: selectedLocationCode,
@@ -198,9 +212,10 @@ function TankOperationMaster({ locations, loggedInUser }) {
         setEditId(null)
       }
 
+      setConfirmDeleteItem(null)
       await reloadTankOperations(selectedLocationCode)
     } catch (error) {
-      alert(error.message)
+      setErrorMsg(error.message)
     } finally {
       setLoading(false)
     }
@@ -276,6 +291,30 @@ function TankOperationMaster({ locations, loggedInUser }) {
         </div>
       )}
 
+      {successMsg && (
+        <div className="success-box">{successMsg}</div>
+      )}
+
+      {errorMsg && (
+        <div className="error-box">{errorMsg}</div>
+      )}
+
+      {confirmDeleteItem && (
+        <div className="confirm-overlay">
+          <div className="confirm-box">
+            <p>Are you sure you want to delete <strong>{confirmDeleteItem.operationLabel}</strong>?</p>
+            <div className="confirm-actions">
+              <button onClick={handleDelete} disabled={loading}>
+                {loading ? 'Deleting...' : 'Yes, Delete'}
+              </button>
+              <button onClick={() => setConfirmDeleteItem(null)} disabled={loading}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="filter-panel">
         <div>
           <label>Filter by Location</label>
@@ -311,8 +350,9 @@ function TankOperationMaster({ locations, loggedInUser }) {
           <select
             name="locationCode"
             value={tankOperation.locationCode}
-            onChange={handleChange}
+            onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, locationCode: '' }) }}
             disabled={!canManageTankOperation || loading}
+            className={validationErrors.locationCode ? 'input-error' : ''}
           >
             <option value="">Select Location</option>
 
@@ -322,6 +362,9 @@ function TankOperationMaster({ locations, loggedInUser }) {
               </option>
             ))}
           </select>
+          {validationErrors.locationCode && (
+            <span className="field-error">{validationErrors.locationCode}</span>
+          )}
         </div>
 
         <div>
@@ -330,10 +373,14 @@ function TankOperationMaster({ locations, loggedInUser }) {
             name="operationCode"
             type="text"
             value={tankOperation.operationCode}
-            onChange={handleChange}
+            onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, operationCode: '' }) }}
             placeholder="Example: OPEN, RCPT, DSP"
             disabled={!canManageTankOperation || loading}
+            className={validationErrors.operationCode ? 'input-error' : ''}
           />
+          {validationErrors.operationCode && (
+            <span className="field-error">{validationErrors.operationCode}</span>
+          )}
         </div>
 
         <div>
@@ -342,10 +389,14 @@ function TankOperationMaster({ locations, loggedInUser }) {
             name="operationLabel"
             type="text"
             value={tankOperation.operationLabel}
-            onChange={handleChange}
+            onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, operationLabel: '' }) }}
             placeholder="Example: Opening Stock"
             disabled={!canManageTankOperation || loading}
+            className={validationErrors.operationLabel ? 'input-error' : ''}
           />
+          {validationErrors.operationLabel && (
+            <span className="field-error">{validationErrors.operationLabel}</span>
+          )}
         </div>
 
         <div>
@@ -353,8 +404,9 @@ function TankOperationMaster({ locations, loggedInUser }) {
           <select
             name="operationCategory"
             value={tankOperation.operationCategory}
-            onChange={handleChange}
+            onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, operationCategory: '' }) }}
             disabled={!canManageTankOperation || loading}
+            className={validationErrors.operationCategory ? 'input-error' : ''}
           >
             <option value="">Select Category</option>
 
@@ -364,6 +416,9 @@ function TankOperationMaster({ locations, loggedInUser }) {
               </option>
             ))}
           </select>
+          {validationErrors.operationCategory && (
+            <span className="field-error">{validationErrors.operationCategory}</span>
+          )}
         </div>
 
         <div>
@@ -371,8 +426,9 @@ function TankOperationMaster({ locations, loggedInUser }) {
           <select
             name="operationSign"
             value={tankOperation.operationSign}
-            onChange={handleChange}
+            onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, operationSign: '' }) }}
             disabled={!canManageTankOperation || loading}
+            className={validationErrors.operationSign ? 'input-error' : ''}
           >
             <option value="">Select Sign</option>
 
@@ -382,6 +438,9 @@ function TankOperationMaster({ locations, loggedInUser }) {
               </option>
             ))}
           </select>
+          {validationErrors.operationSign && (
+            <span className="field-error">{validationErrors.operationSign}</span>
+          )}
         </div>
 
         <div>
@@ -513,7 +572,7 @@ function TankOperationMaster({ locations, loggedInUser }) {
 
                   <button
                     type="button"
-                    onClick={() => handleDelete(item)}
+                    onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteItem(item) }}
                     disabled={loading}
                   >
                     Delete
