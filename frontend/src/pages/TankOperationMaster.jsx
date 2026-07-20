@@ -45,21 +45,18 @@ function TankOperationMaster({ locations, loggedInUser }) {
   }, [locations])
 
   const isAdminBootstrap =
-    loggedInUser &&
-    loggedInUser.userCode === 'admin' &&
-    loggedInUser.permissions &&
-    loggedInUser.permissions.length > 0 &&
-    loggedInUser.permissions[0].permissionName === 'isAdminBootstrap'
+    String(loggedInUser?.username || '').toLowerCase() === 'admin'
+
+  const hasPermission = (permissionName) =>
+    Boolean(
+      loggedInUser?.permissions?.some(
+        (p) => p.permissionName === permissionName
+      )
+    )
 
   const canManageTankOperation = useMemo(() => {
     if (isAdminBootstrap) return true
-    if (!loggedInUser || !loggedInUser.permissions) {
-      return false
-    }
-
-    return loggedInUser.permissions.some((permission) => {
-      return permission.permissionName === 'Manage Tank Operation'
-    })
+    return hasPermission('Manage Tank Operation')
   }, [loggedInUser])
 
   const reloadTankOperations = async (locationCode = selectedLocationCode) => {
@@ -565,7 +562,7 @@ function TankOperationMaster({ locations, loggedInUser }) {
                   <button
                     type="button"
                     onClick={() => handleEdit(item)}
-                    disabled={loading}
+                    disabled={loading || !canManageTankOperation}
                   >
                     Edit
                   </button>
@@ -573,7 +570,7 @@ function TankOperationMaster({ locations, loggedInUser }) {
                   <button
                     type="button"
                     onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteItem(item) }}
-                    disabled={loading}
+                    disabled={loading || !canManageTankOperation}
                   >
                     Delete
                   </button>

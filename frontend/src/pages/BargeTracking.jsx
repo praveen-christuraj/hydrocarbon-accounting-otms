@@ -212,6 +212,10 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
   }
 
   const acknowledgeReceipt = async (assetCode) => {
+    if (!canManage) {
+      setErrorMsg('You do not have permission to acknowledge receipt')
+      return
+    }
     if (isTripClosed) {
       setErrorMsg('Barge Movement is CLOSED. Reopen it to continue.')
       return
@@ -269,6 +273,10 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
   }
 
   const revokeReceipt = async (assetCode) => {
+    if (!canManage) {
+      setErrorMsg('You do not have permission to revoke receipt')
+      return
+    }
     if (isTripClosed) {
       setErrorMsg('Barge Movement is CLOSED. Reopen it to continue.')
       return
@@ -315,6 +323,10 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
   }
 
   const handleCloseBargeMovement = async () => {
+    if (!canManage) {
+      setErrorMsg('You do not have permission to close barge movement')
+      return
+    }
     if (!timeline?.trip?.id) return
 
     if (!hasApprovedBargeComparison()) {
@@ -350,6 +362,10 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
   }
 
   const handleReopenBargeMovement = async () => {
+    if (!canManage) {
+      setErrorMsg('You do not have permission to reopen barge movement')
+      return
+    }
     if (!timeline?.trip?.id) return
 
     setPromptModal({
@@ -862,6 +878,13 @@ return (
         comparison.
       </div>
 
+      {!canManage && (
+        <div className="info-box no-print">
+          You have view-only access. Assign <strong>Create Operation Entry</strong> to
+          acknowledge/revoke receipts, close/reopen barge movements, or use Fix Timeline.
+        </div>
+      )}
+
       <form onSubmit={handleSearch}>
         <div>
           <label>Convoy Number</label>
@@ -895,10 +918,12 @@ return (
               <div className="form-actions" style={{ marginTop: 10 }}>
                 <button
                   type="button"
-                  disabled={loading || !canCloseBargeMovement()}
+                  disabled={loading || !canManage || !canCloseBargeMovement()}
                   onClick={handleCloseBargeMovement}
                   title={
-                    !hasApprovedBargeComparison()
+                    !canManage
+                      ? 'You do not have permission to close barge movement'
+                      : !hasApprovedBargeComparison()
                       ? `Pending comparison for: ${getPendingComparisonAssetCodes().join(
                           ', '
                         )}`
@@ -910,8 +935,9 @@ return (
 
                 <button
                   type="button"
-                  disabled={loading || !isTripClosed}
+                  disabled={loading || !canManage || !isTripClosed}
                   onClick={handleReopenBargeMovement}
+                  title={!canManage ? 'You do not have permission to reopen barge movement' : ''}
                 >
                   Reopen Barge Movement
                 </button>
@@ -953,8 +979,9 @@ return (
                   <div className="form-actions" style={{ marginTop: 8 }}>
                     <button
                       type="button"
-                      disabled={loading || isTripClosed || acked}
+                      disabled={loading || !canManage || isTripClosed || acked}
                       onClick={() => acknowledgeReceipt(assetCode)}
+                      title={!canManage ? 'You do not have permission to acknowledge receipt' : ''}
                     >
                       Acknowledge Receipt
                     </button>
@@ -962,8 +989,9 @@ return (
                     {acked && (
                       <button
                         type="button"
-                        disabled={loading || isTripClosed}
+                        disabled={loading || !canManage || isTripClosed}
                         onClick={() => revokeReceipt(assetCode)}
+                        title={!canManage ? 'You do not have permission to revoke receipt' : ''}
                       >
                         Revoke Receipt
                       </button>

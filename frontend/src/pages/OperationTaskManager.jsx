@@ -11,7 +11,26 @@ import {
   takeOperationTaskOwnership,
 } from '../api/operationTaskApi'
 
-function OperationTaskManager({ reloadOperationTransactions }) {
+function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
+  const isAdminBootstrap =
+    String(loggedInUser?.username || '').toLowerCase() === 'admin'
+
+  const hasPermission = (permissionName) =>
+    Boolean(
+      loggedInUser?.permissions?.some(
+        (p) => p.permissionName === permissionName
+      )
+    )
+
+  const canActOnOperationTask = useMemo(() => {
+    if (isAdminBootstrap) return true
+    return hasPermission('Act On Operation Task')
+  }, [loggedInUser])
+
+  const canAdminRevokeApprovedTransaction = useMemo(() => {
+    if (isAdminBootstrap) return true
+    return hasPermission('Admin Revoke Approved Transaction')
+  }, [loggedInUser])
   const [tasks, setTasks] = useState([])
   const [events, setEvents] = useState([])
   const [selectedTask, setSelectedTask] = useState(null)
@@ -130,6 +149,16 @@ function OperationTaskManager({ reloadOperationTransactions }) {
 
   const executeAction = async (action) => {
     if (!selectedTask) return
+
+    if (['take', 'release', 'approve', 'reject'].includes(action) && !canActOnOperationTask) {
+      setErrorMsg('You do not have permission to act on operation tasks')
+      return
+    }
+    if (['admin-revoke-approved', 'admin-reject-revoke'].includes(action) && !canAdminRevokeApprovedTransaction) {
+      setErrorMsg('You do not have permission to admin revoke approved transactions')
+      return
+    }
+
     setLoading(true)
     try {
       if (action === 'take') {
@@ -172,11 +201,13 @@ function OperationTaskManager({ reloadOperationTransactions }) {
   }
 
   const canAct =
+    canActOnOperationTask &&
     selectedTask &&
     selectedTask.taskType === 'OPERATION_APPROVAL' &&
     ['Pending', 'In Progress'].includes(selectedTask.status)
 
   const canActOnApprovedRevoke =
+    canAdminRevokeApprovedTransaction &&
     selectedTask &&
     selectedTask.taskType === 'APPROVED_TRANSACTION_REVOKE_REQUEST' &&
     ['Pending', 'In Progress'].includes(selectedTask.status)
@@ -214,6 +245,12 @@ function OperationTaskManager({ reloadOperationTransactions }) {
         </div>
         <span className="record-count">{counts.ALL || 0} Tasks</span>
       </div>
+
+      {!canActOnOperationTask && !canAdminRevokeApprovedTransaction && (
+        <div className="info-box">
+          You have view-only access. Assign <strong>Act On Operation Task</strong> to approve/reject tickets, or <strong>Admin Revoke Approved Transaction</strong> to manage approved-transaction revoke requests.
+        </div>
+      )}
 
       <div className="filter-panel">
         <button

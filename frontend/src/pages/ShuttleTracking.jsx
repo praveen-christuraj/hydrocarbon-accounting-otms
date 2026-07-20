@@ -33,6 +33,26 @@ function ShuttleTracking({
 }) {
   const navigate = useNavigate()
 
+  const isAdminBootstrap =
+    String(loggedInUser?.username || '').toLowerCase() === 'admin'
+
+  const hasPermission = (permissionName) =>
+    Boolean(
+      loggedInUser?.permissions?.some(
+        (p) => p.permissionName === permissionName
+      )
+    )
+
+  const canManageShuttle = useMemo(() => {
+    if (isAdminBootstrap) return true
+    return hasPermission('Manage Shuttle Tracking')
+  }, [loggedInUser])
+
+  const canCreateOperationEntry = useMemo(() => {
+    if (isAdminBootstrap) return true
+    return hasPermission('Create Operation Entry')
+  }, [loggedInUser])
+
   // ----------------------------
   // Main state
   // ----------------------------
@@ -520,6 +540,10 @@ function ShuttleTracking({
   // Close / Reopen voyage
   // ----------------------------
   const closeVoyage = async () => {
+    if (!canManageShuttle) {
+      setErrorMsg('You do not have permission to close shuttle voyage')
+      return
+    }
     if (!selectedGroup) return
     setPromptModal({ action: 'close', value: '' })
   }
@@ -546,6 +570,10 @@ function ShuttleTracking({
   }
 
   const reopenVoyage = async () => {
+    if (!canManageShuttle) {
+      setErrorMsg('You do not have permission to reopen shuttle voyage')
+      return
+    }
     if (!selectedGroup) return
     const confirmText = `REOPEN ${selectedGroup.locationCode} | ${selectedGroup.shuttleAssetCode} | ${selectedGroup.shuttleNumber}`
     setPromptModal({ action: 'reopen', confirmText, value: '', remarks: '' })
@@ -682,6 +710,10 @@ function ShuttleTracking({
   }
 
   const createTicket = async () => {
+    if (!canCreateOperationEntry) {
+      setErrorMsg('You do not have permission to create operation entry')
+      return
+    }
     if (!selectedGroup) {
       setErrorMsg('Select a voyage first')
       return
@@ -992,6 +1024,14 @@ function ShuttleTracking({
         Shuttle Tracking shows only <strong>Approved</strong> tickets.
       </div>
 
+      {!canManageShuttle && !canCreateOperationEntry && (
+        <div className="info-box">
+          You have view-only access. Assign <strong>Manage Shuttle Tracking</strong> to
+          close/reopen voyages, or <strong>Create Operation Entry</strong> to create
+          tracking tickets.
+        </div>
+      )}
+
       <div className="two-column-grid">
         {/* LEFT COLUMN */}
         <div>
@@ -1183,15 +1223,17 @@ function ShuttleTracking({
                     </button>
                     <button
                       type="button"
-                      disabled={loading || isVoyageClosed}
+                      disabled={loading || !canManageShuttle || isVoyageClosed}
                       onClick={closeVoyage}
+                      title={!canManageShuttle ? 'You do not have permission to close shuttle voyage' : ''}
                     >
                       Close Voyage
                     </button>
                     <button
                       type="button"
-                      disabled={loading || !isVoyageClosed}
+                      disabled={loading || !canManageShuttle || !isVoyageClosed}
                       onClick={reopenVoyage}
+                      title={!canManageShuttle ? 'You do not have permission to reopen shuttle voyage' : ''}
                     >
                       Reopen Voyage
                     </button>
@@ -1261,8 +1303,9 @@ function ShuttleTracking({
                         <button
                           key={op.id || op.operation_code}
                           type="button"
-                          disabled={loading || isVoyageClosed}
+                          disabled={loading || !canCreateOperationEntry || isVoyageClosed}
                           onClick={() => pickStage(op)}
+                          title={!canCreateOperationEntry ? 'You do not have permission to create operation entry' : ''}
                         >
                           {op.operation_label}
                         </button>
@@ -1622,7 +1665,12 @@ function ShuttleTracking({
                         </div>
 
                         <div className="form-actions" style={{ marginTop: 10 }}>
-                          <button type="button" disabled={loading} onClick={createTicket}>
+                          <button
+                            type="button"
+                            disabled={loading || !canCreateOperationEntry}
+                            onClick={createTicket}
+                            title={!canCreateOperationEntry ? 'You do not have permission to create operation entry' : ''}
+                          >
                             {loading ? 'Saving...' : 'Create Draft Ticket'}
                           </button>
                         </div>

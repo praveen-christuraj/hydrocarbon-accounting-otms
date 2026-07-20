@@ -7,7 +7,21 @@ import {
   updateOperationWorkflowPolicy,
 } from '../api/operationWorkflowPolicyApi'
 
-function OperationWorkflowPolicyMaster({ roles = [], operationTypes = [], operationTemplates = [], assets = [], locations = [] }) {
+function OperationWorkflowPolicyMaster({ roles = [], operationTypes = [], operationTemplates = [], assets = [], locations = [], loggedInUser }) {
+  const isAdminBootstrap =
+    String(loggedInUser?.username || '').toLowerCase() === 'admin'
+
+  const hasPermission = (permissionName) =>
+    Boolean(
+      loggedInUser?.permissions?.some(
+        (p) => p.permissionName === permissionName
+      )
+    )
+
+  const canManageWorkflowPolicy = useMemo(() => {
+    if (isAdminBootstrap) return true
+    return hasPermission('Manage Operation Workflow Policy')
+  }, [loggedInUser])
   const empty = {
     policyName: '',
     actionCode: 'SUBMIT',
@@ -37,6 +51,10 @@ function OperationWorkflowPolicyMaster({ roles = [], operationTypes = [], operat
 
   const onSubmit = async (e) => {
     e.preventDefault()
+    if (!canManageWorkflowPolicy) {
+      setErrorMsg('You do not have permission to manage workflow policies')
+      return
+    }
     if (!form.policyName.trim()) {
       setErrorMsg('Policy Name is required')
       return
@@ -106,6 +124,11 @@ function OperationWorkflowPolicyMaster({ roles = [], operationTypes = [], operat
   }
 
   const confirmDeletePolicy = async () => {
+    if (!canManageWorkflowPolicy) {
+      setErrorMsg('You do not have permission to manage workflow policies')
+      setConfirmDeleteId(null)
+      return
+    }
     if (!confirmDeleteId) return
     await deleteOperationWorkflowPolicy(confirmDeleteId)
     setConfirmDeleteId(null)
@@ -137,26 +160,31 @@ function OperationWorkflowPolicyMaster({ roles = [], operationTypes = [], operat
         </div>
       )}
       <div className="page-title"><div><h2>Operation Workflow Policy</h2><p>Soft-code who can submit/review/approve/reject/cancel/recall by context.</p></div></div>
+      {!canManageWorkflowPolicy && (
+        <div className="info-box">
+          You have view-only access. Assign <strong>Manage Operation Workflow Policy</strong> to create, edit, or delete workflow policies.
+        </div>
+      )}
       <form onSubmit={onSubmit}>
-        <div><label>Policy Name</label><input value={form.policyName} onChange={(e) => { setForm({ ...form, policyName: e.target.value }); setErrorMsg(''); }} /></div>
-        <div><label>Action</label><select value={form.actionCode} onChange={(e) => setForm({ ...form, actionCode: e.target.value })}><option>CREATE_ENTRY</option><option>EDIT_DRAFT</option><option>REVIEW</option><option>SUBMIT</option><option>APPROVE</option><option>REJECT</option><option>CANCEL</option><option>RECALL</option></select></div>
-        <div><label>Operation Type</label><select value={form.operationTypeCode} onChange={(e) => setForm({ ...form, operationTypeCode: e.target.value })}><option value="">Any</option>{operationTypes.map((o) => <option key={o.id} value={o.operationTypeCode}>{o.operationTypeName}</option>)}</select></div>
-        <div><label>Operation Template</label><select value={form.operationTemplateId} onChange={(e) => setForm({ ...form, operationTemplateId: e.target.value })}><option value="">Any</option>{operationTemplates.map((t) => <option key={t.id} value={t.id}>{t.templateName}</option>)}</select></div>
-        <div><label>Asset Type</label><select value={form.assetTypeCode} onChange={(e) => setForm({ ...form, assetTypeCode: e.target.value })}><option value="">Any</option>{[...new Set(assets.map((a) => a.assetTypeCode))].map((x) => <option key={x}>{x}</option>)}</select></div>
-        <div><label>Location</label><select value={form.locationCode} onChange={(e) => setForm({ ...form, locationCode: e.target.value })}><option value="">Any</option>{locations.map((l) => <option key={l.id} value={l.locationCode}>{l.locationName}</option>)}</select></div>
-        <div><label>Priority</label><input type="number" value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })} /></div>
-        <div><label>Status</label><select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}><option>Active</option><option>Inactive</option></select></div>
+        <div><label>Policy Name</label><input value={form.policyName} onChange={(e) => { setForm({ ...form, policyName: e.target.value }); setErrorMsg(''); }} disabled={!canManageWorkflowPolicy} /></div>
+        <div><label>Action</label><select value={form.actionCode} onChange={(e) => setForm({ ...form, actionCode: e.target.value })} disabled={!canManageWorkflowPolicy}><option>CREATE_ENTRY</option><option>EDIT_DRAFT</option><option>REVIEW</option><option>SUBMIT</option><option>APPROVE</option><option>REJECT</option><option>CANCEL</option><option>RECALL</option></select></div>
+        <div><label>Operation Type</label><select value={form.operationTypeCode} onChange={(e) => setForm({ ...form, operationTypeCode: e.target.value })} disabled={!canManageWorkflowPolicy}><option value="">Any</option>{operationTypes.map((o) => <option key={o.id} value={o.operationTypeCode}>{o.operationTypeName}</option>)}</select></div>
+        <div><label>Operation Template</label><select value={form.operationTemplateId} onChange={(e) => setForm({ ...form, operationTemplateId: e.target.value })} disabled={!canManageWorkflowPolicy}><option value="">Any</option>{operationTemplates.map((t) => <option key={t.id} value={t.id}>{t.templateName}</option>)}</select></div>
+        <div><label>Asset Type</label><select value={form.assetTypeCode} onChange={(e) => setForm({ ...form, assetTypeCode: e.target.value })} disabled={!canManageWorkflowPolicy}><option value="">Any</option>{[...new Set(assets.map((a) => a.assetTypeCode))].map((x) => <option key={x}>{x}</option>)}</select></div>
+        <div><label>Location</label><select value={form.locationCode} onChange={(e) => setForm({ ...form, locationCode: e.target.value })} disabled={!canManageWorkflowPolicy}><option value="">Any</option>{locations.map((l) => <option key={l.id} value={l.locationCode}>{l.locationName}</option>)}</select></div>
+        <div><label>Priority</label><input type="number" value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })} disabled={!canManageWorkflowPolicy} /></div>
+        <div><label>Status</label><select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} disabled={!canManageWorkflowPolicy}><option>Active</option><option>Inactive</option></select></div>
         <div className="full-width-field">
           <label>Allowed Roles</label>
           <div className="permission-list">
             {activeRoles.map((r) => (
               <label key={r.id} className="permission-badge" style={{ cursor: 'pointer' }}>
-                <input type="checkbox" checked={form.roleIds.includes(r.id)} onChange={() => toggleRole(r.id)} /> {r.roleName}
+                <input type="checkbox" checked={form.roleIds.includes(r.id)} onChange={() => toggleRole(r.id)} disabled={!canManageWorkflowPolicy} /> {r.roleName}
               </label>
             ))}
           </div>
         </div>
-        <div className="form-actions"><button type="submit" disabled={loading}>{loading ? 'Please wait...' : editId ? 'Update Policy' : 'Save Policy'}</button>{editId && <button type="button" onClick={() => { setEditId(null); setForm(empty) }}>Cancel</button>}</div>
+        <div className="form-actions"><button type="submit" disabled={loading || !canManageWorkflowPolicy}>{loading ? 'Please wait...' : editId ? 'Update Policy' : 'Save Policy'}</button>{editId && <button type="button" onClick={() => { setEditId(null); setForm(empty) }}>Cancel</button>}</div>
       </form>
       <table>
         <thead><tr><th>Name</th><th>Action</th><th>Scope</th><th>Priority</th><th>Status</th><th>Roles</th><th>Actions</th></tr></thead>
@@ -166,7 +194,7 @@ function OperationWorkflowPolicyMaster({ roles = [], operationTypes = [], operat
               <td>{p.policyName}</td><td>{p.actionCode}</td>
               <td>{[p.operationTypeCode || 'Any OpType', p.operationTemplateId ? `Tpl ${p.operationTemplateId}` : 'Any Template', p.assetTypeCode || 'Any AssetType', p.locationCode || 'Any Location'].join(' | ')}</td>
               <td>{p.priority}</td><td>{p.status}</td><td>{(p.roles || []).map((r) => r.role_name).join(', ') || '-'}</td>
-              <td><button type="button" onClick={() => onEdit(p)}>Edit</button><button type="button" onClick={() => onDelete(p.id)}>Delete</button></td>
+              <td><button type="button" onClick={() => onEdit(p)} disabled={!canManageWorkflowPolicy}>Edit</button><button type="button" onClick={() => onDelete(p.id)} disabled={!canManageWorkflowPolicy}>Delete</button></td>
             </tr>
           ))}
         </tbody>

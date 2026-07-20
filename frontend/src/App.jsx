@@ -797,7 +797,7 @@ function AppContent({
                 requiredPermission="View Vessel Operation"
                 fallbackMessage="You do not have permission to view Vessel Operation Master."
               >
-                <VesselOperationMaster locations={locations} assetTypes={assetTypes} />
+                <VesselOperationMaster locations={locations} assetTypes={assetTypes} loggedInUser={loggedInUser} />
               </PermissionGuard>
             }
           />
@@ -809,7 +809,7 @@ function AppContent({
                 requiredPermission="View Movement Mapping"
                 fallbackMessage="You do not have permission to view Movement Mapping."
               >
-                <MovementMapping locations={locations} />
+                <MovementMapping locations={locations} loggedInUser={loggedInUser} />
               </PermissionGuard>
             }
           />
@@ -845,6 +845,7 @@ function AppContent({
                   operationTemplates={operationTemplates}
                   assets={assets}
                   locations={locations}
+                  loggedInUser={loggedInUser}
                 />
               </PermissionGuard>
             }
@@ -885,6 +886,7 @@ function AppContent({
               >
                 <OperationTaskManager
                   reloadOperationTransactions={reloadOperationTransactions}
+                  loggedInUser={loggedInUser}
                 />
               </PermissionGuard>
             }
@@ -923,6 +925,7 @@ function AppContent({
                   assets={assets}
                   operationTypes={operationTypes}
                   operationTemplates={operationTemplates}
+                  loggedInUser={loggedInUser}
                 />
               </PermissionGuard>
             }
@@ -1101,10 +1104,16 @@ function AppContent({
           <Route
             path="/tanker-transaction-report"
             element={
-              <TankerTransactionReport
-                locations={locations}
-                assets={assets}
-              />
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View Operation Transaction"
+                fallbackMessage="You do not have permission to view the Tanker Transaction Report."
+              >
+                <TankerTransactionReport
+                  locations={locations}
+                  assets={assets}
+                />
+              </PermissionGuard>
             }
           />
           <Route

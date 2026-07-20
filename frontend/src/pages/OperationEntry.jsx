@@ -620,7 +620,27 @@ function OperationEntry({
   operationEntries = [],
   reloadOperationEntries,
   reloadOperationTransactions,
+  loggedInUser,
 }) {
+  const isAdminBootstrap =
+    String(loggedInUser?.username || '').toLowerCase() === 'admin'
+
+  const hasPermission = (permissionName) =>
+    Boolean(
+      loggedInUser?.permissions?.some(
+        (p) => p.permissionName === permissionName
+      )
+    )
+
+  const canCreateOperationEntry = useMemo(() => {
+    if (isAdminBootstrap) return true
+    return hasPermission('Create Operation Entry')
+  }, [loggedInUser])
+
+  const canCancelOperationTransaction = useMemo(() => {
+    if (isAdminBootstrap) return true
+    return hasPermission('Cancel Operation Transaction')
+  }, [loggedInUser])
   const emptyEntry = {
     operationTypeCode: '',
     operationTemplateId: '',
@@ -1195,6 +1215,11 @@ function OperationEntry({
   const handleSubmit = async (e) => {
     e.preventDefault()
 
+    if (!canCreateOperationEntry) {
+      setErrorMsg('You do not have permission to create operation entries')
+      return
+    }
+
     if (entry.operationTypeCode.trim() === '') {
       setErrorMsg('Operation Type is required')
       return
@@ -1446,6 +1471,10 @@ function OperationEntry({
   }
 
   const handleEdit = (entryToEdit) => {
+    if (!canCreateOperationEntry) {
+      setErrorMsg('You do not have permission to create operation entries')
+      return
+    }
     if (entryToEdit.status !== 'Draft' && entryToEdit.status !== 'Rejected') {
       setErrorMsg('Only Draft or Rejected operation entries can be edited.')
       return
@@ -1510,6 +1539,10 @@ function OperationEntry({
   const confirmDeleteAction = async () => {
     const entryId = confirmAction?.data
     setConfirmAction(null)
+    if (!canCancelOperationTransaction) {
+      setErrorMsg('You do not have permission to cancel operation transactions')
+      return
+    }
     if (!entryId) return
 
     try {
@@ -1603,6 +1636,12 @@ function OperationEntry({
         </span>
       </div>
 
+      {!canCreateOperationEntry && (
+        <div className="info-box">
+          You have view-only access. Assign <strong>Create Operation Entry</strong> to create or edit tickets, and <strong>Cancel Operation Transaction</strong> to cancel them.
+        </div>
+      )}
+
       <form onSubmit={handleSubmit}>
         {prefill.mode === 'tanker-receiver' && (
           <div className="info-box full-width-field">
@@ -1624,6 +1663,7 @@ function OperationEntry({
             name="operationTypeCode"
             value={entry.operationTypeCode}
             onChange={handleChange}
+            disabled={!canCreateOperationEntry}
           >
             <option value="">Select Operation Type</option>
 
@@ -1645,7 +1685,7 @@ function OperationEntry({
             name="operationTemplateId"
             value={entry.operationTemplateId}
             onChange={handleChange}
-            disabled={!selectedOperationType}
+            disabled={!selectedOperationType || !canCreateOperationEntry}
           >
             <option value="">
               {selectedOperationType
@@ -1670,7 +1710,7 @@ function OperationEntry({
             name="primaryAssetCode"
             value={entry.primaryAssetCode}
             onChange={handleAssetChange}
-            disabled={!selectedOperationType}
+            disabled={!selectedOperationType || !canCreateOperationEntry}
           >
             <option value="">
               {selectedOperationType ? 'Select Asset' : 'Select Operation First'}
@@ -1702,6 +1742,7 @@ function OperationEntry({
               value={entry.convoyNumber}
               onChange={handleChange}
               placeholder="Example: CNV-2026-001"
+              disabled={!canCreateOperationEntry}
             />
           </div>
         )}
@@ -1711,7 +1752,7 @@ function OperationEntry({
             name="originLocationCode"
             value={entry.originLocationCode}
             onChange={handleChange}
-            disabled={selectedAsset?.assetScope === 'Local'}
+            disabled={selectedAsset?.assetScope === 'Local' || !canCreateOperationEntry}
           >
             <option value="">Select Origin Location</option>
 
@@ -1729,6 +1770,7 @@ function OperationEntry({
             name="destinationLocationCode"
             value={entry.destinationLocationCode}
             onChange={handleChange}
+            disabled={!canCreateOperationEntry}
           >
             <option value="">None</option>
 
@@ -1749,6 +1791,7 @@ function OperationEntry({
             name="senderLocationCode"
             value={entry.senderLocationCode}
             onChange={handleChange}
+            disabled={!canCreateOperationEntry}
           >
             <option value="">None</option>
 
@@ -1771,6 +1814,7 @@ function OperationEntry({
             name="receiverLocationCode"
             value={entry.receiverLocationCode}
             onChange={handleChange}
+            disabled={!canCreateOperationEntry}
           >
             <option value="">None</option>
 
@@ -1789,6 +1833,7 @@ function OperationEntry({
             type="date"
             value={entry.operationDate}
             onChange={handleChange}
+            disabled={!canCreateOperationEntry}
           />
         </div>
 
@@ -1799,6 +1844,7 @@ function OperationEntry({
             type="datetime-local"
             value={entry.operationStartDatetime}
             onChange={handleChange}
+            disabled={!canCreateOperationEntry}
           />
         </div>
 
@@ -1809,6 +1855,7 @@ function OperationEntry({
             type="datetime-local"
             value={entry.operationEndDatetime}
             onChange={handleChange}
+            disabled={!canCreateOperationEntry}
           />
         </div>
 
@@ -1820,6 +1867,7 @@ function OperationEntry({
             value={entry.productName}
             onChange={handleChange}
             placeholder="Example: Crude Oil"
+            disabled={!canCreateOperationEntry}
           />
         </div>
 
@@ -1831,6 +1879,7 @@ function OperationEntry({
             value={entry.createdBy}
             onChange={handleChange}
             placeholder="Auto-filled by backend if blank"
+            disabled={!canCreateOperationEntry}
           />
         </div>
 
@@ -1850,6 +1899,7 @@ function OperationEntry({
             onChange={handleChange}
             placeholder="Enter operation remarks"
             rows="3"
+            disabled={!canCreateOperationEntry}
           />
         </div>
 
@@ -1873,7 +1923,7 @@ function OperationEntry({
         />
 
         <div className="form-actions">
-          <button type="submit" disabled={loading}>
+          <button type="submit" disabled={loading || !canCreateOperationEntry}>
             {loading ? 'Saving...' : editId === null ? 'Save Draft' : 'Update Draft'}
           </button>
 
@@ -2002,11 +2052,11 @@ function OperationEntry({
                 </td>
                 <td>{item.values.length}</td>
                 <td>
-                  <button type="button" onClick={() => handleEdit(item)}>
+                  <button type="button" onClick={() => handleEdit(item)} disabled={!canCreateOperationEntry}>
                     Edit
                   </button>
 
-                  <button type="button" onClick={() => handleDelete(item.id)}>
+                  <button type="button" onClick={() => handleDelete(item.id)} disabled={!canCancelOperationTransaction}>
                     Cancel
                   </button>
                 </td>

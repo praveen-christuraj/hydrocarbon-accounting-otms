@@ -105,8 +105,24 @@ function TankerTracking({
   assets = [],
   operationTypes = [],
   operationTemplates = [],
+  loggedInUser,
 }) {
   const navigate = useNavigate()
+
+  const isAdminBootstrap =
+    String(loggedInUser?.username || '').toLowerCase() === 'admin'
+
+  const hasPermission = (permissionName) =>
+    Boolean(
+      loggedInUser?.permissions?.some(
+        (p) => p.permissionName === permissionName
+      )
+    )
+
+  const canManage = useMemo(() => {
+    if (isAdminBootstrap) return true
+    return hasPermission('Create Operation Entry')
+  }, [loggedInUser])
   const [filters, setFilters] = useState(defaultFilters)
   const [report, setReport] = useState({
     rows: [],
@@ -315,6 +331,10 @@ function TankerTracking({
   }
 
   const handleAcknowledge = async () => {
+    if (!canManage) {
+      setErrorMsg('You do not have permission to acknowledge tanker receipt')
+      return
+    }
     if (!ackGroup?.senderTicket?.transactionId) {
       setErrorMsg('Sender transaction is missing')
       return
@@ -372,6 +392,10 @@ function TankerTracking({
   const confirmRevokeAction = async () => {
     const group = confirmRevokeGroup
     setConfirmRevokeGroup(null)
+    if (!canManage) {
+      setErrorMsg('You do not have permission to revoke acknowledgement')
+      return
+    }
     if (!group?.acknowledgementId) return
 
     try {
@@ -427,6 +451,10 @@ function TankerTracking({
   const confirmCloseAction = async () => {
     const group = confirmCloseGroup
     setConfirmCloseGroup(null)
+    if (!canManage) {
+      setErrorMsg('You do not have permission to close tanker movement')
+      return
+    }
     if (!group?.acknowledgementId) return
 
     try {
@@ -929,6 +957,14 @@ function TankerTracking({
         acknowledgement or comparison.
       </div>
 
+      {!canManage && (
+        <div className="info-box no-print">
+          You have view-only access. Assign <strong>Create Operation Entry</strong> to
+          acknowledge receipts, revoke acknowledgements, create receiver entries, or
+          close tanker movements.
+        </div>
+      )}
+
       <div className="report-filter-panel no-print">
         <div>
           <label>Date From</label>
@@ -1206,7 +1242,8 @@ function TankerTracking({
                           <button
                             type="button"
                             onClick={() => openClosePanel(row)}
-                            disabled={loading}
+                            disabled={loading || !canManage}
+                            title={!canManage ? 'You do not have permission to close tanker movement' : ''}
                           >
                             Close
                           </button>
@@ -1217,7 +1254,8 @@ function TankerTracking({
                           <button
                             type="button"
                             onClick={() => openAcknowledgePanel(row)}
-                            disabled={loading}
+                            disabled={loading || !canManage}
+                            title={!canManage ? 'You do not have permission to acknowledge tanker receipt' : ''}
                           >
                             Acknowledge
                           </button>
@@ -1228,7 +1266,8 @@ function TankerTracking({
                           <button
                             type="button"
                             onClick={() => handleCreateReceiverEntry(row)}
-                            disabled={loading}
+                            disabled={loading || !canManage}
+                            title={!canManage ? 'You do not have permission to create receiver entry' : ''}
                           >
                             Create Receiver Entry
                           </button>
@@ -1236,7 +1275,8 @@ function TankerTracking({
                           <button
                             type="button"
                             onClick={() => openRevokePanel(row)}
-                            disabled={loading}
+                            disabled={loading || !canManage}
+                            title={!canManage ? 'You do not have permission to revoke acknowledgement' : ''}
                           >
                             Revoke Ack
                           </button>
@@ -1590,7 +1630,8 @@ function TankerTracking({
                   <button
                     type="button"
                     onClick={() => openClosePanel(selectedGroup)}
-                    disabled={loading}
+                    disabled={loading || !canManage}
+                    title={!canManage ? 'You do not have permission to close tanker movement' : ''}
                   >
                     Close Movement
                   </button>

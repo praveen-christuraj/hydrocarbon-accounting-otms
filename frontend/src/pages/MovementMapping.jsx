@@ -16,8 +16,23 @@ const formatNumber = (v, d = 3) => {
   return n.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d })
 }
 
-function MovementMapping({ locations = [] }) {
+function MovementMapping({ locations = [], loggedInUser }) {
   const location = useLocation()
+
+  const isAdminBootstrap =
+    String(loggedInUser?.username || '').toLowerCase() === 'admin'
+
+  const hasPermission = (permissionName) =>
+    Boolean(
+      loggedInUser?.permissions?.some(
+        (p) => p.permissionName === permissionName
+      )
+    )
+
+  const canManageMovementMapping = useMemo(() => {
+    if (isAdminBootstrap) return true
+    return hasPermission('Manage Movement Mapping')
+  }, [loggedInUser])
 
   const getQuery = () => {
     const params = new URLSearchParams(location.search || '')
@@ -187,6 +202,10 @@ function MovementMapping({ locations = [] }) {
   }
 
   const createNew = async () => {
+    if (!canManageMovementMapping) {
+      setErrorMsg('You do not have permission to manage movement mappings')
+      return
+    }
     try {
       setLoading(true)
       const created = await createMovementMapping(createForm)
@@ -247,6 +266,10 @@ function MovementMapping({ locations = [] }) {
   }
 
   const addItems = async (role, ids) => {
+    if (!canManageMovementMapping) {
+      setErrorMsg('You do not have permission to manage movement mappings')
+      return
+    }
     if (!selectedMappingId) {
       setErrorMsg('Select a mapping first')
       return
@@ -278,6 +301,11 @@ function MovementMapping({ locations = [] }) {
   }
 
   const confirmRemoveMappingItem = async () => {
+    if (!canManageMovementMapping) {
+      setErrorMsg('You do not have permission to manage movement mappings')
+      setConfirmRemoveItem(null)
+      return
+    }
     if (!confirmRemoveItem || !selectedMappingId) return
     const item = confirmRemoveItem
 
@@ -301,6 +329,11 @@ function MovementMapping({ locations = [] }) {
   }
 
   const confirmCloseMapping = async () => {
+    if (!canManageMovementMapping) {
+      setErrorMsg('You do not have permission to manage movement mappings')
+      setConfirmCloseMap(false)
+      return
+    }
     if (!selectedMappingId) return
 
     try {
@@ -373,6 +406,12 @@ function MovementMapping({ locations = [] }) {
         </div>
         <span className="record-count">{mappings.length} Mappings</span>
       </div>
+
+      {!canManageMovementMapping && (
+        <div className="info-box">
+          You have view-only access. Assign <strong>Manage Movement Mapping</strong> to create, edit, or close mappings.
+        </div>
+      )}
 
       <div className="two-column-grid">
         {/* LEFT: Mapping list + create */}
@@ -507,7 +546,7 @@ function MovementMapping({ locations = [] }) {
             </div>
 
             <div className="form-actions">
-              <button type="button" onClick={createNew} disabled={loading}>
+              <button type="button" onClick={createNew} disabled={loading || !canManageMovementMapping}>
                 Create Mapping
               </button>
             </div>
@@ -533,7 +572,7 @@ function MovementMapping({ locations = [] }) {
                 </div>
 
                 <div className="form-actions" style={{ marginTop: 10 }}>
-                  <button type="button" onClick={closeMap} disabled={loading || selectedMapping.status === 'CLOSED'}>
+                  <button type="button" onClick={closeMap} disabled={loading || selectedMapping.status === 'CLOSED' || !canManageMovementMapping}>
                     Close Mapping
                   </button>
                 </div>
@@ -575,7 +614,7 @@ function MovementMapping({ locations = [] }) {
                             <td>{i.asset_code || '-'}</td>
                             <td>{formatNumber(i.nsv_bbl)}</td>
                             <td>
-                              <button type="button" disabled={selectedMapping.status === 'CLOSED'} onClick={() => removeItem(i)}>
+                              <button type="button" disabled={selectedMapping.status === 'CLOSED' || !canManageMovementMapping} onClick={() => removeItem(i)}>
                                 Remove
                               </button>
                             </td>
@@ -609,7 +648,7 @@ function MovementMapping({ locations = [] }) {
                             <td>{i.asset_code || '-'}</td>
                             <td>{formatNumber(i.nsv_bbl)}</td>
                             <td>
-                              <button type="button" disabled={selectedMapping.status === 'CLOSED'} onClick={() => removeItem(i)}>
+                              <button type="button" disabled={selectedMapping.status === 'CLOSED' || !canManageMovementMapping} onClick={() => removeItem(i)}>
                                 Remove
                               </button>
                             </td>
@@ -635,7 +674,7 @@ function MovementMapping({ locations = [] }) {
                     </button>
                     <button
                       type="button"
-                      disabled={loading || selectedMapping.status === 'CLOSED'}
+                      disabled={loading || selectedMapping.status === 'CLOSED' || !canManageMovementMapping}
                       onClick={async () => {
                         await loadBargeUnloads()
                         await searchTargets()
@@ -685,13 +724,13 @@ function MovementMapping({ locations = [] }) {
                     </table>
 
                     <div className="form-actions" style={{ marginTop: 10 }}>
-                      <button
-                        type="button"
-                        disabled={loading || selectedMapping.status === 'CLOSED'}
-                        onClick={() => addItems('SOURCE', selectedSourceTxIds)}
-                      >
-                        Add Selected as SOURCE
-                      </button>
+                    <button
+                      type="button"
+                      disabled={loading || selectedMapping.status === 'CLOSED' || !canManageMovementMapping}
+                      onClick={loadBargeUnloads}
+                    >
+                      Load UNLOAD Tickets
+                    </button>
                     </div>
                   </>
                 )}
@@ -730,12 +769,12 @@ function MovementMapping({ locations = [] }) {
                   </div>
 
                   <div className="report-filter-actions">
-                    <button type="button" onClick={searchTargets} disabled={loading || selectedMapping.status === 'CLOSED'}>
+                    <button type="button" onClick={searchTargets} disabled={loading || selectedMapping.status === 'CLOSED' || !canManageMovementMapping}>
                       Search Approved
                     </button>
                     <button
                       type="button"
-                      disabled={loading || selectedMapping.status === 'CLOSED'}
+                      disabled={loading || selectedMapping.status === 'CLOSED' || !canManageMovementMapping}
                       onClick={async () => {
                         await loadBargeUnloads()
                         await searchTargets()
@@ -787,7 +826,7 @@ function MovementMapping({ locations = [] }) {
                     <div className="form-actions" style={{ marginTop: 10 }}>
                       <button
                         type="button"
-                        disabled={loading || selectedMapping.status === 'CLOSED'}
+                        disabled={loading || selectedMapping.status === 'CLOSED' || !canManageMovementMapping}
                         onClick={() => addItems('TARGET', selectedTargetTxIds)}
                       >
                         Add Selected as TARGET
