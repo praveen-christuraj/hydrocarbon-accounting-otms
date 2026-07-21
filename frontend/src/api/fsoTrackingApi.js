@@ -67,7 +67,7 @@ const convertGroupFromApi = (g) => ({
 })
 
 export const getFSOTracking = async (filters = {}) => {
-  const data = await apiGet(`/fso-tracking${buildQueryString(filters)}`)
+  const data = await apiGet(`/shuttle-fso/fso-tracking${buildQueryString(filters)}`)
   return {
     rows: (data.rows || []).map(convertGroupFromApi),
     totalGroups: Number(data.total_groups || 0),
@@ -83,7 +83,7 @@ export const closeFSOVoyage = async ({
   fsoAssetCode,
   closureRemarks,
 }) => {
-  return apiPost('/fso-voyages/close', {
+  return apiPost('/shuttle-fso/fso-voyages/close', {
     location_code: locationCode,
     shuttle_number: shuttleNumber,
     fso_asset_code: fsoAssetCode,
@@ -100,7 +100,7 @@ export const reopenFSOVoyage = async ({
   fsoAssetCode,
   remarks,
 }) => {
-  return apiPost('/fso-voyages/reopen', {
+  return apiPost('/shuttle-fso/fso-voyages/reopen', {
     location_code: locationCode,
     shuttle_number: shuttleNumber,
     fso_asset_code: fsoAssetCode,

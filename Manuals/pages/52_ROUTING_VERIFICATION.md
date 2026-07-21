@@ -1,7 +1,7 @@
 # API Routing Verification Report
 
 ## Summary
-Verified **44 API module files** against **39 backend router files**. Most frontend API endpoints correctly match their backend router prefixes. **6 API modules have routing mismatches** that need attention.
+Verified **44 API module files** against **39 backend router files**. Most frontend API endpoints correctly match their backend router prefixes. **6 API modules had routing mismatches — all fixed (2026-07-21)**.
 
 ## Verified: All API Endpoints Match (38 of 44 API modules)
 
@@ -42,101 +42,73 @@ Verified **44 API module files** against **39 backend router files**. Most front
 | userRoleApi | `/user-roles` | `/user-roles` (user_roles.py) | ✅ |
 | vesselOperationApi | `/vessel-operations` | `/vessel-operations` (vessel_operations.py) | ✅ |
 
-## Routing Mismatches Found (6 API modules)
+## Routing Mismatches Fixed (2026-07-21)
 
-### 1. bargeTrackingApi.js — Missing `/barge-trip` Prefix
+All 6 routing mismatches have been corrected in `frontend/src/api/`. The fix table below shows what was changed.
 
-| Frontend Calls | Should Be | Backend Route |
-|---------------|-----------|---------------|
-| `GET /barge-tracking` | `GET /barge-trip/barge-tracking` | `@router.get("/barge-tracking")` |
-| `GET /trips/by-convoy/{convoy}` | `GET /barge-trip/trips/by-convoy/{convoy}` | `@router.get("/trips/by-convoy/{convoy_number}")` |
-| `POST /trip-events` | `POST /barge-trip/trip-events` | `@router.post("/trip-events")` |
-| `POST /trip-comparisons` | `POST /barge-trip/trip-comparisons` | `@router.post("/trip-comparisons")` |
-| `POST /trips/{id}/close` | `POST /barge-trip/trips/{id}/close` | `@router.post("/trips/{trip_id}/close")` |
-| `POST /trips/{id}/reopen` | `POST /barge-trip/trips/{id}/reopen` | `@router.post("/trips/{trip_id}/reopen")` |
+### 1. bargeTrackingApi.js — Prefixed `/barge-trip` to all endpoints
 
-### 2. fsoTrackingApi.js — Missing `/shuttle-fso` Prefix
+| Endpoint | Path Changed |
+|----------|-------------|
+| `getBargeTracking` | `/barge-tracking` → `/barge-trip/barge-tracking` |
+| `getTripTimelineByConvoy` | `/trips/by-convoy/{convoy}` → `/barge-trip/trips/by-convoy/{convoy}` |
+| `createTripEvent` | `/trip-events` → `/barge-trip/trip-events` |
+| `createTripComparison` | `/trip-comparisons` → `/barge-trip/trip-comparisons` |
+| `closeTrip` | `/trips/{id}/close` → `/barge-trip/trips/{id}/close` |
+| `reopenTrip` | `/trips/{id}/reopen` → `/barge-trip/trips/{id}/reopen` |
 
-| Frontend Calls | Should Be | Backend Route |
-|---------------|-----------|---------------|
-| `GET /fso-tracking` | `GET /shuttle-fso/fso-tracking` | `@router.get("/fso-tracking")` |
-| `POST /fso-voyages/close` | `POST /shuttle-fso/fso-voyages/close` | `@router.post("/fso-voyages/close")` |
-| `POST /fso-voyages/reopen` | `POST /shuttle-fso/fso-voyages/reopen` | `@router.post("/fso-voyages/reopen")` |
+### 2. shuttleTrackingApi.js — Prefixed `/shuttle-fso` to all endpoints
 
-### 3. shuttleTrackingApi.js — Missing `/shuttle-fso` Prefix
+| Endpoint | Path Changed |
+|----------|-------------|
+| `getShuttleTracking` | `/shuttle-tracking` → `/shuttle-fso/shuttle-tracking` |
+| `closeShuttleVoyage` | `/shuttle-voyages/close` → `/shuttle-fso/shuttle-voyages/close` |
+| `reopenShuttleVoyage` | `/shuttle-voyages/reopen` → `/shuttle-fso/shuttle-voyages/reopen` |
+| `downloadShuttleVoyageXlsx` | `/shuttle-tracking/export/xlsx` → `/shuttle-fso/shuttle-tracking/export/xlsx` |
 
-| Frontend Calls | Should Be | Backend Route |
-|---------------|-----------|---------------|
-| `GET /shuttle-tracking` | `GET /shuttle-fso/shuttle-tracking` | `@router.get("/shuttle-tracking")` |
-| `POST /shuttle-voyages/close` | `POST /shuttle-fso/shuttle-voyages/close` | `@router.post("/shuttle-voyages/close")` |
-| `POST /shuttle-voyages/reopen` | `POST /shuttle-fso/shuttle-voyages/reopen` | `@router.post("/shuttle-voyages/reopen")` |
+### 3. fsoTrackingApi.js — Prefixed `/shuttle-fso` to all endpoints
 
-### 4. locationAccountingDaySettingApi.js — Wrong Prefix
+| Endpoint | Path Changed |
+|----------|-------------|
+| `getFSOTracking` | `/fso-tracking` → `/shuttle-fso/fso-tracking` |
+| `closeFSOVoyage` | `/fso-voyages/close` → `/shuttle-fso/fso-voyages/close` |
+| `reopenFSOVoyage` | `/fso-voyages/reopen` → `/shuttle-fso/fso-voyages/reopen` |
 
-| Frontend Calls | Should Be | Backend Route |
-|---------------|-----------|---------------|
-| `GET /location-accounting-day-settings` | `GET /locations/accounting-day-settings` | Route in locations.py |
-| `POST /location-accounting-day-settings` | `POST /locations/accounting-day-settings` | Route in locations.py |
-| `PUT /location-accounting-day-settings/{id}` | `PUT /locations/accounting-day-settings/{id}` | Route in locations.py |
-| `DELETE /location-accounting-day-settings/{id}` | `DELETE /locations/accounting-day-settings/{id}` | `@router.delete("/accounting-day-settings/{setting_id}")` |
+### 4. locationAccountingDaySettingApi.js — Changed prefix to `/locations/accounting-day-settings`
 
-### 5. materialBalanceReportApi.js — Wrong Prefix
+| Endpoint | Path Changed |
+|----------|-------------|
+| `getLocationAccountingDaySettings` | `/location-accounting-day-settings` → `/locations/accounting-day-settings` |
+| `createLocationAccountingDaySetting` | `/location-accounting-day-settings` → `/locations/accounting-day-settings` |
+| `updateLocationAccountingDaySetting` | `/location-accounting-day-settings/{id}` → `/locations/accounting-day-settings/{id}` |
+| `deleteLocationAccountingDaySetting` | `/location-accounting-day-settings/{id}` → `/locations/accounting-day-settings/{id}` |
 
-| Frontend Calls | Should Be | Backend Route |
-|---------------|-----------|---------------|
-| `GET /material-balance-report` | `GET /reports/fso/material-balance` | `@router.get("/fso/material-balance")` |
+### 5. materialBalanceReportApi.js — Changed prefix to `/reports/fso/material-balance`
 
-### 6. outTurnReportApi.js — Wrong Prefix
+| Endpoint | Path Changed |
+|----------|-------------|
+| `getMaterialBalanceReport` | `/material-balance-report` → `/reports/fso/material-balance` |
 
-| Frontend Calls | Should Be | Backend Route |
-|---------------|-----------|---------------|
-| `GET /out-turn-report` | `GET /reports/out-turn-report/validation` | `@router.get("/out-turn-report/validation")` |
+### 6. outTurnReportApi.js — Changed prefix to `/reports/out-turn-report/validation`
 
-## Unused Backend Routers (no API calls to them)
+| Endpoint | Path Changed |
+|----------|-------------|
+| `getOutTurnReport` | `/out-turn-report` → `/reports/out-turn-report/validation` |
+
+## Unused Backend Routers (still no API calls to them)
 
 | Router Prefix | Router File | Notes |
 |---------------|-------------|-------|
-| `/reports` | reports.py | FSO report APIs used from pages, but routes don't match |
+| `/reports` | reports.py | FSO report endpoint `/reports/fso/otr`, `/reports/fso/outturn`, `/reports/fso/otr/export/xlsx`, `/reports/fso/outturn/export/xlsx`, `/reports/fso/material-balance/export/xlsx`, `/reports/tank-stock-ledger/rebuild` still unused by frontend |
 | `/vessel-stock-ledger` | vessel_stock_ledger.py | No frontend API module calls it |
 | `/operation-tasks` | operation_tasks.py | No frontend API module calls it |
 
-## Root Cause
+## Fix Summary
 
-The frontend API modules for **barge, shuttle, FSO, location accounting-day, material balance, and out-turn report** call endpoints **without the router prefix** that the backend defines. This means:
-
-1. **If the backend router prefix IS being applied**: these API calls will fail with 404
-2. **If the backend router prefix is NOT being applied** (e.g., routes are flat): the calls would work
-
-The `main.py` registers routers with `.include_router(router)` without overriding prefixes, so the prefixes ARE applied. **These are bugs that need fixing.**
-
-## Recommended Fix
-
-For each mismatched API module, prepend the router prefix to all endpoint paths:
-
-```javascript
-// bargeTrackingApi.js — add /barge-trip prefix
-- return apiGet('/barge-tracking?...')
-+ return apiGet('/barge-trip/barge-tracking?...')
-
-- return apiPost('/trip-events', ...)
-+ return apiPost('/barge-trip/trip-events', ...)
-
-// fsoTrackingApi.js — add /shuttle-fso prefix
-- return apiGet('/fso-tracking?...')
-+ return apiGet('/shuttle-fso/fso-tracking?...')
-
-// shuttleTrackingApi.js — add /shuttle-fso prefix
-- return apiGet('/shuttle-tracking?...')
-+ return apiGet('/shuttle-fso/shuttle-tracking?...')
-
-// materialBalanceReportApi.js — use /reports prefix
-- apiGet('/material-balance-report?...')
-+ apiGet('/reports/fso/material-balance?...')
-
-// outTurnReportApi.js — use /reports prefix
-- apiGet('/out-turn-report?...')
-+ apiGet('/reports/out-turn-report/validation?...')
-```
+**Date**: 2026-07-21
+**Files modified**: 6 frontend API modules (~19 endpoint paths corrected)
+**Root cause**: Frontend API modules hardcoded endpoint paths without the backend's router prefix. Since `main.py` registers routers with `.include_router(router)`, prefixes ARE applied — these calls would have returned 404.
+**Fix applied**: Each mismatched API module now prepends the correct backend router prefix to every endpoint path.
 
 ---
 
@@ -149,38 +121,36 @@ For each mismatched API module, prepend the router prefix to all endpoint paths:
 │  ┌─ VERIFIED MATCH (38/44) ──────────────┐   ┌─ 39 ROUTERS ──────────────────┐  ✅ 38 modules correctly      │
 │  │                                      │   │                               │     hit their backend prefix  │
 │  │  userApi     → /users                │   │  users.py       → /users      │                              │
-│  │  roleApi     → /roles                │   │  roles.py       → /roles      │  ⚠️  6 modules have           │
-│  │  assetApi    → /assets               │   │  assets.py      → /assets     │     routing mismatches:       │
+│  │  roleApi     → /roles                │   │  roles.py       → /roles      │  ✅ 6 modules fixed           │
+│  │  assetApi    → /assets               │   │  assets.py      → /assets     │     (2026-07-21):             │
 │  │  permissionApi→ /permissions         │   │  permissions.py → /permissions│                              │
 │  │  locationApi → /locations            │   │  locations.py   → /locations  │  1. bargeTrackingApi          │
-│  │  ... (33 more)                       │   │  ... (34 more)                │     calls /barge-tracking/*   │
-│  └──────────────────────────────────────┘   └───────────────────────────────┘     but router is            │
-│                                                                                    /barge-trip/*            │
-│  ┌─ MISMATCHED (6) ─────────────────────┐                                         (missing prefix)         │
-│  │                                      │                                        │                              │
-│  │ 1. bargeTrackingApi                  │   ┌─ ROUTER PREFIXES ──────────────┐  2. shuttleTrackingApi        │
-│  │    Calls /barge-tracking/*           │   │                               │     calls /shuttle-tracking/* │
-│  │    Should be /barge-trip/*           │   │  ✅ /users, /roles, /assets,  │     but router is             │
-│  │                                      │   │  ✅ /locations, /permissions  │     /shuttle-fso/*            │
-│  │ 2. shuttleTrackingApi                │   │  ✅ /operation-transactions   │                              │
-│  │    Calls /shuttle-tracking/*         │   │  ✅ /operation-entries        │  3. fsoTrackingApi            │
-│  │    Should be /shuttle-fso/*          │   │  ✅ /tanker-tracking           │     calls /fso-tracking/*     │
-│  │                                      │   │  🚫 /barge-trip (miss from FE)│     but router is             │
-│  │ 3. fsoTrackingApi                    │   │  🚫 /shuttle-fso (miss from FE)│     /shuttle-fso/*            │
-│  │    Calls /fso-tracking/*             │   │  🚫 /reports (partial match)   │                              │
-│  │    Should be /shuttle-fso/*          │   └───────────────────────────────┘  4. locationAccountingDay     │
-│  │                                      │                                        calls /location-accounting │
-│  │ 4. locationAccountingDaySettingApi   │   ┌─ UNUSED ROUTERS ─────────────┐     but router is             │
-│  │ 5. materialBalanceReportApi          │   │                               │     /locations/accounting-    │
-│  │ 6. outTurnReportApi                  │   │  /reports - no FE match       │     day-settings              │
-│  └──────────────────────────────────────┘   │  /vessel-stock-ledger - no FE │                              │
-│                                              │  /operation-tasks - no FE     │  5. materialBalanceReportApi  │
-│                                              └───────────────────────────────┘     calls /material-balance   │
-│                                                                                    but router is /reports    │
-│  ROOT CAUSE:                                                                                                │
-│  Frontend API modules hardcode endpoint paths without the backend's router prefix.                          │
-│  main.py registers with .include_router(router) — prefixes ARE applied → these calls return 404            │
+│  │  ... (33 more)                       │   │  ... (34 more)                │     now calls /barge-trip/*   │
+│  │  └──────────────────────────────────────┘   └───────────────────────────────┘                              │
+│  │                                                                                   2. shuttleTrackingApi     │
+│  │  ┌─ FIXED (6) ───────────────────────┐                                         now calls /shuttle-fso/*   │
+│  │  │                                      │                                        │                              │
+│  │  │ 1. bargeTrackingApi                  │   ┌─ ROUTER PREFIXES (ALL MATCH) ──┐  3. fsoTrackingApi            │
+│  │  │    Now calls /barge-trip/*           │   │                               │     now calls /shuttle-fso/* │
+│  │  │ 2. shuttleTrackingApi                │   │  ✅ /users, /roles, /assets    │                              │
+│  │  │    Now calls /shuttle-fso/*          │   │  ✅ /locations, /permissions   │  4. locationAccountingDay   │
+│  │  │ 3. fsoTrackingApi                    │   │  ✅ /operation-transactions    │     now calls                │
+│  │  │    Now calls /shuttle-fso/*          │   │  ✅ /operation-entries         │     /locations/accounting-   │
+│  │  │ 4. locationAccountingDaySettingApi   │   │  ✅ /barge-trip, /shuttle-fso  │     day-settings/*           │
+│  │  │    Now calls /locations/accounting-  │   │  ✅ /reports (via FE now)      │                              │
+│  │  │     day-settings/*                   │   └───────────────────────────────┘  5. materialBalanceReportApi  │
+│  │  │ 5. materialBalanceReportApi          │                                        now calls /reports/*      │
+│  │  │    Now calls /reports/fso/           │   ┌─ STILL UNUSED ──────────────┐                              │
+│  │  │     material-balance                 │   │                               │  6. outTurnReportApi          │
+│  │  │ 6. outTurnReportApi                  │   │  /vessel-stock-ledger - no FE │     now calls /reports/*      │
+│  │  │    Now calls /reports/out-turn-report│   │  /operation-tasks - no FE      │                              │
+│  │  │     /validation                      │   └───────────────────────────────┘                              │
+│  │  └──────────────────────────────────────┘                                                                  │
 │                                                                                                              │
-│  FIX: Prepend the router prefix to all endpoint paths in the 6 mismatched API modules                       │
+│  FIX APPLIED (2026-07-21): Prepend the router prefix to all endpoint paths in the 6 mismatched API modules   │
+│  ~19 endpoint paths corrected across 6 files                                                                │
+│                                                                                                              │
+│  REMAINING: /reports still has many endpoints (fso/otr, fso/outturn, export/xlsx, tank-stock-ledger/rebuild) │
+│  with no frontend consumers yet                                                                               │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```

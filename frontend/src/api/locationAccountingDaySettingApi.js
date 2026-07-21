@@ -72,8 +72,8 @@ export const getLocationAccountingDaySettings = async (filters = {}) => {
   const queryString = params.toString()
 
   const path = queryString
-    ? `/location-accounting-day-settings?${queryString}`
-    : '/location-accounting-day-settings'
+    ? `/locations/accounting-day-settings?${queryString}`
+    : '/locations/accounting-day-settings'
 
   const data = await apiGet(path)
 
@@ -82,7 +82,7 @@ export const getLocationAccountingDaySettings = async (filters = {}) => {
 
 export const createLocationAccountingDaySetting = async (setting) => {
   const data = await apiPost(
-    '/location-accounting-day-settings',
+    '/locations/accounting-day-settings',
     convertSettingToApi(setting)
   )
 
@@ -91,7 +91,7 @@ export const createLocationAccountingDaySetting = async (setting) => {
 
 export const updateLocationAccountingDaySetting = async (settingId, setting) => {
   const data = await apiPut(
-    `/location-accounting-day-settings/${settingId}`,
+    `/locations/accounting-day-settings/${settingId}`,
     convertSettingToApi(setting)
   )
 
@@ -99,5 +99,5 @@ export const updateLocationAccountingDaySetting = async (settingId, setting) => 
 }
 
 export const deleteLocationAccountingDaySetting = async (settingId) => {
-  return apiDelete(`/location-accounting-day-settings/${settingId}`)
+  return apiDelete(`/locations/accounting-day-settings/${settingId}`)
 }

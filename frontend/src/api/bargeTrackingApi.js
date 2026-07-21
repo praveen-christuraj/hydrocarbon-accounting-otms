@@ -37,27 +37,27 @@ const toTripEventPayload = (payload = {}) => ({
 export const getBargeTracking = async (convoyNumber) => {
   const convoy = String(convoyNumber || '').trim()
   if (!convoy) throw new Error('Convoy Number is required')
-  return apiGet(`/barge-tracking?convoy_number=${encodeURIComponent(convoy)}`)
+  return apiGet(`/barge-trip/barge-tracking?convoy_number=${encodeURIComponent(convoy)}`)
 }
 
 export const getTripTimelineByConvoy = async (convoyNumber) => {
   const convoy = String(convoyNumber || '').trim()
   if (!convoy) throw new Error('Convoy Number is required')
-  return apiGet(`/trips/by-convoy/${encodeURIComponent(convoy)}`)
+  return apiGet(`/barge-trip/trips/by-convoy/${encodeURIComponent(convoy)}`)
 }
 
 export const createTripEvent = async (payload) => {
-  return apiPost('/trip-events', toTripEventPayload(payload))
+  return apiPost('/barge-trip/trip-events', toTripEventPayload(payload))
 }
 
 export const createTripComparison = async (payload) => {
-  return apiPost('/trip-comparisons', payload)
+  return apiPost('/barge-trip/trip-comparisons', payload)
 }
 
 export const closeTrip = async (tripId, remarks = null) => {
-  return apiPost(`/trips/${Number(tripId)}/close`, { remarks })
+  return apiPost(`/barge-trip/trips/${Number(tripId)}/close`, { remarks })
 }
 
 export const reopenTrip = async (tripId, remarks = null) => {
-  return apiPost(`/trips/${Number(tripId)}/reopen`, { remarks })
+  return apiPost(`/barge-trip/trips/${Number(tripId)}/reopen`, { remarks })
 }

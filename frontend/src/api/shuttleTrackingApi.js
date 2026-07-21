@@ -66,7 +66,7 @@ const convertGroupFromApi = (g) => ({
 })
 
 export const getShuttleTracking = async (filters = {}) => {
-  const data = await apiGet(`/shuttle-tracking${buildQueryString(filters)}`)
+  const data = await apiGet(`/shuttle-fso/shuttle-tracking${buildQueryString(filters)}`)
   return {
     rows: (data.rows || []).map(convertGroupFromApi),
     totalGroups: Number(data.total_groups || 0),
@@ -82,7 +82,7 @@ export const closeShuttleVoyage = async ({
   shuttleAssetCode,
   closureRemarks,
 }) => {
-  return apiPost('/shuttle-voyages/close', {
+  return apiPost('/shuttle-fso/shuttle-voyages/close', {
     location_code: locationCode,
     shuttle_number: shuttleNumber,
     shuttle_asset_code: shuttleAssetCode,
@@ -99,7 +99,7 @@ export const reopenShuttleVoyage = async ({
   shuttleAssetCode,
   remarks,
 }) => {
-  return apiPost('/shuttle-voyages/reopen', {
+  return apiPost('/shuttle-fso/shuttle-voyages/reopen', {
     location_code: locationCode,
     shuttle_number: shuttleNumber,
     shuttle_asset_code: shuttleAssetCode,
@@ -109,7 +109,7 @@ export const reopenShuttleVoyage = async ({
 
 export const downloadShuttleVoyageXlsx = async ({ group_key }) => {
   await apiDownload(
-    `/shuttle-tracking/export/xlsx?group_key=${encodeURIComponent(group_key)}`,
+    `/shuttle-fso/shuttle-tracking/export/xlsx?group_key=${encodeURIComponent(group_key)}`,
     'shuttle_mtr.xlsx'
   )
 }

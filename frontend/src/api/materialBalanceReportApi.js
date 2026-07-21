@@ -66,8 +66,8 @@ export const getMaterialBalanceReport = async (filters = {}) => {
   const queryString = buildQueryString(filters)
 
   const path = queryString
-    ? `/material-balance-report?${queryString}`
-    : '/material-balance-report'
+    ? `/reports/fso/material-balance?${queryString}`
+    : '/reports/fso/material-balance'
 
   const data = await apiGet(path)
 
