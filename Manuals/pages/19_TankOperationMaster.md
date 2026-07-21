@@ -30,3 +30,38 @@ Manage tank-specific operations. This page handles operations that involve stora
 
 ## Permissions
 - **View:** View Tank Operation
+- **Manage:** Manage Tank Operation
+
+---
+
+## Full-Stack Architecture Diagram — TankOperationMaster
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────────────┐
+│ FRONTEND                       BACKEND                       DATA                        │
+│                                                                                          │
+│ TankOperationMaster tankOpApi    tank_operations.py          TankOperation               │
+│ ─────────────────── ──────────   ─────────────────           ──────────────────           │
+│ Props: locations[],  getOps()    GET  /tank-operations       id (PK)     │ Integer        │
+│        loggedInUser  createOp()  POST /tank-operations       location_code│String(50) IX  │
+│                      updateOp()  PUT  /tank-operations/{id}  op_code     │String(50) IX  │
+│  Form: location,     deleteOp()  DELETE /tank-operations/    op_label    │String(150)    │
+│  op_code, label,      ─────────  {id}                         op_category │String(50) IX  │
+│  category (OPENING,  conv:       ─────────────                 (OPENING/RECEIPT/PRODUCTION/ │
+│  RECEIPT, PRODUCTION opCode↔     Perm: ('View/Manage TK Op')  DISPATCH/DRAINING/CLOSING/   │
+│  DISPATCH, ...),     operation_  Validate: unique per loc     ADJUSTMENT)                  │
+│  sign (SET/IN/OUT/   code        Audit: module='Tank Ops'     op_sign  │String(20)        │
+│  NEUTRAL), sort_order opLabel↔   ─────────────                 (SET=declare, IN=increase,   │
+│                        op_label                                 OUT=decrease, NEUTRAL=none) │
+│                        category↔                                sort_order│Integer         │
+│                        operation_category                       description│Text?          │
+│                        sign↔                                    status│String(20)          │
+│                        operation_sign                           ──────────────────           │
+│                                                                  ──────────────────           │
+│  RELATIONSHIPS:                                                  TankStockLedger             │
+│    Location ──< TankOperation (per location)                      ────────────────           │
+│    TankOperation ──> TankStockLedger (drives stock movements)     Maps tank_operation_code    │
+│    TankStockLedger uses op_category + op_sign to determine         to stock movement sign     │
+│     whether stock increases, decreases, or is set                  (+/-/SET)                 │
+└──────────────────────────────────────────────────────────────────────────────────────────┘
+```

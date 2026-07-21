@@ -30,3 +30,33 @@ Manage barge seal records. This is a reference data page for the seal numbers us
 
 ## Permissions
 - **View:** View Barge Seal Master
+
+---
+
+## Full-Stack Architecture Diagram — BargeSealMaster
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ FRONTEND                        BACKEND                        DATA                                  │
+│                                                                                                      │
+│ BargeSealMaster   bargeSealApi   barge_seal_master.py         BargeSealMaster                       │
+│ ────────────────   ────────────  ──────────────────────       ───────────────                       │
+│ Props: assets[],   bulkUpdate()  POST /barge-seal-master/     id (PK) | Integer                     │
+│        assetCalib  ─────────────  bulk                         barge_asset_code | String(50)       │
+│        Tables[],   conv:         ────────────────              compartment | String(50)              │
+│        calibration bulkUpdate↔    (Bulk create/update)         seal_type (MANIFOLD/HATCH)           │
+│        Templates[], POST /barge- ────────────────              seal_number | String(100)            │
+│        loggedInUser  seal-master  Perm: ('View Barge Seal      is_master | Boolean                  │
+│                      /bulk        Master')                     status | String(20)                  │
+│  Manage seal                     Audit: module='Barge Seal    installed_at | DateTime               │
+│  numbers per                      Master'                     ───────────────                       │
+│  barge/compartment,              ────────────────                                                  │
+│  bulk import/update                                          USED BY: BargeTracking (seal           │
+│  master seal numbers                                          verification during Trip lifecycle)   │
+│  for verification                                                               BargeSealMaster     │
+│                                                                                 ───────────────     │
+│  DATA FLOW:                                                                                         │
+│  BargeSealMaster stores reference seals → BargeTracking compares observed                           │
+│  seals (from TripEvent) against master seal numbers for mismatch detection                         │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```

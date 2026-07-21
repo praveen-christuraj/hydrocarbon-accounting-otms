@@ -30,3 +30,35 @@ Configure which operation types are available at each location. This controls wh
 
 ## Permissions
 - **View:** View Location Operation Availability
+- **Manage:** Manage Location Operation Availability
+
+---
+
+## Full-Stack Architecture Diagram — LocationOperationAvailability
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ FRONTEND                          BACKEND                          DATA                              │
+│                                                                                                      │
+│ LocationOpAvailability  locOpAvailApi  location_operation_availability.py  LocationOpAvailability    │
+│ ──────────────────────  ────────────  ──────────────────────────────────  ──────────────────────      │
+│ Props: locations[]       getConfigs() GET /location-operation-availability  id (PK) | Integer        │
+│        loggedInUser      createConfig POST /location-operation-availability  location_code | String   │
+│                          updateConfig PUT  /location-operation-availability  operation_type_code      │
+│ Grid: select location,                 /{id}                                | String(80)             │
+│ select operation type,                  DELETE /location-operation-          is_available | Boolean   │
+│ toggle available/unavailable            availability/{id}                   settings_json | JSONB    │
+│ with optional settings                  ─────────────                        (per-location operation   │
+│ (e.g. default parameters) Perm: ('View/Manage LOC Op Avail')                   configuration)        │
+│                               Audit: module='LOC Op Avail'                 status | String(20)       │
+│                               ─────────────                                ──────────────────────      │
+│                                                                             ──────────────────────      │
+│                               conv:                                         UNIQUE: location_code +   │
+│                               getConfigs()↔GET /loc-op-avail               operation_type_code       │
+│                                                                                                        │
+│  CONTROL FLOW:                                                                                        │
+│  LocationOperationSummary (read-only view) reads same LocationOperationAvailability                   │
+│  OperationEntry checks this table to validate operation types for a location                          │
+│  OperationTemplateMaster filters templates by available operations for a location                     │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```

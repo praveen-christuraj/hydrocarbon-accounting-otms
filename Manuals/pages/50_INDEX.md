@@ -100,3 +100,56 @@ All API modules import from `apiClient.js` which provides:
 - Base URL: `VITE_API_BASE_URL` or `http://127.0.0.1:8000`
 - Auth: Bearer token from localStorage added automatically
 - 401 handling: auto-clears token on unauthorized response
+
+---
+
+## Full Full-Stack Architecture — System Overview
+
+```
+┌────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ FRONTEND (React/Vite, 49 pages)                  BACKEND (FastAPI, 39 routers)        DATA (PostgreSQL 16)  │
+│                                                                                                            │
+│  ┌─ App.jsx ──────────────────────────────────┐  ┌─ main.py ──────────────────────────┐   ~40 tables        │
+│  │                                            │  │  lifespan: start_backup_scheduler()│                    │
+│  │  ┌─ Router ───────────────────────────┐   │  │  include_router(auth)              │   Core Models:      │
+│  │  │ /login → LoginPage                 │   │  │  include_router(users)              │   User, Role,        │
+│  │  │ /users → UserMaster                │   │  │  ... (39 routers)                  │   Permission,        │
+│  │  │ /operations → OperationEntry       │   │  └────────────────────────────────────┘   Location, Asset  │
+│  │  │ /dashboard → Dashboard             │   │                                            OperationType,    │
+│  │  │ ... (45+ routes)                   │   │  ┌─ Dependencies ─────────────────────┐   OperationTxn      │
+│  │  └────────────────────────────────────┘   │  │  auth.py (JWT Bearer)              │                    │
+│  │                                            │  │  permissions.py (RBAC gate)       │   Tracking Models:  │
+│  │  ┌─ State Management ─────────────────┐   │  │  database.py (SQLAlchemy session)  │   Trip, TripEvent,  │
+│  │  │ All pages receive props from       │   │  └────────────────────────────────────┘   ShuttleVoyage,    │
+│  │  │ App.jsx: loggedInUser, locations[], │   │                                            FSOVoyage         │
+│  │  │ assets[], opTypes[], etc.          │   │  ┌─ Services ─────────────────────────┐                    │
+│  │  │ reload functions per domain        │   │  │  audit_service.py (create_audit    │   Ledger Models:    │
+│  │  └────────────────────────────────────┘   │  │    _log() — 150+ call sites)      │   TankStockLedger,  │
+│  │                                            │  │  transaction_helpers.py            │   VesselStockLedger │
+│  │  ┌─ API Layer ─────────────────────────┐   │  │  material_balance_helpers.py      │                    │
+│  │  │ 45 API modules (api/*.js)           │   │  └────────────────────────────────────┘   Reference:       │
+│  │  │ All import from apiClient.js:       │   │                                            Table11Factor,   │
+│  │  │  apiGet, apiPost, apiPut,           │   │  ┌─ auth.py ─────────────────────────┐   FlowmeterConfig,  │
+│  │  │  apiDelete, apiDownload             │   │  │  POST /auth/login                  │   CalibrationTemp  │
+│  │  │  → Bearer token → auto 401 handle   │   │  │  POST /auth/request-password-reset│                    │
+│  │  └────────────────────────────────────┘   │  │  POST /auth/reset-password         │   Admin:           │
+│  │                                            │  │  GET /auth/login-challenges        │   AuditLog,        │
+│  │  ┌─ Component Library ───────────────┐   │  └────────────────────────────────────┘   BackupJob,        │
+│  │  │ operationLayouts/:                 │   │                                            SystemNotif,     │
+│  │  │  TankGaugingLayout                │   │  ┌─ RBAC Chain ───────────────────────┐   OperationTask     │
+│  │  │  MultiTankBeforeAfterLayout       │   │  │  JWT→User→UserRole→Role→           │                    │
+│  │  │  TankerTruckLayout                │   │  │  RolePermission→Permission          │                    │
+│  │  │  TankerPayloadPreview             │   │  │  → require_user_permission()        │                    │
+│  │  │  StockMovementLayout              │   │  │  + evaluate_operation_workflow_     │                    │
+│  │  │  VesselCycleLayout                │   │  │    policy() for fine-grained         │                    │
+│  │  │  ShuttleTrackingLayout            │   │  └────────────────────────────────────┘                    │
+│  │  │  FSOTrackingLayout                │   │                                            ┌──────────┐    │
+│  │  │  FlowmeterReadingLayout           │   │                                            │  Redis?  │    │
+│  │  └────────────────────────────────────┘   │  ┌─ Correction Flow ──────────────────┐  │ (future  │    │
+│  │                                            │  │  Approved → Correction Request →  │  │  cache)  │    │
+│  │  ┌─ Print Reports ──────────────────┐   │  │  Admin Revoke Task → Txn→Draft,     │  └──────────┘    │
+│  │  │ PrintableTankGaugingReport       │   │  │  TankStockLedger→Reversed            │                    │
+│  │  │ PrintableMultiTankReport         │   │  └────────────────────────────────────┘                    │
+│  │  └────────────────────────────────────┘                                                              │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```

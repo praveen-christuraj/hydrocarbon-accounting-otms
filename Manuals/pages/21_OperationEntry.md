@@ -71,3 +71,48 @@ Complex state management includes:
 2. Transaction goes through workflow approval via OperationTaskManager
 3. Once approved, `TankStockLedger` is updated
 4. Reports pull from approved transactions
+
+---
+
+## Full-Stack Architecture Diagram — OperationEntry
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ FRONTEND                               BACKEND                              DATA                     │
+│                                                                                                      │
+│ OperationEntry (1993 lines)            operation_entries.py               OperationTransaction       │
+│ ──────────────────────────             ────────────────────               ────────────────────        │
+│                                                                                                      │
+│  ┌─ Layout Engine ──────────┐          GET  /operation-templates/         id (PK)         │ Integer  │
+│  │ Based on template's     │          │      {id}/layout-detail           ticket_number  │ String   │
+│  │ entry_layout_type:      │          │                                    location_code │ String   │
+│  │                        │          ├─ POST /operation-entries           asset_code     │ String   │
+│  │ TankGaugingLayout      │          │  (creates OpTransaction + values)   op_type_code   │ String   │
+│  │ MultiTankBeforeAfter   │          │                                    template_id    │ Integer  │
+│  │ TankerTruckLayout      │          ├─ PUT /operation-entries/{id}       transaction    │ String   │
+│  │ StockMovementLayout    │          │  (updates pending entry)            _date         │          │
+│  │ VesselCycleLayout      │          │                                    status        │ String   │
+│  │ ShuttleTrackingLayout  │          ├─ DELETE /operation-entries/{id}    field_values   │ JSONB   │
+│  │ FSOTrackingLayout      │          │                                    ────────────────────        │
+│  │ FlowmeterReadingLayout │          │  Perm: ('View Op Template',                                │
+│  └────────────────────────┘          │         'Manage Op')              OperationTransactionValue │
+│                                      │  Audit: module='Op Entry'         ────────────────────        │
+│  ┌─ Data Sources ──────┐            ────                                 id, transaction_id (FK),   │
+│  │ operationTypes      │            conv:                               field_code, field_label,    │
+│  │ operationTemplates  │            createOpEntry() ↔                   field_value, field_type     │
+│  │ entries[]           │            POST /operation-entries                                       │
+│  │ loggedInUser       │            (sends layout-specific payload)     TankerTruckTracking           │
+│  └─────────────────────┘                                                 ────────────────────        │
+│                                                                          shuttle_number (ref)       │
+│  ┌─ Payload Types ───────┐          RELATED:                           ────────────────────        │
+│  │ tank_gauging_payload  │          tankerTrackingApi.js               BargeTripTracking             │
+│  │ multi_tank_payload    │          ─────────────                       ────────────────────        │
+│  │ shuttle_payload       │          GET /tanker-tracking/               convoy_number (ref)         │
+│  │ flowmeter_payload     │          sender/receiver                    ────────────────────        │
+│  └───────────────────────┘                                                                        │
+│                                                                                                  │
+│  OPERATION DATA FLOW:                                                                            │
+│  Form Input → Layout Component → createOpEntry() → POST /operation-entries →                      │
+│  Router (operation_entries.py) → CREATE OperationTransaction(field_values=JSONB)→ Returns {id}     │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```

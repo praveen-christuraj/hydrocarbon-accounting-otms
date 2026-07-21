@@ -34,3 +34,46 @@ View the tank stock ledger — a running record of inventory changes for each ta
 
 ## Permissions
 - **View:** View Tank Stock Ledger
+
+---
+
+## Full-Stack Architecture Diagram — TankStockLedger
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ FRONTEND                          BACKEND                          DATA                                       │
+│                                                                                                              │
+│ TankStockLedger   tankStockApi     tank_stock_ledger.py           TankStockLedger                           │
+│ ────────────────   ─────────────   ───────────────────            ────────────────                           │
+│ Props:             getLedger()     GET /tank-stock-ledger         id (PK) | Integer                          │
+│  loggedInUser      getSummary()    GET /tank-stock-ledger/        transaction_id (FK→OpTxn)                │
+│ ─────────────       getDailySumm()   summary                       operation_number | String                  │
+│ Filters: tank,     ─────────────   GET /tank-stock-ledger/        tank_number | String(100)                  │
+│ date range,         conv:           daily-summary                  location_code | String(50)                 │
+│ location            getLedger↔     ─────────────                  tank_asset_code | String(50)               │
+│                     GET /tank-     Perm: ('View Tank Stock         product_name | String                      │
+│ Table columns:      stock-ledger    Ledger')                       before_volume | Float                      │
+│ Date, Ticket #,     getSummary↔    Audit: module='Tank Stock      after_volume | Float                       │
+│ Ticket #, Operation, GET /tank-     Ledger'                        volume_change | Float                     │
+│ Location, Tank,      stock-ledger  ─────────────                  before_mass | Float                        │
+│ Before Vol, After   /summary                                                                                  │
+│ Vol, Change,         getDailySumm↔  ─────────────                 after_mass | Float                         │
+| Status, Remarks | GET /tank-      SHARED:                         mass_change | Float                        │
+│ ─────────────        stock-ledger  operation_transactions.py:      before_ullage | Float                      │
+│ ─────────────        /daily-summary create_tank_stock_ledger_      after_ullage | Float                       │
+│                       conv:API       from_approved_transaction()   ullage_change | Float                      │
+│  FEATURES:            conv          ─ auto-creates records        before_temperature | Float                 │
+│  Opening bal,                        on OpTxn APPROVED,            after_temperature | Float                  │
+│  Receipts,                           for templates with:           before_density | Float                     │
+│  Deliveries,                         - Stock Movement              after_density | Float                      │
+│  Adjustments,                        - Multi-Tank Before/After     opening_balance_bbl | Float               │
+│  Closing bal                         - Tank Gauging                closing_balance_bbl | Float                │
+│  Daily summary                                                      running_balance_bbl | Float               │
+│  Manual adjustment                   REVERSAL:                     operation_date | Date                     │
+│                                      correction_requests.py        status (Active/Correction Hold/          │
+│                                      sets status='Correction        Reversed)                                │
+│                                      Hold' on correction,          created_by | String                       │
+│                                      restores to 'Active' on                                              │
+│                                      denial, reverses on revoke                                             │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```

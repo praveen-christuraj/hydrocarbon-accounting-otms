@@ -55,3 +55,38 @@ Manage database backup and restore operations. Supports automatic scheduled back
 ## Permissions
 - **View:** View Backup
 - **Manage:** Manage Backup
+
+---
+
+## Full-Stack Architecture Diagram — BackupRecovery
+
+```
+┌────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ FRONTEND                          BACKEND (backup_restore.py)          DATA                               │
+│                                                                                                            │
+│ BackupRecovery     backupApi      backup_restore.py                   BackupSettings                      │
+│ ──────────────     ─────────      ────────────────                    ───────────────                     │
+│ Backup settings:    getSettings() GET  /backup/settings                id (PK) | Integer                  │
+│ schedule (cron),    saveSettings() POST /backup/settings               schedule_cron | String(100)        │
+│ retention count,    manualBackup()POST /backup/backups/manual          retention_count | Integer          │
+│ storage location    cleanup()     POST /backup/backups/cleanup         storage_path | String(500)         │
+│ ─────────────       getRequests() GET  /backup/backup-restore-requests auto_backup_enabled | Boolean      │
+│ Manual backup:      ─────────     ────────────────                     last_backup_at | DateTime          │
+│ trigger, view       conv:         Perm: ('View/Manage Backup')         ───────────────                     │
+│ progress, download  getSettings↔  Audit: module='Backup Restore'                                          │
+│ ─────────────       GET /settings ────────────────                     BackupJob                          │
+│ Restore: create     manualBackup↔ ────────────────                     ─────────                          │
+│ restore request,    POST /backups/ SHARED:                             id, job_type (manual/auto/schedule)│
+│ execute restore     manual        main.py: start_backup_scheduler()    status, started_at, completed_at    │
+│ ─────────────       ─────────────  runs in background thread           file_path, file_size               │
+│ Cleanup: purge old  ─────────────                                       error_message, created_by         │
+│ backups             ─────────────                                       ─────────                          │
+│                                                                                                            │
+│  SCHEDULER FLOW:                         BackupRestoreRequest           BackupRestoreValidation            │
+│  main.py on startup → start_backup_     ────────────────────            ────────────────────              │
+│   scheduler() → runs cron → creates      id, backup_id, requested_by,   id, request_id, status            │
+│   BackupJob records → cleanup on           status (Pending/Approved/    validation_result, validated_by   │
+│   retention policy                        Rejected/Executed/Failed),     ────────────────────              │
+│                                           executed_at, created_at                                          │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```

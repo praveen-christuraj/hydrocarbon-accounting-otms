@@ -63,3 +63,41 @@ Every mutation across ALL routers calls this function. It records:
 
 ## Permissions
 - **View:** View Audit Log
+
+---
+
+## Full-Stack Architecture Diagram — AuditLog
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ FRONTEND                          BACKEND                          DATA                                      │
+│                                                                                                              │
+│ AuditLog           auditLogApi     audit_logs.py                   AuditLog                                 │
+│ ─────────           ────────────   ─────────────                   ─────────                                 │
+│ Paginated table     getLogs()      GET /audit-logs                 id (PK) | BigInt                         │
+│ with filters:       ────────────    ?page=&page_size=&module=      module_name | String(100)                │
+│ module, action,     conv:           &action=&date_from=&date_to=   action | String(100)                     │
+│ date range, user    getLogs↔        &user_id=&search=              entity_type | String(100)               │
+│                     GET /audit-logs ─────────────                   entity_id | Integer?                     │
+│ Columns:                           Perm: ('View Audit Log')        entity_label | String(200)               │
+│ Timestamp, Module, ─────────────   Audit: module='Audit Log'       ticket_number | String?                  │
+│ Action, Entity,    ─────────────  ─────────────                    operation_number | String?                │
+| Performed By,       Cross-cutting  ─────────────                   old_status | String(50)                  │
+| Old Status, New     service:                                        new_status | String(50)                  │
+| Status, Remarks,    create_audit_log()                             performed_by | String(100)               │
+| Details                          Called from every router          remarks | Text?                           │
+│                                    after every mutation.           request_path | String(500)               │
+│                                    Records:                        details | JSONB                          │
+│                                    - User identity                 created_at | DateTime                    │
+│                                    - Module/action                                                          │
+│                                    - Entity + ID                                                            │
+│                                    - Old/new status                  AUDIT SERVICE:                         │
+│                                    - Changes snapshot (JSONB)        app/services/audit_service.py           │
+│                                    - Request path                   create_audit_log(db, module_name,       │
+│                                                                      action, current_user, entity_type,    │
+│                                                                      entity_id, entity_label,              │
+│                                                                      ticket_number, operation_number,      │
+│                                                                      old_status, new_status, remarks,      │
+│                                                                      request_path, details)                │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```

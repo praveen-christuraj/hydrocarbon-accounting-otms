@@ -25,3 +25,32 @@ Manage links between prime movers (tractors/trucks) and tankers (trailers). This
 
 ## Permissions
 - **View:** View Asset (shared permission)
+
+---
+
+## Full-Stack Architecture Diagram — PrimeMoverTankerLinkMaster
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ FRONTEND                         BACKEND                         DATA                                │
+│                                                                                                      │
+│ PrimeMoverTankerLink  primeMoverLinkApi prime_mover_tanker_links.py  PrimeMoverTankerLink           │
+│ ────────────────────  ────────────────  ──────────────────────────  ────────────────────             │
+│ Props: assets[]        getLinks()       GET /prime-mover-tanker-links   id (PK) | Integer            │
+│        loggedInUser    createLink()     POST /prime-mover-tanker-links  prime_mover_code|String(80) │
+│                        updateLink()     PUT /prime-mover-tanker-links   tanker_code | String(80)     │
+│ Select prime mover                     /{id}                            link_date | Date              │
+│ (tractor) + tanker                     DELETE /prime-mover-tanker-links  unlink_date | Date?          │
+│ (trailer) from assets,                  /{id}                            status | String(20)          │
+│ set link date           conv:          ──────────────                    created_by | String          │
+│                        getLinks()↔     Perm: ('View Asset')             ────────────────────          │
+│ Unlink date optional   GET /prime-     Audit: module='Prime Mover       ────────────────────          │
+│                        mover-tanker-    Tanker Link'                    UNIQUE: prime_mover_code +   │
+│                        links           ──────────────                    tanker_code (active only)   │
+│                        createLink↔                                                                   │
+│ USED BY:               POST /prime-    HELPS: Track which tanker                                      │
+│ TankerTracking (to     mover-tanker-   (trailer) is paired with which                                 │
+│ determine active       links           prime mover (tractor) at any                                  │
+│ tanker config)                          given time for tanker truck ops                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```

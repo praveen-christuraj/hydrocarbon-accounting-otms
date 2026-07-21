@@ -52,3 +52,37 @@ TankerTracking (acknowledge receipt) →
 Auto-creates TankerReceiptAcknowledgement → 
 Trip/TripEvent created for tracking
 ```
+
+---
+
+## Full-Stack Architecture Diagram — TankerTracking
+
+```
+┌────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ FRONTEND                          BACKEND                         DATA                                 │
+│                                                                                                        │
+│ TankerTracking     tankerTrackApi   tanker_tracking.py          TankerReceiptAcknowledgement          │
+│ ────────────────    ──────────────  ───────────────────         ────────────────────────────           │
+│ Views: incoming     acknowledge()  POST /tanker-tracking/       id (PK) | Integer                       │
+│ deliveries,         closeMovement  acknowledge                   transaction_id (FK→OpTxn)              │
+│ receipt            ()              ────────────────              acknowledged_by | String                │
+│ acknowledgment,                     (Seal checks: port,         acknowledged_at | DateTime              │
+│ seal verification   conv:          stbd manifold, pumproom)     seal_port_manifold | String              │
+│                     ackMethod↔                                    seal_stbd_manifold | String            │
+│ TankerPayload       POST /tanker-  POST /tanker-tracking/close   seal_pumproom | String                 │
+│ Preview component   tracking/      ────────────────              receiver_notes | String                 │
+│ (shows computed      acknowledge   (Close out movement)          status | String (Open/Closed)          │
+│ values for                        ─────────────                  ────────────────────────────           │
+│ approval)            closeMethod↔  Perm: ('View/Manage                                                    │
+│                      POST /tanker-  Tanker Tracking')           Trip (auto-created on ack)              │
+│ Convoy ref:          tracking/     Audit: module='Tanker         ────────────                           │
+│ convoy_number from   close          Tracking'                    convoy_number | String PK              │
+│ OperationTransaction               ─────────────                 status (OPEN/CLOSED)                   │
+│                                                                  primary_barge_asset_code               │
+│  FLOW:                                                                                                  │
+│  OperationEntry(TankerTruck) → OpTransaction(Approved) →                                                │
+│    TankerTracking shows pending → Enter receipt ack with seals →                                        │
+│    POST /acknowledge → Trip auto-created → TripEvent added →                                            │
+│    POST /close → status=CLOSED                                                                          │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```

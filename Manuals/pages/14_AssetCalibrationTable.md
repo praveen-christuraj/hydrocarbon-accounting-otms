@@ -42,3 +42,34 @@ Calibration data feeds into:
 - Material balance report calculations
 - OutTurn report calculations
 - Tank stock ledger valuations
+
+---
+
+## Full-Stack Architecture Diagram — AssetCalibrationTable
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ FRONTEND                              BACKEND                              DATA                  │
+│                                                                                                  │
+│ AssetCalibTable       assetCalibApi    asset_calib_tables.py    AssetCalibrationTable            │
+│ ──────────────────    ─────────────    ─────────────────────     ─────────────────────            │
+│ Props: assets[],      getTables()      GET  /asset-calib-tables  id (PK)        │ Integer        │
+│        calibTemplates createTable()    POST /asset-calib-tables  calib_name     │ String(150)    │
+│        calibTables[]  updateTable()    PUT  /asset-calib-tables/ asset_code     │ String(80)     │
+│        reloadTables() deleteTable()    DELETE /asset-calib-tables template_id   │ FK → CT.id     │
+│        loggedInUser    ─────────────    /{id}                      effective_date│ Date           │
+│                        calibName↔      ─────────────               remarks      │ Text?          │
+│  Select Asset +        calib_name       Perm: ('View/Manage       status        │ String(20)     │
+│  Template → loads      assetCode↔        Asset Calibration')       ─────────────────────         │
+│  calibration data      asset_code       Validates: template                  │                  │
+│                        templateId↔        exists                   CalibrationData (child)       │
+│  Enter data rows       template_id      Audit: module='Asset       id (PK)   │ Integer          │
+│  for each column                         Calibration'              calib_tbl_id│FK → ACT.id      │
+│  defined in template                     ─────────────              row_number │ Integer          │
+│                                          Data rows stored as       row_data   │ JSONB           │
+│                                          JSONB for flexibility     UNIQUE(table_id, row_number)   │
+│                                                                                                  │
+│  RELATIONSHIP: Template defines columns → CalibTable instantiates → CalibData stores row_values  │
+│  DOWNSTREAM: Tank gauging (OperationEntry) uses interpolation against CalibrationData            │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+```

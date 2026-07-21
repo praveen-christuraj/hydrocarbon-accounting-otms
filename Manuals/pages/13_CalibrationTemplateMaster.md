@@ -33,3 +33,36 @@ Create and manage calibration templates. Calibration templates define the struct
 
 ## Permissions
 - **View:** View Calibration Template
+
+---
+
+## Full-Stack Architecture Diagram — CalibrationTemplateMaster
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────────────┐
+│ FRONTEND (React)                   BACKEND (FastAPI)            DATA (PostgreSQL)        │
+│                                                                                          │
+│ CalibTemplateMaster    calibTemplApi     calib_templates.py     CalibrationTemplate      │
+│ ────────────────────   ─────────────     ─────────────────       ──────────────────       │
+│ Props: assetTypes[],   getTemplates()    GET  /calib-templates   id (PK)    │ Integer    │
+│        calibTemplates  createTemplate()  POST /calib-templates   template   │ String(150)│
+│        reloadCT()      updateTemplate()  PUT  /calib-templates/   name       │ UNIQUE IX   │
+│        loggedInUser    deleteTemplate()  DELETE /calib-templates/ asset_type │ String(50) │
+│                         ─────────────     {id}                   _code      │             │
+│ Template form: name,   templateName↔     ─────────────           calib_type │ String(100)│
+│ asset_type_code,       template_name     Perm: ('View/Manage    description│ Text?      │
+│ calib_type, columns     assetTypeCode↔    Calibration Template') status    │ String(20) │
+│ (dynamic CRUD)          asset_type_code  Validation: unique name            │             │
+│                         calibType↔       Audit: module='CT'     ──────────────────        │
+│                         calibration_type                                   │             │
+│                         column CRUD inline                     CalibrationTemplateColumn  │
+│                                                                ─────────────────────────    │
+│  Template has child COLUMNS:                                    id (PK)     │ Integer     │
+│  colName, dataType, unit, required,                             template_id │ FK → CT.id   │
+│  interpolation_role, sort_order                                  col_name    │ String(120) │
+│                                                                  data_type   │ String(50)  │
+│                                                                  unit,interp,│ sort_order   │
+│                                                                  is_required  │ dec check  │
+│                                                                  UNIQUE(template_id, col_name)  │
+└──────────────────────────────────────────────────────────────────────────────────────────┘
+```

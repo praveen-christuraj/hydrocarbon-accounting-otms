@@ -40,3 +40,37 @@ MT = LT × 1.01605
 
 ## Permissions
 - **View:** View Asset Calibration (shared permission)
+- **Manage:** Manage Asset Calibration
+
+---
+
+## Full-Stack Architecture Diagram — Table11FactorMaster
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ FRONTEND                          BACKEND                        DATA                                   │
+│                                                                                                          │
+│ Table11FactorMaster  table11Api   table11_factors.py            Table11Factor                          │
+│ ───────────────────  ──────────   ───────────────────           ──────────────                          │
+│ Props: loggedInUser   getFactors() GET /table11-factors         id (PK) | Integer                       │
+│                       createFact() POST /table11-factors        temperature | Float    (INDEXED)       │
+│ CRUD for factors:     updateFact() PUT /table11-factors/{id}    density | Float        (INDEXED)       │
+| temperature, density,  deleteFact() DELETE /table11-factors/{id} api_gravity | Float    (INDEXED)       │
+| api_gravity, vcf,     bulkImport() POST /table11-factors/bulk   vcf | Float (Volume Correction Factor) │
+| lt_factor                          ─────────────                 lt_factor | Float (Long Ton factor)     │
+| (from ASTM Table 11)   conv:       Perm: ('View/Mng Asset       source_reference | String               │
+|                         getFactors↔ Cal')                        effective_from | Date                  │
+| Bulk import for        GET /factors Audit: module='Table11'      effective_to | Date?                    │
+| large factor tables    createFact↔ ─────────────                  status | String(20)                    │
+|                         POST /factors ─────────────              ──────────────                          │
+|                                                                                                           │
+|  USED BY: TankCalculatedSummary (OperationTransactionDetail)                                              │
+|            Tank Gauging calculation engine:                                                               │
+|            GSV = GOV × VCF (looked up from Table11 by temp + density)                                     │
+|            LT = NSV × LT_Factor (from Table 11)                                                          │
+|            MT = LT × 1.01605                                                                             │
+|                                                                                                           │
+|  FORMULA CHAIN:                                                                                          │
+|  Dip cm → TOV (Tank Table) → -Free Water → GOV → ×VCF(Table11) → GSV → -BSW → NSV → ×LT(Table11) → LT │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```

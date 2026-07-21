@@ -49,3 +49,59 @@ User Master, Role Master, Permission Master, Role Permission Assignment, User Ro
 ## Permission Requirements
 - **View:** View Permission
 - **Manage:** Manage Permission
+
+---
+
+## Full-Stack Architecture Diagram — PermissionMaster
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                        FRONTEND LAYER (React SPA)                               │
+│                                                                                 │
+│  PermissionMaster.jsx         permissionApi.js          apiClient.js            │
+│  ────────────────────         ─────────────────         ────────────             │
+│  Props: permissions[],        getPermissions()           fetch() + JWT           │
+│         reloadPermissions(),   ├─ apiGet('/permissions')  apiGet/Put/Post/Delete │
+│         loggedInUser          createPermission()          ────────────           │
+│                               └─ apiPost('/permissions')                         │
+│  CRUD: Create/Edit/Delete     updatePermission()          camelCase ↔ snake_case │
+│  Search: by name/module       └─ apiPut('/perms/{id})    permissionName ↔ perm  │
+│                               deletePermission()          moduleName ↔ mod_nam   │
+│                               └─ apiDelete('/perms/{id})                        │
+└──────────────────────────────────────────────────────────────────┬──────────────┘
+                                                                   │
+┌──────────────────────────────────────────────────────────────────┴──────────────┐
+│                        BACKEND LAYER (FastAPI)                                   │
+│                                                                                 │
+│  permissions.py (prefix: /permissions)                                          │
+│  ─────────────────────────────────                                               │
+│  GET  /permissions          → list (paginated, filterable by search + module)   │
+│  POST /permissions          → create (checks unique per module)                  │
+│  PUT  /permissions/{id}     → update (checks duplicate excluding self)           │
+│  DELETE /permissions/{id}   → delete (blocks if assigned to roles)              │
+│  POST /permissions/seed     → seed standard permissions from STANDARD_PERMISSIONS│
+│                                                                                 │
+│  Schemas: PermissionCreate / PermissionResponse                                  │
+│    permission_name: str, module_name: str, description: str?, status: str        │
+│    (Response: + id, created_at, updated_at)                                      │
+│                                                                                 │
+│  Dependencies: get_current_user_from_token() → require_user_permission()        │
+│  Audit: module_name='Permission Master'                                         │
+└──────────────────────────────────────────────────────────────────┬──────────────┘
+                                                                   │
+┌──────────────────────────────────────────────────────────────────┴──────────────┐
+│                        DATA LAYER (SQLAlchemy + PostgreSQL)                      │
+│                                                                                 │
+│  Permission (permissions)                  RolePermission (role_permissions)    │
+│  ────────────────────────                  ─────────────────────────────         │
+│  id (PK)          │ Integer                id (PK)          │ Integer           │
+│  permission_name  │ String(120)            role_id          │ FK → roles.id     │
+│  module_name      │ String(120)            permission_id    │ FK → permissions   │
+│  description      │ Text?                  created_at       │ DateTime          │
+│  status           │ String(20)             UNIQUE(role_id, permission_id)       │
+│  created_at       │ DateTime                                                        │
+│  updated_at       │ DateTime               RBAC Chain:                            │
+│  UNIQUE(permission_name, module_name)      User → Role → Permission              │
+│                                            (via UserRole → RolePermission)       │
+└──────────────────────────────────────────────────────────────────────────────────┘
+```

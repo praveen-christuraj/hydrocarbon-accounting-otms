@@ -137,3 +137,50 @@ For each mismatched API module, prepend the router prefix to all endpoint paths:
 - apiGet('/out-turn-report?...')
 + apiGet('/reports/out-turn-report/validation?...')
 ```
+
+---
+
+## Architecture Diagram — API Routing Verification
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ FRONTEND API MODULES (45)                    BACKEND ROUTERS (39)              ROUTING STATUS                 │
+│                                                                                                              │
+│  ┌─ VERIFIED MATCH (38/44) ──────────────┐   ┌─ 39 ROUTERS ──────────────────┐  ✅ 38 modules correctly      │
+│  │                                      │   │                               │     hit their backend prefix  │
+│  │  userApi     → /users                │   │  users.py       → /users      │                              │
+│  │  roleApi     → /roles                │   │  roles.py       → /roles      │  ⚠️  6 modules have           │
+│  │  assetApi    → /assets               │   │  assets.py      → /assets     │     routing mismatches:       │
+│  │  permissionApi→ /permissions         │   │  permissions.py → /permissions│                              │
+│  │  locationApi → /locations            │   │  locations.py   → /locations  │  1. bargeTrackingApi          │
+│  │  ... (33 more)                       │   │  ... (34 more)                │     calls /barge-tracking/*   │
+│  └──────────────────────────────────────┘   └───────────────────────────────┘     but router is            │
+│                                                                                    /barge-trip/*            │
+│  ┌─ MISMATCHED (6) ─────────────────────┐                                         (missing prefix)         │
+│  │                                      │                                        │                              │
+│  │ 1. bargeTrackingApi                  │   ┌─ ROUTER PREFIXES ──────────────┐  2. shuttleTrackingApi        │
+│  │    Calls /barge-tracking/*           │   │                               │     calls /shuttle-tracking/* │
+│  │    Should be /barge-trip/*           │   │  ✅ /users, /roles, /assets,  │     but router is             │
+│  │                                      │   │  ✅ /locations, /permissions  │     /shuttle-fso/*            │
+│  │ 2. shuttleTrackingApi                │   │  ✅ /operation-transactions   │                              │
+│  │    Calls /shuttle-tracking/*         │   │  ✅ /operation-entries        │  3. fsoTrackingApi            │
+│  │    Should be /shuttle-fso/*          │   │  ✅ /tanker-tracking           │     calls /fso-tracking/*     │
+│  │                                      │   │  🚫 /barge-trip (miss from FE)│     but router is             │
+│  │ 3. fsoTrackingApi                    │   │  🚫 /shuttle-fso (miss from FE)│     /shuttle-fso/*            │
+│  │    Calls /fso-tracking/*             │   │  🚫 /reports (partial match)   │                              │
+│  │    Should be /shuttle-fso/*          │   └───────────────────────────────┘  4. locationAccountingDay     │
+│  │                                      │                                        calls /location-accounting │
+│  │ 4. locationAccountingDaySettingApi   │   ┌─ UNUSED ROUTERS ─────────────┐     but router is             │
+│  │ 5. materialBalanceReportApi          │   │                               │     /locations/accounting-    │
+│  │ 6. outTurnReportApi                  │   │  /reports - no FE match       │     day-settings              │
+│  └──────────────────────────────────────┘   │  /vessel-stock-ledger - no FE │                              │
+│                                              │  /operation-tasks - no FE     │  5. materialBalanceReportApi  │
+│                                              └───────────────────────────────┘     calls /material-balance   │
+│                                                                                    but router is /reports    │
+│  ROOT CAUSE:                                                                                                │
+│  Frontend API modules hardcode endpoint paths without the backend's router prefix.                          │
+│  main.py registers with .include_router(router) — prefixes ARE applied → these calls return 404            │
+│                                                                                                              │
+│  FIX: Prepend the router prefix to all endpoint paths in the 6 mismatched API modules                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```

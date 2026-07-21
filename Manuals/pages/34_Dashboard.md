@@ -59,3 +59,48 @@ Interactive data dashboard with customizable grid layout and ECharts visualizati
 
 ## Permissions
 - **View:** View Dashboard
+
+---
+
+## Full-Stack Architecture Diagram — Dashboard
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ FRONTEND (React)                            BACKEND (FastAPI)           DATA                             │
+│                                                                                                          │
+│ Dashboard (973 lines)                        dashboard.py                DashboardConfig                 │
+│ ─────────────────────                       ────────────                ───────────────                  │
+│                                                                                                          │
+│  ┌─ Grid Layout ───────────────┐            GET /dashboard/configs      id (PK) | Integer               │
+│  │ React-Grid-Layout           │            GET /dashboard/configs/{id}  config_name | String(150)       │
+│  │ Drag-and-drop widgets       │            GET /dashboard/data         description | Text?              │
+│  │ Responsive WidthProvider    │            POST /dashboard/configs     widget_defs | JSONB              │
+│  └────────────────────────────┘            PUT /dashboard/configs/{id}   (array of widget configs)       │
+│                                             DELETE /dashboard/configs/  layout_json | JSONB              │
+│  ┌─ Widget Types ─────────────┐             {id}                         (grid positions)                │
+│  │ ECharts: bar/line/pie/etc  │            POST /dashboard/configs/    status (Draft/Published)         │
+│  │ KPI value cards            │             {id}/publish                created_by | String              │
+│  │ Custom param queries       │            POST /dashboard/configs/     created_at | DateTime            │
+│  └────────────────────────────┘             {id}/revert                 published_at | DateTime?         │
+│                                             ─────────────               ───────────────                  │
+│  ┌─ Data Caching ────────────┐             Perm: ('View Dashboard',                                   │
+│  │ Cache key: dataSource_    │              'Manage Dashboard')         DashboardWidgetSettings          │
+│  │  Code::serializedParams   │             Audit: module='Dashboard'    ────────────────────             │
+│  │ Prevents redundant API    │             ─────────────                 widget_type (CHART/KPI/TABLE)  │
+│  │  calls                    │                                           data_source_code | String       │
+│  └────────────────────────────┘             ─────────────                param_json | JSONB              │
+│                                              conv:                      ────────────────────             │
+│  ┌─ Parameter Resolution ───┐              getDashboardConfigs↔                                          │
+│  │ $location_code → resolves│              GET /dashboard/configs                                        │
+│  │ {{location_code}} → same │              fetchDashboardData↔                                           │
+│  └──────────────────────────┘              POST /dashboard/data                                           │
+│                                                                                                          │
+│  ┌─ Widget State ───────────┐                                                                           │
+│  │ dashboardConfigs[]       │                                                                           │
+│  │ selectedConfig           │      DATA FLOW:                                                           │
+│  │ widgets[]                │      Dashboard loads config → renders widgets →                            │
+│  │ widgetLayouts (grid pos) │      each widget calls fetchDashboardData →                               │
+│  │ widgetData (cache Map)   │       resolves params → executes data source →                            │
+│  └──────────────────────────┘       returns data → ECharts renders chart                                │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```

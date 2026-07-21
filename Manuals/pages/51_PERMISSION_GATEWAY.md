@@ -127,3 +127,75 @@ def update_status(
 ```
 
 This pattern repeats across ALL protected endpoints — making `require_user_permission()` and `create_audit_log()` the two most cross-cutting functions in the entire system.
+
+---
+
+## Architecture Diagram — Permission Gateway
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ REQUEST FLOW:  JWT Auth → RBAC Gate → Workflow Policy → Action → Audit Log                                │
+│                                                                                                              │
+│  ┌──────────┐    ┌────────────────────┐    ┌──────────────────────┐    ┌──────────────┐    ┌──────────────┐ │
+│  │  Client   │───►│  auth.py          │───►│  permissions.py     │───►│  Router      │───►│  audit_      │ │
+│  │  (React)  │    │  get_current_user │    │  require_user_      │    │  Handler     │    │  service.py  │ │
+│  │ JWT Token │    │  _from_token()    │    │  permission()        │    │  (Business   │    │  create_     │ │
+│  └──────────┘    └────────────────────┘    └──────────────────────┘    │  Logic)     │    │  audit_log() │ │
+│                                                 │                      └──────────────┘    └──────────────┘ │
+│                                                 ▼                                                                  │
+│                                          ┌────────────────┐                                                         │
+│                                          │  Is Admin?     │───YES──► ALLOW (bypass all checks)                      │
+│                                          └────────────────┘                                                         │
+│                                                 │ NO                                                               │
+│                                                 ▼                                                                  │
+│                                          ┌────────────────┐                                                         │
+│                                          │  RBAC Chain    │                                                         │
+│                                          │  User→UserRole │───┐                                                     │
+│                                          │  →Role→RolePerm│   │                                                     │
+│                                          │  →Permission   │◄──┘                                                     │
+│                                          └────────────────┘                                                         │
+│                                                 │                                                                  │
+│                                          ┌──────▼───────┐      ┌──────────────────────────────────────────────┐    │
+│                                          │  Has Required │──NO──►  403 Forbidden                              │    │
+│                                          │  Permission?  │      │  "Permission required: {name}"             │    │
+│                                          └──────┬───────┘      └──────────────────────────────────────────────┘    │
+│                                                 │ YES                                                              │
+│                                                 ▼                                                                  │
+│                                          ┌────────────────┐      ┌──────────────────────────────────────┐          │
+│                                          │  Workflow      │      │  OperationWorkflowPolicy:             │          │
+│                                          │  Policy Check  │──►   │  action_code + context (op_type/     │          │
+│                                          │  (if applicable)│      │  asset_type/location/template)      │          │
+│                                          └──────┬─────────┘      │  → FIND matching policy              │          │
+│                                                 │                │  → CHECK user roles or direct assign │          │
+│                                                 ▼                │  → ALLOW/DENY with reason            │          │
+│                                          ┌────────────────┐      └──────────────────────────────────────┘          │
+│                                          │  Review        │                                                         │
+│                                          │  Confirmation  │──required for Submit & Approve                           │
+│                                          │  Check         │                                                         │
+│                                          └──────┬─────────┘                                                         │
+│                                                 │ ALLOW                                                            │
+│                                                 ▼                                                                  │
+│                                          ACTION EXECUTED                                                            │
+│                                                 │                                                                  │
+│                                                 ▼                                                                  │
+│                                          ┌────────────────┐                                                         │
+│                                          │  Audit Log     │──────── JSONB details → AuditLog table                  │
+│                                          │  Record        │                                                         │
+│                                          └────────────────┘                                                         │
+│                                                                                                              │
+│ ┌─ DATA TABLE ─────────────────────────────────────────────────────────────────────────────────────────┐     │
+│ │  DB Table        │  Role             │  237 edges = require_user_permission() call sites             │     │
+│ │ ──────────────── │ ───────────────── │  150 edges = create_audit_log() call sites                    │     │
+│ │  users           │  RBAC root        │  22+ communities bridged                                      │     │
+│ │  user_roles      │  User ↔ Role M:M  │  Every protected endpoint in all 39 routers                   │     │
+│ │  roles           │  Role definition  │                                                                │     │
+│ │  role_permissions│  Role ↔ Perm M:M  │  ┌─────────────────────────────────────────────────────┐      │     │
+│ │  permissions     │  Permission def    │  │  Status → Permission Map:                           │      │     │
+│ │                  │                    │  │  Draft (Recall) → Submit Op Txn                     │      │     │
+│ │  operation_workflow_policies          │  │  Submitted → Submit Op Txn                          │      │     │
+│ │  operation_workflow_policy_roles      │  │  Approved → Approve Op Txn                          │      │     │
+│ │  operation_workflow_policy_users      │  │  Rejected → Reject Op Txn                           │      │     │
+│ │                  │                    │  │  Cancelled → Cancel Op Txn                          │      │     │
+│ └───────────────────────────────────────┘  └─────────────────────────────────────────────────────┘      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```

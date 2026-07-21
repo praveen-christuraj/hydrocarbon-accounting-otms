@@ -31,3 +31,44 @@ Generate out-turn reports — comparing expected vs actual quantities for hydroc
 
 ## Permissions
 - **View:** View Reports
+
+---
+
+## Full-Stack Architecture Diagram — OutTurnReport
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ FRONTEND                          BACKEND (reports.py)                   DATA                            │
+│                                                                                                          │
+│ OutTurnReport     outTurnRptApi    reports.py                           MovementMapping                │
+│ ───────────────   ──────────────   ─────────                             ───────────────                 │
+│ Props:            getReport()     GET /reports/out-turn-report           id (PK) | Integer               │
+│  loggedInUser     ──────────────   ?date_from=&date_to=                  mapping_name | String(150)     │
+│ ──────────────    conv:            &location_code=&op_type=              location_code | String          │
+│ Filters: date     getReport↔     ─────────────                           period_from | Date              │
+│ range, location,  GET /reports/   Perm: ('View Reports')                 period_to | Date                │
+│ op type           out-turn-report Audit: module='Reports'                status | String                 │
+│                    ────────────── ─────────────                                                           │
+│ Shows:             SHARED                                                  MovementMappingItem            │
+│ BOL qty vs         build_mapping_response()                              ────────────────────            │
+│ Received qty       recompute_mapping_comparison()                         mapping_id (FK)                │
+│ Loss/Gain %        (also used by MovementMapping page)                    role (SOURCE/TARGET)           │
+│                    ─────────────                                           asset_code | String            │
+│ USES:               Queries: MovementMapping +                                                            │
+│ MovementMapping     MovementMappingItem → compares                         qty_bbl | Float                │
+│ data to compute     SOURCE vs TARGET rows                                 water_bbl | Float              │
+│ out-turn values    ─────────────                                           nsv_bbl | Float                │
+│                     Also reads: TankStockLedger for                       api_gravity | Float            │
+│                     inventory corrections                                  temperature | Float            │
+│                                                                           density | Float                │
+│                    ─────────────                                           ────────────────────            │
+│                     ─────────────                                                                        │
+│                    ─────────────                                           MovementMappingComparison      │
+│                                                                            ────────────────────            │
+│                                                                           mapping_id (FK)                │
+│                                                                            source_qty/source_nsv          │
+│                                                                            target_qty/target_nsv          │
+│                                                                            diff_nsv/diff_percent          │
+│                                                                            summary_json | JSONB           │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```

@@ -31,3 +31,43 @@ Configure workflow policies that control operation transaction status transition
 
 ## Permissions
 - **View:** View Operation Workflow Policy
+- **Manage:** Manage Operation Workflow Policy
+
+---
+
+## Full-Stack Architecture Diagram — OperationWorkflowPolicyMaster
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ FRONTEND                          BACKEND                             DATA                                   │
+│                                                                                                              │
+│ OpWorkflowPolicyMaster  wfPolicyApi  workflow_policies.py            OperationWorkflowPolicy                │
+│ ─────────────────────── ───────────  ──────────────────────           ───────────────────────                │
+│ Props: loggedInUser      getPolicies() GET /operation-workflow-      id (PK) | Integer                      │
+│                          createPolicy()  policies                      policy_name | String(150)            │
+│ Policy form: name,       updatePolicy() POST /operation-workflow-     description | Text?                   │
+│ action code (SUBMIT/     deletePolicy()  policies                      action_code | String(50)             │
+│ APPROVE/REJECT/CANCEL/   checkPolicy() PUT /operation-workflow-        (SUBMIT/APPROVE/REJECT/CANCEL/      │
+│ RECALL), criteria         ───────────   policies/{id}                   RECALL/REVIEW)                      │
+│ (op_type, template,      conv:        DELETE /operation-workflow-     operation_type_code | String?          │
+│ asset_type, location),   getPolicies↔  policies/{id}                   operation_template_id | Int?         │
+│ assignment (roles/       GET /policies ──────────────                  asset_type_code | String?             │
+│ users)                   createPolicy↔ Perm: ('View/Mng WF Policy')   location_code | String?               │
+│                          POST /policies Audit: module='WF Policy'     priority | Integer                    │
+│                          checkPolicy↔ ──────────────                   status (Active/Inactive)             │
+│                          GET /policies                                  ───────────────────────               │
+│                           /check?action_code=                         ───────────────────────               │
+│                          &op_type_code=&template_id=                                                        │
+│                          &asset_type_code=&location_code=             OperationWorkflowPolicyRole           │
+│                          Returns: {allowed, reason}                    ────────────────────────              │
+│                                                                        policy_id (FK→WorkflowPolicy)        │
+│  CALLED BY:                                                             role_id (FK→Role)                   │
+│  OperationTransactionDetail checks workflow policies                                                     │
+│  before enabling Submit/Approve/Reject buttons                      OperationWorkflowPolicyUser           │
+│  (via canSubmit/canApprove flags)                                      ────────────────────────              │
+│                                                                        policy_id (FK)                       │
+│  EVALUATION CHAIN:                                                     user_id (FK→User)                    │
+│  User Action → find matching policy → check user has                                                 │
+│    required role (or is assigned user) → allow/deny                                                     │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```

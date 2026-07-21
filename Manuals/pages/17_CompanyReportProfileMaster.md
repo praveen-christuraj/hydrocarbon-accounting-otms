@@ -35,3 +35,33 @@ Manage company report branding profiles. These profiles define how company infor
 
 ## Permissions
 - **View:** View Company Report Profile
+
+---
+
+## Full-Stack Architecture Diagram — CompanyReportProfileMaster
+
+```
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│ FRONTEND                        BACKEND                        DATA                    │
+│                                                                                        │
+│ CompanyReportProfile  companyRP Api    company_report_         CompanyReportProfile    │
+│ Master.jsx                           _profiles.py              ─────────────────────    │
+│ ────────────────────  ─────────────   ────────────────────     id (PK) │ Integer        │
+│ Props: loggedInUser   getProfiles()   GET  /company-report-    profile_name│String(150)  │
+│                        createProfile  profiles                 company_name│String(200)  │
+│  Form fields:         updateProfile   POST /company-report-    system_name│String(200)   │
+│  - Profile name       deleteProfile   profiles                 subtitle│Text?            │
+│  - Company name        ─────────────  PUT  /company-report-    logo_url│String(500)?    │
+│  - System name         conv:          profiles/{id}            logo_text│String(200)?    │
+│  - Subtitle            profileName↔   DELETE /company-report-   footer_formula│Text?     │
+│  - Logo URL            profile_name   profiles/{id}             footer_disclaimer│Text?    │
+│  - Logo text           companyName↔   ─────────────             status │ String(20)      │
+│  - Footer formula      company_name   Perm: ('View/Manage       is_default│String(10)   │
+│  - Footer disclaimer   logoUrl↔        Company Report           created_at/updated_at    │
+│                         logo_url       Profile')                ─────────────────────    │
+│                         footer↔       Audit: module='CRP'                               │
+│                         footer_formula                        Used by: Operation        │
+│                                                                Transaction Detail for     │
+│                                                                tank gauging report PDF   │
+└────────────────────────────────────────────────────────────────────────────────────────┘
+```

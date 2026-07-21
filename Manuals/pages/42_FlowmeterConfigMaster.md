@@ -34,3 +34,43 @@ Configure flowmeter devices that measure hydrocarbon flow. Flowmeters are physic
 
 ## Permissions
 - **View:** View Flowmeter Config
+- **Manage:** Manage Flowmeter Config
+
+---
+
+## Full-Stack Architecture Diagram — FlowmeterConfigMaster
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ FRONTEND                          BACKEND                              DATA                              │
+│                                                                                                          │
+│ FlowmeterConfigMaster  flowmeterApi  flowmeter_configs_records.py     FlowmeterConfig                   │
+│ ─────────────────────  ────────────  ─────────────────────────────    ────────────────                   │
+│ Props: locations[],    getConfigs()  GET /flowmeter/flowmeter-configs id (PK) | Integer                  │
+│        assets[],        createConfig POST /flowmeter/flowmeter-configs config_code | String(80)          │
+│        assetAssign[]    updateConfig PUT /flowmeter/flowmeter-configs config_name | String(150)          │
+│                         deleteConfig /{id}                             location_code | String(50)        │
+│ Config form: code,      ──────────── DELETE /flowmeter/flowmeter-      asset_code | String(50)          │
+│ name, location, asset,  conv:          configs/{id}                    meter_factor | Float             │
+│ meter factor, K-factor, getConfigs↔  ─────────────                     k_factor | Float                 │
+| unit, status           GET /configs  Perm: ('View/Mng Flowmeter        meter_unit | String(50)          │
+│                         createConfig↔  Config')                        stream_config | JSONB            │
+│ History tracking:       POST /configs Audit: module='Flowmeter Config'  (multi-meter stream grouping)    │
+│ changes captured in    ───────────── ─────────────                      status (Active/Inactive)        │
+│ FlowmeterConfigHistory ─────────────                                     ────────────────                 │
+│                                             ─────────────                                              │
+│                        ─────────────         ─────────────              FlowmeterConfigHistory           │
+│                                                                         ──────────────────────           │
+│  USED BY: FlowmeterRecordEntry (reads configs)                         config_id (FK), field,            │
+│           OperationEntry FlowmeterReadingLayout (uses config)            old_value, new_value,           │
+│           FlowmeterCalculatedSummary (review modal)                      changed_by, changed_at          │
+│                                                                         ──────────────────────           │
+│                                                                                                            │
+│                                                                         FlowmeterRecord                  │
+│                                                                         ────────────────                  │
+│                                                                         config_id (FK), reading_date,     │
+│                                                                         opening_reading, closing_reading, │
+│                                                                         gross_observed, calculated        │
+│                                                                         volume, created_by                │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```

@@ -31,3 +31,44 @@ Track Floating Storage and Offloading (FSO) vessel operations. FSOs are stationa
 
 ## Permissions
 - **View:** View FSO Tracking
+
+---
+
+## Full-Stack Architecture Diagram — FSOTracking
+
+```
+┌────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ FRONTEND                         BACKEND                          DATA                                     │
+│                                                                                                            │
+│ FSOTracking       fsoTrackApi     shuttle_fso_voyages.py       FSOVoyage                                  │
+│ ───────────       ────────────    ──────────────────────        ─────────                                   │
+│ Props:             closeFsoVoy()  POST /shuttle-fso/fso-        id (PK) | Integer                          │
+│  loggedInUser       reopenFsoVoy() voyages/close                voyage_number | String(100)                │
+│ ───────────       ────────────   ──────────────────────         fso_asset_code | String(50)                 │
+│ FSO inventory      conv:          POST /shuttle-fso/fso-        location_code | String(50)                  │
+│ FSO→shuttle         closeFsoVoy↔   voyages/reopen               status (OPEN/CLOSED)                       │
+│ transfers           POST /shuttle- ─────────────────────        start_date | DateTime                      │
+│ Stock ledger        fso/fso-      Perm: ('View FSO              end_date | DateTime                        │
+│ Report gen          voyages/close  Tracking')                    closing_inventory_bbl | Float              │
+│ (incl. Excel)      ────────────   Audit: module='FSO            created_by | String                        │
+│ ───────────        ────────────    Voyage'                      ─────────                                   │
+│                     fsoReportApi ─────────────────────                                                    │
+│                     ────────────  SHARED:                       VesselStockLedger                          │
+│                     getFsoReport()  operation_transactions.py    ────────────────                          │
+│                     downloadFso     auto-creates VesselStock-    transaction_id (FK→OpTxn)                │
+│                     ReportXlsx()    Ledger entries on APPROVE   vessel_asset_code | String                 │
+│                                      ─────────────────────       tank_number | String                       │
+│                     conv:                                        before/after_volume | Float                │
+│                     getFsoReport↔  Reports app:                  volume_change | Float                     │
+│                     GET /shuttle-   GET /shuttle-fso/fso/report  before/after_mass | Float                  │
+│                     fso/fso/report  GET /shuttle-fso/fso/        mass_change | Float                        │
+│                     downloadFsoRpt   report/xlsx                 operation_date | Date                     │
+│                     ↔ GET /shuttle- ─────────────────────        created_by | String                       │
+│                     fso/fso/report                                                                         │
+│                     /xlsx          ─────────────────────                                                    │
+│                                                                                                            │
+│  FSO VESSEL LIFECYCLE:                                                                                    │
+│  Production → FSO storage → Shuttle loading (OpTransaction Approved) →                                    │
+│    → VesselStockLedger updated → FSO→Shuttle transfer → FSOVoyage → CLOSED                                │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```

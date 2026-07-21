@@ -33,3 +33,28 @@ Create and manage asset type classifications. Asset types categorize assets (e.g
 ## Permissions
 - **View:** View Asset Type
 - **Manage:** Manage Asset Type
+
+---
+
+## Full-Stack Architecture Diagram — AssetTypeMaster
+
+```
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│   FRONTEND                            BACKEND                          DATA LAYER      │
+│                                                                                        │
+│  AssetTypeMaster    assetTypeApi       asset_types.py       AssetType (asset_types)    │
+│  ────────────────   ──────────────     ──────────────       ───────────────────────    │
+│  Props: assetTypes  getAssetTypes()    GET  /asset-types    id (PK)       │ Integer     │
+│         setAT()     createAssetType()  POST /asset-types    asset_type_name│String(150) │
+│         reloadAT()  updateAssetType()  PUT  /asset-types/id asset_type_code│String(50)  │
+│         loggedInUsr deleteAssetType()  DELETE /asset-typ/id  description   │ Text?      │
+│                                        ──────────────       status        │ String(20) │
+│  Form: name, code,  conv:              require_permission   created_at    │ DateTime   │
+│  description, status assetTypeName ↔   ('View/Manage AT')   updated_at    │ DateTime   │
+│                      asset_type_name   unique check code   UNIQUE(asset_type_code)      │
+│                      assetTypeCode ↔   on create/update    ───────────────────────       │
+│                      asset_type_code   block if used on    Used by: Asset, Calibration   │
+│                                        delete              Template, OperationType, etc  │
+│                                        Audit: module='AT'  FK: Asset.asset_type_code     │
+└────────────────────────────────────────────────────────────────────────────────────────┘
+```

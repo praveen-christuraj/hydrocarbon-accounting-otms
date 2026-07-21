@@ -63,3 +63,48 @@ Company, Region, Terminal, Station, Tank Farm, Jetty, Warehouse, Office, Other
 ## Dependencies
 - Used by: AssetMaster, AssetAssignment, OperationEntry, Dashboard, flowmeter pages, barge tracking, tanker tracking, and all operation pages
 - Location data is loaded globally in App.jsx on login
+
+---
+
+## Full-Stack Architecture Diagram — LocationMaster
+
+```
+┌───────────────────────────────────────────────────────────────────────────────────────────┐
+│                     FRONTEND LAYER                                            BACKEND     │
+│                                                                                           │
+│  LocationMaster.jsx    locationApi.js        apiClient.js        locations.py             │
+│  ──────────────────    ──────────────        ────────────        ────────────              │
+│  Props: locations[],   getLocations()        fetch() + JWT       GET  /locations           │
+│         reloadLocs(),  createLocation()      apiPost/Put/Delete  POST /locations           │
+│         loggedInUser   updateLocation()       ────────────       PUT  /locations/{id}      │
+│                        deleteLocation()                          DELETE /locations/{id}    │
+│  ┌────────────────┐     ──────────────                             ────────────             │
+│  │ HIERARCHY:     │    locationName ↔     Schema: LocationCreate   require_user_permission │
+│  │ Company  (root)│    location_code         location_name: str    ('Manage/View Location') │
+│  │  └─ Region     │    location_type         location_code: str   Audit: module_name='Loc' │
+│  │      └─ Termnl │    parentLocation        location_type: str   Checks: unique code,     │
+│  │          └─ TF │                         parent_location_code  parent exists, no self   │
+│  └────────────────┘                         status: str           parent, no children      │
+│                                                                   on delete                │
+└──────────────────────────────────────────┬────────────────────────────────────────────────┘
+                                           │
+┌──────────────────────────────────────────┴────────────────────────────────────────────────┐
+│                              DATA LAYER                                                   │
+│                                                                                           │
+│  Location (locations)                    FK References (from other tables):               │
+│  ──────────────────────                   ──────────────────────────────                   │
+│  id (PK)          │ Integer               Asset.location_code → locations.location_code    │
+│  location_name    │ String(150)           AssetAssignment.assignment_location_code         │
+│  location_code    │ String(50) UNIQUE IX  OperationTransaction.origin/dest/sender/recv     │
+│  location_type    │ String(100)           LocationAccountingDaySetting.location_code       │
+│  parent_location  │ String(50) NULL       TankStockLedger.location_code                    │
+│  description      │ Text?                 LocationOperationAvailability.location_code      │
+│  status           │ String(20)            SystemNotification.target_location_codes_json    │
+│  created_at       │ DateTime              ... and 15+ more tables                          │
+│  updated_at       │ DateTime                                                                │
+│                                                                                           │
+│  SELF-REF: parent_location_code → locations.location_code (hierarchy)                     │
+│                                                                                           │
+│  DB: PostgreSQL → Table: locations                                                        │
+└───────────────────────────────────────────────────────────────────────────────────────────┘
+```

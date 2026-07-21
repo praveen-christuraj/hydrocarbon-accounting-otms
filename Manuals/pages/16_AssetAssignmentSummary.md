@@ -25,3 +25,38 @@ Read-only consolidated view of which assets are assigned to which users, grouped
 
 ## Permissions
 - **View:** Requires View Asset + View Asset Assignment + View Asset Assignment Summary
+
+---
+
+## Full-Stack Architecture Diagram — AssetAssignmentSummary
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────────────┐
+│ FRONTEND (React SPA) — Read-Only, NO dedicated backend API                                │
+│                                                                                          │
+│  AssetAssignmentSummary.jsx                                                              │
+│  ──────────────────────────                                                              │
+│  Props: assets[], assetTypes[], locations[], users[], assetAssignments[]                  │
+│         (ALL loaded by App.jsx on login via their respective APIs)                       │
+│                                                                                          │
+│  Derivation (client-side):                                                               │
+│    ┌─────────────────────────────────────────────────────────────────────────────────┐   │
+│    │  For each asset, find its assignment:                                           │   │
+│    │    asset.asset_code → assetAssignments.find(a => a.assetCode === asset.assetCode)│   │
+│    │  Then group by: assetTypes → locations → assets → assigned user                 │   │
+│    │                                                                                  │   │
+│    │  OUTPUT:  Storage Tank ──▶ UTP Terminal ──▶ T-101 ──▶ John (Operator)            │   │
+│    │           (asset type)       (location)      (asset)    (assigned user)          │   │
+│    └─────────────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                          │
+│  Filters: by location                                                                     │
+│  Summary: count of assets assigned / unassigned per type/location                         │
+│                                                                                          │
+│  DATA SOURCES (from App.jsx state):                                                      │
+│    assets[]           ← assetApi.getAssets()      → assets table                          │
+│    assetTypes[]       ← assetTypeApi.getATs()     → asset_types table                    │
+│    locations[]        ← locationApi.getLocs()     → locations table                      │
+│    users[]            ← userApi.getUsers()        → users table                           │
+│    assetAssignments[] ← assetAssgnApi.getAssign() → asset_assignments table               │
+└──────────────────────────────────────────────────────────────────────────────────────────┘
+```
