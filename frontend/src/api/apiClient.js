@@ -28,6 +28,14 @@ const readResponseData = async (response) => {
   return null
 }
 
+const formatApiError = (data) => {
+  if (!data) return 'API request failed'
+  if (typeof data.detail === 'string') return data.detail
+  if (Array.isArray(data.detail)) return data.detail.map(d => d.msg).join('; ')
+  if (typeof data.detail === 'object') return JSON.stringify(data.detail)
+  return 'API request failed'
+}
+
 // Track whether a refresh is in flight to avoid duplicate calls
 let refreshPromise = null
 
@@ -53,7 +61,7 @@ const tryRefreshAndRetry = async (endpoint, options) => {
 
   const retryData = await readResponseData(retryResponse)
   if (!retryResponse.ok) {
-    throw new Error(retryData?.detail || 'API request failed')
+    throw new Error(formatApiError(retryData))
   }
   return retryData
 }
@@ -80,7 +88,7 @@ export const apiRequest = async (endpoint, options = {}) => {
       clearAccessToken()
     }
 
-    throw new Error(data?.detail || 'API request failed')
+    throw new Error(formatApiError(data))
   }
 
   return data

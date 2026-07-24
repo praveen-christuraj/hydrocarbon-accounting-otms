@@ -1183,10 +1183,10 @@ function App() {
   }
   const reloadUsers = async () => {
     try {
-      const usersFromApi = await getUsers({ limit: 1000 })
+      const usersFromApi = await getUsers({ limit: 200 })
       setUsers(usersFromApi.items)
     } catch (error) {
-      console.error(error)
+      console.error('reloadUsers failed:', error.message)
       alert('Unable to load users from backend')
     }
   }
