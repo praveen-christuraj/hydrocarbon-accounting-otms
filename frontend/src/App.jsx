@@ -416,6 +416,7 @@ function AppContent({
                   permissions={permissions}
                   rolePermissionAssignments={rolePermissionAssignments}
                   reloadRolePermissions={reloadRolePermissions}
+                  loggedInUser={loggedInUser}
                 />
               </PermissionGuard>
             }

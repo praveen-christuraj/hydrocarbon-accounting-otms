@@ -221,4 +221,11 @@ def save_role_permissions(
 
     db.commit()
 
-    return build_role_permission_response(role, db)
+    after_role_permissions = (
+        db.query(Permission)
+        .join(RolePermission, RolePermission.permission_id == Permission.id)
+        .filter(RolePermission.role_id == role.id)
+        .order_by(Permission.module_name, Permission.permission_name)
+        .all()
+    )
+    return build_role_permission_response(role, {role.id: after_role_permissions})

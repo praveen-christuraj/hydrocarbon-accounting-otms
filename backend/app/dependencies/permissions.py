@@ -36,11 +36,8 @@ def user_has_permission(
     return permission is not None
 
 
-def require_user_permission(
-    user: User,
-    permission_name: str,
-    db: Session,
-):
+def is_admin_user(user: User, db: Session) -> bool:
+    """Check if user is an admin — by role name or by username."""
     admin_role_names = {"admin"}
     user_role_names = {
         str(r.role_name or "").lower()
@@ -52,8 +49,19 @@ def require_user_permission(
         )
         if str(r.role_name or "").strip() != ""
     }
-
     if user_role_names.intersection(admin_role_names):
+        return True
+    if user.username.lower() == "admin":
+        return True
+    return False
+
+
+def require_user_permission(
+    user: User,
+    permission_name: str,
+    db: Session,
+):
+    if is_admin_user(user, db):
         return user
 
     if not user_has_permission(user, permission_name, db):
@@ -208,16 +216,7 @@ def find_matching_operation_workflow_policy(
 
 
 def user_can_act_on_operation_task(db: Session, user: User, task):
-    role_names = {
-        str(r.role_name or "").lower()
-        for r in (
-            db.query(Role)
-            .join(UserRole, UserRole.role_id == Role.id)
-            .filter(UserRole.user_id == user.id)
-            .all()
-        )
-    }
-    if "admin" in role_names:
+    if is_admin_user(user, db):
         return True
 
     assigned_user_ids = set(task.assigned_user_ids_json or [])
@@ -231,6 +230,10 @@ def user_can_act_on_operation_task(db: Session, user: User, task):
 def build_logged_in_user_response(user: User, db: Session):
     from app.utils.password_policy import build_security_flags
 
+    role_data = None
+    permissions_data = []
+
+    # Determine role_data first (from user_roles)
     user_role_assignment = (
         db.query(UserRole)
         .join(Role, Role.id == UserRole.role_id)
@@ -238,12 +241,8 @@ def build_logged_in_user_response(user: User, db: Session):
         .first()
     )
 
-    role_data = None
-    permissions_data = []
-
     if user_role_assignment:
         role = db.query(Role).filter(Role.id == user_role_assignment.role_id).first()
-
         if role:
             role_data = {
                 "id": role.id,
@@ -252,24 +251,43 @@ def build_logged_in_user_response(user: User, db: Session):
                 "status": role.status,
             }
 
-            permissions = (
-                db.query(Permission)
-                .join(RolePermission, RolePermission.permission_id == Permission.id)
-                .filter(RolePermission.role_id == role.id)
-                .order_by(Permission.module_name, Permission.permission_name)
-                .all()
-            )
+    # If admin user, return ALL active permissions regardless of role assignment
+    if is_admin_user(user, db):
+        all_permissions = (
+            db.query(Permission)
+            .filter(Permission.status == "Active")
+            .order_by(Permission.module_name, Permission.permission_name)
+            .all()
+        )
+        permissions_data = [
+            {
+                "id": permission.id,
+                "permission_name": permission.permission_name,
+                "module_name": permission.module_name,
+                "description": permission.description,
+                "status": permission.status,
+            }
+            for permission in all_permissions
+        ]
+    elif user_role_assignment and role:
+        permissions = (
+            db.query(Permission)
+            .join(RolePermission, RolePermission.permission_id == Permission.id)
+            .filter(RolePermission.role_id == role.id)
+            .order_by(Permission.module_name, Permission.permission_name)
+            .all()
+        )
 
-            permissions_data = [
-                {
-                    "id": permission.id,
-                    "permission_name": permission.permission_name,
-                    "module_name": permission.module_name,
-                    "description": permission.description,
-                    "status": permission.status,
-                }
-                for permission in permissions
-            ]
+        permissions_data = [
+            {
+                "id": permission.id,
+                "permission_name": permission.permission_name,
+                "module_name": permission.module_name,
+                "description": permission.description,
+                "status": permission.status,
+            }
+            for permission in permissions
+        ]
 
     return {
         "id": user.id,

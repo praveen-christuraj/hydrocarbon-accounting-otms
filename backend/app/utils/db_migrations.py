@@ -9,6 +9,8 @@ from app.models import (
     Permission,
     Role,
     RolePermission,
+    User,
+    UserRole,
 )
 from datetime import datetime, timezone
 from app.utils.default_permissions import STANDARD_PERMISSIONS
@@ -719,10 +721,15 @@ def seed_default_permissions():
 
 
 def seed_admin_role():
-    """Create Admin role (if missing) and assign ALL permissions to it.
-    Runs on every startup so the admin role is always fully authorized."""
+    """Create Admin role (if missing), assign ALL permissions to it, and ensure
+    the default 'admin' user exists and is assigned the Admin role.
+    Runs on every startup so the admin role/user is always fully authorized."""
+    from app.utils.security import hash_password
+    import secrets
+
     db = SessionLocal()
     try:
+        # 1. Ensure Admin role exists
         role = db.query(Role).filter(Role.role_name.ilike("Admin")).first()
         if not role:
             now = datetime.now(timezone.utc)
@@ -739,7 +746,7 @@ def seed_admin_role():
         else:
             print(f"[SEED] 'Admin' role already exists (id={role.id})")
 
-        # Assign ALL permissions to the Admin role
+        # 2. Assign ALL permissions to the Admin role
         all_perms = db.query(Permission).filter(Permission.status == "Active").all()
         assigned = 0
         skipped = 0
@@ -762,14 +769,106 @@ def seed_admin_role():
             ))
             assigned += 1
 
+        # 3. Ensure default 'admin' user exists and has Admin role
+        admin_user = db.query(User).filter(User.username.ilike("admin")).first()
+        if not admin_user:
+            now = datetime.now(timezone.utc)
+            admin_password = secrets.token_urlsafe(16)
+            hashed = hash_password(admin_password)
+            admin_user = User(
+                full_name="System Administrator",
+                username="admin",
+                email="admin@hydrocarbon.example.com",
+                phone=None,
+                department="IT Administration",
+                designation="System Administrator",
+                password_hash=hashed,
+                password_changed_at=now,
+                force_password_change="No",
+                password_never_expires="Yes",
+                password_expiry_days=30,
+                failed_login_count=0,
+                totp_enabled="No",
+                force_2fa="No",
+                status="Active",
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(admin_user)
+            db.flush()
+            print(f"[SEED] Created 'admin' user (id={admin_user.id})")
+            print(f"[SEED] Default admin password: {admin_password}")
+        else:
+            print(f"[SEED] 'admin' user already exists (id={admin_user.id})")
+            # Ensure admin user is active
+            if admin_user.status != "Active":
+                admin_user.status = "Active"
+                print(f"[SEED] Activated 'admin' user")
+
+        # 4. Assign Admin role to admin user (force assign - bypass unique constraint issues)
+        user_role = db.query(UserRole).filter(UserRole.user_id == admin_user.id).first()
+        if not user_role:
+            user_role = UserRole(user_id=admin_user.id, role_id=role.id)
+            db.add(user_role)
+            print(f"[SEED] Assigned 'Admin' role to 'admin' user")
+        elif user_role.role_id != role.id:
+            user_role.role_id = role.id
+            print(f"[SEED] Updated 'admin' user role to 'Admin'")
+        else:
+            print(f"[SEED] 'admin' user already has 'Admin' role")
+
+        # 5. Verify the setup
+        verify_role = db.query(Role).filter(Role.id == user_role.role_id).first()
+        print(f"[SEED] VERIFICATION: admin user (id={admin_user.id}) -> role (id={user_role.role_id}, name={verify_role.role_name if verify_role else 'NOT FOUND'})")
+
         db.commit()
         if assigned:
             print(f"[SEED] Assigned {assigned} permissions to 'Admin' role ({skipped} already existed)")
         else:
             print(f"[SEED] Admin role already has all {skipped} permissions assigned")
-    except Exception:
+    except Exception as e:
         db.rollback()
+        print(f"[SEED] ERROR: {e}")
         raise
+    finally:
+        db.close()
+
+
+def verify_admin_setup():
+    """Verify admin user has Admin role with all permissions. Returns dict with status."""
+    db = SessionLocal()
+    try:
+        admin_user = db.query(User).filter(User.username.ilike("admin")).first()
+        if not admin_user:
+            return {"ok": False, "error": "admin user not found"}
+
+        user_role = db.query(UserRole).filter(UserRole.user_id == admin_user.id).first()
+        if not user_role:
+            return {"ok": False, "error": "admin user has no role assigned"}
+
+        role = db.query(Role).filter(Role.id == user_role.role_id).first()
+        if not role:
+            return {"ok": False, "error": f"role id {user_role.role_id} not found"}
+
+        if role.role_name.lower() != "admin":
+            return {"ok": False, "error": f"admin user has role '{role.role_name}', not 'Admin'"}
+
+        # Count permissions assigned to Admin role
+        perm_count = db.query(RolePermission).filter(RolePermission.role_id == role.id).count()
+        total_active_perms = db.query(Permission).filter(Permission.status == "Active").count()
+
+        return {
+            "ok": True,
+            "admin_user_id": admin_user.id,
+            "admin_username": admin_user.username,
+            "admin_status": admin_user.status,
+            "role_id": role.id,
+            "role_name": role.role_name,
+            "role_status": role.status,
+            "permissions_assigned": perm_count,
+            "total_active_permissions": total_active_perms,
+            "has_all_permissions": perm_count >= total_active_perms,
+        }
     finally:
         db.close()
 
