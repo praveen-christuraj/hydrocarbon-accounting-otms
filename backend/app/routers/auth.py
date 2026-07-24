@@ -84,7 +84,7 @@ def login_user(
             detail="User is not Active",
         )
 
-    if user.locked_until and user.locked_until > datetime.now(timezone.utc):
+    if user.locked_until and user.locked_until > datetime.now(timezone.utc).replace(tzinfo=None):
         create_audit_log(
             db=db,
             module_name="Authentication",
@@ -103,7 +103,7 @@ def login_user(
     if not verify_password(login_request.password, user.password_hash):
         user.failed_login_count = int(user.failed_login_count or 0) + 1
         if user.failed_login_count >= 5:
-            user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=15)
+            user.locked_until = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=15)
         create_audit_log(
             db=db,
             module_name="Authentication",
