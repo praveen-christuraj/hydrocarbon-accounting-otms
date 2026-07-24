@@ -17,7 +17,7 @@ const calcPasswordStrength = (pw) => {
   return { level: 'strong', label: 'Strong', pct: 100, color: '#16a34a' }
 }
 
-function UserMaster({ loggedInUser }) {
+function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
   const emptyUser = {
     fullName: '',
     username: '',
@@ -168,6 +168,7 @@ function UserMaster({ loggedInUser }) {
       setConfirmPassword('')
       setFieldErrors({})
       await reloadUsers(search, 0)
+      if (appReloadUsers) await appReloadUsers()
       setUser(emptyUser)
       setEditId(null)
     } catch (err) {
@@ -214,6 +215,7 @@ function UserMaster({ loggedInUser }) {
       setConfirmDelete(null)
       setSuccess('User deleted successfully')
       await reloadUsers(search, 0)
+      if (appReloadUsers) await appReloadUsers()
 
       if (editId === id) {
         setUser(emptyUser)

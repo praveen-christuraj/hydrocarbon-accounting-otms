@@ -1183,7 +1183,7 @@ function App() {
   }
   const reloadUsers = async () => {
     try {
-      const usersFromApi = await getUsers()
+      const usersFromApi = await getUsers({ limit: 1000 })
       setUsers(usersFromApi.items)
     } catch (error) {
       console.error(error)

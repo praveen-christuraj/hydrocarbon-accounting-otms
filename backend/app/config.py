@@ -1,11 +1,18 @@
 import os
 import secrets
 
-allowed_origins = [
-    origin.strip()
-    for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
-    if origin.strip()
-]
+cors_origins_env = os.getenv("CORS_ORIGINS", "")
+if cors_origins_env == "*":
+    # "*" = allow any origin. Starlette echoes back the Origin header,
+    # which is compatible with allow_credentials=True.
+    allowed_origins = ["*"]
+elif cors_origins_env:
+    allowed_origins = [o.strip() for o in cors_origins_env.split(",") if o.strip()]
+else:
+    allowed_origins = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ]
 
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
 if not JWT_SECRET_KEY:

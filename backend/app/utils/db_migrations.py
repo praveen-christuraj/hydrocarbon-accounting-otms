@@ -7,7 +7,10 @@ from app.models import (
     OperationTemplate,
     OperationTemplateField,
     Permission,
+    Role,
+    RolePermission,
 )
+from datetime import datetime, timezone
 from app.utils.default_permissions import STANDARD_PERMISSIONS
 
 
@@ -708,6 +711,62 @@ def seed_default_permissions():
         db.commit()
         if created_count:
             print(f"Seeded {created_count} default permissions ({existing_count} already existed)")
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def seed_admin_role():
+    """Create Admin role (if missing) and assign ALL permissions to it.
+    Runs on every startup so the admin role is always fully authorized."""
+    db = SessionLocal()
+    try:
+        role = db.query(Role).filter(Role.role_name.ilike("Admin")).first()
+        if not role:
+            now = datetime.now(timezone.utc)
+            role = Role(
+                role_name="Admin",
+                description="Full system access — all permissions granted",
+                status="Active",
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(role)
+            db.flush()
+            print(f"[SEED] Created 'Admin' role (id={role.id})")
+        else:
+            print(f"[SEED] 'Admin' role already exists (id={role.id})")
+
+        # Assign ALL permissions to the Admin role
+        all_perms = db.query(Permission).filter(Permission.status == "Active").all()
+        assigned = 0
+        skipped = 0
+        for perm in all_perms:
+            exists = (
+                db.query(RolePermission)
+                .filter(
+                    RolePermission.role_id == role.id,
+                    RolePermission.permission_id == perm.id,
+                )
+                .first()
+            )
+            if exists:
+                skipped += 1
+                continue
+            db.add(RolePermission(
+                role_id=role.id,
+                permission_id=perm.id,
+                created_at=datetime.now(timezone.utc),
+            ))
+            assigned += 1
+
+        db.commit()
+        if assigned:
+            print(f"[SEED] Assigned {assigned} permissions to 'Admin' role ({skipped} already existed)")
+        else:
+            print(f"[SEED] Admin role already has all {skipped} permissions assigned")
     except Exception:
         db.rollback()
         raise
