@@ -254,14 +254,6 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
         <span className="record-count">{notifications.length} Notifications</span>
       </div>
 
-      {successMsg && (
-        <div className="success-box">{successMsg}</div>
-      )}
-
-      {errorMsg && (
-        <div className="error-box">{errorMsg}</div>
-      )}
-
       {confirmPublishItem && (
         <div className="confirm-overlay">
           <div className="confirm-box">
@@ -309,6 +301,7 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
       )}
 
       {canManageSystemNotification && (
+      <>
       <form onSubmit={handleSave} className="notification-admin-form">
         <div>
           <label>Title</label>
@@ -494,6 +487,14 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
           </button>
         </div>
       </form>
+
+      {successMsg && (
+        <div className="success-box">{successMsg}</div>
+      )}
+      {errorMsg && (
+        <div className="error-box">{errorMsg}</div>
+      )}
+      </>
       )}
 
       <div className="section-title">

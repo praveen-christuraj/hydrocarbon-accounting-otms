@@ -31,6 +31,8 @@ from app.schemas import (
 )
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
+    apply_location_filter,
+    get_user_location_codes,
     require_user_permission,
     get_required_permission_for_status_change,
     get_action_code_for_status_change,
@@ -335,8 +337,14 @@ def get_filtered_operation_transaction_rows(
     asset_code: str | None = None,
     status: str | None = None,
     search: str | None = None,
+    current_user: User | None = None,
 ):
     query = db.query(OperationTransaction)
+
+    if current_user is not None:
+        query = apply_location_filter(
+            query, OperationTransaction, current_user, db, column_name="origin_location_code"
+        )
 
     if date_from:
         query = query.filter(OperationTransaction.operation_date >= date_from)
@@ -1159,6 +1167,7 @@ def get_operation_transactions(
         asset_code=asset_code,
         status=status,
         search=search,
+        current_user=current_user,
     )
 
 
@@ -1251,6 +1260,10 @@ def get_operation_transactions_paged(
         .outerjoin(AST, AST.asset_code == OperationTransaction.primary_asset_code)
         .outerjoin(value_count_subq, value_count_subq.c.tx_id == OperationTransaction.id)
     )
+
+    allowed = get_user_location_codes(current_user, db)
+    if allowed is not None:
+        base_query = base_query.filter(OperationTransaction.origin_location_code.in_(allowed))
 
     if date_from:
         base_query = base_query.filter(OperationTransaction.operation_date >= date_from)
@@ -1417,6 +1430,7 @@ def export_operation_transactions_csv(
         asset_code=asset_code,
         status=status,
         search=search,
+        current_user=current_user,
     )
 
     output = io.StringIO()
@@ -1502,6 +1516,15 @@ def create_operation_transaction(
 
     operation_type, asset = validate_operation_transaction(transaction, db)
 
+    allowed = get_user_location_codes(current_user, db)
+    if allowed is not None:
+        origin = clean_optional_text(transaction.origin_location_code)
+        if origin and origin not in allowed:
+            raise HTTPException(status_code=403, detail="Origin location is not in your assigned scope")
+        dest = clean_optional_text(transaction.destination_location_code)
+        if dest and dest not in allowed:
+            raise HTTPException(status_code=403, detail="Destination location is not in your assigned scope")
+
     created_by_display = get_current_user_display_name(current_user)
 
     new_transaction = OperationTransaction(
@@ -1581,6 +1604,11 @@ def update_operation_transaction(
             detail="Operation transaction not found",
         )
 
+    allowed = get_user_location_codes(current_user, db)
+    if allowed is not None:
+        if existing_transaction.origin_location_code not in allowed:
+            raise HTTPException(status_code=403, detail="This transaction's location is not in your assigned scope")
+
     if existing_transaction.status not in ["Draft", "Rejected"]:
         raise HTTPException(
             status_code=400,
@@ -1605,6 +1633,14 @@ def update_operation_transaction(
     }
 
     operation_type, asset = validate_operation_transaction(transaction, db)
+
+    if allowed is not None:
+        origin = clean_optional_text(transaction.origin_location_code)
+        if origin and origin not in allowed:
+            raise HTTPException(status_code=403, detail="Origin location is not in your assigned scope")
+        dest = clean_optional_text(transaction.destination_location_code)
+        if dest and dest not in allowed:
+            raise HTTPException(status_code=403, detail="Destination location is not in your assigned scope")
 
     existing_transaction.operation_type_code = operation_type.operation_type_code
     existing_transaction.primary_asset_code = asset.asset_code
@@ -1690,6 +1726,10 @@ def delete_operation_transaction(
             status_code=404,
             detail="Operation transaction not found",
         )
+
+    allowed = get_user_location_codes(current_user, db)
+    if allowed is not None and existing_transaction.origin_location_code not in allowed:
+        raise HTTPException(status_code=403, detail="This transaction's location is not in your assigned scope")
 
     if existing_transaction.status not in ["Draft", "Rejected"]:
         raise HTTPException(

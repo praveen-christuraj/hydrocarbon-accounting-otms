@@ -14,6 +14,7 @@ import RoleMaster from './pages/RoleMaster'
 import PermissionMaster from './pages/PermissionMaster'
 import RolePermissionAssignment from './pages/RolePermissionAssignment'
 import UserRoleAssignment from './pages/UserRoleAssignment'
+import UserLocationAssignment from './pages/UserLocationAssignment'
 import AccessSummary from './pages/AccessSummary'
 import LocationMaster from './pages/LocationMaster'
 import LocationAccountingDaySetting from './pages/LocationAccountingDaySetting'
@@ -69,6 +70,7 @@ import { getPermissions } from './api/permissionApi'
 import { getAllRolePermissions } from './api/rolePermissionApi'
 import { getUsers } from './api/userApi'
 import { getUserRoleAssignments } from './api/userRoleApi'
+import { getUserLocationAssignments, getUserLocationSummaries } from './api/userLocationApi'
 import { getLocations } from './api/locationApi'
 import { getAssetTypes } from './api/assetTypeApi'
 import { getAssets } from './api/assetApi'
@@ -288,6 +290,11 @@ function AppContent({
   userRoleAssignments,
   reloadUserRoleAssignments,
 
+  userLocationAssignments,
+  userLocationSummaries,
+  reloadUserLocationAssignments,
+  reloadUserLocationSummaries,
+
   operationTypes,
   reloadOperationTypes,
 
@@ -435,6 +442,27 @@ function AppContent({
                   roles={roles}
                   userRoleAssignments={userRoleAssignments}
                   reloadUserRoleAssignments={reloadUserRoleAssignments}
+                  loggedInUser={loggedInUser}
+                />
+              </PermissionGuard>
+            }
+          />
+
+          <Route
+            path="/user-locations"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View User Location Assignment"
+                fallbackMessage="You do not have permission to view user location assignments."
+              >
+                <UserLocationAssignment
+                  users={users}
+                  locations={locations}
+                  userLocationSummaries={userLocationSummaries}
+                  userLocationAssignments={userLocationAssignments}
+                  reloadUserLocationSummaries={reloadUserLocationSummaries}
+                  reloadUserLocationAssignments={reloadUserLocationAssignments}
                   loggedInUser={loggedInUser}
                 />
               </PermissionGuard>
@@ -1147,6 +1175,8 @@ function App() {
   const [assetAssignments, setAssetAssignments] = useState([])
   const [rolePermissionAssignments, setRolePermissionAssignments] = useState([])
   const [userRoleAssignments, setUserRoleAssignments] = useState([])
+  const [userLocationAssignments, setUserLocationAssignments] = useState([])
+  const [userLocationSummaries, setUserLocationSummaries] = useState([])
   const [operationTypes, setOperationTypes] = useState([])
   const [operationTemplates, setOperationTemplates] = useState([])
   const [operationEntries, setOperationEntries] = useState([])
@@ -1229,6 +1259,24 @@ function App() {
     } catch (error) {
       console.error(error)
       alert('Unable to load user role assignments from backend')
+    }
+  }
+
+  const reloadUserLocationAssignments = async () => {
+    try {
+      const assignmentsFromApi = await getUserLocationAssignments()
+      setUserLocationAssignments(assignmentsFromApi)
+    } catch (error) {
+      console.error('reloadUserLocationAssignments failed:', error.message)
+    }
+  }
+
+  const reloadUserLocationSummaries = async () => {
+    try {
+      const summariesFromApi = await getUserLocationSummaries()
+      setUserLocationSummaries(summariesFromApi)
+    } catch (error) {
+      console.error('reloadUserLocationSummaries failed:', error.message)
     }
   }
 
@@ -1378,6 +1426,11 @@ useEffect(() => {
     reloadUserRoleAssignments()
   }
 
+  if (hasPermission('View User Location Assignment')) {
+    reloadUserLocationAssignments()
+    reloadUserLocationSummaries()
+  }
+
   if (hasPermission('View Location')) {
     reloadLocations()
   }
@@ -1481,6 +1534,11 @@ useEffect(() => {
 
         userRoleAssignments={userRoleAssignments}
         reloadUserRoleAssignments={reloadUserRoleAssignments}
+
+        userLocationAssignments={userLocationAssignments}
+        userLocationSummaries={userLocationSummaries}
+        reloadUserLocationAssignments={reloadUserLocationAssignments}
+        reloadUserLocationSummaries={reloadUserLocationSummaries}
 
         operationTypes={operationTypes}
         reloadOperationTypes={reloadOperationTypes}

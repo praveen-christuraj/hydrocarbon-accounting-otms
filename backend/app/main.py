@@ -28,7 +28,7 @@ from app.models import (
     MaterialBalanceTemplate, MaterialBalanceTemplateColumn, Permission, Role,
     RolePermission, SystemNotification, SystemNotificationReceipt,
     BackupSettings, BackupJob, BackupRestoreRequest, BackupRestoreValidation,
-    User, PasswordResetRequest, UserRole, OperationWorkflowPolicy,
+    User, PasswordResetRequest, UserRole, UserLocation, OperationWorkflowPolicy,
     OperationWorkflowPolicyRole, OperationWorkflowPolicyUser, OperationTask,
     OperationTaskEvent, ApprovedTransactionCorrectionRequest, Table11Factor,
     BargeSealMaster, FlowmeterConfig, FlowmeterRecord, FlowmeterConfigHistory,
@@ -47,6 +47,7 @@ from app.utils.db_migrations import (
     ensure_barge_event_type_template_field,
     ensure_operation_workflow_policy_tables,
     ensure_operation_task_tables,
+    ensure_user_location_columns,
     migrate_boolean_columns,
     seed_default_permissions,
     seed_admin_role,
@@ -67,6 +68,7 @@ async def lifespan(app: FastAPI):
     ensure_operation_workflow_policy_tables()
     ensure_operation_task_tables()
     migrate_boolean_columns()
+    ensure_user_location_columns()
     seed_default_permissions()
     seed_admin_role()
 
@@ -99,7 +101,7 @@ from app.routers import (
     operation_tasks, operation_templates, operation_transactions, operation_types,
     permissions, prime_mover_tanker_links, reports, role_permissions, roles,
     shuttle_fso_voyages, system_notifications, table11_factors, tank_operations,
-    tank_stock_ledger, tanker_tracking, user_roles, users, vessel_operations,
+    tank_stock_ledger, tanker_tracking, user_locations, user_roles, users, vessel_operations,
     vessel_stock_ledger, workflow_policies,
 )
 
@@ -138,6 +140,7 @@ app.include_router(table11_factors.router)
 app.include_router(tank_operations.router)
 app.include_router(tank_stock_ledger.router)
 app.include_router(tanker_tracking.router)
+app.include_router(user_locations.router)
 app.include_router(user_roles.router)
 app.include_router(users.router)
 app.include_router(vessel_operations.router)

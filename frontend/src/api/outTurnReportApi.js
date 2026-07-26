@@ -87,10 +87,10 @@ const buildQueryString = (filters = {}) => {
 export const getOutTurnReport = async (filters = {}) => {
   const queryString = buildQueryString(filters)
   const path = queryString
-    ? `/reports/out-turn-report/validation?${queryString}`
-    : '/reports/out-turn-report/validation'
+    ? `/reports/out-turn-report?${queryString}`
+    : '/reports/out-turn-report'
 
   const data = await apiGet(path)
 
-  return (data || []).map(convertOutTurnRowFromApi)
+  return (Array.isArray(data) ? data : []).map(convertOutTurnRowFromApi)
 }

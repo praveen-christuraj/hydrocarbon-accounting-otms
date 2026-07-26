@@ -1595,16 +1595,6 @@ function OperationEntry({
 
   return (
     <div>
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
       {confirmAction && (
         <div className="confirm-overlay">
           <div className="confirm-dialog">
@@ -2071,6 +2061,17 @@ function OperationEntry({
         tickets. The official full ticket list remains Operation Transaction
         Register.
       </div>
+
+      {successMsg && (
+        <div className="success-box" onClick={() => setSuccessMsg('')}>
+          {successMsg}
+        </div>
+      )}
+      {errorMsg && (
+        <div className="error-box" onClick={() => setErrorMsg('')}>
+          {errorMsg}
+        </div>
+      )}
     </div>
   )
 }

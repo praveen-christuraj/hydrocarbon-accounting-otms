@@ -169,14 +169,6 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
         <span className="record-count">{assetTypes.length} Asset Types</span>
       </div>
 
-      {successMsg && (
-        <div className="success-box">{successMsg}</div>
-      )}
-
-      {errorMsg && (
-        <div className="error-box">{errorMsg}</div>
-      )}
-
       {!canManageAssetType && (
         <div className="info-box">
           You are in view-only mode. Admin can manage asset types.
@@ -200,6 +192,7 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
       )}
 
       {canManageAssetType && (
+      <>
       <form onSubmit={handleSubmit}>
         <div>
           <label>Asset Type Name</label>
@@ -271,6 +264,14 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
           )}
         </div>
       </form>
+
+      {successMsg && (
+        <div className="success-box">{successMsg}</div>
+      )}
+      {errorMsg && (
+        <div className="error-box">{errorMsg}</div>
+      )}
+      </>
       )}
 
       <div className="section-title">

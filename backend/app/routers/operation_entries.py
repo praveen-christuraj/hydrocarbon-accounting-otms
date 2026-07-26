@@ -20,6 +20,8 @@ from app.schemas import (
 )
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
+    apply_location_filter,
+    get_user_location_codes,
     require_user_permission,
     evaluate_operation_workflow_policy,
 )
@@ -294,8 +296,12 @@ def get_operation_entries(
         db,
     )
 
+    query = db.query(OperationTransaction)
+    query = apply_location_filter(
+        query, OperationTransaction, current_user, db, column_name="origin_location_code"
+    )
     transactions = (
-        db.query(OperationTransaction)
+        query
         .filter(OperationTransaction.operation_template_id.isnot(None))
         .filter(OperationTransaction.status.in_(["Draft", "Rejected"]))
         .order_by(OperationTransaction.id.desc())

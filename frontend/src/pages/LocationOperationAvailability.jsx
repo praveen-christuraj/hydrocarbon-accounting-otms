@@ -216,16 +216,6 @@ function LocationOperationAvailability({
 
   return (
     <div>
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
       {confirmDeleteItem && (
         <div className="confirm-overlay">
           <div className="confirm-dialog">
@@ -409,6 +399,17 @@ function LocationOperationAvailability({
         Example: If Truck Loading is configured for Utapate Terminal, then
         Operation Entry can later show Truck Loading only for that location.
       </div>
+
+      {successMsg && (
+        <div className="success-box" onClick={() => setSuccessMsg('')}>
+          {successMsg}
+        </div>
+      )}
+      {errorMsg && (
+        <div className="error-box" onClick={() => setErrorMsg('')}>
+          {errorMsg}
+        </div>
+      )}
     </div>
   )
 }

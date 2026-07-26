@@ -311,16 +311,6 @@ function MaterialBalanceReport({ locations, assets }) {
 
   return (
     <div className="material-balance-report-page">
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
       <div className="page-title">
         <div>
           <h2>Material Balance Report</h2>
@@ -627,6 +617,17 @@ function MaterialBalanceReport({ locations, assets }) {
         Material Balance is calculated from approved Tank Stock Ledger rows and
         the active Material Balance Template for the selected location.
       </div>
+
+      {successMsg && (
+        <div className="success-box" onClick={() => setSuccessMsg('')}>
+          {successMsg}
+        </div>
+      )}
+      {errorMsg && (
+        <div className="error-box" onClick={() => setErrorMsg('')}>
+          {errorMsg}
+        </div>
+      )}
     </div>
   )
 }

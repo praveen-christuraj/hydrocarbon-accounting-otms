@@ -51,6 +51,16 @@ STANDARD_PERMISSIONS = [
         "description": "Can assign roles to users",
     },
     {
+        "permission_name": "View User Location Assignment",
+        "module_name": "User Location Assignment",
+        "description": "Can view user location assignments",
+    },
+    {
+        "permission_name": "Manage User Location Assignment",
+        "module_name": "User Location Assignment",
+        "description": "Can assign locations to users",
+    },
+    {
         "permission_name": "View Access Summary",
         "module_name": "Access Summary",
         "description": "Can view final RBAC access summary",

@@ -182,11 +182,6 @@ function SystemNotificationCenter({ loggedInUser }) {
           <div className="notification-inbox-header">
             <h3>Notification Inbox</h3>
             <div className="notification-inbox-header-actions">
-              {canViewTaskManager && (
-                <Link to="/operation-tasks" onClick={() => setShowInbox(false)}>
-                  Task Manager
-                </Link>
-              )}
               <button type="button" onClick={() => setShowInbox(false)}>
                 Close
               </button>

@@ -161,16 +161,6 @@ function VesselOperationMaster({ locations = [], assetTypes = [], loggedInUser }
 
   return (
     <div>
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
       {confirmDelete && (
         <div className="confirm-overlay">
           <div className="confirm-dialog">
@@ -440,6 +430,17 @@ function VesselOperationMaster({ locations = [], assetTypes = [], loggedInUser }
           </div>
         </div>
       </div>
+
+      {successMsg && (
+        <div className="success-box" onClick={() => setSuccessMsg('')}>
+          {successMsg}
+        </div>
+      )}
+      {errorMsg && (
+        <div className="error-box" onClick={() => setErrorMsg('')}>
+          {errorMsg}
+        </div>
+      )}
     </div>
   )
 }

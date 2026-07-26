@@ -439,14 +439,6 @@ function BackupRecovery({ loggedInUser }) {
         <span className="record-count">{jobs.length} Jobs</span>
       </div>
 
-      {successMsg && (
-        <div className="success-box">{successMsg}</div>
-      )}
-
-      {errorMsg && (
-        <div className="error-box">{errorMsg}</div>
-      )}
-
       {validationErrors.runTime && (
         <div className="error-box">{validationErrors.runTime}</div>
       )}
@@ -1088,6 +1080,13 @@ function BackupRecovery({ loggedInUser }) {
         currentPage={restoreCurrentPage}
         onPageChange={setRestoreCurrentPage}
       />
+
+      {successMsg && (
+        <div className="success-box">{successMsg}</div>
+      )}
+      {errorMsg && (
+        <div className="error-box">{errorMsg}</div>
+      )}
     </div>
   )
 }

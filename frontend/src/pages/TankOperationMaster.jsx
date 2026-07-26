@@ -288,14 +288,6 @@ function TankOperationMaster({ locations, loggedInUser }) {
         </div>
       )}
 
-      {successMsg && (
-        <div className="success-box">{successMsg}</div>
-      )}
-
-      {errorMsg && (
-        <div className="error-box">{errorMsg}</div>
-      )}
-
       {confirmDeleteItem && (
         <div className="confirm-overlay">
           <div className="confirm-box">
@@ -580,6 +572,13 @@ function TankOperationMaster({ locations, loggedInUser }) {
           )}
         </tbody>
       </table>
+
+      {successMsg && (
+        <div className="success-box">{successMsg}</div>
+      )}
+      {errorMsg && (
+        <div className="error-box">{errorMsg}</div>
+      )}
 
       <div className="info-box">
         Stock logic rule: SET declares a stock balance, IN increases stock, OUT

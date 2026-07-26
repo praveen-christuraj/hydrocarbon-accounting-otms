@@ -723,14 +723,6 @@ function AssetCalibrationTable({
         </div>
       )}
 
-      {successMsg && (
-        <div className="success-box">{successMsg}</div>
-      )}
-
-      {errorMsg && (
-        <div className="error-box">{errorMsg}</div>
-      )}
-
       {confirmRemoveRowIndex !== null && (
         <div className="confirm-overlay">
           <div className="confirm-box">
@@ -783,6 +775,7 @@ function AssetCalibrationTable({
       )}
 
       {canManageAssetCalibration && (
+      <>
       <form onSubmit={handleSubmit}>
         <div>
           <label>Calibration Name</label>
@@ -1117,6 +1110,14 @@ function AssetCalibrationTable({
           )}
         </div>
       </form>
+
+      {successMsg && (
+        <div className="success-box">{successMsg}</div>
+      )}
+      {errorMsg && (
+        <div className="error-box">{errorMsg}</div>
+      )}
+      </>
       )}
 
       <div className="section-title">

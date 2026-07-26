@@ -624,7 +624,7 @@ textarea:focus {
   position: fixed;
   inset: 0;
   background: rgba(15, 23, 42, 0.55);
-  z-index: 999;
+  z-index: 1300;
   display: flex;
   justify-content: center;
   align-items: flex-start;
@@ -914,6 +914,17 @@ textarea:focus {
   padding: 0;
   line-height: 1;
   flex-shrink: 0;
+}
+
+.success-box {
+  margin: 0 0 16px;
+  padding: 12px 16px;
+  background: #f0fdf4;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
 }
 .password-input-wrapper {
   position: relative;
@@ -1436,6 +1447,59 @@ textarea:focus {
     max-width: 100%;
   }
 }
+/* Confirm overlay (used across 20+ pages) */
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  z-index: 1300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.confirm-box,
+.confirm-dialog {
+  width: min(480px, 100%);
+  background: white;
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.3);
+}
+
+.confirm-box p,
+.confirm-dialog p {
+  margin: 0 0 18px;
+  font-size: 15px;
+  color: #334155;
+  line-height: 1.5;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.confirm-actions button:first-child {
+  background: #dc2626;
+  color: white;
+}
+
+.confirm-actions button:first-child:hover {
+  background: #b91c1c;
+}
+
+.confirm-actions button:last-child {
+  background: #64748b;
+  color: white;
+}
+
+.confirm-actions button:last-child:hover {
+  background: #475569;
+}
+
 /* Approval review modal */
 .review-modal-backdrop {
   position: fixed;
@@ -4769,7 +4833,7 @@ textarea:focus {
 .notification-popup-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 1100;
+  z-index: 1300;
   display: flex;
   align-items: center;
   justify-content: center;

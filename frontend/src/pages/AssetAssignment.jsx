@@ -234,14 +234,6 @@ function AssetAssignment({
         </div>
       )}
 
-      {successMsg && (
-        <div className="success-box">{successMsg}</div>
-      )}
-
-      {errorMsg && (
-        <div className="error-box">{errorMsg}</div>
-      )}
-
       {confirmDeleteId && (
         <div className="confirm-overlay">
           <div className="confirm-box">
@@ -266,6 +258,7 @@ function AssetAssignment({
       )}
 
       {canManageAssetAssignment && (
+      <>
       <form onSubmit={handleSubmit}>
         <div>
           <label>Asset</label>
@@ -455,6 +448,14 @@ function AssetAssignment({
           )}
         </div>
       </form>
+
+      {successMsg && (
+        <div className="success-box">{successMsg}</div>
+      )}
+      {errorMsg && (
+        <div className="error-box">{errorMsg}</div>
+      )}
+      </>
       )}
 
       <div className="section-title">

@@ -42,6 +42,14 @@ const dashboardCards = [
     icon: '👥',
   },
   {
+    title: 'User Locations',
+    description: 'Location access',
+    path: '/user-locations',
+    permission: 'View User Location Assignment',
+    group: 'User Management',
+    icon: '🌍',
+  },
+  {
     title: 'Access Summary',
     description: 'RBAC summary',
     path: '/access-summary',

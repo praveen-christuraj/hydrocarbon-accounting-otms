@@ -266,16 +266,6 @@ function OutTurnReport({ locations, assets }) {
 
   return (
     <div className="out-turn-report-page">
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
       <div className="page-title">
         <div>
           <h2>Out-Turn Report</h2>
@@ -576,6 +566,17 @@ function OutTurnReport({ locations, assets }) {
         stock snapshot with the previous chronological stock snapshot for the
         same tank/product.
       </div>
+
+      {successMsg && (
+        <div className="success-box" onClick={() => setSuccessMsg('')}>
+          {successMsg}
+        </div>
+      )}
+      {errorMsg && (
+        <div className="error-box" onClick={() => setErrorMsg('')}>
+          {errorMsg}
+        </div>
+      )}
     </div>
   )
 }

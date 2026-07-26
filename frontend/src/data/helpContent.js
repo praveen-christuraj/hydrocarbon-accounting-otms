@@ -298,6 +298,20 @@ export const helpContent = {
     ],
   },
 
+  '/user-locations': {
+    title: 'User Location Assignment Help',
+    description:
+      'Assign locations to users for location-based access control. Users bound to locations can only access data from those locations.',
+    points: [
+      'Only Active users are available for location assignment.',
+      'Only Active locations are available for selection.',
+      'Users can have multiple locations assigned.',
+      '"All Locations Access" overrides individual assignments — the user can access every location.',
+      'If "All Locations Access" is set to "No", the user is restricted to their individually assigned locations.',
+      'Use the Edit button to update a user\'s location assignments and access flag.',
+    ],
+  },
+
   '/material-balance-report': {
     title: 'Material Balance Report Help',
     description:

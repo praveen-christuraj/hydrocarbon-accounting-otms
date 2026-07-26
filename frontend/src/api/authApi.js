@@ -36,6 +36,8 @@ const convertLoggedInUserFromApi = (data) => {
       description: permission.description || '',
       status: permission.status,
     })),
+    assignedLocationCodes: user.assigned_location_codes || [],
+    allLocationsAccess: user.all_locations_access || 'No',
   }
 }
 

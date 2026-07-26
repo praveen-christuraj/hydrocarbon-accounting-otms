@@ -882,16 +882,6 @@ function ShuttleTracking({
   // ----------------------------
   return (
     <>
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
       {promptModal && promptModal.action === 'close' && (
         <div className="confirm-overlay">
           <div className="confirm-dialog">
@@ -1692,9 +1682,19 @@ function ShuttleTracking({
       </div>
       </div>
       </div>
+
+      {successMsg && (
+        <div className="success-box" onClick={() => setSuccessMsg('')}>
+          {successMsg}
+        </div>
+      )}
+      {errorMsg && (
+        <div className="error-box" onClick={() => setErrorMsg('')}>
+          {errorMsg}
+        </div>
+      )}
     </>
   )
 }
-
 
 export default ShuttleTracking

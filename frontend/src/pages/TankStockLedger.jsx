@@ -414,16 +414,6 @@ function TankStockLedger({ locations, assets }) {
 
   return (
     <div>
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
       <div className="page-title">
         <div>
           <h2>Tank Stock Ledger</h2>
@@ -858,6 +848,17 @@ function TankStockLedger({ locations, assets }) {
             Movement is calculated from previous stock and current stock for the
             same tank/product sequence.
           </div>
+
+          {successMsg && (
+            <div className="success-box" onClick={() => setSuccessMsg('')}>
+              {successMsg}
+            </div>
+          )}
+          {errorMsg && (
+            <div className="error-box" onClick={() => setErrorMsg('')}>
+              {errorMsg}
+            </div>
+          )}
         </>
       )}
     </div>

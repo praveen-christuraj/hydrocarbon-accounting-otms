@@ -30,6 +30,7 @@ class User(Base):
     force_2fa = Column(String(20), nullable=False, default="No")
     backup_codes_hash_json = Column(JSONB, nullable=True)
     status = Column(String(20), nullable=False, default="Active")
+    all_locations_access = Column(String(20), nullable=False, default="No")
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now())
 
@@ -218,6 +219,27 @@ class UserRole(Base):
         UniqueConstraint(
             "user_id",
             name="unique_user_role",
+        ),
+    )
+
+
+class UserLocation(Base):
+    __tablename__ = "user_locations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    location_code = Column(String(50), nullable=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "location_code",
+            name="unique_user_location",
         ),
     )
 

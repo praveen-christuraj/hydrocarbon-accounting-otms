@@ -373,14 +373,6 @@ function Table11FactorMaster({ loggedInUser }) {
         structure: first column API @ 60°F, second column LT Factor.
       </div>
 
-      {successMsg && (
-        <div className="success-box">{successMsg}</div>
-      )}
-
-      {errorMsg && (
-        <div className="error-box">{errorMsg}</div>
-      )}
-
       {confirmSaveRowsAction && (
         <div className="confirm-overlay">
           <div className="confirm-box">
@@ -678,6 +670,13 @@ API@60 LT_FACTOR
           {sortedRows.length}. Use Lookup Test to verify any API @ 60°F value.
         </div>
       )}
+      {successMsg && (
+        <div className="success-box">{successMsg}</div>
+      )}
+      {errorMsg && (
+        <div className="error-box">{errorMsg}</div>
+      )}
+
       <div className="info-box">
         Calculation rule: API@60 → LT Factor lookup → LT = NSV × LT Factor → MT
         = LT × 1.01605.

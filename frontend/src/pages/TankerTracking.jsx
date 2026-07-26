@@ -782,16 +782,6 @@ function TankerTracking({
 
   return (
     <div>
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
       {confirmRevokeGroup && (
         <div className="confirm-overlay">
           <div className="confirm-dialog">
@@ -1811,6 +1801,17 @@ function TankerTracking({
       {printGroup && (
         <div className="print-only">
           <TankerMtrComparisonReport group={printGroup} />
+        </div>
+      )}
+
+      {successMsg && (
+        <div className="success-box" onClick={() => setSuccessMsg('')}>
+          {successMsg}
+        </div>
+      )}
+      {errorMsg && (
+        <div className="error-box" onClick={() => setErrorMsg('')}>
+          {errorMsg}
         </div>
       )}
     </div>

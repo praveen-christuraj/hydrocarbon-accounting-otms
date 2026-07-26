@@ -433,14 +433,6 @@ function CalibrationTemplateMaster({
         </div>
       )}
 
-      {successMsg && (
-        <div className="success-box">{successMsg}</div>
-      )}
-
-      {errorMsg && (
-        <div className="error-box">{errorMsg}</div>
-      )}
-
       {confirmRemoveColumnIndex !== null && (
         <div className="confirm-overlay">
           <div className="confirm-box">
@@ -474,6 +466,7 @@ function CalibrationTemplateMaster({
       )}
 
       {canManageCalibrationTemplate && (
+        <>
         <form onSubmit={handleSubmit}>
           <div>
             <label>Template Name</label>
@@ -746,6 +739,14 @@ function CalibrationTemplateMaster({
             )}
           </div>
         </form>
+
+      {successMsg && (
+        <div className="success-box">{successMsg}</div>
+      )}
+      {errorMsg && (
+        <div className="error-box">{errorMsg}</div>
+      )}
+      </>
       )}
 
       <div className="section-title">

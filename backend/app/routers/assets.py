@@ -6,7 +6,11 @@ from app.database import get_db
 from app.models import Asset, AssetType, Location, AssetCalibrationTable, AssetAssignment, FlowmeterConfig, User
 from app.schemas import AssetCreate, AssetResponse
 from app.dependencies.auth import get_current_user_from_token
-from app.dependencies.permissions import require_user_permission
+from app.dependencies.permissions import (
+    apply_location_filter,
+    get_user_location_codes,
+    require_user_permission,
+)
 from app.services.audit_service import create_audit_log
 from app.utils.helpers import clean_optional_text
 from app.utils.pagination import paginate_query
@@ -26,6 +30,7 @@ def get_assets(
 ):
     require_user_permission(current_user, "View Asset", db)
     query = db.query(Asset).order_by(Asset.id)
+    query = apply_location_filter(query, Asset, current_user, db)
     if search:
         query = query.filter(
             or_(
@@ -110,6 +115,13 @@ def create_asset(
                 detail="Only Active location can be used for Local assets",
             )
 
+        allowed = get_user_location_codes(current_user, db)
+        if allowed is not None and location_code not in allowed:
+            raise HTTPException(
+                status_code=403,
+                detail="Location is not in your assigned scope",
+            )
+
     new_asset = Asset(
         asset_name=asset.asset_name.strip(),
         asset_code=asset.asset_code.strip(),
@@ -182,6 +194,10 @@ def update_asset(
             status_code=404,
             detail="Asset not found",
         )
+
+    allowed = get_user_location_codes(current_user, db)
+    if allowed is not None and existing_asset.location_code and existing_asset.location_code not in allowed:
+        raise HTTPException(status_code=403, detail="This asset's location is not in your assigned scope")
 
     duplicate_asset = db.query(Asset).filter(
         Asset.asset_code.ilike(asset.asset_code),

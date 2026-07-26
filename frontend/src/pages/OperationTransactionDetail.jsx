@@ -2347,16 +2347,6 @@ function OperationTransactionDetail({ loggedInUser }) {
 
   return (
     <div>
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
       <PrintableTankGaugingReport
         transaction={transaction}
         tankPayload={tankPayload}
@@ -2938,6 +2928,17 @@ function OperationTransactionDetail({ loggedInUser }) {
         Status actions are protected by JWT, role permissions, backend workflow
         validation, and visible data review before confirmation.
       </div>
+
+      {successMsg && (
+        <div className="success-box" onClick={() => setSuccessMsg('')}>
+          {successMsg}
+        </div>
+      )}
+      {errorMsg && (
+        <div className="error-box" onClick={() => setErrorMsg('')}>
+          {errorMsg}
+        </div>
+      )}
     </div>
   )
 }

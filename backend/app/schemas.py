@@ -155,6 +155,36 @@ class UserRoleResponse(BaseModel):
     role_name: str
 
 
+class UserLocationSaveRequest(BaseModel):
+    location_codes: list[str]
+
+
+class UserLocationItem(BaseModel):
+    id: int
+    user_id: int
+    full_name: str
+    username: str
+    location_code: str
+    location_name: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UserLocationResponse(BaseModel):
+    user_id: int
+    full_name: str
+    username: str
+    all_locations_access: str
+    location_codes: list[str] = []
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UserAllLocationsUpdateRequest(BaseModel):
+    all_locations_access: str
+
+
 class OperationWorkflowPolicyBase(BaseModel):
     policy_name: str
     action_code: str

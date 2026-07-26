@@ -155,16 +155,6 @@ function OperationTransactionRegister({
 
   return (
     <div>
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
       <div className="page-title no-print">
         <div>
           <h2>Operation Transaction Register</h2>
@@ -435,6 +425,17 @@ function OperationTransactionRegister({
       <div className="info-box no-print">
         This register uses server-side paging and status counts. Export CSV downloads directly from the backend using the selected filters.
       </div>
+
+      {successMsg && (
+        <div className="success-box" onClick={() => setSuccessMsg('')}>
+          {successMsg}
+        </div>
+      )}
+      {errorMsg && (
+        <div className="error-box" onClick={() => setErrorMsg('')}>
+          {errorMsg}
+        </div>
+      )}
     </div>
   )
 }

@@ -169,16 +169,6 @@ function FlowmeterRecordEntry({ locations = [], assets = [] }) {
       </div>
 
       <div>
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
       <div className="page-title">
         <div>
           <h2>Flowmeter Records</h2>
@@ -307,6 +297,17 @@ function FlowmeterRecordEntry({ locations = [], assets = [] }) {
         </table>
       )}
       </div>
+
+      {successMsg && (
+        <div className="success-box" onClick={() => setSuccessMsg('')}>
+          {successMsg}
+        </div>
+      )}
+      {errorMsg && (
+        <div className="error-box" onClick={() => setErrorMsg('')}>
+          {errorMsg}
+        </div>
+      )}
     </>
   )
 }

@@ -190,14 +190,6 @@ function FlowmeterConfigMaster({ locations = [], assets = [], assetAssignments =
         </div>
       </div>
 
-      {successMsg && (
-        <div className="success-box">{successMsg}</div>
-      )}
-
-      {errorMsg && (
-        <div className="error-box">{errorMsg}</div>
-      )}
-
       {confirmDeleteItem && (
         <div className="confirm-overlay">
           <div className="confirm-box">
@@ -319,6 +311,12 @@ function FlowmeterConfigMaster({ locations = [], assets = [], assetAssignments =
         </button>
         <button type="button" onClick={() => setForm(emptyForm)} disabled={saving}>Clear</button>
       </div>
+      {successMsg && (
+        <div className="success-box">{successMsg}</div>
+      )}
+      {errorMsg && (
+        <div className="error-box">{errorMsg}</div>
+      )}
       </>
       )}
 

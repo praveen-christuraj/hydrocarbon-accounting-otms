@@ -245,14 +245,6 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations, loggedInUser
         </div>
       )}
 
-      {successMsg && (
-        <div className="success-box">{successMsg}</div>
-      )}
-
-      {errorMsg && (
-        <div className="error-box">{errorMsg}</div>
-      )}
-
       {!canManageAsset && (
         <div className="info-box">
           You are in view-only mode. Admin can manage assets.
@@ -276,6 +268,7 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations, loggedInUser
       )}
 
       {canManageAsset && (
+      <>
       <form onSubmit={handleSubmit}>
         <div>
           <label>Asset Name</label>
@@ -452,6 +445,14 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations, loggedInUser
           )}
         </div>
       </form>
+
+      {successMsg && (
+        <div className="success-box">{successMsg}</div>
+      )}
+      {errorMsg && (
+        <div className="error-box">{errorMsg}</div>
+      )}
+      </>
       )}
 
       <div className="section-title">

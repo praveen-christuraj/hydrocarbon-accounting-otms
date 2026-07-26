@@ -214,14 +214,6 @@ function OperationTypeMaster({
         </div>
       )}
 
-      {successMsg && (
-        <div className="success-box">{successMsg}</div>
-      )}
-
-      {errorMsg && (
-        <div className="error-box">{errorMsg}</div>
-      )}
-
       {confirmDeleteId && (
         <div className="confirm-overlay">
           <div className="confirm-box">
@@ -411,6 +403,13 @@ function OperationTypeMaster({
           )}
         </div>
       </form>
+
+      {successMsg && (
+        <div className="success-box">{successMsg}</div>
+      )}
+      {errorMsg && (
+        <div className="error-box">{errorMsg}</div>
+      )}
 
       {!canManageOperationType && (
         <div className="info-box">

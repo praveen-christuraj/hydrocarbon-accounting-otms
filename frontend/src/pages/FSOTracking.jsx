@@ -214,16 +214,6 @@ function FSOTracking({ locations = [], assets = [] }) {
 
   return (
     <>
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
       <div className="print-only mtr-page">
         <div className="mtr-header">
           <h1>FSO MTR REPORT</h1>
@@ -565,6 +555,17 @@ function FSOTracking({ locations = [], assets = [] }) {
           )}
         </div>
       </div>
+
+      {successMsg && (
+        <div className="success-box" onClick={() => setSuccessMsg('')}>
+          {successMsg}
+        </div>
+      )}
+      {errorMsg && (
+        <div className="error-box" onClick={() => setErrorMsg('')}>
+          {errorMsg}
+        </div>
+      )}
     </>
   )
 }

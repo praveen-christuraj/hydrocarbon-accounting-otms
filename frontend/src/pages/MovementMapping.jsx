@@ -365,16 +365,6 @@ function MovementMapping({ locations = [], loggedInUser }) {
 
   return (
     <div>
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
       {confirmRemoveItem && (
         <div className="confirm-overlay">
           <div className="confirm-dialog">
@@ -839,6 +829,17 @@ function MovementMapping({ locations = [], loggedInUser }) {
           )}
         </div>
       </div>
+
+      {successMsg && (
+        <div className="success-box" onClick={() => setSuccessMsg('')}>
+          {successMsg}
+        </div>
+      )}
+      {errorMsg && (
+        <div className="error-box" onClick={() => setErrorMsg('')}>
+          {errorMsg}
+        </div>
+      )}
     </div>
   )
 }

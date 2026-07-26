@@ -236,16 +236,6 @@ function TankerTransactionReport({ locations = [], assets = [] }) {
 
   return (
     <div>
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
       <div className="page-title">
         <div>
           <h2>Tanker Transaction Report</h2>
@@ -569,6 +559,17 @@ function TankerTransactionReport({ locations = [], assets = [] }) {
               <p>Remarks: {selectedRow.remarks || 'N/A'}</p>
             </div>
           </div>
+        </div>
+      )}
+
+      {successMsg && (
+        <div className="success-box" onClick={() => setSuccessMsg('')}>
+          {successMsg}
+        </div>
+      )}
+      {errorMsg && (
+        <div className="error-box" onClick={() => setErrorMsg('')}>
+          {errorMsg}
         </div>
       )}
     </div>

@@ -103,10 +103,6 @@ function AuditLog() {
         <span className="record-count">{auditLogs.length} Logs</span>
       </div>
 
-      {errorMsg && (
-        <div className="error-box">{errorMsg}</div>
-      )}
-
       <form onSubmit={handleApplyFilters}>
         <div>
           <label>Module</label>
@@ -227,6 +223,10 @@ function AuditLog() {
           </button>
         </div>
       </form>
+
+      {errorMsg && (
+        <div className="error-box">{errorMsg}</div>
+      )}
 
       <div className="section-title">
         <h3>Audit Trail</h3>

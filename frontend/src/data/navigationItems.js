@@ -46,6 +46,12 @@ export const navigationItems = [
         permission: 'View User Role Assignment',
       },
       {
+        label: 'User Location Assignment',
+        path: '/user-locations',
+        disabled: false,
+        permission: 'View User Location Assignment',
+      },
+      {
         label: 'Profile & Security',
         path: '/profile-security',
         disabled: false,

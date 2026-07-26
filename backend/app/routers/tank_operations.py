@@ -6,7 +6,11 @@ from app.database import get_db
 from app.models import TankOperation, Location, User
 from app.schemas import TankOperationCreate, TankOperationResponse
 from app.dependencies.auth import get_current_user_from_token
-from app.dependencies.permissions import require_user_permission
+from app.dependencies.permissions import (
+    apply_location_filter,
+    get_user_location_codes,
+    require_user_permission,
+)
 from app.services.audit_service import create_audit_log
 from app.utils.helpers import clean_optional_text, normalize_code
 
@@ -197,6 +201,7 @@ def get_tank_operations(
     )
 
     query = db.query(TankOperation)
+    query = apply_location_filter(query, TankOperation, current_user, db)
 
     cleaned_location_code = clean_optional_text(location_code)
 
@@ -238,6 +243,13 @@ def create_tank_operation(
     )
 
     validated_data = validate_tank_operation(tank_operation, db)
+
+    allowed = get_user_location_codes(current_user, db)
+    if allowed is not None and validated_data["location_code"] not in allowed:
+        raise HTTPException(
+            status_code=403,
+            detail="Location is not in your assigned scope",
+        )
 
     new_tank_operation = TankOperation(
         location_code=validated_data["location_code"],
@@ -304,6 +316,13 @@ def update_tank_operation(
             detail="Tank Operation not found",
         )
 
+    allowed = get_user_location_codes(current_user, db)
+    if allowed is not None and existing_tank_operation.location_code not in allowed:
+        raise HTTPException(
+            status_code=403,
+            detail="Location is not in your assigned scope",
+        )
+
     before_data = build_tank_operation_audit_snapshot(
         existing_tank_operation,
         db,
@@ -314,6 +333,12 @@ def update_tank_operation(
         db,
         tank_operation_id,
     )
+
+    if allowed is not None and validated_data["location_code"] not in allowed:
+        raise HTTPException(
+            status_code=403,
+            detail="Location is not in your assigned scope",
+        )
 
     existing_tank_operation.location_code = validated_data["location_code"]
     existing_tank_operation.operation_code = validated_data["operation_code"]
@@ -383,6 +408,13 @@ def delete_tank_operation(
         raise HTTPException(
             status_code=404,
             detail="Tank Operation not found",
+        )
+
+    allowed = get_user_location_codes(current_user, db)
+    if allowed is not None and existing_tank_operation.location_code not in allowed:
+        raise HTTPException(
+            status_code=403,
+            detail="Location is not in your assigned scope",
         )
 
     deleted_data = build_tank_operation_audit_snapshot(

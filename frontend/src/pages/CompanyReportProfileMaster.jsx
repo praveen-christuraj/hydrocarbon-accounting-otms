@@ -273,14 +273,6 @@ function CompanyReportProfileMaster({ loggedInUser }) {
         </div>
       )}
 
-      {successMsg && (
-        <div className="success-box">{successMsg}</div>
-      )}
-
-      {errorMsg && (
-        <div className="error-box">{errorMsg}</div>
-      )}
-
       {confirmDeleteId && (
         <div className="confirm-overlay">
           <div className="confirm-box">
@@ -298,6 +290,7 @@ function CompanyReportProfileMaster({ loggedInUser }) {
       )}
 
       {canManageProfiles && (
+        <>
         <form onSubmit={handleSubmit}>
           <div>
             <label>Profile Name</label>
@@ -482,6 +475,14 @@ function CompanyReportProfileMaster({ loggedInUser }) {
             </button>
           </div>
         </form>
+
+      {successMsg && (
+        <div className="success-box">{successMsg}</div>
+      )}
+      {errorMsg && (
+        <div className="error-box">{errorMsg}</div>
+      )}
+      </>
       )}
 
       {canManageProfiles && showPreview && (

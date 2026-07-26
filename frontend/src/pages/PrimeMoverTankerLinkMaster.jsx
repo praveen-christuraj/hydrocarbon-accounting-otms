@@ -296,14 +296,6 @@ function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
         </div>
       )}
 
-      {successMsg && (
-        <div className="success-box">{successMsg}</div>
-      )}
-
-      {errorMsg && (
-        <div className="error-box">{errorMsg}</div>
-      )}
-
       {confirmDeleteItem && (
         <div className="confirm-overlay">
           <div className="confirm-box">
@@ -456,6 +448,13 @@ function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
           )}
         </div>
       </form>
+
+      {successMsg && (
+        <div className="success-box">{successMsg}</div>
+      )}
+      {errorMsg && (
+        <div className="error-box">{errorMsg}</div>
+      )}
 
       <div className="section-title">
         <h3>Saved Prime Mover - Tanker Links</h3>

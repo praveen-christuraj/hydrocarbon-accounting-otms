@@ -214,16 +214,6 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
 
   return (
     <div>
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
       {confirmAction && (
         <div className="confirm-overlay">
           <div className="confirm-dialog">
@@ -523,6 +513,17 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
               )}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {successMsg && (
+        <div className="success-box" onClick={() => setSuccessMsg('')}>
+          {successMsg}
+        </div>
+      )}
+      {errorMsg && (
+        <div className="error-box" onClick={() => setErrorMsg('')}>
+          {errorMsg}
         </div>
       )}
     </div>

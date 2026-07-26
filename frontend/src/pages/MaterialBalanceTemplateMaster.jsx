@@ -621,14 +621,6 @@ function MaterialBalanceTemplateMaster({ locations }) {
         excluded from Material Balance and Book Closing.
       </div>
 
-      {successMsg && (
-        <div className="success-box">{successMsg}</div>
-      )}
-
-      {errorMsg && (
-        <div className="error-box">{errorMsg}</div>
-      )}
-
       {confirmDeleteTemplateItem && (
         <div className="confirm-overlay">
           <div className="confirm-box">
@@ -1070,6 +1062,13 @@ function MaterialBalanceTemplateMaster({ locations }) {
             Balance and Book Closing.
           </div>
         </>
+      )}
+
+      {successMsg && (
+        <div className="success-box">{successMsg}</div>
+      )}
+      {errorMsg && (
+        <div className="error-box">{errorMsg}</div>
       )}
     </div>
   )

@@ -686,6 +686,26 @@ def ensure_operation_template_layout_columns():
         )
 
 
+def ensure_user_location_columns():
+    """Add all_locations_access column to users table if missing."""
+    inspector = inspect(engine)
+    if "users" not in inspector.get_table_names():
+        return
+    cols = {c["name"] for c in inspector.get_columns("users")}
+    if "all_locations_access" not in cols:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "ALTER TABLE users ADD COLUMN all_locations_access VARCHAR(20) DEFAULT 'No';"
+                )
+            )
+            connection.execute(
+                text(
+                    "UPDATE users SET all_locations_access = 'No' WHERE all_locations_access IS NULL;"
+                )
+            )
+
+
 def seed_default_permissions():
     db = SessionLocal()
     try:

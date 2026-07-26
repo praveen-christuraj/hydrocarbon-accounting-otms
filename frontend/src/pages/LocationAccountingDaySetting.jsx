@@ -284,14 +284,6 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
         </div>
       )}
 
-      {successMsg && (
-        <div className="success-box">{successMsg}</div>
-      )}
-
-      {errorMsg && (
-        <div className="error-box">{errorMsg}</div>
-      )}
-
       {confirmDeleteItem && (
         <div className="confirm-overlay">
           <div className="confirm-box">
@@ -552,6 +544,13 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
           )}
         </tbody>
       </table>
+
+      {successMsg && (
+        <div className="success-box">{successMsg}</div>
+      )}
+      {errorMsg && (
+        <div className="error-box">{errorMsg}</div>
+      )}
 
       <div className="info-box">
         Example: if the start time is 06:01 and end time is 06:00, then

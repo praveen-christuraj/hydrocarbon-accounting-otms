@@ -1,3 +1,4 @@
+import sqlalchemy
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
@@ -7,6 +8,7 @@ from app.models import (
     Role,
     RolePermission,
     UserRole,
+    UserLocation,
     OperationWorkflowPolicy,
     OperationWorkflowPolicyRole,
     OperationWorkflowPolicyUser,
@@ -289,6 +291,16 @@ def build_logged_in_user_response(user: User, db: Session):
             for permission in permissions
         ]
 
+    # Gather location context
+    assigned_location_codes = [
+        row.location_code
+        for row in db.query(UserLocation)
+        .filter(UserLocation.user_id == user.id)
+        .order_by(UserLocation.location_code)
+        .all()
+    ]
+    all_locations_access = user.all_locations_access or "No"
+
     return {
         "id": user.id,
         "full_name": user.full_name,
@@ -301,4 +313,42 @@ def build_logged_in_user_response(user: User, db: Session):
         "security": build_security_flags(user),
         "role": role_data,
         "permissions": permissions_data,
+        "assigned_location_codes": assigned_location_codes,
+        "all_locations_access": all_locations_access,
     }
+
+
+def get_user_location_codes(user: User, db: Session) -> set[str] | None:
+    """
+    Returns the set of location codes the user is allowed to access.
+    Returns None if the user has unrestricted access (all_locations_access == "Yes").
+    Returns an empty set if the user has no assigned locations and no all-access.
+    """
+    if user.all_locations_access == "Yes":
+        return None
+    codes = (
+        db.query(UserLocation.location_code)
+        .filter(UserLocation.user_id == user.id)
+        .all()
+    )
+    return {row[0] for row in codes}
+
+
+def apply_location_filter(query, model, user: User, db: Session, column_name: str = "location_code"):
+    """
+    Apply location-based filtering to a SQLAlchemy query.
+    - If user has all_locations_access == "Yes": no filter applied (returns query unchanged)
+    - If user has assigned locations: filters to only those location codes
+    - If user has no assigned locations: makes the query return zero results
+
+    Usage:
+        query = apply_location_filter(query, MyModel, current_user, db)
+        query = apply_location_filter(query, MyModel, current_user, db, column_name="origin_location_code")
+    """
+    allowed_codes = get_user_location_codes(user, db)
+    if allowed_codes is None:
+        return query  # unrestricted
+    if not allowed_codes:
+        return query.filter(sqlalchemy.literal(False))  # no access to any location
+    col = getattr(model, column_name)
+    return query.filter(col.in_(allowed_codes))

@@ -514,16 +514,6 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
   }
 return (
     <div>
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
       {confirmAction && (
         <div className="confirm-overlay">
           <div className="confirm-dialog">
@@ -1268,6 +1258,17 @@ return (
             </div>
           )}
         </>
+      )}
+
+      {successMsg && (
+        <div className="success-box" onClick={() => setSuccessMsg('')}>
+          {successMsg}
+        </div>
+      )}
+      {errorMsg && (
+        <div className="error-box" onClick={() => setErrorMsg('')}>
+          {errorMsg}
+        </div>
       )}
     </div>
   )
