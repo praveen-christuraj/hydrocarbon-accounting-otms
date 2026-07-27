@@ -839,9 +839,9 @@ function OperationEntry({
     const hasAllLocationsAccess = loggedInUser?.allLocationsAccess === 'Yes'
     const isAdmin =
       String(loggedInUser?.username || '').toLowerCase() === 'admin'
+    const hasCreatePermission = hasPermission('Create Operation Entry')
 
-    // Admin / all-locations-access users see all active operation types
-    if (isAdmin || hasAllLocationsAccess) {
+    if (isAdmin || hasAllLocationsAccess || hasCreatePermission) {
       return statusFiltered
     }
 
@@ -923,6 +923,7 @@ function OperationEntry({
     const hasAllLocationsAccess = loggedInUser?.allLocationsAccess === 'Yes'
     const isAdmin =
       String(loggedInUser?.username || '').toLowerCase() === 'admin'
+    const hasCreatePermission = hasPermission('Create Operation Entry')
 
     // If an origin location has been selected, narrow filtering to that location
     // Otherwise, use the user's assigned location codes
@@ -936,8 +937,8 @@ function OperationEntry({
         return false
       }
 
-      // Admin / all-locations-access users see all matching assets
-      if (isAdmin || hasAllLocationsAccess) {
+      // Admin / all-locations-access / create-permission users see all matching assets
+      if (isAdmin || hasAllLocationsAccess || hasCreatePermission) {
         return true
       }
 
