@@ -4,6 +4,7 @@ import {
   deleteLocation,
   updateLocation,
 } from '../api/locationApi'
+import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
 
 function LocationMaster({ locations, reloadLocations, loggedInUser }) {
   const emptyLocation = {
@@ -22,6 +23,9 @@ function LocationMaster({ locations, reloadLocations, loggedInUser }) {
   const [success, setSuccess] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(null)
   const [fieldErrors, setFieldErrors] = useState({})
+  const [page, setPage] = useState(1)
+
+  const visibleItems = paginateRows(locations, page)
 
   const isAdminBootstrap =
     String(loggedInUser?.username || '').toLowerCase() === 'admin'
@@ -259,7 +263,7 @@ function LocationMaster({ locations, reloadLocations, loggedInUser }) {
           {locations.length === 0 ? (
             <tr><td colSpan={canManageLocation ? 7 : 6} className="empty-table">No locations added yet.</td></tr>
           ) : (
-            locations.map((item) => (
+            visibleItems.map((item) => (
               <tr key={item.id}>
                 <td>{item.locationName}</td>
                 <td>{item.locationCode}</td>
@@ -287,6 +291,8 @@ function LocationMaster({ locations, reloadLocations, loggedInUser }) {
           )}
         </tbody>
       </table>
+
+      <PaginationControls currentPage={page} totalRows={locations.length} onPageChange={setPage} />
 
       <div className="info-box">Location Code must be unique. Example: UTP for Utapate Terminal.</div>
     </div>

@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   getUserLocationSummaries,
   saveUserLocations,
   updateUserAllLocationsAccess,
   deleteUserLocation,
 } from '../api/userLocationApi'
+import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
 
 function UserLocationAssignment({
   users,
@@ -23,6 +24,7 @@ function UserLocationAssignment({
   const [success, setSuccess] = useState('')
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [fieldErrors, setFieldErrors] = useState({})
+  const [page, setPage] = useState(1)
 
   const activeUsers = users.filter((user) => user.status === 'Active')
   const activeLocations = locations.filter((loc) => loc.status === 'Active')
@@ -40,6 +42,11 @@ function UserLocationAssignment({
 
   const canManage = hasPermission('Manage User Location Assignment')
   const canView = hasPermission('View User Location Assignment')
+  const visibleAssignments = paginateRows(userLocationAssignments, page)
+
+  useEffect(() => {
+    setPage(1)
+  }, [userLocationAssignments.length])
 
   const clearError = () => setError('')
   const clearSuccess = () => setSuccess('')
@@ -459,7 +466,7 @@ function UserLocationAssignment({
               </td>
             </tr>
           ) : (
-            userLocationAssignments.map((assignment) => {
+            visibleAssignments.map((assignment) => {
               const summary = summaryByUserId[assignment.userId]
               const isFirstRowForUser =
                 userLocationAssignments.findIndex(
@@ -570,6 +577,12 @@ function UserLocationAssignment({
           )}
         </tbody>
       </table>
+
+      <PaginationControls
+        currentPage={page}
+        totalRows={userLocationAssignments.length}
+        onPageChange={setPage}
+      />
     </div>
   )
 }

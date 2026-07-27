@@ -197,7 +197,7 @@ function VesselOperationMaster({ locations = [], assetTypes = [], loggedInUser }
             value={filters.location_code}
             onChange={onFilterChange}
           >
-            <option value="">All</option>
+            <option value="">All Locations</option>
             {locations.map((l) => (
               <option key={l.id} value={l.locationCode}>
                 {l.locationName} ({l.locationCode})
@@ -213,7 +213,7 @@ function VesselOperationMaster({ locations = [], assetTypes = [], loggedInUser }
             value={filters.applicable_asset_type_code}
             onChange={onFilterChange}
           >
-            <option value="">All</option>
+            <option value="">All Asset Types</option>
             {vesselAssetTypes.map((t) => (
               <option key={t.id} value={t.assetTypeCode}>
                 {t.assetTypeName} ({t.assetTypeCode})
@@ -225,7 +225,7 @@ function VesselOperationMaster({ locations = [], assetTypes = [], loggedInUser }
         <div>
           <label>Status</label>
           <select name="status" value={filters.status} onChange={onFilterChange}>
-            <option value="">All</option>
+            <option value="">All Statuses</option>
             <option>Active</option>
             <option>Inactive</option>
           </select>
@@ -233,201 +233,8 @@ function VesselOperationMaster({ locations = [], assetTypes = [], loggedInUser }
 
         <div className="report-filter-actions">
           <button type="button" onClick={load} disabled={loading}>
-            {loading ? 'Loading...' : 'Load'}
+            {loading ? 'Loading...' : 'Load Data'}
           </button>
-        </div>
-      </div>
-
-      <div className="two-column-grid">
-        <div>
-          <table>
-            <thead>
-              <tr>
-                <th>Location</th>
-                <th>Asset Type</th>
-                <th>Code</th>
-                <th>Label</th>
-                <th>Category</th>
-                <th>Sign</th>
-                <th>Show In</th>
-                <th>Status</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {rows.length === 0 ? (
-                <tr>
-                  <td colSpan="9" className="empty-table">
-                    No vessel operations found.
-                  </td>
-                </tr>
-              ) : (
-                rows.map((r) => (
-                  <tr key={r.id}>
-                    <td>
-                      {r.location_name} <br />
-                      <small>{r.location_code}</small>
-                    </td>
-                    <td>{r.applicable_asset_type_code}</td>
-                    <td>{r.operation_code}</td>
-                    <td>{r.operation_label}</td>
-                    <td>{r.operation_category}</td>
-                    <td>{r.operation_sign}</td>
-                    <td>{r.show_in || 'Both'}</td>
-                    <td>{r.status}</td>
-                    <td>
-                      <div className="table-actions">
-                        <button type="button" onClick={() => startEdit(r)} disabled={!canManageVesselOperation}>
-                          Edit
-                        </button>
-                        <button type="button" onClick={() => remove(r)} disabled={!canManageVesselOperation}>
-                          Delete
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <div>
-          <div className="info-box">
-            <strong>{editing ? 'Edit Operation' : 'Create Operation'}</strong>
-            <div style={{ marginTop: 10 }} className="operation-entry-subgrid">
-              <div>
-                <label>Location *</label>
-                <select
-                  name="location_code"
-                  value={form.location_code}
-                  onChange={onFormChange}
-                  disabled={!canManageVesselOperation || loading}
-                >
-                  <option value="">Select</option>
-                  {locations.map((l) => (
-                    <option key={l.id} value={l.locationCode}>
-                      {l.locationName} ({l.locationCode})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label>Asset Type *</label>
-                <select
-                  name="applicable_asset_type_code"
-                  value={form.applicable_asset_type_code}
-                  onChange={onFormChange}
-                  disabled={!canManageVesselOperation || loading}
-                >
-                  <option value="">Select</option>
-                  {vesselAssetTypes.map((t) => (
-                    <option key={t.id} value={t.assetTypeCode}>
-                      {t.assetTypeName} ({t.assetTypeCode})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label>Operation Code *</label>
-                <input
-                  name="operation_code"
-                  value={form.operation_code}
-                  onChange={onFormChange}
-                  placeholder="LOADING / UNLOADING / STS_IN / STS_OUT ..."
-                  disabled={!canManageVesselOperation || loading}
-                />
-              </div>
-
-              <div>
-                <label>Operation Label *</label>
-                <input
-                  name="operation_label"
-                  value={form.operation_label}
-                  onChange={onFormChange}
-                  placeholder="Loading / Unloading / STS IN ..."
-                  disabled={!canManageVesselOperation || loading}
-                />
-              </div>
-
-              <div>
-                <label>Category *</label>
-                <input
-                  name="operation_category"
-                  value={form.operation_category}
-                  onChange={onFormChange}
-                  placeholder="LOADING / UNLOADING / STS / DECANTING ..."
-                  disabled={!canManageVesselOperation || loading}
-                />
-              </div>
-
-              <div>
-                <label>Sign *</label>
-                <select
-                  name="operation_sign"
-                  value={form.operation_sign}
-                  onChange={onFormChange}
-                  disabled={!canManageVesselOperation || loading}
-                >
-                  <option>IN</option>
-                  <option>OUT</option>
-                  <option>NEUTRAL</option>
-                  <option>SET</option>
-                </select>
-              </div>
-
-              <div>
-                <label>Show In</label>
-                <select name="show_in" value={form.show_in} onChange={onFormChange} disabled={!canManageVesselOperation || loading}>
-                  <option value="Both">Both</option>
-                  <option value="Entry">Entry</option>
-                  <option value="Tracking">Tracking</option>
-                </select>
-              </div>
-
-              <div>
-                <label>Sort Order</label>
-                <input
-                  type="number"
-                  name="sort_order"
-                  value={form.sort_order}
-                  onChange={onFormChange}
-                  disabled={!canManageVesselOperation || loading}
-                />
-              </div>
-
-              <div>
-                <label>Status</label>
-                <select name="status" value={form.status} onChange={onFormChange} disabled={!canManageVesselOperation || loading}>
-                  <option>Active</option>
-                  <option>Inactive</option>
-                </select>
-              </div>
-
-              <div className="full-width-field">
-                <label>Description</label>
-                <textarea
-                  name="description"
-                  rows="3"
-                  value={form.description}
-                  onChange={onFormChange}
-                  disabled={!canManageVesselOperation || loading}
-                />
-              </div>
-            </div>
-
-            <div className="form-actions">
-              <button type="button" onClick={save} disabled={loading || !canManageVesselOperation}>
-                {loading ? 'Saving...' : editing ? 'Update' : 'Create'}
-              </button>
-              <button type="button" onClick={resetForm} disabled={loading}>
-                Clear
-              </button>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -441,6 +248,192 @@ function VesselOperationMaster({ locations = [], assetTypes = [], loggedInUser }
           {errorMsg}
         </div>
       )}
+
+      <form onSubmit={(e) => { e.preventDefault(); save(); }}>
+        <div>
+          <label>Location *</label>
+          <select
+            name="location_code"
+            value={form.location_code}
+            onChange={onFormChange}
+            disabled={!canManageVesselOperation || loading}
+          >
+            <option value="">Select Location</option>
+            {locations.map((l) => (
+              <option key={l.id} value={l.locationCode}>
+                {l.locationName} ({l.locationCode})
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label>Asset Type *</label>
+          <select
+            name="applicable_asset_type_code"
+            value={form.applicable_asset_type_code}
+            onChange={onFormChange}
+            disabled={!canManageVesselOperation || loading}
+          >
+            <option value="">Select Asset Type</option>
+            {vesselAssetTypes.map((t) => (
+              <option key={t.id} value={t.assetTypeCode}>
+                {t.assetTypeName} ({t.assetTypeCode})
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label>Operation Code *</label>
+          <input
+            name="operation_code"
+            value={form.operation_code}
+            onChange={onFormChange}
+            placeholder="LOADING / UNLOADING / STS_IN / STS_OUT ..."
+            disabled={!canManageVesselOperation || loading}
+          />
+        </div>
+
+        <div>
+          <label>Operation Label *</label>
+          <input
+            name="operation_label"
+            value={form.operation_label}
+            onChange={onFormChange}
+            placeholder="Loading / Unloading / STS IN ..."
+            disabled={!canManageVesselOperation || loading}
+          />
+        </div>
+
+        <div>
+          <label>Category *</label>
+          <input
+            name="operation_category"
+            value={form.operation_category}
+            onChange={onFormChange}
+            placeholder="LOADING / UNLOADING / STS / DECANTING ..."
+            disabled={!canManageVesselOperation || loading}
+          />
+        </div>
+
+        <div>
+          <label>Sign *</label>
+          <select
+            name="operation_sign"
+            value={form.operation_sign}
+            onChange={onFormChange}
+            disabled={!canManageVesselOperation || loading}
+          >
+            <option>IN</option>
+            <option>OUT</option>
+            <option>NEUTRAL</option>
+            <option>SET</option>
+          </select>
+        </div>
+
+        <div>
+          <label>Show In</label>
+          <select name="show_in" value={form.show_in} onChange={onFormChange} disabled={!canManageVesselOperation || loading}>
+            <option value="Both">Both</option>
+            <option value="Entry">Entry</option>
+            <option value="Tracking">Tracking</option>
+          </select>
+        </div>
+
+        <div>
+          <label>Sort Order</label>
+          <input
+            type="number"
+            name="sort_order"
+            value={form.sort_order}
+            onChange={onFormChange}
+            disabled={!canManageVesselOperation || loading}
+          />
+        </div>
+
+        <div>
+          <label>Status</label>
+          <select name="status" value={form.status} onChange={onFormChange} disabled={!canManageVesselOperation || loading}>
+            <option>Active</option>
+            <option>Inactive</option>
+          </select>
+        </div>
+
+        <div className="full-width-field">
+          <label>Description</label>
+          <textarea
+            name="description"
+            rows="3"
+            value={form.description}
+            onChange={onFormChange}
+            disabled={!canManageVesselOperation || loading}
+          />
+        </div>
+
+        <div className="form-actions">
+          <button type="submit" disabled={loading || !canManageVesselOperation}>
+            {loading ? 'Saving...' : editing ? 'Update' : 'Create'}
+          </button>
+          <button type="button" onClick={resetForm} disabled={loading}>
+            Clear
+          </button>
+        </div>
+      </form>
+
+      <div className="section-title">
+        <h3>Saved Vessel Operations</h3>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Location</th>
+            <th>Asset Type</th>
+            <th>Code</th>
+            <th>Label</th>
+            <th>Category</th>
+            <th>Sign</th>
+            <th>Show In</th>
+            <th>Status</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          {rows.length === 0 ? (
+            <tr>
+              <td colSpan="9" className="empty-table">
+                No vessel operations found.
+              </td>
+            </tr>
+          ) : (
+            rows.map((r) => (
+              <tr key={r.id}>
+                <td>
+                  {r.location_name} <br />
+                  <small>{r.location_code}</small>
+                </td>
+                <td>{r.applicable_asset_type_code}</td>
+                <td>{r.operation_code}</td>
+                <td>{r.operation_label}</td>
+                <td>{r.operation_category}</td>
+                <td>{r.operation_sign}</td>
+                <td>{r.show_in || 'Both'}</td>
+                <td>{r.status}</td>
+                <td>
+                  <button type="button" onClick={() => startEdit(r)} disabled={!canManageVesselOperation}>
+                    Edit
+                  </button>
+                  <button type="button" onClick={() => remove(r)} disabled={!canManageVesselOperation}>
+                    Delete
+                  </button>
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
     </div>
   )
 }

@@ -6,6 +6,7 @@ import {
   getFlowmeterConfigs,
   updateFlowmeterConfig,
 } from '../api/flowmeterApi'
+import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
 
 const emptyForm = {
   id: null,
@@ -31,6 +32,19 @@ function FlowmeterConfigMaster({ locations = [], assets = [], assetAssignments =
   const [errorMsg, setErrorMsg] = useState('')
   const [validationErrors, setValidationErrors] = useState({})
   const [confirmDeleteItem, setConfirmDeleteItem] = useState(null)
+  const [configPage, setConfigPage] = useState(1)
+  const [historyPage, setHistoryPage] = useState(1)
+
+  const visibleRows = paginateRows(rows, configPage)
+  const visibleHistoryRows = paginateRows(historyRows, historyPage)
+
+  useEffect(() => {
+    setConfigPage(1)
+  }, [rows.length])
+
+  useEffect(() => {
+    setHistoryPage(1)
+  }, [historyRows.length])
 
   const isAdminBootstrap =
     String(loggedInUser?.username || '').toLowerCase() === 'admin'
@@ -327,48 +341,52 @@ function FlowmeterConfigMaster({ locations = [], assets = [], assetAssignments =
       {loading ? (
         <div className="info-box">Loading...</div>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>Location</th>
-              <th>Stream Asset</th>
-              <th>Stream</th>
-              <th>Meter Label</th>
-              <th>Factor</th>
-              <th>Unit</th>
-              <th>Calibration Date</th>
-              <th>Status</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.id}>
-                <td>{row.locationName || row.locationCode}</td>
-                <td>{row.assetName || row.assetCode}</td>
-                <td>{row.streamName || 'Default'}</td>
-                <td>{row.meterLabel}</td>
-                <td>{row.meterFactor}</td>
-                <td>{row.meterUnit}</td>
-                <td>{row.calibrationDate || '-'}</td>
-                <td>{row.status}</td>
-                <td className="action-buttons">
-                  {canManageFlowmeterConfig && (
-                    <button type="button" onClick={() => handleEdit(row)}>Edit</button>
-                  )}
-                  {canManageFlowmeterConfig && (
-                    <button type="button" className="danger-button" onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteItem(row) }}>Delete</button>
-                  )}
-                </td>
-              </tr>
-            ))}
-            {rows.length === 0 ? (
+        <>
+          <table>
+            <thead>
               <tr>
-                <td colSpan={9}>No flowmeter config found.</td>
+                <th>Location</th>
+                <th>Stream Asset</th>
+                <th>Stream</th>
+                <th>Meter Label</th>
+                <th>Factor</th>
+                <th>Unit</th>
+                <th>Calibration Date</th>
+                <th>Status</th>
+                <th>Action</th>
               </tr>
-            ) : null}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {visibleRows.map((row) => (
+                <tr key={row.id}>
+                  <td>{row.locationName || row.locationCode}</td>
+                  <td>{row.assetName || row.assetCode}</td>
+                  <td>{row.streamName || 'Default'}</td>
+                  <td>{row.meterLabel}</td>
+                  <td>{row.meterFactor}</td>
+                  <td>{row.meterUnit}</td>
+                  <td>{row.calibrationDate || '-'}</td>
+                  <td>{row.status}</td>
+                  <td className="action-buttons">
+                    {canManageFlowmeterConfig && (
+                      <button type="button" onClick={() => handleEdit(row)}>Edit</button>
+                    )}
+                    {canManageFlowmeterConfig && (
+                      <button type="button" className="danger-button" onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteItem(row) }}>Delete</button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {rows.length === 0 ? (
+                <tr>
+                  <td colSpan={9}>No flowmeter config found.</td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+
+          <PaginationControls currentPage={configPage} totalRows={rows.length} onPageChange={setConfigPage} />
+        </>
       )}
 
       <div className="section-title">
@@ -378,47 +396,51 @@ function FlowmeterConfigMaster({ locations = [], assets = [], assetAssignments =
       {historyLoading ? (
         <div className="info-box">Loading history...</div>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>Changed At</th>
-              <th>Stream Asset</th>
-              <th>Stream</th>
-              <th>Meter Label</th>
-              <th>Action</th>
-              <th>Old Factor</th>
-              <th>New Factor</th>
-              <th>Old Unit</th>
-              <th>New Unit</th>
-              <th>Old Calibration</th>
-              <th>New Calibration</th>
-              <th>Changed By</th>
-            </tr>
-          </thead>
-          <tbody>
-            {historyRows.map((row) => (
-              <tr key={row.id}>
-                <td>{row.changedAt}</td>
-                <td>{row.assetCode}</td>
-                <td>{row.streamName || 'Default'}</td>
-                <td>{row.meterLabel}</td>
-                <td>{row.changeAction}</td>
-                <td>{row.oldMeterFactor ?? '-'}</td>
-                <td>{row.newMeterFactor ?? '-'}</td>
-                <td>{row.oldMeterUnit || '-'}</td>
-                <td>{row.newMeterUnit || '-'}</td>
-                <td>{row.oldCalibrationDate || '-'}</td>
-                <td>{row.newCalibrationDate || '-'}</td>
-                <td>{row.changedBy || '-'}</td>
-              </tr>
-            ))}
-            {historyRows.length === 0 ? (
+        <>
+          <table>
+            <thead>
               <tr>
-                <td colSpan={12}>No meter history yet.</td>
+                <th>Changed At</th>
+                <th>Stream Asset</th>
+                <th>Stream</th>
+                <th>Meter Label</th>
+                <th>Action</th>
+                <th>Old Factor</th>
+                <th>New Factor</th>
+                <th>Old Unit</th>
+                <th>New Unit</th>
+                <th>Old Calibration</th>
+                <th>New Calibration</th>
+                <th>Changed By</th>
               </tr>
-            ) : null}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {visibleHistoryRows.map((row) => (
+                <tr key={row.id}>
+                  <td>{row.changedAt}</td>
+                  <td>{row.assetCode}</td>
+                  <td>{row.streamName || 'Default'}</td>
+                  <td>{row.meterLabel}</td>
+                  <td>{row.changeAction}</td>
+                  <td>{row.oldMeterFactor ?? '-'}</td>
+                  <td>{row.newMeterFactor ?? '-'}</td>
+                  <td>{row.oldMeterUnit || '-'}</td>
+                  <td>{row.newMeterUnit || '-'}</td>
+                  <td>{row.oldCalibrationDate || '-'}</td>
+                  <td>{row.newCalibrationDate || '-'}</td>
+                  <td>{row.changedBy || '-'}</td>
+                </tr>
+              ))}
+              {historyRows.length === 0 ? (
+                <tr>
+                  <td colSpan={12}>No meter history yet.</td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+
+          <PaginationControls currentPage={historyPage} totalRows={historyRows.length} onPageChange={setHistoryPage} />
+        </>
       )}
     </div>
   )

@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   createOperationType,
   deleteOperationType,
   updateOperationType,
 } from '../api/operationTypeApi'
+import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
 
 function OperationTypeMaster({
   assetTypes,
@@ -45,8 +46,14 @@ function OperationTypeMaster({
   const [errorMsg, setErrorMsg] = useState('')
   const [validationErrors, setValidationErrors] = useState({})
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
+  const [page, setPage] = useState(1)
 
   const activeAssetTypes = assetTypes.filter((item) => item.status === 'Active')
+  const visibleOperationTypes = paginateRows(operationTypes, page)
+
+  useEffect(() => {
+    setPage(1)
+  }, [operationTypes.length])
 
   const handleChange = (e) => {
     setOperationType({
@@ -449,7 +456,7 @@ function OperationTypeMaster({
               </td>
             </tr>
           ) : (
-            operationTypes.map((item) => (
+            visibleOperationTypes.map((item) => (
               <tr key={item.id}>
                 <td>{item.operationTypeName}</td>
                 <td>{item.operationTypeCode}</td>
@@ -481,6 +488,12 @@ function OperationTypeMaster({
           )}
         </tbody>
       </table>
+
+      <PaginationControls
+        currentPage={page}
+        totalRows={operationTypes.length}
+        onPageChange={setPage}
+      />
 
       <div className="info-box">
         Example: If Asset Type is Barge and Operation Type is Barge Operations,

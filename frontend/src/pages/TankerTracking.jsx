@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
 import {
   acknowledgeTankerReceipt,
   closeTankerMovement,
@@ -150,6 +151,7 @@ function TankerTracking({
   const [errorMsg, setErrorMsg] = useState('')
   const [confirmRevokeGroup, setConfirmRevokeGroup] = useState(null)
   const [confirmCloseGroup, setConfirmCloseGroup] = useState(null)
+  const [page, setPage] = useState(1)
   
   const trackingExceptionSummary = useMemo(() => {
     const rows = report.rows || []
@@ -180,6 +182,12 @@ function TankerTracking({
       return row.trackingStatus === trackingStatusFilter
     })
   }, [report.rows, trackingStatusFilter])
+
+  const visibleTrackingRows = paginateRows(filteredTrackingRows, page)
+
+  useEffect(() => {
+    setPage(1)
+  }, [filteredTrackingRows.length])
 
   const tankerAssets = useMemo(() => {
     return assets.filter((asset) => {
@@ -1079,14 +1087,14 @@ function TankerTracking({
         </thead>
 
         <tbody>
-          {filteredTrackingRows.length === 0 ? (
+          {visibleTrackingRows.length === 0 ? (
             <tr>
               <td colSpan="11" className="empty-table">
                 No tanker tracking records found.
               </td>
             </tr>
           ) : (
-            filteredTrackingRows.map((row) => {
+            visibleTrackingRows.map((row) => {
               const comparison = row.quantityComparison
               const sealMismatch = row.sealChecks.some((seal) => {
                 return (
@@ -1280,6 +1288,8 @@ function TankerTracking({
           )}
         </tbody>
       </table>
+
+      <PaginationControls currentPage={page} totalRows={filteredTrackingRows.length} onPageChange={setPage} />
 
       {ackGroup && (
         <div className="report-detail-panel no-print">

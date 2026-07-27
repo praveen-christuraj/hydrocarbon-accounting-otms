@@ -5,6 +5,7 @@ import {
   updateCompanyReportProfile,
   deleteCompanyReportProfile,
 } from '../api/companyReportProfileApi'
+import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
 
 const emptyProfile = {
   id: null,
@@ -31,6 +32,7 @@ function CompanyReportProfileMaster({ loggedInUser }) {
   const [errorMsg, setErrorMsg] = useState('')
   const [validationErrors, setValidationErrors] = useState({})
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
+  const [page, setPage] = useState(1)
 
   const isAdminBootstrap =
     String(loggedInUser?.username || '').toLowerCase() === 'admin'
@@ -44,6 +46,7 @@ function CompanyReportProfileMaster({ loggedInUser }) {
   }
 
   const canManageProfiles = hasPermission('Manage Company Report Profile')
+  const visibleProfiles = paginateRows(profiles, page)
 
   const reloadProfiles = async () => {
     try {
@@ -60,6 +63,10 @@ function CompanyReportProfileMaster({ loggedInUser }) {
   useEffect(() => {
     reloadProfiles()
   }, [])
+
+  useEffect(() => {
+    setPage(1)
+  }, [profiles.length])
 
   const handleChange = (e) => {
     setProfile({
@@ -535,7 +542,7 @@ function CompanyReportProfileMaster({ loggedInUser }) {
               </td>
             </tr>
           ) : (
-            profiles.map((item) => (
+            visibleProfiles.map((item) => (
               <tr key={item.id}>
                 <td>{item.profileName}</td>
                 <td>{item.companyName}</td>
@@ -576,6 +583,12 @@ function CompanyReportProfileMaster({ loggedInUser }) {
           )}
         </tbody>
       </table>
+
+      <PaginationControls
+        currentPage={page}
+        totalRows={profiles.length}
+        onPageChange={setPage}
+      />
 
       <div className="info-box">
         Recommended: keep one Active profile for each allied company. Inactive

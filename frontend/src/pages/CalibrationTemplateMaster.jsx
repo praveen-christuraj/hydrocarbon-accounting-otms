@@ -4,6 +4,7 @@ import {
   updateCalibrationTemplate,
   deleteCalibrationTemplate,
 } from '../api/calibrationTemplateApi'
+import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
 
 function CalibrationTemplateMaster({
   assetTypes,
@@ -39,6 +40,9 @@ function CalibrationTemplateMaster({
   const [validationErrors, setValidationErrors] = useState({})
   const [confirmRemoveColumnIndex, setConfirmRemoveColumnIndex] = useState(null)
   const [confirmDeleteItem, setConfirmDeleteItem] = useState(null)
+  const [page, setPage] = useState(1)
+
+  const visibleTemplates = paginateRows(calibrationTemplates, page)
 
   const activeAssetTypes = assetTypes.filter((item) => item.status === 'Active')
 
@@ -780,7 +784,7 @@ function CalibrationTemplateMaster({
               </td>
             </tr>
           ) : (
-            calibrationTemplates.map((item) => (
+            visibleTemplates.map((item) => (
               <tr key={item.id}>
                 <td>{item.templateName}</td>
                 <td>

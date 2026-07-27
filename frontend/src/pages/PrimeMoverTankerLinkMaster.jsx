@@ -6,6 +6,7 @@ import {
   getPrimeMoverTankerLinks,
   updatePrimeMoverTankerLink,
 } from '../api/primeMoverTankerLinkApi'
+import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
 
 const today = new Date().toISOString().slice(0, 10)
 
@@ -55,11 +56,14 @@ function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
   const [errorMsg, setErrorMsg] = useState('')
   const [validationErrors, setValidationErrors] = useState({})
   const [confirmDeleteItem, setConfirmDeleteItem] = useState(null)
+  const [page, setPage] = useState(1)
   const [closeForm, setCloseForm] = useState({
     linkId: null,
     linkedTo: today,
     remarks: '',
   })
+
+  const visibleLinks = paginateRows(links, page)
 
   const activeAssets = useMemo(() => {
     return assets.filter((asset) => asset.status === 'Active')
@@ -556,7 +560,7 @@ function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
               </td>
             </tr>
           ) : (
-            links.map((item) => (
+            visibleLinks.map((item) => (
               <tr key={item.id}>
                 <td>
                   <strong>{item.primeMoverAssetName}</strong>
@@ -621,6 +625,8 @@ function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
           )}
         </tbody>
       </table>
+
+      <PaginationControls currentPage={page} totalRows={links.length} onPageChange={setPage} />
     </div>
   )
 }

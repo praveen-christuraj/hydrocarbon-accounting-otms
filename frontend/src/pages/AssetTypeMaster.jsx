@@ -4,6 +4,7 @@ import {
   deleteAssetType,
   updateAssetType,
 } from '../api/assetTypeApi'
+import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
 
 function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
   const emptyAssetType = {
@@ -20,6 +21,9 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
   const [errorMsg, setErrorMsg] = useState('')
   const [validationErrors, setValidationErrors] = useState({})
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
+  const [page, setPage] = useState(1)
+
+  const visibleItems = paginateRows(assetTypes, page)
 
   const isAdminBootstrap =
     String(loggedInUser?.username || '').toLowerCase() === 'admin'
@@ -298,7 +302,7 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
               </td>
             </tr>
           ) : (
-            assetTypes.map((item) => (
+            visibleItems.map((item) => (
               <tr key={item.id}>
                 <td>{item.assetTypeName}</td>
                 <td>{item.assetTypeCode}</td>
@@ -324,6 +328,8 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
           )}
         </tbody>
       </table>
+
+      <PaginationControls currentPage={page} totalRows={assetTypes.length} onPageChange={setPage} />
 
       <div className="info-box">
         Asset Type Code must be unique. Example: MSKID for Metering Skid.

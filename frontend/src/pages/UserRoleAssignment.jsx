@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { deleteUserRole, saveUserRole } from '../api/userRoleApi'
+import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
 
 function UserRoleAssignment({
   users,
@@ -15,6 +16,9 @@ function UserRoleAssignment({
   const [success, setSuccess] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(null)
   const [fieldErrors, setFieldErrors] = useState({})
+  const [page, setPage] = useState(1)
+
+  const visibleItems = paginateRows(userRoleAssignments, page)
 
   const activeUsers = users.filter((user) => user.status === 'Active')
   const activeRoles = roles.filter((role) => role.status === 'Active')
@@ -252,7 +256,7 @@ function UserRoleAssignment({
               </td>
             </tr>
           ) : (
-            userRoleAssignments.map((assignment) => (
+            visibleItems.map((assignment) => (
               <tr key={assignment.id}>
                 <td>{assignment.fullName}</td>
                 <td>{assignment.username}</td>
@@ -305,6 +309,8 @@ function UserRoleAssignment({
           )}
         </tbody>
       </table>
+
+      <PaginationControls currentPage={page} totalRows={userRoleAssignments.length} onPageChange={setPage} />
 
       {activeUsers.length === 0 && (
         <div className="info-box">

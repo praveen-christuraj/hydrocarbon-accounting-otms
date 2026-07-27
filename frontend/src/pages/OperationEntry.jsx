@@ -621,6 +621,7 @@ function OperationEntry({
   reloadOperationEntries,
   reloadOperationTransactions,
   loggedInUser,
+  locationOperationAvailability = [],
 }) {
   const isAdminBootstrap =
     String(loggedInUser?.username || '').toLowerCase() === 'admin'
@@ -829,9 +830,34 @@ function OperationEntry({
     }
   }, [prefill.mode, prefill.senderTransactionId])
 
-  const activeOperationTypes = operationTypes.filter(
-    (item) => item.status === 'Active'
-  )
+  const availableOperationTypes = useMemo(() => {
+    const statusFiltered = operationTypes.filter(
+      (item) => item.status === 'Active'
+    )
+
+    const userLocationCodes = loggedInUser?.assignedLocationCodes || []
+    const hasAllLocationsAccess = loggedInUser?.allLocationsAccess === 'Yes'
+    const isAdmin =
+      String(loggedInUser?.username || '').toLowerCase() === 'admin'
+
+    // Admin / all-locations-access users see all active operation types
+    if (isAdmin || hasAllLocationsAccess) {
+      return statusFiltered
+    }
+
+    // Build set of operation type codes configured at the user's assigned locations
+    const activeAvail = (locationOperationAvailability || []).filter(
+      (x) => x.status === 'Active'
+    )
+    const allowedOpTypeCodes = new Set()
+    activeAvail
+      .filter((x) => userLocationCodes.includes(x.locationCode))
+      .forEach((x) => allowedOpTypeCodes.add(x.operationTypeCode))
+
+    return statusFiltered.filter((ot) =>
+      allowedOpTypeCodes.has(ot.operationTypeCode)
+    )
+  }, [operationTypes, locationOperationAvailability, loggedInUser])
 
   const activeOperationTemplates = operationTemplates.filter(
     (item) => item.status === 'Active'
@@ -840,7 +866,7 @@ function OperationEntry({
   const activeAssets = assets.filter((item) => item.status === 'Active')
   const activeLocations = locations.filter((item) => item.status === 'Active')
 
-  const selectedOperationType = activeOperationTypes.find((item) => {
+  const selectedOperationType = availableOperationTypes.find((item) => {
     return item.operationTypeCode === entry.operationTypeCode
   })
 
@@ -893,10 +919,42 @@ function OperationEntry({
       return []
     }
 
+    const userLocationCodes = loggedInUser?.assignedLocationCodes || []
+    const hasAllLocationsAccess = loggedInUser?.allLocationsAccess === 'Yes'
+    const isAdmin =
+      String(loggedInUser?.username || '').toLowerCase() === 'admin'
+
+    // If an origin location has been selected, narrow filtering to that location
+    // Otherwise, use the user's assigned location codes
+    const locationFilter = entry.originLocationCode
+      ? [entry.originLocationCode]
+      : userLocationCodes
+
     return activeAssets.filter((asset) => {
-      return asset.assetTypeCode === selectedOperationType.applicableAssetTypeCode
+      // Must match the operation type's applicable asset type
+      if (asset.assetTypeCode !== selectedOperationType.applicableAssetTypeCode) {
+        return false
+      }
+
+      // Admin / all-locations-access users see all matching assets
+      if (isAdmin || hasAllLocationsAccess) {
+        return true
+      }
+
+      // Global assets are available at every location
+      if (asset.assetScope === 'Global') {
+        return true
+      }
+
+      // Local assets must have a location_code matching the target location(s)
+      if (asset.assetScope === 'Local' && asset.locationCode) {
+        return locationFilter.includes(asset.locationCode)
+      }
+
+      // Fallback: include the asset (safety net for undefined scope)
+      return true
     })
-  }, [activeAssets, selectedOperationType])
+  }, [activeAssets, selectedOperationType, entry.originLocationCode, loggedInUser])
 
   const selectedAsset = activeAssets.find((asset) => {
     return asset.assetCode === entry.primaryAssetCode
@@ -1657,7 +1715,7 @@ function OperationEntry({
           >
             <option value="">Select Operation Type</option>
 
-            {activeOperationTypes.map((operationType) => (
+            {availableOperationTypes.map((operationType) => (
               <option
                 key={operationType.id}
                 value={operationType.operationTypeCode}

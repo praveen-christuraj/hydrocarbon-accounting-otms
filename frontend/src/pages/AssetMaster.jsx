@@ -4,6 +4,7 @@ import {
   deleteAsset,
   updateAsset,
 } from '../api/assetApi'
+import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
 
 function AssetMaster({ assets, reloadAssets, assetTypes, locations, loggedInUser }) {
   const emptyAsset = {
@@ -27,6 +28,9 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations, loggedInUser
   const [errorMsg, setErrorMsg] = useState('')
   const [validationErrors, setValidationErrors] = useState({})
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
+  const [assetPage, setAssetPage] = useState(1)
+
+  const visibleAssets = paginateRows(assets, assetPage)
 
   const isAdminBootstrap =
     String(loggedInUser?.username || '').toLowerCase() === 'admin'
@@ -488,7 +492,7 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations, loggedInUser
               </td>
             </tr>
           ) : (
-            assets.map((item) => (
+            visibleAssets.map((item) => (
               <tr key={item.id}>
                 <td>{item.assetName}</td>
                 <td>{item.assetCode}</td>
@@ -536,6 +540,8 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations, loggedInUser
           )}
         </tbody>
       </table>
+
+      <PaginationControls currentPage={assetPage} totalRows={assets.length} onPageChange={setAssetPage} />
 
       <div className="info-box">
         Asset Code must be unique. Local assets require a primary location.

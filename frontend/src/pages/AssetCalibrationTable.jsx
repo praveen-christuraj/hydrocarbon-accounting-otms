@@ -4,6 +4,7 @@ import {
   deleteAssetCalibrationTable,
   updateAssetCalibrationTable,
 } from '../api/assetCalibrationApi'
+import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
 
 function AssetCalibrationTable({
   assets,
@@ -38,6 +39,9 @@ function AssetCalibrationTable({
   const [confirmRemoveRowIndex, setConfirmRemoveRowIndex] = useState(null)
   const [confirmClearRows, setConfirmClearRows] = useState(false)
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
+  const [page, setPage] = useState(1)
+
+  const visibleTables = paginateRows(calibrationTables, page)
 
   const visibleRowLimit = 10
 
@@ -1146,7 +1150,7 @@ function AssetCalibrationTable({
               </td>
             </tr>
           ) : (
-            calibrationTables.map((table) => (
+            visibleTables.map((table) => (
               <tr key={table.id}>
                 <td>{table.calibrationName}</td>
                 <td>
@@ -1178,6 +1182,8 @@ function AssetCalibrationTable({
           )}
         </tbody>
       </table>
+
+      <PaginationControls currentPage={page} totalRows={calibrationTables.length} onPageChange={setPage} />
 
       <div className="info-box">
         CSV headers must match the selected calibration template columns.

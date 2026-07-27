@@ -900,6 +900,7 @@ function AppContent({
                   loggedInUser={loggedInUser}
                   assetCalibrationTables={calibrationTables}
                   calibrationTemplates={calibrationTemplates}
+                  locationOperationAvailability={locationOperationAvailability}
                 />
               </PermissionGuard>
             }

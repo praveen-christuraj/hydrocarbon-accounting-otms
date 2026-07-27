@@ -4,6 +4,7 @@ import {
   deleteAssetAssignment,
   updateAssetAssignment,
 } from '../api/assetAssignmentApi'
+import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
 
 function AssetAssignment({
   assets,
@@ -32,6 +33,8 @@ function AssetAssignment({
   const [errorMsg, setErrorMsg] = useState('')
   const [validationErrors, setValidationErrors] = useState({})
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
+  const [activePage, setActivePage] = useState(1)
+  const [historyPage, setHistoryPage] = useState(1)
 
   const isAdminBootstrap =
     String(loggedInUser?.username || '').toLowerCase() === 'admin'
@@ -205,6 +208,8 @@ function AssetAssignment({
   const activeAssignments = assetAssignments.filter(
     (item) => item.status === 'Active'
   )
+  const visibleActive = paginateRows(activeAssignments, activePage)
+  const visibleHistory = paginateRows(assetAssignments, historyPage)
 
   return (
     <div>
@@ -487,7 +492,7 @@ function AssetAssignment({
               </td>
             </tr>
           ) : (
-            activeAssignments.map((item) => (
+            visibleActive.map((item) => (
               <tr key={item.id}>
                 <td>
                   {item.assetName} ({item.assetCode})
@@ -520,6 +525,8 @@ function AssetAssignment({
         </tbody>
       </table>
 
+      <PaginationControls currentPage={activePage} totalRows={activeAssignments.length} onPageChange={setActivePage} />
+
       <div className="section-title">
         <h3>Assignment History</h3>
         <p>All assignment records are shown here for audit and tracking.</p>
@@ -549,7 +556,7 @@ function AssetAssignment({
               </td>
             </tr>
           ) : (
-            assetAssignments.map((item) => (
+            visibleHistory.map((item) => (
               <tr key={item.id}>
                 <td>
                   {item.assetName} ({item.assetCode})
@@ -596,6 +603,8 @@ function AssetAssignment({
           )}
         </tbody>
       </table>
+
+      <PaginationControls currentPage={historyPage} totalRows={assetAssignments.length} onPageChange={setHistoryPage} />
 
       <div className="info-box">
         Rule: Local assets can have only one active assignment. Global assets can

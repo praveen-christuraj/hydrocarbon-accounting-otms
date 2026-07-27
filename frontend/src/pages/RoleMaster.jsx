@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { createRole, deleteRole, updateRole } from '../api/roleApi'
+import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
 
 function RoleMaster({ roles, reloadRoles, loggedInUser }) {
   const emptyRole = {
@@ -15,6 +16,9 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
   const [success, setSuccess] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(null)
   const [fieldErrors, setFieldErrors] = useState({})
+  const [page, setPage] = useState(1)
+
+  const visibleItems = paginateRows(roles, page)
 
   const isAdminBootstrap =
     String(loggedInUser?.username || '').toLowerCase() === 'admin'
@@ -251,7 +255,7 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
               </td>
             </tr>
           ) : (
-            roles.map((item) => (
+            visibleItems.map((item) => (
               <tr key={item.id}>
                 <td>{item.roleName}</td>
                 <td>{item.description}</td>
@@ -298,6 +302,8 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
           )}
         </tbody>
       </table>
+
+      <PaginationControls currentPage={page} totalRows={roles.length} onPageChange={setPage} />
     </div>
   )
 }

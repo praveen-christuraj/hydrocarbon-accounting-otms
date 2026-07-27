@@ -6,6 +6,7 @@ import {
   saveOperationWorkflowPolicyRoles,
   updateOperationWorkflowPolicy,
 } from '../api/operationWorkflowPolicyApi'
+import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
 
 function OperationWorkflowPolicyMaster({ roles = [], operationTypes = [], operationTemplates = [], assets = [], locations = [], loggedInUser }) {
   const isAdminBootstrap =
@@ -40,14 +41,20 @@ function OperationWorkflowPolicyMaster({ roles = [], operationTypes = [], operat
   const [successMsg, setSuccessMsg] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
+  const [page, setPage] = useState(1)
 
   const activeRoles = useMemo(() => roles.filter((r) => r.status === 'Active'), [roles])
+  const visiblePolicies = paginateRows(policies, page)
 
   const load = async () => {
     const data = await getOperationWorkflowPolicies()
     setPolicies(data)
   }
   useEffect(() => { load() }, [])
+
+  useEffect(() => {
+    setPage(1)
+  }, [policies.length])
 
   const onSubmit = async (e) => {
     e.preventDefault()
@@ -179,7 +186,7 @@ function OperationWorkflowPolicyMaster({ roles = [], operationTypes = [], operat
       <table>
         <thead><tr><th>Name</th><th>Action</th><th>Scope</th><th>Priority</th><th>Status</th><th>Roles</th><th>Actions</th></tr></thead>
         <tbody>
-          {policies.length === 0 ? <tr><td colSpan="7" className="empty-table">No workflow policies</td></tr> : policies.map((p) => (
+          {visiblePolicies.length === 0 ? <tr><td colSpan="7" className="empty-table">No workflow policies</td></tr> : visiblePolicies.map((p) => (
             <tr key={p.id}>
               <td>{p.policyName}</td><td>{p.actionCode}</td>
               <td>{[p.operationTypeCode || 'Any OpType', p.operationTemplateId ? `Tpl ${p.operationTemplateId}` : 'Any Template', p.assetTypeCode || 'Any AssetType', p.locationCode || 'Any Location'].join(' | ')}</td>
@@ -189,6 +196,8 @@ function OperationWorkflowPolicyMaster({ roles = [], operationTypes = [], operat
           ))}
         </tbody>
       </table>
+
+      <PaginationControls currentPage={page} totalRows={policies.length} onPageChange={setPage} />
 
       {successMsg && (
         <div className="success-box" onClick={() => setSuccessMsg('')}>

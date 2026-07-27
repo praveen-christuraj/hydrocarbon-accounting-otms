@@ -5,6 +5,7 @@ import {
   getLocationAccountingDaySettings,
   updateLocationAccountingDaySetting,
 } from '../api/locationAccountingDaySettingApi'
+import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
 
 function LocationAccountingDaySetting({ locations, loggedInUser }) {
   const emptySetting = {
@@ -27,6 +28,7 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
   const [errorMsg, setErrorMsg] = useState('')
   const [validationErrors, setValidationErrors] = useState({})
   const [confirmDeleteItem, setConfirmDeleteItem] = useState(null)
+  const [page, setPage] = useState(1)
 
   const activeLocations = useMemo(() => {
     return (locations || []).filter((location) => location.status === 'Active')
@@ -55,6 +57,8 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
     })
   }, [loggedInUser])
 
+  const visibleSettings = paginateRows(settings, page)
+
   const reloadSettings = async (locationCode = selectedLocationCode) => {
     try {
       setLoading(true)
@@ -79,6 +83,10 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
   useEffect(() => {
     reloadSettings('')
   }, [])
+
+  useEffect(() => {
+    setPage(1)
+  }, [settings.length])
 
   const handleFilterLocationChange = async (e) => {
     const locationCode = e.target.value
@@ -507,7 +515,7 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
               </td>
             </tr>
           ) : (
-            settings.map((item) => (
+            visibleSettings.map((item) => (
               <tr key={item.id}>
                 <td>{getLocationDisplay(item.locationCode)}</td>
                 <td>{item.dayStartTime}</td>

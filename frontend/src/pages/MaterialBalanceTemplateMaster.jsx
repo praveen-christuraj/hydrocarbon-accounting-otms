@@ -10,6 +10,7 @@ import {
   updateMaterialBalanceTemplate,
   updateMaterialBalanceTemplateColumn,
 } from '../api/materialBalanceTemplateApi'
+import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
 
 const columnTypes = [
   'OPENING',
@@ -63,6 +64,9 @@ function MaterialBalanceTemplateMaster({ locations }) {
   const [confirmDeleteTemplateItem, setConfirmDeleteTemplateItem] = useState(null)
   const [confirmDeleteColumnItem, setConfirmDeleteColumnItem] = useState(null)
   const [confirmAddStandard, setConfirmAddStandard] = useState(false)
+  const [page, setPage] = useState(1)
+
+  const visibleTemplates = paginateRows(templates, page)
 
   const activeLocations = useMemo(() => {
     return (locations || []).filter((location) => location.status === 'Active')
@@ -757,7 +761,7 @@ function MaterialBalanceTemplateMaster({ locations }) {
               </td>
             </tr>
           ) : (
-            templates.map((template) => (
+            visibleTemplates.map((template) => (
               <tr key={template.id}>
                 <td>{template.locationCode}</td>
                 <td>{template.templateName}</td>
@@ -786,8 +790,10 @@ function MaterialBalanceTemplateMaster({ locations }) {
               </tr>
             ))
           )}
-        </tbody>
+          </tbody>
       </table>
+
+      <PaginationControls currentPage={page} totalRows={templates.length} onPageChange={setPage} />
 
       {selectedTemplate && (
         <>

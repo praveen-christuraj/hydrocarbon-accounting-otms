@@ -4,6 +4,7 @@ import {
   deletePermission,
   updatePermission,
 } from '../api/permissionApi'
+import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
 
 function PermissionMaster({ permissions, reloadPermissions, loggedInUser }) {
   const emptyPermission = {
@@ -20,6 +21,9 @@ function PermissionMaster({ permissions, reloadPermissions, loggedInUser }) {
   const [success, setSuccess] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(null)
   const [fieldErrors, setFieldErrors] = useState({})
+  const [page, setPage] = useState(1)
+
+  const visibleItems = paginateRows(permissions, page)
 
   const isAdminBootstrap =
     String(loggedInUser?.username || '').toLowerCase() === 'admin'
@@ -299,7 +303,7 @@ function PermissionMaster({ permissions, reloadPermissions, loggedInUser }) {
               </td>
             </tr>
           ) : (
-            permissions.map((item) => (
+            visibleItems.map((item) => (
               <tr key={item.id}>
                 <td>{item.permissionName}</td>
                 <td>{item.moduleName}</td>
@@ -347,6 +351,8 @@ function PermissionMaster({ permissions, reloadPermissions, loggedInUser }) {
           )}
         </tbody>
       </table>
+
+      <PaginationControls currentPage={page} totalRows={permissions.length} onPageChange={setPage} />
     </div>
   )
 }

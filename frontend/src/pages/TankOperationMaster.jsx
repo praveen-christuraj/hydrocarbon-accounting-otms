@@ -5,6 +5,7 @@ import {
   getTankOperations,
   updateTankOperation,
 } from '../api/tankOperationApi'
+import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
 
 function TankOperationMaster({ locations, loggedInUser }) {
   const emptyTankOperation = {
@@ -39,6 +40,9 @@ function TankOperationMaster({ locations, loggedInUser }) {
   const [errorMsg, setErrorMsg] = useState('')
   const [validationErrors, setValidationErrors] = useState({})
   const [confirmDeleteItem, setConfirmDeleteItem] = useState(null)
+  const [page, setPage] = useState(1)
+
+  const visibleTankOperations = paginateRows(tankOperations, page)
 
   const activeLocations = useMemo(() => {
     return (locations || []).filter((location) => location.status === 'Active')
@@ -525,7 +529,7 @@ function TankOperationMaster({ locations, loggedInUser }) {
               </td>
             </tr>
           ) : (
-            tankOperations.map((item) => (
+            visibleTankOperations.map((item) => (
               <tr key={item.id}>
                 <td>{getLocationDisplay(item.locationCode)}</td>
                 <td>{item.operationCode}</td>
@@ -572,6 +576,8 @@ function TankOperationMaster({ locations, loggedInUser }) {
           )}
         </tbody>
       </table>
+
+      <PaginationControls currentPage={page} totalRows={tankOperations.length} onPageChange={setPage} />
 
       {successMsg && (
         <div className="success-box">{successMsg}</div>

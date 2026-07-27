@@ -8,6 +8,7 @@ import {
   updateOperationTemplateLayout,
   updateOperationTemplate,
 } from '../api/operationTemplateApi'
+import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
 
 function OperationTemplateMaster({
   operationTypes,
@@ -65,6 +66,7 @@ function OperationTemplateMaster({
   const [confirmRemoveField, setConfirmRemoveField] = useState(null)
   const [confirmDeleteTemplate, setConfirmDeleteTemplate] = useState(null)
   const [draggingSectionId, setDraggingSectionId] = useState('')
+  const [page, setPage] = useState(1)
   const [draggingItemId, setDraggingItemId] = useState('')
   const [layoutDraft, setLayoutDraft] = useState({
     layoutName: '',
@@ -79,11 +81,17 @@ function OperationTemplateMaster({
     (item) => item.status === 'Active'
   )
 
+  const visibleOperationTemplates = paginateRows(operationTemplates, page)
+
   const fieldOptions = useMemo(() => {
     return [...(template.fields || [])].sort(
       (a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0)
     )
   }, [template.fields])
+
+  useEffect(() => {
+    setPage(1)
+  }, [operationTemplates.length])
 
   const layoutPreviewSections = useMemo(() => {
     if (!layoutDraft.sections.length || !layoutDraft.items.length) return []
@@ -1215,7 +1223,7 @@ function OperationTemplateMaster({
               </td>
             </tr>
           ) : (
-            operationTemplates.map((item) => (
+            visibleOperationTemplates.map((item) => (
               <tr key={item.id}>
                 <td>{item.templateName}</td>
                 <td>
@@ -1257,6 +1265,12 @@ function OperationTemplateMaster({
           )}
         </tbody>
       </table>
+
+      <PaginationControls
+        currentPage={page}
+        totalRows={operationTemplates.length}
+        onPageChange={setPage}
+      />
 
       <div className="info-box">
         Rule: Operation Template fields define the future data entry form.

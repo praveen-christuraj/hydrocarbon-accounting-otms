@@ -5,6 +5,7 @@ import {
   getTable11Factors,
   lookupTable11Factor,
 } from '../api/table11Api'
+import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
 
 function Table11FactorMaster({ loggedInUser }) {
   const [rows, setRows] = useState([])
@@ -38,6 +39,9 @@ function Table11FactorMaster({ loggedInUser }) {
   const sortedRows = useMemo(() => {
     return [...rows].sort((a, b) => Number(a.api60) - Number(b.api60))
   }, [rows])
+
+  const [page, setPage] = useState(1)
+  const visibleRows = paginateRows(sortedRows, page)
 
   const resetUploadState = () => {
     setUploadFileName('')
@@ -652,7 +656,7 @@ API@60 LT_FACTOR
               </td>
             </tr>
           ) : (
-            sortedRows.slice(0, 10).map((row) => (
+            visibleRows.map((row) => (
               <tr key={`${row.api60}-${row.ltFactor}`}>
                 <td>{row.api60}</td>
                 <td>
@@ -664,6 +668,9 @@ API@60 LT_FACTOR
           )}
         </tbody>
       </table>
+
+      <PaginationControls currentPage={page} totalRows={sortedRows.length} onPageChange={setPage} />
+
       {sortedRows.length > 10 && (
         <div className="info-box">
           Showing first 10 rows only for easy viewing. Total saved Table 11 rows:{' '}

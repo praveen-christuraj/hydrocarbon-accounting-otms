@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   createLocationOperationAvailability,
   updateLocationOperationAvailability,
   deleteLocationOperationAvailability,
 } from '../api/locationOperationAvailabilityApi'
+import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
 
 function LocationOperationAvailability({
   locations,
@@ -26,6 +27,7 @@ function LocationOperationAvailability({
   const [errorMsg, setErrorMsg] = useState('')
   const [validationErrors, setValidationErrors] = useState({})
   const [confirmDeleteItem, setConfirmDeleteItem] = useState(null)
+  const [page, setPage] = useState(1)
 
   const activeLocations = locations.filter((location) => {
     return location.status === 'Active'
@@ -49,6 +51,11 @@ function LocationOperationAvailability({
   const canManageAvailability = hasPermission(
     'Manage Location Operation Availability'
   )
+  const visibleEntries = paginateRows(locationOperationAvailability, page)
+
+  useEffect(() => {
+    setPage(1)
+  }, [locationOperationAvailability.length])
 
   const handleChange = (e) => {
     const { name, value } = e.target
@@ -357,7 +364,7 @@ function LocationOperationAvailability({
         </thead>
 
         <tbody>
-          {locationOperationAvailability.length === 0 ? (
+          {visibleEntries.length === 0 ? (
             <tr>
               <td
                 colSpan={canManageAvailability ? 5 : 4}
@@ -367,7 +374,7 @@ function LocationOperationAvailability({
               </td>
             </tr>
           ) : (
-            locationOperationAvailability.map((item) => (
+            visibleEntries.map((item) => (
               <tr key={item.id}>
                 <td>{getLocationDisplay(item.locationCode)}</td>
                 <td>{getOperationTypeDisplay(item.operationTypeCode)}</td>
@@ -394,6 +401,12 @@ function LocationOperationAvailability({
           )}
         </tbody>
       </table>
+
+      <PaginationControls
+        currentPage={page}
+        totalRows={locationOperationAvailability.length}
+        onPageChange={setPage}
+      />
 
       <div className="info-box">
         Example: If Truck Loading is configured for Utapate Terminal, then

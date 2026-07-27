@@ -7,6 +7,7 @@ import {
   publishSystemNotification,
   updateSystemNotification,
 } from '../api/systemNotificationApi'
+import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
 
 const emptyForm = {
   title: '',
@@ -48,6 +49,11 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
   const [confirmPublishItem, setConfirmPublishItem] = useState(null)
   const [deactivateItem, setDeactivateItem] = useState(null)
   const [deactivateReason, setDeactivateReason] = useState('')
+  const [page, setPage] = useState(1)
+  const [deliveryPage, setDeliveryPage] = useState(1)
+
+  const visibleNotifications = paginateRows(notifications, page)
+  const visibleDeliveryRows = paginateRows(deliveryRows, deliveryPage)
 
   const activeRoles = useMemo(() => roles.filter((role) => role.status === 'Active'), [roles])
   const activeUsers = useMemo(() => users.filter((user) => user.status === 'Active'), [users])
@@ -87,6 +93,14 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
   useEffect(() => {
     loadNotifications()
   }, [statusFilter])
+
+  useEffect(() => {
+    setPage(1)
+  }, [notifications.length])
+
+  useEffect(() => {
+    setDeliveryPage(1)
+  }, [deliveryRows.length])
 
   const updateField = (fieldName, value) => {
     setForm((current) => ({
@@ -535,12 +549,12 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
           </tr>
         </thead>
         <tbody>
-          {notifications.length === 0 ? (
+          {visibleNotifications.length === 0 ? (
             <tr>
               <td colSpan="8" className="empty-table">No system notifications found.</td>
             </tr>
           ) : (
-            notifications.map((notification) => (
+            visibleNotifications.map((notification) => (
               <tr key={notification.id}>
                 <td>{notification.notificationNumber}</td>
                 <td>
@@ -592,6 +606,8 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
         </tbody>
       </table>
 
+      <PaginationControls currentPage={page} totalRows={notifications.length} onPageChange={setPage} />
+
       {selectedNotification && (
         <div className="info-box">
           <div className="section-title compact-section-title">
@@ -616,7 +632,7 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
                   <td colSpan="7" className="empty-table">No delivery receipts found.</td>
                 </tr>
               ) : (
-                deliveryRows.map((receipt) => (
+                visibleDeliveryRows.map((receipt) => (
                   <tr key={receipt.id}>
                     <td>{receipt.username || receipt.user_id}</td>
                     <td>{receipt.status}</td>
@@ -630,6 +646,8 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
               )}
             </tbody>
           </table>
+
+          <PaginationControls currentPage={deliveryPage} totalRows={deliveryRows.length} onPageChange={setDeliveryPage} />
         </div>
       )}
     </div>

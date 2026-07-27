@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo, useCallback } from 'react'
 import { createUser, deleteUser, getUsers, updateUser } from '../api/userApi'
+import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
 
 const PAGE_SIZE = 50
 
@@ -547,24 +548,12 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
         </tbody>
       </table>
 
-      {total > PAGE_SIZE && (
-        <div className="pagination-controls">
-          <div className="pagination-summary">
-            Showing {users.length > 0 ? skip + 1 : 0}–
-            {Math.min(skip + users.length, total)} of {total} users
-          </div>
-          <div className="pagination-actions">
-            <button type="button" onClick={handlePrevPage} disabled={skip === 0 || loading}>
-              &laquo; Prev
-            </button>
-            <span style={{ fontSize: 13, fontWeight: 700, color: '#475569' }}>
-              Page {currentPage} of {totalPages}
-            </span>
-            <button type="button" onClick={handleNextPage} disabled={!hasMore || loading}>
-              Next &raquo;
-            </button>
-          </div>
-        </div>
+      {total > 0 && (
+        <PaginationControls
+          currentPage={currentPage}
+          totalRows={total}
+          onPageChange={(page) => reloadUsers(search, (page - 1) * PAGE_SIZE)}
+        />
       )}
     </div>
   )

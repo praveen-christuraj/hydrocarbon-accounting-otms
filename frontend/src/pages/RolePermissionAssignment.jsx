@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { saveRolePermissions } from '../api/rolePermissionApi'
+import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
 
 function RolePermissionAssignment({
   roles,
@@ -13,6 +14,9 @@ function RolePermissionAssignment({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const [page, setPage] = useState(1)
+
+  const visibleItems = paginateRows(rolePermissionAssignments, page)
 
   const isAdminBootstrap =
     String(loggedInUser?.username || '').toLowerCase() === 'admin'
@@ -221,7 +225,7 @@ function RolePermissionAssignment({
               </td>
             </tr>
           ) : (
-            rolePermissionAssignments.map((item) => (
+            visibleItems.map((item) => (
               <tr key={item.roleId}>
                 <td>{item.roleName}</td>
                 <td>
@@ -242,6 +246,8 @@ function RolePermissionAssignment({
           )}
         </tbody>
       </table>
+
+      <PaginationControls currentPage={page} totalRows={rolePermissionAssignments.length} onPageChange={setPage} />
     </div>
   )
 }
