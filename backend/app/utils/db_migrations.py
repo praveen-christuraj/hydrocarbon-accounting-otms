@@ -893,6 +893,168 @@ def verify_admin_setup():
         db.close()
 
 
+def ensure_export_operations_tables():
+    with engine.begin() as connection:
+        connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS export_locations (
+                id SERIAL PRIMARY KEY,
+                location_name VARCHAR(150) NOT NULL,
+                location_code VARCHAR(50) NOT NULL UNIQUE,
+                description TEXT,
+                status VARCHAR(20) NOT NULL DEFAULT 'Active',
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            );
+        """))
+        connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS export_entities (
+                id SERIAL PRIMARY KEY,
+                entity_name VARCHAR(200) NOT NULL,
+                entity_code VARCHAR(50) NOT NULL UNIQUE,
+                description TEXT,
+                status VARCHAR(20) NOT NULL DEFAULT 'Active',
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            );
+        """))
+        connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS export_blocks (
+                id SERIAL PRIMARY KEY,
+                block_name VARCHAR(200) NOT NULL,
+                block_code VARCHAR(50) NOT NULL UNIQUE,
+                description TEXT,
+                status VARCHAR(20) NOT NULL DEFAULT 'Active',
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            );
+        """))
+        connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS export_location_entities (
+                id SERIAL PRIMARY KEY,
+                location_code VARCHAR(50) NOT NULL REFERENCES export_locations(location_code) ON DELETE CASCADE,
+                entity_code VARCHAR(50) NOT NULL REFERENCES export_entities(entity_code) ON DELETE CASCADE,
+                status VARCHAR(20) NOT NULL DEFAULT 'Active',
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                CONSTRAINT unique_export_location_entity UNIQUE (location_code, entity_code)
+            );
+        """))
+        connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS export_entity_blocks (
+                id SERIAL PRIMARY KEY,
+                entity_code VARCHAR(50) NOT NULL REFERENCES export_entities(entity_code) ON DELETE CASCADE,
+                block_code VARCHAR(50) NOT NULL REFERENCES export_blocks(block_code) ON DELETE CASCADE,
+                status VARCHAR(20) NOT NULL DEFAULT 'Active',
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                CONSTRAINT unique_export_entity_block UNIQUE (entity_code, block_code)
+            );
+        """))
+        connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS export_permits (
+                id SERIAL PRIMARY KEY,
+                permit_number VARCHAR(100) NOT NULL UNIQUE,
+                location_code VARCHAR(50) NOT NULL REFERENCES export_locations(location_code) ON DELETE RESTRICT,
+                entity_code VARCHAR(50) NOT NULL REFERENCES export_entities(entity_code) ON DELETE RESTRICT,
+                block_code VARCHAR(50) NOT NULL REFERENCES export_blocks(block_code) ON DELETE RESTRICT,
+                quarter VARCHAR(20) NOT NULL,
+                permit_volume DOUBLE PRECISION NOT NULL DEFAULT 0,
+                supplementary_permit VARCHAR(10) NOT NULL DEFAULT 'No',
+                remarks TEXT,
+                status VARCHAR(20) NOT NULL DEFAULT 'Active',
+                created_by VARCHAR(150),
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            );
+        """))
+        connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS export_transactions (
+                id SERIAL PRIMARY KEY,
+                bl_date DATE NOT NULL,
+                location_code VARCHAR(50) NOT NULL REFERENCES export_locations(location_code) ON DELETE RESTRICT,
+                entity_code VARCHAR(50) NOT NULL REFERENCES export_entities(entity_code) ON DELETE RESTRICT,
+                block_code VARCHAR(50) NOT NULL REFERENCES export_blocks(block_code) ON DELETE RESTRICT,
+                volume DOUBLE PRECISION NOT NULL DEFAULT 0,
+                consignee VARCHAR(200) NOT NULL,
+                destination VARCHAR(200) NOT NULL,
+                country VARCHAR(150) NOT NULL,
+                vessel_name VARCHAR(200),
+                quarter VARCHAR(20) NOT NULL,
+                permit_number VARCHAR(100),
+                created_by VARCHAR(150),
+                status VARCHAR(20) NOT NULL DEFAULT 'Active',
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            );
+        """))
+        connection.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_export_transactions_bl_date ON export_transactions(bl_date);
+        """))
+        connection.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_export_transactions_quarter ON export_transactions(quarter);
+        """))
+        connection.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_export_transactions_permit_number ON export_transactions(permit_number);
+        """))
+        connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS export_configs (
+                id SERIAL PRIMARY KEY,
+                config_key VARCHAR(100) NOT NULL UNIQUE,
+                config_value TEXT,
+                description TEXT,
+                status VARCHAR(20) NOT NULL DEFAULT 'Active',
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            );
+        """))
+        connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS export_consignees (
+                id SERIAL PRIMARY KEY,
+                consignee_name VARCHAR(200) NOT NULL UNIQUE,
+                description TEXT,
+                status VARCHAR(20) NOT NULL DEFAULT 'Active',
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            );
+        """))
+
+        # Add missing columns to tables that may have been created by older model versions
+        for sql in [
+            "ALTER TABLE export_permits ADD COLUMN IF NOT EXISTS remarks TEXT;",
+            "ALTER TABLE export_permits ADD COLUMN IF NOT EXISTS supplementary_permit VARCHAR(10) NOT NULL DEFAULT 'No';",
+            "ALTER TABLE export_permits ADD COLUMN IF NOT EXISTS created_by VARCHAR(150);",
+            "ALTER TABLE export_transactions ADD COLUMN IF NOT EXISTS permit_number VARCHAR(100);",
+            "ALTER TABLE export_transactions ADD COLUMN IF NOT EXISTS created_by VARCHAR(150);",
+            "ALTER TABLE export_transactions ADD COLUMN IF NOT EXISTS destination VARCHAR(200);",
+            "ALTER TABLE export_transactions ADD COLUMN IF NOT EXISTS country VARCHAR(150);",
+            "ALTER TABLE export_transactions ADD COLUMN IF NOT EXISTS consignee VARCHAR(200);",
+            "ALTER TABLE export_transactions ADD COLUMN IF NOT EXISTS remarks TEXT;",
+            "ALTER TABLE export_transactions ADD COLUMN IF NOT EXISTS vessel_name VARCHAR(200);",
+            "ALTER TABLE export_locations ADD COLUMN IF NOT EXISTS description TEXT;",
+            "ALTER TABLE export_entities ADD COLUMN IF NOT EXISTS description TEXT;",
+            "ALTER TABLE export_blocks ADD COLUMN IF NOT EXISTS description TEXT;",
+        ]:
+            connection.execute(text(sql))
+
+        # Ensure status column has a database-level default (in case table was created by ORM without one)
+        connection.execute(text("""
+            ALTER TABLE export_configs ALTER COLUMN status SET DEFAULT 'Active';
+        """))
+        connection.execute(text("""
+            UPDATE export_configs SET status = 'Active' WHERE status IS NULL;
+        """))
+
+        # Seed default configs
+        connection.execute(text("""
+            INSERT INTO export_configs (config_key, config_value, description, status)
+            VALUES ('permit_insufficiency_threshold_pct', '90', 'Permit insufficiency alert threshold (%)', 'Active')
+            ON CONFLICT (config_key) DO NOTHING;
+        """))
+        connection.execute(text("""
+            INSERT INTO export_configs (config_key, config_value, description, status)
+            VALUES ('default_export_uom', 'bbls', 'Default unit of measure for volumes', 'Active')
+            ON CONFLICT (config_key) DO NOTHING;
+        """))
+
+
 def migrate_boolean_columns():
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())

@@ -1862,3 +1862,130 @@ class TokenBlacklist(Base):
     token_hash = Column(String(200), nullable=False, unique=True, index=True)
     expires_at = Column(DateTime, nullable=False, index=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class ExportLocation(Base):
+    __tablename__ = "export_locations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    location_name = Column(String(150), nullable=False)
+    location_code = Column(String(50), nullable=False, unique=True, index=True)
+    description = Column(Text, nullable=True)
+    status = Column(String(20), nullable=False, default="Active")
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class ExportEntity(Base):
+    __tablename__ = "export_entities"
+
+    id = Column(Integer, primary_key=True, index=True)
+    entity_name = Column(String(200), nullable=False)
+    entity_code = Column(String(50), nullable=False, unique=True, index=True)
+    description = Column(Text, nullable=True)
+    status = Column(String(20), nullable=False, default="Active")
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class ExportLocationEntity(Base):
+    __tablename__ = "export_location_entities"
+
+    id = Column(Integer, primary_key=True, index=True)
+    location_code = Column(String(50), ForeignKey("export_locations.location_code", ondelete="CASCADE"), nullable=False, index=True)
+    entity_code = Column(String(50), ForeignKey("export_entities.entity_code", ondelete="CASCADE"), nullable=False, index=True)
+    status = Column(String(20), nullable=False, default="Active")
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("location_code", "entity_code", name="unique_export_location_entity"),
+    )
+
+
+class ExportEntityBlock(Base):
+    __tablename__ = "export_entity_blocks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    entity_code = Column(String(50), ForeignKey("export_entities.entity_code", ondelete="CASCADE"), nullable=False, index=True)
+    block_code = Column(String(50), ForeignKey("export_blocks.block_code", ondelete="CASCADE"), nullable=False, index=True)
+    status = Column(String(20), nullable=False, default="Active")
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("entity_code", "block_code", name="unique_export_entity_block"),
+    )
+
+
+class ExportBlock(Base):
+    __tablename__ = "export_blocks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    block_name = Column(String(200), nullable=False)
+    block_code = Column(String(50), nullable=False, unique=True, index=True)
+    description = Column(Text, nullable=True)
+    status = Column(String(20), nullable=False, default="Active")
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class ExportPermit(Base):
+    __tablename__ = "export_permits"
+
+    id = Column(Integer, primary_key=True, index=True)
+    permit_number = Column(String(100), nullable=False, unique=True, index=True)
+    location_code = Column(String(50), ForeignKey("export_locations.location_code", ondelete="RESTRICT"), nullable=False, index=True)
+    entity_code = Column(String(50), ForeignKey("export_entities.entity_code", ondelete="RESTRICT"), nullable=False, index=True)
+    block_code = Column(String(50), ForeignKey("export_blocks.block_code", ondelete="RESTRICT"), nullable=False, index=True)
+    quarter = Column(String(20), nullable=False, index=True)
+    permit_volume = Column(Float, nullable=False, default=0)
+    supplementary_permit = Column(String(10), nullable=False, default="No")
+    remarks = Column(Text, nullable=True)
+    status = Column(String(20), nullable=False, default="Active")
+    created_by = Column(String(150), nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class ExportTransaction(Base):
+    __tablename__ = "export_transactions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    bl_date = Column(Date, nullable=False, index=True)
+    location_code = Column(String(50), ForeignKey("export_locations.location_code", ondelete="RESTRICT"), nullable=False, index=True)
+    entity_code = Column(String(50), ForeignKey("export_entities.entity_code", ondelete="RESTRICT"), nullable=False, index=True)
+    block_code = Column(String(50), ForeignKey("export_blocks.block_code", ondelete="RESTRICT"), nullable=False, index=True)
+    volume = Column(Float, nullable=False, default=0)
+    consignee = Column(String(200), nullable=False)
+    destination = Column(String(200), nullable=False)
+    country = Column(String(150), nullable=False)
+    quarter = Column(String(20), nullable=False, index=True)
+    permit_number = Column(String(100), nullable=True, index=True)
+    vessel_name = Column(String(200), nullable=True)
+    created_by = Column(String(150), nullable=True)
+    status = Column(String(20), nullable=False, default="Active")
+    remarks = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class ExportConsignee(Base):
+    __tablename__ = "export_consignees"
+
+    id = Column(Integer, primary_key=True, index=True)
+    consignee_name = Column(String(200), nullable=False, unique=True)
+    description = Column(Text, nullable=True)
+    status = Column(String(20), nullable=False, default="Active")
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class ExportConfig(Base):
+    __tablename__ = "export_configs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    config_key = Column(String(100), nullable=False, unique=True, index=True)
+    config_value = Column(Text, nullable=True)
+    description = Column(Text, nullable=True)
+    status = Column(String(20), nullable=False, default="Active")
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now())

@@ -212,6 +212,12 @@ export const navigationItems = [
         disabled: false,
       },
       {
+        label: 'Export Operations',
+        path: '/export-operations',
+        disabled: false,
+        permission: 'View Export Operations',
+      },
+      {
         label: 'Operation Transaction Register',
         path: '/operation-transactions',
         disabled: false,

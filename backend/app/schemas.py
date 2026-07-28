@@ -2645,3 +2645,263 @@ class FlowmeterConfigHistoryResponse(BaseModel):
     changed_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ---------------------------------------------------------------------------
+# Export Operations Schemas
+# ---------------------------------------------------------------------------
+
+class ExportLocationBase(BaseModel):
+    location_name: str
+    location_code: str
+    description: Optional[str] = None
+    status: str = "Active"
+
+
+class ExportLocationCreate(ExportLocationBase):
+    pass
+
+
+class ExportLocationResponse(ExportLocationBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ExportEntityBase(BaseModel):
+    entity_name: str
+    entity_code: str
+    description: Optional[str] = None
+    status: str = "Active"
+
+
+class ExportEntityCreate(ExportEntityBase):
+    pass
+
+
+class ExportEntityResponse(ExportEntityBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ExportBlockBase(BaseModel):
+    block_name: str
+    block_code: str
+    description: Optional[str] = None
+    status: str = "Active"
+
+
+class ExportBlockCreate(ExportBlockBase):
+    pass
+
+
+class ExportBlockResponse(ExportBlockBase):
+    id: int
+    entity_names: list[str] = []
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ExportEntityBlockBase(BaseModel):
+    entity_code: str
+    block_code: str
+    status: str = "Active"
+
+
+class ExportEntityBlockCreate(ExportEntityBlockBase):
+    pass
+
+
+class ExportEntityBlockResponse(ExportEntityBlockBase):
+    id: int
+    entity_name: Optional[str] = None
+    block_name: Optional[str] = None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ExportPermitBase(BaseModel):
+    permit_number: str
+    location_code: str
+    entity_code: str
+    block_code: str
+    quarter: str
+    permit_volume: float = 0
+    supplementary_permit: str = "No"
+    remarks: Optional[str] = None
+    status: str = "Active"
+
+
+class ExportPermitCreate(ExportPermitBase):
+    pass
+
+
+class ExportPermitUpdate(BaseModel):
+    permit_number: Optional[str] = None
+    location_code: Optional[str] = None
+    entity_code: Optional[str] = None
+    block_code: Optional[str] = None
+    quarter: Optional[str] = None
+    permit_volume: Optional[float] = None
+    supplementary_permit: Optional[str] = None
+    remarks: Optional[str] = None
+    status: Optional[str] = None
+
+
+class ExportPermitResponse(ExportPermitBase):
+    id: int
+    location_name: Optional[str] = None
+    entity_name: Optional[str] = None
+    block_name: Optional[str] = None
+    used_volume: Optional[float] = None
+    remaining_volume: Optional[float] = None
+    created_by: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ExportConsigneeBase(BaseModel):
+    consignee_name: str
+    description: Optional[str] = None
+
+
+class ExportConsigneeCreate(ExportConsigneeBase):
+    pass
+
+
+class ExportConsigneeUpdate(BaseModel):
+    consignee_name: Optional[str] = None
+    description: Optional[str] = None
+
+
+class ExportConsigneeResponse(ExportConsigneeBase):
+    id: int
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ExportTransactionBlockEntryCreate(BaseModel):
+    block_code: str
+    volume: float = 0
+
+
+class ExportTransactionBase(BaseModel):
+    bl_date: date
+    location_code: str
+    entity_code: str
+    block_code: str
+    volume: float = 0
+    consignee: str
+    destination: str
+    country: str
+    vessel_name: Optional[str] = None
+    permit_number: Optional[str] = None
+    remarks: Optional[str] = None
+    block_entries: Optional[list[ExportTransactionBlockEntryCreate]] = None
+    override: bool = False
+
+
+class ExportTransactionCreate(ExportTransactionBase):
+    pass
+
+
+class ExportTransactionUpdate(BaseModel):
+    bl_date: Optional[date] = None
+    location_code: Optional[str] = None
+    entity_code: Optional[str] = None
+    block_code: Optional[str] = None
+    volume: Optional[float] = None
+    consignee: Optional[str] = None
+    destination: Optional[str] = None
+    country: Optional[str] = None
+    vessel_name: Optional[str] = None
+    permit_number: Optional[str] = None
+    remarks: Optional[str] = None
+    block_entries: Optional[list[ExportTransactionBlockEntryCreate]] = None
+    override: Optional[bool] = None
+
+
+class ExportTransactionResponse(ExportTransactionBase):
+    id: int
+    quarter: str
+    location_name: Optional[str] = None
+    entity_name: Optional[str] = None
+    block_name: Optional[str] = None
+    created_by: Optional[str] = None
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ExportConfigBase(BaseModel):
+    config_key: str
+    config_value: Optional[str] = None
+    description: Optional[str] = None
+
+
+class ExportConfigCreate(ExportConfigBase):
+    pass
+
+
+class ExportConfigResponse(ExportConfigBase):
+    id: int
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ExportDashboardResponse(BaseModel):
+    total_volume: float = 0
+    total_permits: int = 0
+    used_volume: float = 0
+    remaining_volume: float = 0
+    permit_insufficient_count: int = 0
+    insufficient_threshold_pct: float = 0
+    recent_exports: list[ExportTransactionResponse] = []
+    volume_by_location: list[dict] = []
+    volume_by_quarter: list[dict] = []
+    permits_with_exceed: list[dict] = []
+
+
+class BulkUploadItem(BaseModel):
+    bl_date: date
+    location_code: str
+    entity_code: str
+    block_code: str
+    volume: float
+    consignee: str
+    destination: str
+    country: str
+    vessel_name: Optional[str] = None
+    permit_number: Optional[str] = None
+    remarks: Optional[str] = None
+
+
+class BulkUploadRequest(BaseModel):
+    items: list[BulkUploadItem]
+
+
+class PermitBulkUploadItem(BaseModel):
+    permit_number: str
+    location_code: str
+    entity_code: str
+    block_code: str
+    quarter: str
+    year: int
+    permit_volume: float
+    supplementary_permit: str = "No"
+    status: str = "Active"
+    remarks: Optional[str] = None
+
+
+class PermitBulkUploadRequest(BaseModel):
+    items: list[PermitBulkUploadItem]

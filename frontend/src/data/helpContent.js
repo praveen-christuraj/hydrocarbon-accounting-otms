@@ -326,4 +326,19 @@ export const helpContent = {
       'CSV export, Excel export, and browser print are standard features for this report.',
     ],
   },
+  '/export-operations': {
+    title: 'Export Operations Help',
+    description:
+      'Export Operations page manages all export-related activities across locations, entities, and oil blocks.',
+    points: [
+      'Dashboard tab shows KPIs, permit statuses, and recent export transactions.',
+      'Export Data tab is for entering and managing export volumes with BL date, location, entity, block, volume, consignee, destination, and country.',
+      'The system automatically calculates the quarter from the BL date.',
+      'Bulk Upload feature allows uploading CSV files or entering multiple rows for back-data entry.',
+      'Reports tab generates export reports with filters and supports CSV export and print/PDF.',
+      'Configuration tab allows managing soft-coded locations, entities, blocks, permits, and system settings.',
+      'Permits are tracked per quarter. When usage exceeds the configured threshold, a warning is shown on the Dashboard.',
+      'All actions are audited in the Audit Log.',
+    ],
+  },
 }

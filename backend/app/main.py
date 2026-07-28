@@ -31,9 +31,11 @@ from app.models import (
     User, PasswordResetRequest, UserRole, UserLocation, OperationWorkflowPolicy,
     OperationWorkflowPolicyRole, OperationWorkflowPolicyUser, OperationTask,
     OperationTaskEvent, ApprovedTransactionCorrectionRequest, Table11Factor,
-    BargeSealMaster, FlowmeterConfig, FlowmeterRecord, FlowmeterConfigHistory,
+    BargeSealMaster,     FlowmeterConfig, FlowmeterRecord, FlowmeterConfigHistory,
     CompanyReportProfile, DashboardConfig, DashboardVersion, DashboardDataSource,
     AuditLog, Trip, TripEvent, TripComparison, ShuttleVoyage, FSOVoyage,
+    ExportLocation, ExportEntity, ExportLocationEntity, ExportBlock,
+    ExportPermit, ExportTransaction, ExportConfig,
 )
 
 from app.utils.db_migrations import (
@@ -48,6 +50,7 @@ from app.utils.db_migrations import (
     ensure_operation_workflow_policy_tables,
     ensure_operation_task_tables,
     ensure_user_location_columns,
+    ensure_export_operations_tables,
     migrate_boolean_columns,
     seed_default_permissions,
     seed_admin_role,
@@ -69,6 +72,7 @@ async def lifespan(app: FastAPI):
     ensure_operation_task_tables()
     migrate_boolean_columns()
     ensure_user_location_columns()
+    ensure_export_operations_tables()
     seed_default_permissions()
     seed_admin_role()
 
@@ -96,6 +100,7 @@ from app.routers import (
     asset_assignments, asset_calibration_tables, asset_types, assets,
     audit_logs, auth, backup_restore, barge_seal_master, barge_trip_tracking,
     calibration_templates, company_report_profiles, correction_requests, dashboard,
+    export_operations,
     flowmeter_configs_records, location_operation_availability, locations,
     material_balance_templates, movement_mappings, operation_entries,
     operation_tasks, operation_templates, operation_transactions, operation_types,
@@ -106,6 +111,7 @@ from app.routers import (
 )
 
 app.include_router(asset_assignments.router)
+app.include_router(export_operations.router)
 app.include_router(asset_calibration_tables.router)
 app.include_router(asset_types.router)
 app.include_router(assets.router)

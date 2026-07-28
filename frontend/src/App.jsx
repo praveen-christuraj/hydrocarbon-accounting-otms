@@ -60,6 +60,7 @@ import ProfileSecurity from './pages/ProfileSecurity'
 import SystemNotificationMaster from './pages/SystemNotificationMaster'
 import SystemNotificationCenter from './components/SystemNotificationCenter'
 import BackupRecovery from './pages/BackupRecovery'
+import ExportOperations from './pages/ExportOperations'
 
 import { getCurrentUser, logoutUser } from './api/authApi'
 import { getLocationOperationAvailability } from './api/locationOperationAvailabilityApi'
@@ -763,6 +764,18 @@ function AppContent({
                 fallbackMessage="You do not have permission to view backup recovery."
               >
                 <BackupRecovery loggedInUser={loggedInUser} />
+              </PermissionGuard>
+            }
+          />
+          <Route
+            path="/export-operations"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View Export Operations"
+                fallbackMessage="You do not have permission to view Export Operations."
+              >
+                <ExportOperations loggedInUser={loggedInUser} />
               </PermissionGuard>
             }
           />

@@ -529,4 +529,15 @@ STANDARD_PERMISSIONS = [
         "module_name": "User Security",
         "description": "Can reset user 2FA during administrator password reset",
     },
+    # Export Operations
+    {
+        "permission_name": "View Export Operations",
+        "module_name": "Export Operations",
+        "description": "Can view Export Operations page",
+    },
+    {
+        "permission_name": "Manage Export Operations",
+        "module_name": "Export Operations",
+        "description": "Can create, edit, delete export data and manage configurations",
+    },
 ]
