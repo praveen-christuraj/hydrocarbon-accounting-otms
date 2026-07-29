@@ -649,17 +649,20 @@ def list_export_permits(
     location_code: str = Query(None),
     entity_code: str = Query(None),
     quarter: str = Query(None),
+    status: str = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_from_token),
 ):
     expire_permits_if_needed(db)
-    q = db.query(ExportPermit).filter(ExportPermit.status == "Active")
+    q = db.query(ExportPermit)
     if location_code:
         q = q.filter(ExportPermit.location_code == location_code)
     if entity_code:
         q = q.filter(ExportPermit.entity_code == entity_code)
     if quarter:
         q = q.filter(ExportPermit.quarter == quarter)
+    if status:
+        q = q.filter(ExportPermit.status == status)
     return [build_permit_response(p, db) for p in q.order_by(ExportPermit.quarter.desc()).all()]
 
 

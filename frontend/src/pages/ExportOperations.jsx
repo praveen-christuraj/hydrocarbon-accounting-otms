@@ -1133,7 +1133,14 @@ function PermitConfig({ canManage }) {
   const [entities, setEntities] = useState([])
   const [blocks, setBlocks] = useState([])
   const [entityBlocks, setEntityBlocks] = useState([])
-  const [form, setForm] = useState({ permit_number: '', location_code: '', entity_code: '', block_code: '', permit_quarter: 'Q1', permit_year: new Date().getFullYear(), permit_volume: '', supplementary_permit: 'No', permit_status: 'Active', permit_remarks: '' })
+  const getCurrentQuarter = () => {
+    const m = new Date().getMonth()
+    if (m < 3) return 'Q1'
+    if (m < 6) return 'Q2'
+    if (m < 9) return 'Q3'
+    return 'Q4'
+  }
+  const [form, setForm] = useState({ permit_number: '', location_code: '', entity_code: '', block_code: '', permit_quarter: getCurrentQuarter(), permit_year: new Date().getFullYear(), permit_volume: '', supplementary_permit: 'No', permit_status: 'Active', permit_remarks: '' })
   const [editing, setEditing] = useState(null)
   const [loading, setLoading] = useState(false)
   const [filters, setFilters] = useState({ location_code: '' })
@@ -1323,7 +1330,7 @@ function PermitConfig({ canManage }) {
       }
       if (editing?.id) await updateExportPermit(editing.id, payload)
       else await createExportPermit(payload)
-      setEditing(null); setForm({ permit_number: '', location_code: '', entity_code: '', block_code: '', permit_quarter: 'Q1', permit_year: new Date().getFullYear(), permit_volume: '', supplementary_permit: 'No', permit_status: 'Active', permit_remarks: '' }); await load()
+      setEditing(null); setForm({ permit_number: '', location_code: '', entity_code: '', block_code: '', permit_quarter: getCurrentQuarter(), permit_year: new Date().getFullYear(), permit_volume: '', supplementary_permit: 'No', permit_status: 'Active', permit_remarks: '' }); setSuccessMsg(editing?.id ? 'Permit updated successfully' : 'Permit created successfully'); await load()
     } catch (e) { alert(e.message) } finally { setLoading(false) }
   }
 
@@ -1503,7 +1510,7 @@ function PermitConfig({ canManage }) {
         <div><label>Remarks</label><input value={form.permit_remarks} onChange={(e) => setForm((c) => ({ ...c, permit_remarks: e.target.value }))} disabled={!canManage} /></div>
         <div>
           <button type="submit" disabled={loading || !canManage}>{loading ? '...' : editing?.id ? 'Update' : 'Add'}</button>
-          {editing && <button onClick={() => { setEditing(null); setForm({ permit_number: '', location_code: '', entity_code: '', block_code: '', permit_quarter: 'Q1', permit_year: new Date().getFullYear(), permit_volume: '', supplementary_permit: 'No', permit_status: 'Active', permit_remarks: '' }) }}>Cancel</button>}
+          {editing && <button onClick={() => { setEditing(null); setForm({ permit_number: '', location_code: '', entity_code: '', block_code: '', permit_quarter: getCurrentQuarter(), permit_year: new Date().getFullYear(), permit_volume: '', supplementary_permit: 'No', permit_status: 'Active', permit_remarks: '' }) }}>Cancel</button>}
         </div>
       </form>
       <table>
