@@ -849,7 +849,8 @@ class TankStockLedger(Base):
     __table_args__ = (
         UniqueConstraint(
             "transaction_id",
-            name="unique_tank_stock_ledger_transaction",
+            "tank_asset_code",
+            name="unique_tank_stock_ledger_transaction_tank",
         ),
     )
 

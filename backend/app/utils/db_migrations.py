@@ -1129,3 +1129,25 @@ def migrate_boolean_columns():
                     f'ALTER TABLE {table_name} ALTER COLUMN {col_name} '
                     f'SET DEFAULT FALSE;'
                 ))
+
+
+def ensure_tank_stock_ledger_multi_entry_constraint():
+    inspector = inspect(engine)
+
+    if "tank_stock_ledger" not in inspector.get_table_names():
+        return
+
+    existing_constraints = {
+        c["name"] for c in inspector.get_unique_constraints("tank_stock_ledger")
+    }
+
+    if "unique_tank_stock_ledger_transaction" not in existing_constraints:
+        return
+
+    with engine.begin() as connection:
+        connection.execute(text(
+            "ALTER TABLE tank_stock_ledger DROP CONSTRAINT unique_tank_stock_ledger_transaction;"
+        ))
+        connection.execute(text(
+            "ALTER TABLE tank_stock_ledger ADD CONSTRAINT unique_tank_stock_ledger_transaction_tank UNIQUE (transaction_id, tank_asset_code);"
+        ))

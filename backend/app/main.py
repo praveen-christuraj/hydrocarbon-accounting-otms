@@ -44,6 +44,7 @@ from app.utils.db_migrations import (
     ensure_operation_template_layout_columns,
     ensure_tank_stock_ledger_accounting_columns,
     ensure_tank_stock_ledger_stock_snapshot_columns,
+    ensure_tank_stock_ledger_multi_entry_constraint,
     ensure_vessel_operation_show_in_column,
     ensure_flowmeter_stream_columns,
     ensure_barge_event_type_template_field,
@@ -65,6 +66,7 @@ async def lifespan(app: FastAPI):
     ensure_operation_template_layout_columns()
     ensure_tank_stock_ledger_accounting_columns()
     ensure_tank_stock_ledger_stock_snapshot_columns()
+    ensure_tank_stock_ledger_multi_entry_constraint()
     ensure_vessel_operation_show_in_column()
     ensure_flowmeter_stream_columns()
     ensure_barge_event_type_template_field()

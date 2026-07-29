@@ -34,15 +34,35 @@ const convertOutTurnRowFromApi = (row) => {
     stockAfterLt: Number(row.stock_after_lt || 0),
     stockAfterMt: Number(row.stock_after_mt || 0),
 
-    netReceiptGsvBbl: Number(row.net_receipt_gsv_bbl || 0),
-    netReceiptNsvBbl: Number(row.net_receipt_nsv_bbl || 0),
-    netReceiptLt: Number(row.net_receipt_lt || 0),
-    netReceiptMt: Number(row.net_receipt_mt || 0),
+    receiptGsvBbl: Number(row.receipt_gsv_bbl || 0),
+    receiptNsvBbl: Number(row.receipt_nsv_bbl || 0),
+    receiptLt: Number(row.receipt_lt || 0),
+    receiptMt: Number(row.receipt_mt || 0),
 
-    netDispatchGsvBbl: Number(row.net_dispatch_gsv_bbl || 0),
-    netDispatchNsvBbl: Number(row.net_dispatch_nsv_bbl || 0),
-    netDispatchLt: Number(row.net_dispatch_lt || 0),
-    netDispatchMt: Number(row.net_dispatch_mt || 0),
+    productionGsvBbl: Number(row.production_gsv_bbl || 0),
+    productionNsvBbl: Number(row.production_nsv_bbl || 0),
+    productionLt: Number(row.production_lt || 0),
+    productionMt: Number(row.production_mt || 0),
+
+    drainingGsvBbl: Number(row.draining_gsv_bbl || 0),
+    drainingNsvBbl: Number(row.draining_nsv_bbl || 0),
+    drainingLt: Number(row.draining_lt || 0),
+    drainingMt: Number(row.draining_mt || 0),
+
+    dispatchGsvBbl: Number(row.dispatch_gsv_bbl || 0),
+    dispatchNsvBbl: Number(row.dispatch_nsv_bbl || 0),
+    dispatchLt: Number(row.dispatch_lt || 0),
+    dispatchMt: Number(row.dispatch_mt || 0),
+
+    otherInGsvBbl: Number(row.other_in_gsv_bbl || 0),
+    otherInNsvBbl: Number(row.other_in_nsv_bbl || 0),
+    otherInLt: Number(row.other_in_lt || 0),
+    otherInMt: Number(row.other_in_mt || 0),
+
+    otherOutGsvBbl: Number(row.other_out_gsv_bbl || 0),
+    otherOutNsvBbl: Number(row.other_out_nsv_bbl || 0),
+    otherOutLt: Number(row.other_out_lt || 0),
+    otherOutMt: Number(row.other_out_mt || 0),
 
     signedNetMovementGsvBbl: Number(row.signed_net_movement_gsv_bbl || 0),
     signedNetMovementNsvBbl: Number(row.signed_net_movement_nsv_bbl || 0),
@@ -75,10 +95,6 @@ const buildQueryString = (filters = {}) => {
 
   if (filters.dateTo) {
     params.append('date_to', filters.dateTo)
-  }
-
-  if (filters.status) {
-    params.append('status', filters.status)
   }
 
   return params.toString()

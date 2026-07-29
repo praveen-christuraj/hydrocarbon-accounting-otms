@@ -104,108 +104,140 @@ function DashboardTab({ loggedInUser }) {
   const [dash, setDash] = useState(null)
   const [loading, setLoading] = useState(false)
   const [locations, setLocations] = useState([])
-  const [locFilter, setLocFilter] = useState('')
+  const [entities, setEntities] = useState([])
+  const [blocks, setBlocks] = useState([])
+  const [quarters, setQuarters] = useState([])
+  const [filters, setFilters] = useState({ location_code: '', entity_code: '', block_code: '', quarter: '', from_date: '', to_date: '' })
 
   const load = async () => {
     try {
       setLoading(true)
-      const [d, locs] = await Promise.all([getExportDashboard({ location_code: locFilter }), getExportLocations()])
+      const params = {}
+      Object.entries(filters).forEach(([k, v]) => { if (v) params[k] = v })
+      const [d, locs, ents, blks] = await Promise.all([
+        getExportDashboard(params),
+        getExportLocations(),
+        getExportEntities(),
+        getExportBlocks(),
+      ])
       setDash(d)
       setLocations(Array.isArray(locs) ? locs : [])
+      setEntities(Array.isArray(ents) ? ents : [])
+      setBlocks(Array.isArray(blks) ? blks : [])
+      const qs = [...new Set((d?.blocks_summary || []).map((b) => b.quarter).filter(Boolean))].sort().reverse()
+      setQuarters(qs)
     } catch (e) { console.error(e) } finally { setLoading(false) }
   }
 
   useEffect(() => { load() }, [])
 
+  const kpiColors = ['#e3f2fd', '#e8f5e9', '#fff3e0', '#f3e5f5', '#e0f7fa', '#fce4ec', '#e8eaf6', '#fff8e1']
+
   return (
     <div>
       <div className="report-filter-panel no-print" style={{ marginTop: '1rem' }}>
-        <div>
-          <label>Location</label>
-          <select value={locFilter} onChange={(e) => setLocFilter(e.target.value)}>
-            <option value="">All Locations</option>
+        <div><label>Location</label>
+          <select value={filters.location_code} onChange={(e) => setFilters((c) => ({ ...c, location_code: e.target.value }))}>
+            <option value="">All</option>
             {sortOptions(locations, 'location_name', 'location_code')}
           </select>
         </div>
+        <div><label>Entity</label>
+          <select value={filters.entity_code} onChange={(e) => setFilters((c) => ({ ...c, entity_code: e.target.value }))}>
+            <option value="">All</option>
+            {sortOptions(entities, 'entity_name', 'entity_code')}
+          </select>
+        </div>
+        <div><label>Block</label>
+          <select value={filters.block_code} onChange={(e) => setFilters((c) => ({ ...c, block_code: e.target.value }))}>
+            <option value="">All</option>
+            {sortOptions(blocks, 'block_name', 'block_code')}
+          </select>
+        </div>
+        <div><label>Quarter</label>
+          <select value={filters.quarter} onChange={(e) => setFilters((c) => ({ ...c, quarter: e.target.value }))}>
+            <option value="">All</option>
+            {quarters.map((q) => <option key={q} value={q}>{q}</option>)}
+          </select>
+        </div>
+        <div><label>From</label><input type="date" value={filters.from_date} onChange={(e) => setFilters((c) => ({ ...c, from_date: e.target.value }))} /></div>
+        <div><label>To</label><input type="date" value={filters.to_date} onChange={(e) => setFilters((c) => ({ ...c, to_date: e.target.value }))} /></div>
         <div className="report-filter-actions">
           <button type="button" onClick={load} disabled={loading}>{loading ? 'Loading...' : 'Refresh'}</button>
         </div>
       </div>
       {dash && (
         <>
-          <div className="kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem', margin: '1rem 0' }}>
+          {/* Dynamic per-location KPI cards */}
+          {(dash.locations_kpi || []).length > 0 && (
+            <div className="kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '1rem', margin: '1rem 0' }}>
+              {(dash.locations_kpi || []).map((loc, idx) => (
+                <div key={loc.location_code} className="kpi-card" style={{ background: kpiColors[idx % kpiColors.length], padding: '1rem', borderRadius: '8px', textAlign: 'center' }}>
+                  <p style={{ margin: 0, fontWeight: 600, fontSize: '0.9rem', color: '#333' }}>{loc.location_name}</p>
+                  <h3 style={{ margin: '0.25rem 0', fontSize: '1.8rem' }}>{fmt(loc.total_export_volume)}</h3>
+                  <p style={{ margin: 0, fontSize: '0.8rem', color: '#666' }}>Exported</p>
+                  <p style={{ margin: '0.25rem 0 0', fontSize: '0.8rem', color: '#666' }}>Permit: {fmt(loc.total_permit_volume)} | Remaining: {fmt(loc.total_remaining_volume)}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Overall totals */}
+          <div className="kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '1rem', margin: '1rem 0' }}>
             <div className="kpi-card" style={{ background: '#e3f2fd', padding: '1rem', borderRadius: '8px', textAlign: 'center' }}>
-              <h3 style={{ margin: 0, fontSize: '2rem' }}>{fmt(dash.total_volume)}</h3>
-              <p style={{ margin: '0.25rem 0 0', color: '#555' }}>Total Exported Volume</p>
+              <h3 style={{ margin: 0, fontSize: '2rem' }}>{fmt(dash.total_export_volume)}</h3>
+              <p style={{ margin: '0.25rem 0 0', color: '#555' }}>Total Exported</p>
             </div>
             <div className="kpi-card" style={{ background: '#e8f5e9', padding: '1rem', borderRadius: '8px', textAlign: 'center' }}>
               <h3 style={{ margin: 0, fontSize: '2rem' }}>{dash.total_permits}</h3>
               <p style={{ margin: '0.25rem 0 0', color: '#555' }}>Active Permits</p>
             </div>
             <div className="kpi-card" style={{ background: '#fff3e0', padding: '1rem', borderRadius: '8px', textAlign: 'center' }}>
-              <h3 style={{ margin: 0, fontSize: '2rem' }}>{fmt(dash.used_volume)}</h3>
-              <p style={{ margin: '0.25rem 0 0', color: '#555' }}>Used Volume</p>
+              <h3 style={{ margin: 0, fontSize: '2rem' }}>{fmt(dash.total_permit_volume)}</h3>
+              <p style={{ margin: '0.25rem 0 0', color: '#555' }}>Total Permit Vol</p>
             </div>
             <div className="kpi-card" style={{ background: '#f3e5f5', padding: '1rem', borderRadius: '8px', textAlign: 'center' }}>
-              <h3 style={{ margin: 0, fontSize: '2rem' }}>{fmt(dash.remaining_volume)}</h3>
-              <p style={{ margin: '0.25rem 0 0', color: '#555' }}>Remaining Volume</p>
+              <h3 style={{ margin: 0, fontSize: '2rem' }}>{fmt(dash.total_remaining_permit_volume)}</h3>
+              <p style={{ margin: '0.25rem 0 0', color: '#555' }}>Remaining Permit Vol</p>
             </div>
           </div>
+
           {dash.permit_insufficient_count > 0 && (
             <div className="warn-box" style={{ background: '#fff3cd', border: '1px solid #ffc107', padding: '1rem', borderRadius: '8px', marginBottom: '1rem' }}>
               <strong>Permit Insufficiency Alert:</strong> {dash.permit_insufficient_count} permit(s) exceed {dash.insufficient_threshold_pct}% usage. Supplementary permits may be required.
             </div>
           )}
-          <div className="section-title"><h3>Volume by Location</h3></div>
+
+          {/* Block Summary Table */}
+          <div className="section-title"><h3>Blocks Summary (Export vs Permit)</h3></div>
           <table>
-            <thead><tr><th>Location</th><th>Total Volume</th></tr></thead>
+            <thead><tr><th>Location</th><th>Entity</th><th>Block</th><th>Quarter</th><th>Export Vol</th><th>Permit Vol</th><th>Used Permit</th><th>Remaining</th><th>Usage %</th><th>Permits</th></tr></thead>
             <tbody>
-              {(dash.volume_by_location || []).length === 0 ? <tr><td colSpan="2" className="empty-table">No data</td></tr> :
-                dash.volume_by_location.map((v) => (
-                  <tr key={v.location_code}><td>{v.location_name} ({v.location_code})</td><td>{fmt(v.total)}</td></tr>
+              {!dash.blocks_summary?.length ? <tr><td colSpan="10" className="empty-table">No data</td></tr> :
+                dash.blocks_summary.map((b, idx) => (
+                  <tr key={idx} style={b.usage_pct >= dash.insufficient_threshold_pct ? { background: '#fff3cd' } : {}}>
+                    <td>{b.location_name}</td><td>{b.entity_name || '-'}</td>
+                    <td>{b.block_name}</td><td>{b.quarter || '-'}</td>
+                    <td>{fmt(b.export_volume)}</td><td>{fmt(b.permit_volume)}</td>
+                    <td>{fmt(b.used_permit_volume)}</td><td>{fmt(b.remaining_permit_volume)}</td>
+                    <td>{b.usage_pct}%</td><td>{b.permit_count}</td>
+                  </tr>
                 ))
               }
             </tbody>
           </table>
-          <div className="section-title" style={{ marginTop: '1rem' }}><h3>Volume by Quarter</h3></div>
-          <table>
-            <thead><tr><th>Quarter</th><th>Total Volume</th></tr></thead>
-            <tbody>
-              {(dash.volume_by_quarter || []).length === 0 ? <tr><td colSpan="2" className="empty-table">No data</td></tr> :
-                dash.volume_by_quarter.map((v) => (
-                  <tr key={v.quarter}><td>{v.quarter}</td><td>{fmt(v.total)}</td></tr>
-                ))
-              }
-            </tbody>
-          </table>
-          {(dash.permits_with_exceed || []).length > 0 && (
-            <>
-              <div className="section-title" style={{ marginTop: '1rem' }}><h3>Permits Near / Over Limit</h3></div>
-              <table>
-                <thead><tr><th>Permit</th><th>Quarter</th><th>Permit Vol</th><th>Used</th><th>Remaining</th><th>Usage %</th></tr></thead>
-                <tbody>
-                  {dash.permits_with_exceed.map((p) => {
-                    const usagePct = p.permit_volume > 0 ? ((p.used_volume / p.permit_volume) * 100).toFixed(1) : 0
-                    return (
-                      <tr key={p.id}>
-                        <td>{p.permit_number}</td><td>{p.quarter}</td><td>{fmt(p.permit_volume)}</td>
-                        <td>{fmt(p.used_volume)}</td><td>{fmt(p.remaining_volume)}</td><td>{usagePct}%</td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </>
-          )}
+
+          {/* Recent Exports */}
           <div className="section-title" style={{ marginTop: '1rem' }}><h3>Recent Exports (Last 10)</h3></div>
           <table>
-            <thead><tr><th>BL Date</th><th>Location</th><th>Entity</th><th>Block</th><th>Volume</th><th>Consignee</th><th>Quarter</th></tr></thead>
+            <thead><tr><th>BL Date</th><th>Vessel</th><th>Location</th><th>Entity</th><th>Block</th><th>Volume</th><th>Consignee</th><th>Quarter</th></tr></thead>
             <tbody>
-              {(dash.recent_exports || []).length === 0 ? <tr><td colSpan="7" className="empty-table">No recent exports</td></tr> :
+              {(dash.recent_exports || []).length === 0 ? <tr><td colSpan="8" className="empty-table">No recent exports</td></tr> :
                 dash.recent_exports.map((tx) => (
                   <tr key={tx.id}>
-                    <td>{tx.bl_date}</td><td>{tx.location_name || tx.location_code}</td><td>{tx.entity_name || tx.entity_code}</td>
-                    <td>{tx.block_name || tx.block_code}</td><td>{fmt(tx.volume)}</td><td>{tx.consignee}</td><td>{tx.quarter}</td>
+                    <td>{tx.bl_date}</td><td>{tx.vessel_name || '-'}</td><td>{tx.location_name || tx.location_code}</td>
+                    <td>{tx.entity_name || tx.entity_code}</td><td>{tx.block_name || tx.block_code}</td>
+                    <td>{fmt(tx.volume)}</td><td>{tx.consignee}</td><td>{tx.quarter}</td>
                   </tr>
                 ))
               }

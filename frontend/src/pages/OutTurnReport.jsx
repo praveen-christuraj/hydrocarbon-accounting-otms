@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getOutTurnReport } from '../api/outTurnReportApi'
+import { getCompanyReportProfiles } from '../api/companyReportProfileApi'
 import PaginationControls, {
   paginateRows,
 } from '../components/common/PaginationControls'
@@ -11,7 +12,6 @@ function OutTurnReport({ locations, assets }) {
     productName: '',
     dateFrom: '',
     dateTo: '',
-    status: 'Active',
   }
 
   const [filters, setFilters] = useState(emptyFilters)
@@ -42,16 +42,28 @@ function OutTurnReport({ locations, assets }) {
   const totals = useMemo(() => {
     return rows.reduce(
       (accumulator, row) => {
-        accumulator.totalReceiptNsvBbl += row.netReceiptNsvBbl
-        accumulator.totalDispatchNsvBbl += row.netDispatchNsvBbl
+        accumulator.totalReceiptNsvBbl += row.receiptNsvBbl
+        accumulator.totalProductionNsvBbl += row.productionNsvBbl
+        accumulator.totalDrainingNsvBbl += row.drainingNsvBbl
+        accumulator.totalDispatchNsvBbl += row.dispatchNsvBbl
+        accumulator.totalOtherInNsvBbl += row.otherInNsvBbl
+        accumulator.totalOtherOutNsvBbl += row.otherOutNsvBbl
         accumulator.netMovementNsvBbl += row.signedNetMovementNsvBbl
 
-        accumulator.totalReceiptLt += row.netReceiptLt
-        accumulator.totalDispatchLt += row.netDispatchLt
+        accumulator.totalReceiptLt += row.receiptLt
+        accumulator.totalProductionLt += row.productionLt
+        accumulator.totalDrainingLt += row.drainingLt
+        accumulator.totalDispatchLt += row.dispatchLt
+        accumulator.totalOtherInLt += row.otherInLt
+        accumulator.totalOtherOutLt += row.otherOutLt
         accumulator.netMovementLt += row.signedNetMovementLt
 
-        accumulator.totalReceiptMt += row.netReceiptMt
-        accumulator.totalDispatchMt += row.netDispatchMt
+        accumulator.totalReceiptMt += row.receiptMt
+        accumulator.totalProductionMt += row.productionMt
+        accumulator.totalDrainingMt += row.drainingMt
+        accumulator.totalDispatchMt += row.dispatchMt
+        accumulator.totalOtherInMt += row.otherInMt
+        accumulator.totalOtherOutMt += row.otherOutMt
         accumulator.netMovementMt += row.signedNetMovementMt
 
         accumulator.lastStockNsvBbl = row.stockAfterNsvBbl
@@ -62,13 +74,25 @@ function OutTurnReport({ locations, assets }) {
       },
       {
         totalReceiptNsvBbl: 0,
+        totalProductionNsvBbl: 0,
+        totalDrainingNsvBbl: 0,
         totalDispatchNsvBbl: 0,
+        totalOtherInNsvBbl: 0,
+        totalOtherOutNsvBbl: 0,
         netMovementNsvBbl: 0,
         totalReceiptLt: 0,
+        totalProductionLt: 0,
+        totalDrainingLt: 0,
         totalDispatchLt: 0,
+        totalOtherInLt: 0,
+        totalOtherOutLt: 0,
         netMovementLt: 0,
         totalReceiptMt: 0,
+        totalProductionMt: 0,
+        totalDrainingMt: 0,
         totalDispatchMt: 0,
+        totalOtherInMt: 0,
+        totalOtherOutMt: 0,
         netMovementMt: 0,
         lastStockNsvBbl: 0,
         lastStockLt: 0,
@@ -76,6 +100,18 @@ function OutTurnReport({ locations, assets }) {
       }
     )
   }, [rows])
+
+  const [profile, setProfile] = useState(null)
+
+  useEffect(() => {
+    ;(async () => {
+      try {
+        const profiles = await getCompanyReportProfiles()
+        const activeProfile = profiles.find((p) => p.status === 'Active') || profiles[0]
+        if (activeProfile) setProfile(activeProfile)
+      } catch { /* non-critical */ }
+    })()
+  }, [])
 
   const loadReport = async (activeFilters = filters) => {
     try {
@@ -221,8 +257,12 @@ function OutTurnReport({ locations, assets }) {
       'Operation Sign',
       'Previous NSV',
       'Stock After NSV',
-      'Net Receipt NSV',
-      'Net Dispatch NSV',
+      'Receipt NSV',
+      'Production NSV',
+      'Draining NSV',
+      'Dispatch NSV',
+      'Other IN NSV',
+      'Other OUT NSV',
       'Signed Net NSV',
       'Stock After LT',
       'Stock After MT',
@@ -244,8 +284,12 @@ function OutTurnReport({ locations, assets }) {
       row.tankOperationSign,
       formatNumber(row.previousStockNsvBbl),
       formatNumber(row.stockAfterNsvBbl),
-      formatNumber(row.netReceiptNsvBbl),
-      formatNumber(row.netDispatchNsvBbl),
+      formatNumber(row.receiptNsvBbl),
+      formatNumber(row.productionNsvBbl),
+      formatNumber(row.drainingNsvBbl),
+      formatNumber(row.dispatchNsvBbl),
+      formatNumber(row.otherInNsvBbl),
+      formatNumber(row.otherOutNsvBbl),
       formatNumber(row.signedNetMovementNsvBbl),
       formatNumber(row.stockAfterLt),
       formatNumber(row.stockAfterMt),
@@ -328,21 +372,6 @@ function OutTurnReport({ locations, assets }) {
         </div>
 
         <div>
-          <label>Status</label>
-          <select
-            name="status"
-            value={filters.status}
-            onChange={handleFilterChange}
-            disabled={loading}
-          >
-            <option value="Active">Active</option>
-            <option value="">All Statuses</option>
-            <option value="Reversed">Reversed</option>
-            <option value="Cancelled">Cancelled</option>
-          </select>
-        </div>
-
-        <div>
           <label>Accounting Date From</label>
           <input
             name="dateFrom"
@@ -395,8 +424,28 @@ function OutTurnReport({ locations, assets }) {
         </div>
 
         <div className="summary-card">
+          <span>Total Production NSV</span>
+          <strong>{formatNumber(totals.totalProductionNsvBbl)}</strong>
+        </div>
+
+        <div className="summary-card">
+          <span>Total Draining NSV</span>
+          <strong>{formatNumber(totals.totalDrainingNsvBbl)}</strong>
+        </div>
+
+        <div className="summary-card">
           <span>Total Dispatch NSV</span>
           <strong>{formatNumber(totals.totalDispatchNsvBbl)}</strong>
+        </div>
+
+        <div className="summary-card">
+          <span>Total Other IN NSV</span>
+          <strong>{formatNumber(totals.totalOtherInNsvBbl)}</strong>
+        </div>
+
+        <div className="summary-card">
+          <span>Total Other OUT NSV</span>
+          <strong>{formatNumber(totals.totalOtherOutNsvBbl)}</strong>
         </div>
 
         <div className="summary-card">
@@ -418,6 +467,21 @@ function OutTurnReport({ locations, assets }) {
       </div>
 
       <div className="print-report-header">
+        {profile && (
+          <div className="print-company-block">
+            {profile.logoUrl ? (
+              <img src={profile.logoUrl} alt={`${profile.companyName} Logo`} className="print-company-logo" />
+            ) : (
+              <div className="print-logo-placeholder">{profile.logoText || 'LOGO'}</div>
+            )}
+            <div>
+              <h1>{profile.companyName}</h1>
+              <p>{profile.systemName}</p>
+              <p>{profile.reportSubtitle || 'Out-Turn Report'}</p>
+            </div>
+          </div>
+        )}
+
         <h2>Out-Turn Report</h2>
 
         <div className="print-report-meta">
@@ -455,8 +519,28 @@ function OutTurnReport({ locations, assets }) {
           </div>
 
           <div>
+            <span>Total Production NSV</span>
+            <strong>{formatNumber(totals.totalProductionNsvBbl)}</strong>
+          </div>
+
+          <div>
+            <span>Total Draining NSV</span>
+            <strong>{formatNumber(totals.totalDrainingNsvBbl)}</strong>
+          </div>
+
+          <div>
             <span>Total Dispatch NSV</span>
             <strong>{formatNumber(totals.totalDispatchNsvBbl)}</strong>
+          </div>
+
+          <div>
+            <span>Total Other IN NSV</span>
+            <strong>{formatNumber(totals.totalOtherInNsvBbl)}</strong>
+          </div>
+
+          <div>
+            <span>Total Other OUT NSV</span>
+            <strong>{formatNumber(totals.totalOtherOutNsvBbl)}</strong>
           </div>
 
           <div>
@@ -496,8 +580,12 @@ function OutTurnReport({ locations, assets }) {
             <th>Operation</th>
             <th>Previous NSV</th>
             <th>Stock After NSV</th>
-            <th>Net Receipt NSV</th>
-            <th>Net Dispatch NSV</th>
+            <th>Receipt NSV</th>
+            <th>Production NSV</th>
+            <th>Draining NSV</th>
+            <th>Dispatch NSV</th>
+            <th>Other IN NSV</th>
+            <th>Other OUT NSV</th>
             <th>Signed Net NSV</th>
             <th>Stock After LT</th>
             <th>Stock After MT</th>
@@ -508,8 +596,8 @@ function OutTurnReport({ locations, assets }) {
         <tbody>
           {rows.length === 0 ? (
             <tr>
-              <td colSpan="15" className="empty-table">
-                No Out-Turn Report rows found.
+              <td colSpan="19" className="empty-table">
+                No Out-Turn Report rows found. Approved Tank Gauging tickets create ledger entries automatically. Submit → Approve a tank gauging ticket, then return here.
               </td>
             </tr>
           ) : (
@@ -536,8 +624,12 @@ function OutTurnReport({ locations, assets }) {
                 </td>
                 <td>{formatNumber(row.previousStockNsvBbl)}</td>
                 <td>{formatNumber(row.stockAfterNsvBbl)}</td>
-                <td>{formatNumber(row.netReceiptNsvBbl)}</td>
-                <td>{formatNumber(row.netDispatchNsvBbl)}</td>
+                <td>{formatNumber(row.receiptNsvBbl)}</td>
+                <td>{formatNumber(row.productionNsvBbl)}</td>
+                <td>{formatNumber(row.drainingNsvBbl)}</td>
+                <td>{formatNumber(row.dispatchNsvBbl)}</td>
+                <td>{formatNumber(row.otherInNsvBbl)}</td>
+                <td>{formatNumber(row.otherOutNsvBbl)}</td>
                 <td className={getMovementClass(row.signedNetMovementNsvBbl)}>
                   {formatNumber(row.signedNetMovementNsvBbl)}
                 </td>
@@ -566,6 +658,13 @@ function OutTurnReport({ locations, assets }) {
         stock snapshot with the previous chronological stock snapshot for the
         same tank/product.
       </div>
+
+      {profile && (
+        <div className="print-only" style={{ marginTop: 20, fontSize: 11, color: '#555' }}>
+          <p>{profile.footerFormula}</p>
+          <p>{profile.footerNote}</p>
+        </div>
+      )}
 
       {successMsg && (
         <div className="success-box" onClick={() => setSuccessMsg('')}>

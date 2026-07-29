@@ -137,6 +137,15 @@ def calculate_used_permit_volume(db: Session, permit: ExportPermit) -> float:
     ).scalar() or 0
 
 
+def calculate_used_permit_volume_for_block(db: Session, location_code: str, block_code: str, quarter: str) -> float:
+    return db.query(func.coalesce(func.sum(ExportTransaction.volume), 0)).filter(
+        ExportTransaction.location_code == location_code,
+        ExportTransaction.block_code == block_code,
+        ExportTransaction.quarter == quarter,
+        ExportTransaction.status == "Active",
+    ).scalar() or 0
+
+
 def validate_permit_limit(required_volume: float, remaining_volume: float, permit_number: str | None, block_code: str | None, override: bool = False):
     if not permit_number or not block_code:
         return None
@@ -1054,26 +1063,51 @@ def delete_export_consignee(consignee_id: int, db: Session = Depends(get_db), cu
 @router.get("/dashboard", response_model=ExportDashboardResponse)
 def get_export_dashboard(
     location_code: str = Query(None),
+    entity_code: str = Query(None),
+    block_code: str = Query(None),
     quarter: str = Query(None),
+    from_date: date = Query(None),
+    to_date: date = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_from_token),
 ):
-    q = db.query(ExportTransaction).filter(ExportTransaction.status == "Active")
+    # --- Transaction query base ---
+    tx_q = db.query(ExportTransaction).filter(ExportTransaction.status == "Active")
     if location_code:
-        q = q.filter(ExportTransaction.location_code == location_code)
+        tx_q = tx_q.filter(ExportTransaction.location_code == location_code)
+    if entity_code:
+        tx_q = tx_q.filter(ExportTransaction.entity_code == entity_code)
+    if block_code:
+        tx_q = tx_q.filter(ExportTransaction.block_code == block_code)
     if quarter:
-        q = q.filter(ExportTransaction.quarter == quarter)
+        tx_q = tx_q.filter(ExportTransaction.quarter == quarter)
+    if from_date:
+        tx_q = tx_q.filter(ExportTransaction.bl_date >= from_date)
+    if to_date:
+        tx_q = tx_q.filter(ExportTransaction.bl_date <= to_date)
 
-    total_volume = q.with_entities(func.coalesce(func.sum(ExportTransaction.volume), 0)).scalar() or 0
+    total_export_volume = tx_q.with_entities(func.coalesce(func.sum(ExportTransaction.volume), 0)).scalar() or 0
 
-    recent = q.order_by(ExportTransaction.created_at.desc()).limit(10).all()
+    recent = tx_q.order_by(ExportTransaction.created_at.desc()).limit(10).all()
     recent_exports = [build_transaction_response(tx, db) for tx in recent]
 
-    permits = db.query(ExportPermit).filter(ExportPermit.status == "Active").all()
+    # --- Permits ---
+    permit_q = db.query(ExportPermit).filter(ExportPermit.status == "Active")
+    if location_code:
+        permit_q = permit_q.filter(ExportPermit.location_code == location_code)
+    if entity_code:
+        permit_q = permit_q.filter(ExportPermit.entity_code == entity_code)
+    if block_code:
+        permit_q = permit_q.filter(ExportPermit.block_code == block_code)
+    if quarter:
+        permit_q = permit_q.filter(ExportPermit.quarter == quarter)
+
+    permits = permit_q.all()
     permit_responses = [build_permit_response(p, db) for p in permits]
     total_permits = len(permit_responses)
-    used_volume = sum(p["used_volume"] for p in permit_responses)
-    remaining_volume = sum(p["remaining_volume"] for p in permit_responses)
+    total_permit_volume = sum(p["permit_volume"] for p in permit_responses)
+    total_used_permit_volume = sum(p["used_volume"] for p in permit_responses)
+    total_remaining_permit_volume = sum(p["remaining_volume"] for p in permit_responses)
 
     threshold_config = db.query(ExportConfig).filter(ExportConfig.config_key == "permit_insufficiency_threshold_pct").first()
     threshold_pct = float(threshold_config.config_value) if threshold_config and threshold_config.config_value else 90.0
@@ -1085,42 +1119,141 @@ def get_export_dashboard(
             if usage_pct >= threshold_pct:
                 permits_with_exceed.append(p)
 
-    volume_by_location = db.query(
+    # --- Location KPI ---
+    tx_loc_q = db.query(
         ExportTransaction.location_code,
         func.coalesce(func.sum(ExportTransaction.volume), 0).label("total"),
     ).filter(ExportTransaction.status == "Active")
+    if entity_code:
+        tx_loc_q = tx_loc_q.filter(ExportTransaction.entity_code == entity_code)
+    if block_code:
+        tx_loc_q = tx_loc_q.filter(ExportTransaction.block_code == block_code)
     if quarter:
-        volume_by_location = volume_by_location.filter(ExportTransaction.quarter == quarter)
-    if location_code:
-        volume_by_location = volume_by_location.filter(ExportTransaction.location_code == location_code)
-    volume_by_location = volume_by_location.group_by(ExportTransaction.location_code).all()
+        tx_loc_q = tx_loc_q.filter(ExportTransaction.quarter == quarter)
+    if from_date:
+        tx_loc_q = tx_loc_q.filter(ExportTransaction.bl_date >= from_date)
+    if to_date:
+        tx_loc_q = tx_loc_q.filter(ExportTransaction.bl_date <= to_date)
+    tx_loc_q = tx_loc_q.group_by(ExportTransaction.location_code).all()
 
-    vol_loc = []
-    for row in volume_by_location:
+    locations_kpi = []
+    for row in tx_loc_q:
         loc = db.query(ExportLocation).filter(ExportLocation.location_code == row.location_code).first()
-        vol_loc.append({"location_code": row.location_code, "location_name": loc.location_name if loc else row.location_code, "total": float(row.total)})
+        loc_name = loc.location_name if loc else row.location_code
+        loc_permits = [p for p in permit_responses if p["location_code"] == row.location_code]
+        perm_vol = sum(p["permit_volume"] for p in loc_permits)
+        rem_vol = sum(p["remaining_volume"] for p in loc_permits)
+        locations_kpi.append({
+            "location_code": row.location_code,
+            "location_name": loc_name,
+            "total_export_volume": float(row.total),
+            "total_permit_volume": float(perm_vol),
+            "total_remaining_volume": float(rem_vol),
+        })
 
-    volume_by_quarter = db.query(
-        ExportTransaction.quarter,
-        func.coalesce(func.sum(ExportTransaction.volume), 0).label("total"),
+    # --- Block summary ---
+    tx_block_q = db.query(
+        ExportTransaction.location_code,
+        ExportTransaction.block_code,
+        func.coalesce(func.sum(ExportTransaction.volume), 0).label("export_vol"),
     ).filter(ExportTransaction.status == "Active")
-    if location_code:
-        volume_by_quarter = volume_by_quarter.filter(ExportTransaction.location_code == location_code)
-    volume_by_quarter = volume_by_quarter.group_by(ExportTransaction.quarter).all()
+    if entity_code:
+        tx_block_q = tx_block_q.filter(ExportTransaction.entity_code == entity_code)
+    if quarter:
+        tx_block_q = tx_block_q.filter(ExportTransaction.quarter == quarter)
+    if from_date:
+        tx_block_q = tx_block_q.filter(ExportTransaction.bl_date >= from_date)
+    if to_date:
+        tx_block_q = tx_block_q.filter(ExportTransaction.bl_date <= to_date)
+    tx_block_q = tx_block_q.group_by(ExportTransaction.location_code, ExportTransaction.block_code).all()
 
-    vol_q = [{"quarter": row.quarter, "total": float(row.total)} for row in volume_by_quarter]
+    # also fetch per-block permits
+    permit_block_q = db.query(
+        ExportPermit.location_code,
+        ExportPermit.entity_code,
+        ExportPermit.block_code,
+        ExportPermit.quarter,
+        func.coalesce(func.sum(ExportPermit.permit_volume), 0).label("perm_vol"),
+        func.count(ExportPermit.id).label("cnt"),
+    ).filter(ExportPermit.status == "Active")
+    if location_code:
+        permit_block_q = permit_block_q.filter(ExportPermit.location_code == location_code)
+    if entity_code:
+        permit_block_q = permit_block_q.filter(ExportPermit.entity_code == entity_code)
+    if block_code:
+        permit_block_q = permit_block_q.filter(ExportPermit.block_code == block_code)
+    if quarter:
+        permit_block_q = permit_block_q.filter(ExportPermit.quarter == quarter)
+    permit_block_q = permit_block_q.group_by(ExportPermit.location_code, ExportPermit.entity_code, ExportPermit.block_code, ExportPermit.quarter).all()
+
+    # Merge
+    tx_map = {}
+    for r in tx_block_q:
+        key = (r.location_code, r.block_code)
+        tx_map[key] = float(r.export_vol)
+
+    blocks_summary = []
+    seen_keys = set()
+    for r in permit_block_q:
+        key = (r.location_code, r.block_code)
+        seen_keys.add(key)
+        export_vol = tx_map.get(key, 0)
+        used = calculate_used_permit_volume_for_block(db, r.location_code, r.block_code, r.quarter)
+        perm_vol = float(r.perm_vol)
+        rem = max(0, perm_vol - used)
+        usage = (used / perm_vol * 100) if perm_vol > 0 else 0
+        loc = db.query(ExportLocation).filter(ExportLocation.location_code == r.location_code).first()
+        blk = db.query(ExportBlock).filter(ExportBlock.block_code == r.block_code).first()
+        ent = db.query(ExportEntity).filter(ExportEntity.entity_code == r.entity_code).first()
+        blocks_summary.append({
+            "location_code": r.location_code,
+            "location_name": loc.location_name if loc else r.location_code,
+            "entity_code": r.entity_code,
+            "entity_name": ent.entity_name if ent else r.entity_code,
+            "block_code": r.block_code,
+            "block_name": blk.block_name if blk else r.block_code,
+            "quarter": r.quarter,
+            "export_volume": export_vol,
+            "permit_volume": perm_vol,
+            "used_permit_volume": used,
+            "remaining_permit_volume": rem,
+            "usage_pct": round(usage, 1),
+            "permit_count": int(r.cnt),
+        })
+
+    # Also add blocks that have exports but no permits
+    for key, export_vol in tx_map.items():
+        if key not in seen_keys:
+            loc_code, blk_code = key
+            loc = db.query(ExportLocation).filter(ExportLocation.location_code == loc_code).first()
+            blk = db.query(ExportBlock).filter(ExportBlock.block_code == blk_code).first()
+            blocks_summary.append({
+                "location_code": loc_code,
+                "location_name": loc.location_name if loc else loc_code,
+                "entity_code": "",
+                "entity_name": "",
+                "block_code": blk_code,
+                "block_name": blk.block_name if blk else blk_code,
+                "quarter": "",
+                "export_volume": export_vol,
+                "permit_volume": 0,
+                "used_permit_volume": 0,
+                "remaining_permit_volume": 0,
+                "usage_pct": 0,
+                "permit_count": 0,
+            })
 
     return {
-        "total_volume": total_volume,
+        "locations_kpi": locations_kpi,
+        "blocks_summary": blocks_summary,
+        "total_export_volume": total_export_volume,
         "total_permits": total_permits,
-        "used_volume": used_volume,
-        "remaining_volume": remaining_volume,
+        "total_permit_volume": total_permit_volume,
+        "total_used_permit_volume": total_used_permit_volume,
+        "total_remaining_permit_volume": total_remaining_permit_volume,
         "permit_insufficient_count": len(permits_with_exceed),
         "insufficient_threshold_pct": threshold_pct,
         "recent_exports": recent_exports,
-        "volume_by_location": vol_loc,
-        "volume_by_quarter": vol_q,
-        "permits_with_exceed": permits_with_exceed,
     }
 
 

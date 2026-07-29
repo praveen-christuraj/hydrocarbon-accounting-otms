@@ -1188,15 +1188,35 @@ class OutTurnReportResponse(BaseModel):
     stock_after_lt: float = 0
     stock_after_mt: float = 0
 
-    net_receipt_gsv_bbl: float = 0
-    net_receipt_nsv_bbl: float = 0
-    net_receipt_lt: float = 0
-    net_receipt_mt: float = 0
+    receipt_gsv_bbl: float = 0
+    receipt_nsv_bbl: float = 0
+    receipt_lt: float = 0
+    receipt_mt: float = 0
 
-    net_dispatch_gsv_bbl: float = 0
-    net_dispatch_nsv_bbl: float = 0
-    net_dispatch_lt: float = 0
-    net_dispatch_mt: float = 0
+    production_gsv_bbl: float = 0
+    production_nsv_bbl: float = 0
+    production_lt: float = 0
+    production_mt: float = 0
+
+    draining_gsv_bbl: float = 0
+    draining_nsv_bbl: float = 0
+    draining_lt: float = 0
+    draining_mt: float = 0
+
+    dispatch_gsv_bbl: float = 0
+    dispatch_nsv_bbl: float = 0
+    dispatch_lt: float = 0
+    dispatch_mt: float = 0
+
+    other_in_gsv_bbl: float = 0
+    other_in_nsv_bbl: float = 0
+    other_in_lt: float = 0
+    other_in_mt: float = 0
+
+    other_out_gsv_bbl: float = 0
+    other_out_nsv_bbl: float = 0
+    other_out_lt: float = 0
+    other_out_mt: float = 0
 
     signed_net_movement_gsv_bbl: float = 0
     signed_net_movement_nsv_bbl: float = 0
@@ -2859,17 +2879,41 @@ class ExportConfigResponse(ExportConfigBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class LocationKPIData(BaseModel):
+    location_code: str
+    location_name: Optional[str] = None
+    total_export_volume: float = 0
+    total_permit_volume: float = 0
+    total_remaining_volume: float = 0
+
+
+class BlockSummaryData(BaseModel):
+    location_code: str
+    location_name: Optional[str] = None
+    entity_code: Optional[str] = None
+    entity_name: Optional[str] = None
+    block_code: str
+    block_name: Optional[str] = None
+    quarter: Optional[str] = None
+    export_volume: float = 0
+    permit_volume: float = 0
+    used_permit_volume: float = 0
+    remaining_permit_volume: float = 0
+    usage_pct: float = 0
+    permit_count: int = 0
+
+
 class ExportDashboardResponse(BaseModel):
-    total_volume: float = 0
+    locations_kpi: list[LocationKPIData] = []
+    blocks_summary: list[BlockSummaryData] = []
+    total_export_volume: float = 0
     total_permits: int = 0
-    used_volume: float = 0
-    remaining_volume: float = 0
+    total_permit_volume: float = 0
+    total_used_permit_volume: float = 0
+    total_remaining_permit_volume: float = 0
     permit_insufficient_count: int = 0
     insufficient_threshold_pct: float = 0
     recent_exports: list[ExportTransactionResponse] = []
-    volume_by_location: list[dict] = []
-    volume_by_quarter: list[dict] = []
-    permits_with_exceed: list[dict] = []
 
 
 class BulkUploadItem(BaseModel):

@@ -55,6 +55,10 @@ const buildQueryString = (filters = {}) => {
     params.append('date_to', filters.dateTo)
   }
 
+  if (filters.status) {
+    params.append('status', filters.status)
+  }
+
   if (filters.unit) {
     params.append('unit', filters.unit)
   }
@@ -66,8 +70,8 @@ export const getMaterialBalanceReport = async (filters = {}) => {
   const queryString = buildQueryString(filters)
 
   const path = queryString
-    ? `/reports/fso/material-balance?${queryString}`
-    : '/reports/fso/material-balance'
+    ? `/reports/material-balance-report?${queryString}`
+    : '/reports/material-balance-report'
 
   const data = await apiGet(path)
 

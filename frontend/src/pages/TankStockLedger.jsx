@@ -4,6 +4,7 @@ import {
   getTankStockLedgerDailySummary,
   getTankStockLedgerSummary,
 } from '../api/tankStockLedgerApi'
+import { getCompanyReportProfiles } from '../api/companyReportProfileApi'
 import PaginationControls, {
   paginateRows,
 } from '../components/common/PaginationControls'
@@ -31,6 +32,8 @@ function TankStockLedger({ locations, assets }) {
   const [successMsg, setSuccessMsg] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
 
+  const [profile, setProfile] = useState(null)
+
   const activeLocations = useMemo(() => {
     return (locations || []).filter((location) => location.status === 'Active')
   }, [locations])
@@ -48,43 +51,6 @@ function TankStockLedger({ locations, assets }) {
       return true
     })
   }, [assets, filters.locationCode])
-
-  const totals = useMemo(() => {
-    return summaryRows.reduce(
-      (accumulator, row) => {
-        accumulator.openingNsvBbl += row.openingNsvBbl
-        accumulator.totalInNsvBbl += row.totalInNsvBbl
-        accumulator.totalOutNsvBbl += row.totalOutNsvBbl
-        accumulator.closingNsvBbl += row.closingNsvBbl
-
-        accumulator.openingLt += row.openingLt
-        accumulator.totalInLt += row.totalInLt
-        accumulator.totalOutLt += row.totalOutLt
-        accumulator.closingLt += row.closingLt
-
-        accumulator.openingMt += row.openingMt
-        accumulator.totalInMt += row.totalInMt
-        accumulator.totalOutMt += row.totalOutMt
-        accumulator.closingMt += row.closingMt
-
-        return accumulator
-      },
-      {
-        openingNsvBbl: 0,
-        totalInNsvBbl: 0,
-        totalOutNsvBbl: 0,
-        closingNsvBbl: 0,
-        openingLt: 0,
-        totalInLt: 0,
-        totalOutLt: 0,
-        closingLt: 0,
-        openingMt: 0,
-        totalInMt: 0,
-        totalOutMt: 0,
-        closingMt: 0,
-      }
-    )
-  }, [summaryRows])
 
   const dailyTotals = useMemo(() => {
     return dailySummaryRows.reduce(
@@ -123,6 +89,16 @@ function TankStockLedger({ locations, assets }) {
       }
     )
   }, [dailySummaryRows])
+
+  useEffect(() => {
+    ;(async () => {
+      try {
+        const profiles = await getCompanyReportProfiles()
+        const activeProfile = profiles.find((p) => p.status === 'Active') || profiles[0]
+        if (activeProfile) setProfile(activeProfile)
+      } catch { /* non-critical */ }
+    })()
+  }, [])
 
   const loadLedger = async (activeFilters = filters) => {
     try {
@@ -414,6 +390,45 @@ function TankStockLedger({ locations, assets }) {
 
   return (
     <div>
+      {profile && (
+        <div className="print-report-header">
+          <div className="print-company-block">
+            {profile.logoUrl ? (
+              <img src={profile.logoUrl} alt={`${profile.companyName} Logo`} className="print-company-logo" />
+            ) : (
+              <div className="print-logo-placeholder">{profile.logoText || 'LOGO'}</div>
+            )}
+            <div>
+              <h1>{profile.companyName}</h1>
+              <p>{profile.systemName}</p>
+              <p>{profile.reportSubtitle || 'Tank Stock Ledger'}</p>
+            </div>
+          </div>
+
+          <div className="print-report-meta">
+            <span>
+              <strong>Location:</strong> {filters.locationCode || 'All Locations'}
+            </span>
+            <span>
+              <strong>Tank:</strong> {filters.tankAssetCode || 'All Tanks'}
+            </span>
+            <span>
+              <strong>Product:</strong> {filters.productName || 'All Products'}
+            </span>
+            <span>
+              <strong>Accounting Date:</strong> {filters.dateFrom || '-'} to{' '}
+              {filters.dateTo || '-'}
+            </span>
+            <span>
+              <strong>Status:</strong> {filters.status || 'All Statuses'}
+            </span>
+            <span>
+              <strong>Printed:</strong> {new Date().toLocaleString()}
+            </span>
+          </div>
+        </div>
+      )}
+
       <div className="page-title">
         <div>
           <h2>Tank Stock Ledger</h2>
@@ -423,7 +438,12 @@ function TankStockLedger({ locations, assets }) {
           </p>
         </div>
 
-        <span className="record-count">{ledgerRows.length} Ledger Rows</span>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span className="record-count">{ledgerRows.length} Ledger Rows</span>
+          <button type="button" onClick={() => window.print()}>
+            Print
+          </button>
+        </div>
       </div>
 
       <form onSubmit={handleApplyFilters} className="filter-panel">
@@ -630,7 +650,7 @@ function TankStockLedger({ locations, assets }) {
               {dailySummaryRows.length === 0 ? (
                 <tr>
                   <td colSpan="14" className="empty-table">
-                    No daily summary rows found.
+                    No daily summary rows found. Data comes from approved Tank Gauging tickets — Submit → Approve first.
                   </td>
                 </tr>
               ) : (
@@ -713,7 +733,7 @@ function TankStockLedger({ locations, assets }) {
               {summaryRows.length === 0 ? (
                 <tr>
                   <td colSpan="9" className="empty-table">
-                    No stock summary found.
+                    No stock summary found. Approve a Tank Gauging ticket to generate ledger entries.
                   </td>
                 </tr>
               ) : (
@@ -786,7 +806,7 @@ function TankStockLedger({ locations, assets }) {
               {ledgerRows.length === 0 ? (
                 <tr>
                   <td colSpan="15" className="empty-table">
-                    No Tank Stock Ledger rows found.
+                    No Tank Stock Ledger rows found. Ledger entries are auto-created when a Tank Gauging ticket is Approved.
                   </td>
                 </tr>
               ) : (
@@ -860,6 +880,13 @@ function TankStockLedger({ locations, assets }) {
             </div>
           )}
         </>
+      )}
+
+      {profile && (
+        <div className="print-only" style={{ marginTop: 20, fontSize: 11, color: '#555' }}>
+          <p>{profile.footerFormula}</p>
+          <p>{profile.footerNote}</p>
+        </div>
       )}
     </div>
   )

@@ -16,6 +16,7 @@ from app.dependencies.permissions import require_user_permission
 from app.services.audit_service import create_audit_log
 from app.utils.helpers import safe_float, clean_optional_text, get_transaction_ticket_number, get_location_by_code
 from app.services.material_balance_helpers import (
+    normalize_material_balance_category,
     normalize_material_balance_code_value,
     get_active_material_balance_template_for_location,
     get_active_material_balance_template_columns,
@@ -204,12 +205,19 @@ def get_tank_stock_rows_for_daily_summary(
     tank_asset_code: str | None,
     product_name: str | None,
     date_to_value: date,
+    status: str | None = "Active",
 ):
-    query = db.query(TankStockLedger).filter(
-        TankStockLedger.status == "Active",
-        TankStockLedger.accounting_date != None,
-        TankStockLedger.accounting_date <= date_to_value,
-    )
+    query = db.query(TankStockLedger)
+
+    cleaned_status = clean_optional_text(status)
+
+    if cleaned_status:
+        query = query.filter(TankStockLedger.status == cleaned_status)
+
+    if TankStockLedger.accounting_date != None:
+        query = query.filter(
+            TankStockLedger.accounting_date <= date_to_value,
+        )
 
     cleaned_location_code = clean_optional_text(location_code)
     cleaned_tank_asset_code = clean_optional_text(tank_asset_code)
@@ -305,61 +313,108 @@ def build_out_turn_report_response(
     stock_after_lt = stock_snapshot["lt"]
     stock_after_mt = stock_snapshot["mt"]
 
-    movement_gsv = safe_float(row.movement_gsv_bbl)
-    movement_nsv = safe_float(row.movement_nsv_bbl)
-    movement_lt = safe_float(row.movement_lt)
-    movement_mt = safe_float(row.movement_mt)
+    signed_net_gsv = stock_after_gsv - previous_gsv
+    signed_net_nsv = stock_after_nsv - previous_nsv
+    signed_net_lt = stock_after_lt - previous_lt
+    signed_net_mt = stock_after_mt - previous_mt
 
-    sign = str(row.tank_operation_sign or "").upper()
+    net_receipt_gsv = max(signed_net_gsv, 0)
+    net_receipt_nsv = max(signed_net_nsv, 0)
+    net_receipt_lt = max(signed_net_lt, 0)
+    net_receipt_mt = max(signed_net_mt, 0)
 
-    net_receipt_gsv = 0
-    net_receipt_nsv = 0
-    net_receipt_lt = 0
-    net_receipt_mt = 0
+    net_dispatch_gsv = max(-signed_net_gsv, 0)
+    net_dispatch_nsv = max(-signed_net_nsv, 0)
+    net_dispatch_lt = max(-signed_net_lt, 0)
+    net_dispatch_mt = max(-signed_net_mt, 0)
 
-    net_dispatch_gsv = 0
-    net_dispatch_nsv = 0
-    net_dispatch_lt = 0
-    net_dispatch_mt = 0
+    receipt_gsv = 0
+    receipt_nsv = 0
+    receipt_lt = 0
+    receipt_mt = 0
 
-    signed_net_gsv = 0
-    signed_net_nsv = 0
-    signed_net_lt = 0
-    signed_net_mt = 0
+    production_gsv = 0
+    production_nsv = 0
+    production_lt = 0
+    production_mt = 0
+
+    draining_gsv = 0
+    draining_nsv = 0
+    draining_lt = 0
+    draining_mt = 0
+
+    dispatch_gsv = 0
+    dispatch_nsv = 0
+    dispatch_lt = 0
+    dispatch_mt = 0
+
+    other_in_gsv = 0
+    other_in_nsv = 0
+    other_in_lt = 0
+    other_in_mt = 0
+
+    other_out_gsv = 0
+    other_out_nsv = 0
+    other_out_lt = 0
+    other_out_mt = 0
 
     if sign == "IN":
-        net_receipt_gsv = movement_gsv
-        net_receipt_nsv = movement_nsv
-        net_receipt_lt = movement_lt
-        net_receipt_mt = movement_mt
+        if category == "RECEIPT":
+            receipt_gsv = signed_net_gsv
+            receipt_nsv = signed_net_nsv
+            receipt_lt = signed_net_lt
+            receipt_mt = signed_net_mt
 
-        signed_net_gsv = movement_gsv
-        signed_net_nsv = movement_nsv
-        signed_net_lt = movement_lt
-        signed_net_mt = movement_mt
+            net_receipt_gsv = receipt_gsv
+            net_receipt_nsv = receipt_nsv
+            net_receipt_lt = receipt_lt
+            net_receipt_mt = receipt_mt
+
+        elif category == "PRODUCTION":
+            production_gsv = signed_net_gsv
+            production_nsv = signed_net_nsv
+            production_lt = signed_net_lt
+            production_mt = signed_net_mt
+
+        else:
+            other_in_gsv = signed_net_gsv
+            other_in_nsv = signed_net_nsv
+            other_in_lt = signed_net_lt
+            other_in_mt = signed_net_mt
+
+            net_receipt_gsv = other_in_gsv
+            net_receipt_nsv = other_in_nsv
+            net_receipt_lt = other_in_lt
+            net_receipt_mt = other_in_mt
 
     elif sign == "OUT":
-        net_dispatch_gsv = movement_gsv
-        net_dispatch_nsv = movement_nsv
-        net_dispatch_lt = movement_lt
-        net_dispatch_mt = movement_mt
+        if category == "DISPATCH":
+            dispatch_gsv = -signed_net_gsv
+            dispatch_nsv = -signed_net_nsv
+            dispatch_lt = -signed_net_lt
+            dispatch_mt = -signed_net_mt
 
-        signed_net_gsv = movement_gsv * -1
-        signed_net_nsv = movement_nsv * -1
-        signed_net_lt = movement_lt * -1
-        signed_net_mt = movement_mt * -1
+            net_dispatch_gsv = dispatch_gsv
+            net_dispatch_nsv = dispatch_nsv
+            net_dispatch_lt = dispatch_lt
+            net_dispatch_mt = dispatch_mt
 
-    elif sign == "SET":
-        signed_net_gsv = 0
-        signed_net_nsv = 0
-        signed_net_lt = 0
-        signed_net_mt = 0
+        elif category == "DRAINING":
+            draining_gsv = -signed_net_gsv
+            draining_nsv = -signed_net_nsv
+            draining_lt = -signed_net_lt
+            draining_mt = -signed_net_mt
 
-    elif sign == "NEUTRAL":
-        signed_net_gsv = 0
-        signed_net_nsv = 0
-        signed_net_lt = 0
-        signed_net_mt = 0
+        else:
+            other_out_gsv = -signed_net_gsv
+            other_out_nsv = -signed_net_nsv
+            other_out_lt = -signed_net_lt
+            other_out_mt = -signed_net_mt
+
+            net_dispatch_gsv = other_out_gsv
+            net_dispatch_nsv = other_out_nsv
+            net_dispatch_lt = other_out_lt
+            net_dispatch_mt = other_out_mt
 
     return {
         "ledger_id": row.id,
@@ -385,6 +440,30 @@ def build_out_turn_report_response(
         "stock_after_nsv_bbl": round(stock_after_nsv, 3),
         "stock_after_lt": round(stock_after_lt, 3),
         "stock_after_mt": round(stock_after_mt, 3),
+        "receipt_gsv_bbl": round(receipt_gsv, 3),
+        "receipt_nsv_bbl": round(receipt_nsv, 3),
+        "receipt_lt": round(receipt_lt, 3),
+        "receipt_mt": round(receipt_mt, 3),
+        "production_gsv_bbl": round(production_gsv, 3),
+        "production_nsv_bbl": round(production_nsv, 3),
+        "production_lt": round(production_lt, 3),
+        "production_mt": round(production_mt, 3),
+        "draining_gsv_bbl": round(draining_gsv, 3),
+        "draining_nsv_bbl": round(draining_nsv, 3),
+        "draining_lt": round(draining_lt, 3),
+        "draining_mt": round(draining_mt, 3),
+        "dispatch_gsv_bbl": round(dispatch_gsv, 3),
+        "dispatch_nsv_bbl": round(dispatch_nsv, 3),
+        "dispatch_lt": round(dispatch_lt, 3),
+        "dispatch_mt": round(dispatch_mt, 3),
+        "other_in_gsv_bbl": round(other_in_gsv, 3),
+        "other_in_nsv_bbl": round(other_in_nsv, 3),
+        "other_in_lt": round(other_in_lt, 3),
+        "other_in_mt": round(other_in_mt, 3),
+        "other_out_gsv_bbl": round(other_out_gsv, 3),
+        "other_out_nsv_bbl": round(other_out_nsv, 3),
+        "other_out_lt": round(other_out_lt, 3),
+        "other_out_mt": round(other_out_mt, 3),
         "net_receipt_gsv_bbl": round(net_receipt_gsv, 3),
         "net_receipt_nsv_bbl": round(net_receipt_nsv, 3),
         "net_receipt_lt": round(net_receipt_lt, 3),
@@ -1406,6 +1485,7 @@ def get_tank_stock_ledger_summary(
     product_name: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
+    status: str | None = "Active",
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
@@ -1422,7 +1502,7 @@ def get_tank_stock_ledger_summary(
         product_name=product_name,
         date_from=date_from,
         date_to=date_to,
-        status="Active",
+        status=status,
     )
 
     summary_map = {}
@@ -1498,6 +1578,7 @@ def get_tank_stock_ledger_daily_summary(
     product_name: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
+    status: str | None = "Active",
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
@@ -1522,6 +1603,7 @@ def get_tank_stock_ledger_daily_summary(
         tank_asset_code=tank_asset_code,
         product_name=product_name,
         date_to_value=date_to_value,
+        status=status,
     )
 
     return build_tank_stock_daily_summary_rows(

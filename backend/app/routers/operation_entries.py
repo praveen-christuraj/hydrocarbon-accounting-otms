@@ -329,6 +329,15 @@ def create_operation_entry(
         db,
     )
 
+    allowed = get_user_location_codes(current_user, db)
+    if allowed is not None:
+        origin = clean_optional_text(entry.transaction.origin_location_code)
+        if origin and origin not in allowed:
+            raise HTTPException(status_code=403, detail="Origin location is not in your assigned scope")
+        dest = clean_optional_text(entry.transaction.destination_location_code)
+        if dest and dest not in allowed:
+            raise HTTPException(status_code=403, detail="Destination location is not in your assigned scope")
+
     (
         template,
         operation_type,

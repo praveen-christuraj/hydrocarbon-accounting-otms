@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { getMaterialBalanceReport } from '../api/materialBalanceReportApi'
+import { getCompanyReportProfiles } from '../api/companyReportProfileApi'
 import PaginationControls, {
   paginateRows,
 } from '../components/common/PaginationControls'
@@ -11,6 +12,7 @@ function MaterialBalanceReport({ locations, assets }) {
     productName: '',
     dateFrom: '',
     dateTo: '',
+    status: 'Active',
     unit: 'nsv',
   }
 
@@ -115,6 +117,18 @@ function MaterialBalanceReport({ locations, assets }) {
     }
   }, [rows, sortedColumns])
 
+  const [profile, setProfile] = useState(null)
+
+  useEffect(() => {
+    ;(async () => {
+      try {
+        const profiles = await getCompanyReportProfiles()
+        const activeProfile = profiles.find((p) => p.status === 'Active') || profiles[0]
+        if (activeProfile) setProfile(activeProfile)
+      } catch { /* non-critical */ }
+    })()
+  }, [])
+
   const loadReport = async (activeFilters = filters) => {
     if (!activeFilters.locationCode) {
       setErrorMsg('Location is required')
@@ -155,6 +169,7 @@ function MaterialBalanceReport({ locations, assets }) {
       setColumns([])
       setRows([])
       setErrorMsg('')
+      setCurrentPage(1)
       return
     }
 
@@ -163,6 +178,7 @@ function MaterialBalanceReport({ locations, assets }) {
       [name]: value,
     })
     setErrorMsg('')
+    setCurrentPage(1)
   }
 
   const handleApplyFilters = async (e) => {
@@ -373,6 +389,21 @@ function MaterialBalanceReport({ locations, assets }) {
         </div>
 
         <div>
+          <label>Status</label>
+          <select
+            name="status"
+            value={filters.status}
+            onChange={handleFilterChange}
+            disabled={loading}
+          >
+            <option value="Active">Active</option>
+            <option value="">All Statuses</option>
+            <option value="Reversed">Reversed</option>
+            <option value="Cancelled">Cancelled</option>
+          </select>
+        </div>
+
+        <div>
           <label>Unit</label>
           <select
             name="unit"
@@ -472,6 +503,21 @@ function MaterialBalanceReport({ locations, assets }) {
       </div>
 
       <div className="print-report-header">
+        {profile && (
+          <div className="print-company-block">
+            {profile.logoUrl ? (
+              <img src={profile.logoUrl} alt={`${profile.companyName} Logo`} className="print-company-logo" />
+            ) : (
+              <div className="print-logo-placeholder">{profile.logoText || 'LOGO'}</div>
+            )}
+            <div>
+              <h1>{profile.companyName}</h1>
+              <p>{profile.systemName}</p>
+              <p>{profile.reportSubtitle || 'Material Balance Report'}</p>
+            </div>
+          </div>
+        )}
+
         <h2>Material Balance Report</h2>
 
         <div className="print-report-meta">
@@ -489,6 +535,10 @@ function MaterialBalanceReport({ locations, assets }) {
 
           <span>
             <strong>Product:</strong> {filters.productName || 'All Products'}
+          </span>
+
+          <span>
+            <strong>Status:</strong> {filters.status === '' ? 'All Statuses' : filters.status || '-'}
           </span>
 
           <span>
@@ -617,6 +667,13 @@ function MaterialBalanceReport({ locations, assets }) {
         Material Balance is calculated from approved Tank Stock Ledger rows and
         the active Material Balance Template for the selected location.
       </div>
+
+      {profile && (
+        <div className="print-only" style={{ marginTop: 20, fontSize: 11, color: '#555' }}>
+          <p>{profile.footerFormula}</p>
+          <p>{profile.footerNote}</p>
+        </div>
+      )}
 
       {successMsg && (
         <div className="success-box" onClick={() => setSuccessMsg('')}>

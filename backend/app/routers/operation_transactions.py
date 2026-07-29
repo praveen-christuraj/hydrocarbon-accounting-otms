@@ -928,6 +928,19 @@ def create_tank_stock_ledger_from_approved_transaction(
     transaction: OperationTransaction,
     current_user: User,
 ):
+    """
+    Creates TankStockLedger entries on transaction approval.
+
+    For Tank Gauging entries (tank_gauging_payload): delegates to the full
+    implementation in reports.py which sets all required columns (status,
+    ticket_number, product_name, accounting_date, movement/stock values,
+    running balances, audit log).
+
+    For Stock Movement / Multi-Tank Before/After entries with
+    multi_tank_payload: currently skipped because the TankStockLedger model
+    does not have before/after/change columns. This path can be extended
+    when model support is added.
+    """
     template = (
         db.query(OperationTemplate)
         .filter(OperationTemplate.id == transaction.operation_template_id)
@@ -937,94 +950,171 @@ def create_tank_stock_ledger_from_approved_transaction(
     if not template:
         return None, None, None
 
-    if str(template.entry_layout_type or "").strip() not in [
-        "Stock Movement",
-        "Multi-Tank Before/After",
-        "Tank Gauging",
-    ]:
-        return None, None, None
+    entry_layout = str(template.entry_layout_type or "").strip()
 
-    payload_row = (
-        db.query(OperationTransactionValue)
-        .filter(
-            OperationTransactionValue.transaction_id == transaction.id,
-            OperationTransactionValue.field_code == "multi_tank_payload",
+    # --- Tank Gauging entries: delegate to reports.py ---
+    if entry_layout in ("Tank Gauging",):
+        gauge_payload_row = (
+            db.query(OperationTransactionValue)
+            .filter(
+                OperationTransactionValue.transaction_id == transaction.id,
+                OperationTransactionValue.field_code == "tank_gauging_payload",
+            )
+            .first()
         )
-        .first()
-    )
 
-    if not payload_row or not payload_row.field_value:
+        if gauge_payload_row and gauge_payload_row.field_value:
+            from app.routers.reports import (
+                create_tank_stock_ledger_from_approved_transaction as _create_gauging_ledger,
+            )
+
+            result = _create_gauging_ledger(
+                db=db,
+                transaction=transaction,
+                current_user=current_user,
+            )
+            if result is None:
+                return None, None, None
+            return [result], transaction.origin_location_code, {}
+
+        # Tank Gauging entry but no payload found → skip silently.
+        # The approval will still succeed; user gets an error if they
+        # try to approve without payload data.
         return None, None, None
 
-    payload = payload_row.field_value if isinstance(payload_row.field_value, dict) else {}
-
-    tanks = payload.get("tanks") or {}
-    if not isinstance(tanks, dict):
-        return None, None, None
-
-    created_by_display = get_current_user_display_name(current_user)
-    location_code = transaction.origin_location_code
-
-    entries = []
-    for tank_key, tank_data in tanks.items():
-        if not isinstance(tank_data, dict):
-            continue
-
-        after_data = tank_data.get("after") or {}
-        before_data = tank_data.get("before") or {}
-
-        after_volume = after_data.get("volume")
-        before_volume = before_data.get("volume")
-        after_mass = after_data.get("mass")
-        before_mass = before_data.get("mass")
-        after_ullage = after_data.get("ullage")
-        before_ullage = before_data.get("ullage")
-        after_temp = after_data.get("temperature")
-        before_temp = before_data.get("temperature")
-        after_density = after_data.get("density")
-        before_density = before_data.get("density")
-
-        try:
-            volume_change = round(float(after_volume or 0) - float(before_volume or 0), 2) if before_volume is not None and after_volume is not None else None
-        except (ValueError, TypeError):
-            volume_change = None
-
-        try:
-            mass_change = round(float(after_mass or 0) - float(before_mass or 0), 2) if before_mass is not None and after_mass is not None else None
-        except (ValueError, TypeError):
-            mass_change = None
-
-        try:
-            ullage_change = round(float(after_ullage or 0) - float(before_ullage or 0), 2) if before_ullage is not None and after_ullage is not None else None
-        except (ValueError, TypeError):
-            ullage_change = None
-
-        entry = TankStockLedger(
-            transaction_id=transaction.id,
-            operation_number=transaction.operation_number,
-            tank_number=tank_key,
-            location_code=location_code,
-            before_volume=before_volume,
-            after_volume=after_volume,
-            volume_change=volume_change,
-            before_mass=before_mass,
-            after_mass=after_mass,
-            mass_change=mass_change,
-            before_ullage=before_ullage,
-            after_ullage=after_ullage,
-            ullage_change=ullage_change,
-            before_temperature=before_temp,
-            after_temperature=after_temp,
-            before_density=before_density,
-            after_density=after_density,
-            operation_date=transaction.operation_date,
-            created_by=created_by_display,
+    if entry_layout == "Multi-Tank Before/After":
+        payload_row = (
+            db.query(OperationTransactionValue)
+            .filter(
+                OperationTransactionValue.transaction_id == transaction.id,
+                OperationTransactionValue.field_code == "multi_tank_payload",
+            )
+            .first()
         )
-        db.add(entry)
-        entries.append(entry)
 
-    db.flush()
-    return entries, location_code, tanks
+        if not payload_row or not payload_row.field_value:
+            return None, None, None
+
+        payload = (
+            payload_row.field_value
+            if isinstance(payload_row.field_value, dict)
+            else {}
+        )
+
+        per_tank = ((payload.get("perTank") or {}).get("before") or {})
+        per_tank_after = ((payload.get("perTank") or {}).get("after") or {})
+
+        if not per_tank or not per_tank_after:
+            return None, None, None
+
+        created_by_display = get_current_user_display_name(current_user)
+        entries = []
+
+        for tank_key in sorted(per_tank.keys()):
+            before_data = per_tank.get(tank_key) or {}
+            after_data = per_tank_after.get(tank_key) or {}
+
+            previous_gsv = safe_float(before_data.get("GSV"))
+            previous_nsv = safe_float(before_data.get("NSV"))
+            previous_lt = safe_float(before_data.get("LT"))
+            previous_mt = safe_float(before_data.get("MT"))
+
+            current_gsv = safe_float(after_data.get("GSV"))
+            current_nsv = safe_float(after_data.get("NSV"))
+            current_lt = safe_float(after_data.get("LT"))
+            current_mt = safe_float(after_data.get("MT"))
+
+            movement_gsv = current_gsv - previous_gsv
+            movement_nsv = current_nsv - previous_nsv
+            movement_lt = current_lt - previous_lt
+            movement_mt = current_mt - previous_mt
+
+            net = movement_gsv
+            if net > 0:
+                op_sign = "IN"
+            elif net < 0:
+                op_sign = "OUT"
+            else:
+                op_sign = "SET"
+
+            existing = (
+                db.query(TankStockLedger)
+                .filter(
+                    TankStockLedger.transaction_id == transaction.id,
+                    TankStockLedger.tank_asset_code == tank_key,
+                )
+                .first()
+            )
+
+            if existing:
+                existing.previous_stock_gsv_bbl = previous_gsv
+                existing.previous_stock_nsv_bbl = previous_nsv
+                existing.previous_stock_lt = previous_lt
+                existing.previous_stock_mt = previous_mt
+                existing.stock_gsv_bbl = current_gsv
+                existing.stock_nsv_bbl = current_nsv
+                existing.stock_lt = current_lt
+                existing.stock_mt = current_mt
+                existing.movement_gsv_bbl = movement_gsv
+                existing.movement_nsv_bbl = movement_nsv
+                existing.movement_lt = movement_lt
+                existing.movement_mt = movement_mt
+                existing.running_balance_gsv_bbl = current_gsv
+                existing.running_balance_nsv_bbl = current_nsv
+                existing.running_balance_lt = current_lt
+                existing.running_balance_mt = current_mt
+                existing.tank_operation_sign = op_sign
+                existing.updated_at = datetime.now()
+            else:
+                ledger = TankStockLedger(
+                    transaction_id=transaction.id,
+                    ticket_number=get_transaction_ticket_number(transaction),
+                    operation_number=transaction.operation_number,
+                    location_code=transaction.origin_location_code,
+                    tank_asset_code=tank_key,
+                    tank_asset_name=tank_key,
+                    operation_date=transaction.operation_date,
+                    product_name=clean_optional_text(transaction.product_name),
+                    accounting_date=transaction.operation_date,
+                    accounting_day_start=None,
+                    accounting_day_end=None,
+                    accounting_day_setting_id=None,
+                    tank_operation_code="MULTI-TANK",
+                    tank_operation_label="Multi-Tank Before/After",
+                    tank_operation_category="SET",
+                    tank_operation_sign=op_sign,
+                    movement_gsv_bbl=movement_gsv,
+                    movement_nsv_bbl=movement_nsv,
+                    movement_lt=movement_lt,
+                    movement_mt=movement_mt,
+                    stock_gsv_bbl=current_gsv,
+                    stock_nsv_bbl=current_nsv,
+                    stock_lt=current_lt,
+                    stock_mt=current_mt,
+                    previous_stock_gsv_bbl=previous_gsv,
+                    previous_stock_nsv_bbl=previous_nsv,
+                    previous_stock_lt=previous_lt,
+                    previous_stock_mt=previous_mt,
+                    running_balance_gsv_bbl=current_gsv,
+                    running_balance_nsv_bbl=current_nsv,
+                    running_balance_lt=current_lt,
+                    running_balance_mt=current_mt,
+                    source_payload=normalize_jsonb_value(payload),
+                    status="Active",
+                    created_by=created_by_display,
+                    remarks="Auto-created when Multi-Tank Before/After ticket was approved",
+                )
+                db.add(ledger)
+                db.flush()
+                entries.append(ledger)
+
+        if entries:
+            db.flush()
+            return entries, transaction.origin_location_code, {}
+
+        return None, None, None
+
+    return None, None, None
 
 
 def create_or_update_vessel_stock_ledger_from_approved_transaction(
@@ -1041,93 +1131,109 @@ def create_or_update_vessel_stock_ledger_from_approved_transaction(
     if not template:
         return None, None
 
-    if str(template.entry_layout_type or "").strip() not in [
-        "Stock Movement",
-        "Multi-Tank Before/After",
-        "Vessel Cycle",
-    ]:
-        return None, None
+    layout = str(template.entry_layout_type or "").strip()
 
-    payload_row = (
-        db.query(OperationTransactionValue)
-        .filter(
-            OperationTransactionValue.transaction_id == transaction.id,
-            OperationTransactionValue.field_code == "multi_tank_payload",
+    if layout in ["Stock Movement", "Vessel Cycle"]:
+        from app.routers.vessel_stock_ledger import (
+            create_or_update_vessel_stock_ledger_from_approved_transaction as _create_vessel_ledger,
         )
-        .first()
-    )
 
-    if not payload_row or not payload_row.field_value:
-        return None, None
+        result = _create_vessel_ledger(
+            db=db,
+            transaction=transaction,
+            current_user=current_user,
+        )
+        if result is None:
+            return None, None
+        return result, {}
 
-    payload = payload_row.field_value if isinstance(payload_row.field_value, dict) else {}
-
-    tanks = payload.get("tanks") or {}
-    if not isinstance(tanks, dict):
-        return None, None
-
-    created_by_display = get_current_user_display_name(current_user)
-    entries = []
-
-    for tank_key, tank_data in tanks.items():
-        if not isinstance(tank_data, dict):
-            continue
-
-        after_data = tank_data.get("after") or {}
-        before_data = tank_data.get("before") or {}
-
-        after_volume = after_data.get("volume")
-        before_volume = before_data.get("volume")
-        after_mass = after_data.get("mass")
-        before_mass = before_data.get("mass")
-
-        try:
-            volume_change = round(float(after_volume or 0) - float(before_volume or 0), 2) if before_volume is not None and after_volume is not None else None
-        except (ValueError, TypeError):
-            volume_change = None
-
-        try:
-            mass_change = round(float(after_mass or 0) - float(before_mass or 0), 2) if before_mass is not None and after_mass is not None else None
-        except (ValueError, TypeError):
-            mass_change = None
-
-        existing = (
-            db.query(VesselStockLedger)
+    if layout in ["Multi-Tank Before/After"]:
+        payload_row = (
+            db.query(OperationTransactionValue)
             .filter(
-                VesselStockLedger.transaction_id == transaction.id,
-                VesselStockLedger.tank_number == tank_key,
+                OperationTransactionValue.transaction_id == transaction.id,
+                OperationTransactionValue.field_code == "multi_tank_payload",
             )
             .first()
         )
 
-        if existing:
-            existing.before_volume = before_volume
-            existing.after_volume = after_volume
-            existing.volume_change = volume_change
-            existing.before_mass = before_mass
-            existing.after_mass = after_mass
-            existing.mass_change = mass_change
-            existing.updated_at = datetime.now()
-        else:
-            entry = VesselStockLedger(
-                transaction_id=transaction.id,
-                operation_number=transaction.operation_number,
-                vessel_asset_code=transaction.primary_asset_code,
-                tank_number=tank_key,
-                before_volume=before_volume,
-                after_volume=after_volume,
-                volume_change=volume_change,
-                before_mass=before_mass,
-                after_mass=after_mass,
-                mass_change=mass_change,
-                operation_date=transaction.operation_date,
-                created_by=created_by_display,
-            )
-            db.add(entry)
-            entries.append(entry)
+        if not payload_row or not payload_row.field_value:
+            return None, None
 
-    db.flush()
-    return entries, tanks
+        payload = (
+            payload_row.field_value
+            if isinstance(payload_row.field_value, dict)
+            else {}
+        )
+
+        tanks = payload.get("tanks") or {}
+        if not isinstance(tanks, dict):
+            return None, None
+
+        created_by_display = get_current_user_display_name(current_user)
+        entries = []
+
+        for tank_key, tank_data in tanks.items():
+            if not isinstance(tank_data, dict):
+                continue
+
+            after_data = tank_data.get("after") or {}
+            before_data = tank_data.get("before") or {}
+
+            after_volume = after_data.get("volume")
+            before_volume = before_data.get("volume")
+            after_mass = after_data.get("mass")
+            before_mass = before_data.get("mass")
+
+            try:
+                volume_change = round(float(after_volume or 0) - float(before_volume or 0), 2) if before_volume is not None and after_volume is not None else None
+            except (ValueError, TypeError):
+                volume_change = None
+
+            try:
+                mass_change = round(float(after_mass or 0) - float(before_mass or 0), 2) if before_mass is not None and after_mass is not None else None
+            except (ValueError, TypeError):
+                mass_change = None
+
+            existing = (
+                db.query(VesselStockLedger)
+                .filter(
+                    VesselStockLedger.transaction_id == transaction.id,
+                    VesselStockLedger.tank_number == tank_key,
+                )
+                .first()
+            )
+
+            if existing:
+                existing.before_volume = before_volume
+                existing.after_volume = after_volume
+                existing.volume_change = volume_change
+                existing.before_mass = before_mass
+                existing.after_mass = after_mass
+                existing.mass_change = mass_change
+                existing.updated_at = datetime.now()
+            else:
+                entry = VesselStockLedger(
+                    transaction_id=transaction.id,
+                    operation_number=transaction.operation_number,
+                    vessel_asset_code=transaction.primary_asset_code,
+                    tank_number=tank_key,
+                    before_volume=before_volume,
+                    after_volume=after_volume,
+                    volume_change=volume_change,
+                    before_mass=before_mass,
+                    after_mass=after_mass,
+                    mass_change=mass_change,
+                    operation_date=transaction.operation_date,
+                    created_by=created_by_display,
+                )
+                db.add(entry)
+                entries.append(entry)
+
+        db.flush()
+        return entries, tanks
+
+    return None, None
 
 
 # ---------------------------------------------------------------------------
@@ -1313,6 +1419,9 @@ def get_operation_transactions_paged(
         .outerjoin(LOC, LOC.location_code == OperationTransaction.origin_location_code)
         .outerjoin(AST, AST.asset_code == OperationTransaction.primary_asset_code)
     )
+
+    if allowed is not None:
+        count_query = count_query.filter(OperationTransaction.origin_location_code.in_(allowed))
 
     if date_from:
         count_query = count_query.filter(OperationTransaction.operation_date >= date_from)

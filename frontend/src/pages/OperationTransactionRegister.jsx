@@ -4,6 +4,7 @@ import {
   getOperationTransactionsPaged,
   exportOperationTransactionsCsv,
 } from '../api/operationTransactionApi'
+import { getCompanyReportProfiles } from '../api/companyReportProfileApi'
 
 function OperationTransactionRegister({
   operationTypes = [],
@@ -21,6 +22,8 @@ function OperationTransactionRegister({
   const [loading, setLoading] = useState(false)
   const [successMsg, setSuccessMsg] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
+
+  const [profile, setProfile] = useState(null)
 
   const [filters, setFilters] = useState({
     searchText: '',
@@ -96,6 +99,16 @@ function OperationTransactionRegister({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters, page, pageSize])
 
+  useEffect(() => {
+    ;(async () => {
+      try {
+        const profiles = await getCompanyReportProfiles()
+        const activeProfile = profiles.find((p) => p.status === 'Active') || profiles[0]
+        if (activeProfile) setProfile(activeProfile)
+      } catch { /* non-critical */ }
+    })()
+  }, [])
+
   const handleFilterChange = (e) => {
     const { name, value } = e.target
 
@@ -155,6 +168,38 @@ function OperationTransactionRegister({
 
   return (
     <div>
+      {profile && (
+        <div className="print-report-header">
+          <div className="print-company-block">
+            {profile.logoUrl ? (
+              <img src={profile.logoUrl} alt={`${profile.companyName} Logo`} className="print-company-logo" />
+            ) : (
+              <div className="print-logo-placeholder">{profile.logoText || 'LOGO'}</div>
+            )}
+            <div>
+              <h1>{profile.companyName}</h1>
+              <p>{profile.systemName}</p>
+              <p>{profile.reportSubtitle || 'Operation Transaction Register'}</p>
+            </div>
+          </div>
+
+          <div className="print-report-meta">
+            <span>
+              <strong>Date From:</strong> {filters.dateFrom || '-'}
+            </span>
+            <span>
+              <strong>Date To:</strong> {filters.dateTo || '-'}
+            </span>
+            <span>
+              <strong>Status:</strong> {filters.status || 'All'}
+            </span>
+            <span>
+              <strong>Printed:</strong> {new Date().toLocaleString()}
+            </span>
+          </div>
+        </div>
+      )}
+
       <div className="page-title no-print">
         <div>
           <h2>Operation Transaction Register</h2>

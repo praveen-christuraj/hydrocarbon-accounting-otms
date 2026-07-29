@@ -11,7 +11,7 @@ from openpyxl.utils import get_column_letter
 from app.database import get_db
 from app.models import (
     TankStockLedger, LocationAccountingDaySetting, MaterialBalanceTemplate,
-    MaterialBalanceTemplateColumn, OperationTransaction, OperationTransactionValue,
+    MaterialBalanceTemplateColumn, OperationTransaction, OperationTransactionValue, OperationType,
     MovementMapping, MovementMappingItem, MovementMappingComparison, User,
     OperationTemplate,
 )
@@ -30,7 +30,19 @@ from app.utils.helpers import (
     normalize_code,
 )
 from app.config import APPROVED_TRANSACTION_STATUS
-from app.routers.tank_stock_ledger import get_filtered_tank_stock_ledger_rows, build_tank_stock_ledger_response
+from app.routers.tank_stock_ledger import (
+    get_filtered_tank_stock_ledger_rows,
+    build_tank_stock_ledger_response,
+    build_date_range,
+    get_active_location_day_setting,
+    compute_accounting_date,
+    combine_operation_datetime,
+    get_tank_stock_rows_for_daily_summary,
+    get_stock_snapshot_values,
+    get_ledger_operation_datetime,
+    build_out_turn_report_response,
+    build_tank_stock_daily_summary_rows,
+)
 from app.services.transaction_helpers import parse_date_filter
 from app.services.material_balance_helpers import (
     normalize_material_balance_category,
@@ -107,276 +119,7 @@ def build_mapping_response(db: Session, mapping: MovementMapping):
         "mapping_label": mapping.mapping_label,
         "source_tickets": [{"ticket_number": i.ticket_number, "ticket_label": i.ticket_label, "movement_date": i.movement_date, "operation_number": i.operation_number} for i in source],
         "target_tickets": [{"ticket_number": i.ticket_number, "ticket_label": i.ticket_label, "movement_date": i.movement_date, "operation_number": i.operation_number} for i in target],
-    }
-
-
-def build_date_range(start_date: date, end_date: date):
-    if end_date < start_date:
-        raise HTTPException(
-            status_code=400,
-            detail="Date To cannot be earlier than Date From",
-        )
-
-    dates = []
-    current_date = start_date
-
-    while current_date <= end_date:
-        dates.append(current_date)
-        current_date = current_date + timedelta(days=1)
-
-    return dates
-
-
-def get_active_location_day_setting(db: Session, location_code: str, on_date: date):
-    return (
-        db.query(LocationAccountingDaySetting)
-        .filter(
-            LocationAccountingDaySetting.location_code.ilike(location_code),
-            LocationAccountingDaySetting.status == "Active",
-            LocationAccountingDaySetting.effective_from <= on_date,
-            or_(
-                LocationAccountingDaySetting.effective_to.is_(None),
-                LocationAccountingDaySetting.effective_to >= on_date,
-            ),
-        )
-        .order_by(
-            LocationAccountingDaySetting.effective_from.desc(),
-            LocationAccountingDaySetting.id.desc(),
-        )
-        .first()
-    )
-
-
-def compute_accounting_date(
-    op_date: date,
-    event_time: str | None,
-    day_start_time: datetime_time,
-):
-    if not event_time:
-        return op_date
-
-    try:
-        hh, mm = event_time.split(":")
-        t = datetime_time(int(hh), int(mm))
-    except Exception:
-        return op_date
-
-    return op_date - timedelta(days=1) if t < day_start_time else op_date
-
-
-def combine_operation_datetime(op_date: date, event_time: str | None, tz_name: str):
-    try:
-        if not event_time:
-            return None
-        hh, mm = event_time.split(":")
-        dt = datetime(op_date.year, op_date.month, op_date.day, int(hh), int(mm))
-        return dt.replace(tzinfo=ZoneInfo(tz_name))
-    except Exception:
-        return None
-
-
-def get_tank_stock_rows_for_daily_summary(
-    db: Session,
-    location_code: str | None,
-    tank_asset_code: str | None,
-    product_name: str | None,
-    date_to_value: date,
-):
-    query = db.query(TankStockLedger).filter(
-        TankStockLedger.status == "Active",
-        TankStockLedger.accounting_date != None,
-        TankStockLedger.accounting_date <= date_to_value,
-    )
-
-    cleaned_location_code = clean_optional_text(location_code)
-    cleaned_tank_asset_code = clean_optional_text(tank_asset_code)
-    cleaned_product_name = clean_optional_text(product_name)
-
-    if cleaned_location_code:
-        query = query.filter(
-            TankStockLedger.location_code.ilike(cleaned_location_code)
-        )
-
-    if cleaned_tank_asset_code:
-        query = query.filter(
-            TankStockLedger.tank_asset_code.ilike(cleaned_tank_asset_code)
-        )
-
-    if cleaned_product_name:
-        query = query.filter(
-            TankStockLedger.product_name.ilike(cleaned_product_name)
-        )
-
-    return (
-        query.order_by(
-            TankStockLedger.location_code.asc(),
-            TankStockLedger.tank_asset_code.asc(),
-            TankStockLedger.product_name.asc(),
-            TankStockLedger.accounting_date.asc(),
-            TankStockLedger.operation_date.asc(),
-            TankStockLedger.id.asc(),
-        )
-        .all()
-    )
-
-
-def get_stock_snapshot_values(row: TankStockLedger):
-    stock_gsv = safe_float(row.stock_gsv_bbl)
-    stock_nsv = safe_float(row.stock_nsv_bbl)
-    stock_lt = safe_float(row.stock_lt)
-    stock_mt = safe_float(row.stock_mt)
-
-    if stock_gsv == 0 and stock_nsv == 0:
-        stock_gsv = safe_float(row.running_balance_gsv_bbl)
-        stock_nsv = safe_float(row.running_balance_nsv_bbl)
-        stock_lt = safe_float(row.running_balance_lt)
-        stock_mt = safe_float(row.running_balance_mt)
-
-    return {
-        "gsv": stock_gsv,
-        "nsv": stock_nsv,
-        "lt": stock_lt,
-        "mt": stock_mt,
-    }
-
-
-def get_ledger_operation_datetime(row: TankStockLedger):
-    try:
-        payload = row.source_payload or {}
-        inputs = payload.get("inputs") or {}
-
-        gauging_date = clean_optional_text(inputs.get("gaugingDate"))
-        gauging_time = clean_optional_text(inputs.get("gaugingTime"))
-
-        if gauging_date and gauging_time:
-            return datetime.fromisoformat(f"{gauging_date}T{gauging_time}")
-    except Exception:
-        pass
-
-    if row.accounting_day_start is not None:
-        return row.accounting_day_start
-
-    if row.operation_date is not None:
-        return datetime.combine(row.operation_date, datetime_time(0, 0))
-
-    return None
-
-
-def build_out_turn_report_response(
-    row: TankStockLedger,
-    db: Session,
-):
-    location = get_location_by_code(row.location_code, db)
-
-    operation_datetime = get_ledger_operation_datetime(row)
-
-    previous_gsv = safe_float(row.previous_stock_gsv_bbl)
-    previous_nsv = safe_float(row.previous_stock_nsv_bbl)
-    previous_lt = safe_float(row.previous_stock_lt)
-    previous_mt = safe_float(row.previous_stock_mt)
-
-    stock_snapshot = get_stock_snapshot_values(row)
-
-    stock_after_gsv = stock_snapshot["gsv"]
-    stock_after_nsv = stock_snapshot["nsv"]
-    stock_after_lt = stock_snapshot["lt"]
-    stock_after_mt = stock_snapshot["mt"]
-
-    movement_gsv = safe_float(row.movement_gsv_bbl)
-    movement_nsv = safe_float(row.movement_nsv_bbl)
-    movement_lt = safe_float(row.movement_lt)
-    movement_mt = safe_float(row.movement_mt)
-
-    sign = str(row.tank_operation_sign or "").upper()
-
-    net_receipt_gsv = 0
-    net_receipt_nsv = 0
-    net_receipt_lt = 0
-    net_receipt_mt = 0
-
-    net_dispatch_gsv = 0
-    net_dispatch_nsv = 0
-    net_dispatch_lt = 0
-    net_dispatch_mt = 0
-
-    signed_net_gsv = 0
-    signed_net_nsv = 0
-    signed_net_lt = 0
-    signed_net_mt = 0
-
-    if sign == "IN":
-        net_receipt_gsv = movement_gsv
-        net_receipt_nsv = movement_nsv
-        net_receipt_lt = movement_lt
-        net_receipt_mt = movement_mt
-
-        signed_net_gsv = movement_gsv
-        signed_net_nsv = movement_nsv
-        signed_net_lt = movement_lt
-        signed_net_mt = movement_mt
-
-    elif sign == "OUT":
-        net_dispatch_gsv = movement_gsv
-        net_dispatch_nsv = movement_nsv
-        net_dispatch_lt = movement_lt
-        net_dispatch_mt = movement_mt
-
-        signed_net_gsv = movement_gsv * -1
-        signed_net_nsv = movement_nsv * -1
-        signed_net_lt = movement_lt * -1
-        signed_net_mt = movement_mt * -1
-
-    elif sign == "SET":
-        signed_net_gsv = 0
-        signed_net_nsv = 0
-        signed_net_lt = 0
-        signed_net_mt = 0
-
-    elif sign == "NEUTRAL":
-        signed_net_gsv = 0
-        signed_net_nsv = 0
-        signed_net_lt = 0
-        signed_net_mt = 0
-
-    return {
-        "ledger_id": row.id,
-        "transaction_id": row.transaction_id,
-        "ticket_number": row.ticket_number,
-        "operation_number": row.operation_number,
-        "accounting_date": row.accounting_date,
-        "operation_datetime": operation_datetime,
-        "location_code": row.location_code,
-        "location_name": location.location_name if location else "",
-        "tank_asset_code": row.tank_asset_code,
-        "tank_asset_name": row.tank_asset_name,
-        "product_name": row.product_name,
-        "tank_operation_code": row.tank_operation_code,
-        "tank_operation_label": row.tank_operation_label,
-        "tank_operation_category": row.tank_operation_category,
-        "tank_operation_sign": row.tank_operation_sign,
-        "previous_stock_gsv_bbl": round(previous_gsv, 3),
-        "previous_stock_nsv_bbl": round(previous_nsv, 3),
-        "previous_stock_lt": round(previous_lt, 3),
-        "previous_stock_mt": round(previous_mt, 3),
-        "stock_after_gsv_bbl": round(stock_after_gsv, 3),
-        "stock_after_nsv_bbl": round(stock_after_nsv, 3),
-        "stock_after_lt": round(stock_after_lt, 3),
-        "stock_after_mt": round(stock_after_mt, 3),
-        "net_receipt_gsv_bbl": round(net_receipt_gsv, 3),
-        "net_receipt_nsv_bbl": round(net_receipt_nsv, 3),
-        "net_receipt_lt": round(net_receipt_lt, 3),
-        "net_receipt_mt": round(net_receipt_mt, 3),
-        "net_dispatch_gsv_bbl": round(net_dispatch_gsv, 3),
-        "net_dispatch_nsv_bbl": round(net_dispatch_nsv, 3),
-        "net_dispatch_lt": round(net_dispatch_lt, 3),
-        "net_dispatch_mt": round(net_dispatch_mt, 3),
-        "signed_net_movement_gsv_bbl": round(signed_net_gsv, 3),
-        "signed_net_movement_nsv_bbl": round(signed_net_nsv, 3),
-        "signed_net_movement_lt": round(signed_net_lt, 3),
-        "signed_net_movement_mt": round(signed_net_mt, 3),
-        "status": row.status,
-        "remarks": row.remarks,
-    }
+}
 
 
 def get_out_turn_report_rows(
@@ -439,21 +182,298 @@ def get_out_turn_report_rows(
     return rows
 
 
-def build_tank_stock_daily_summary_rows(
+def _build_out_turn_transaction_payload_map(db: Session, transaction_ids: list[int]):
+    if not transaction_ids:
+        return {}
+
+    rows = (
+        db.query(OperationTransactionValue)
+        .filter(
+            OperationTransactionValue.transaction_id.in_(transaction_ids),
+            OperationTransactionValue.field_code.in_([
+                "tank_gauging_payload",
+                "multi_tank_payload",
+                "net_nsv",
+            ]),
+        )
+        .all()
+    )
+
+    payload_map = {}
+
+    for row in rows:
+        if row.transaction_id not in payload_map:
+            payload_map[row.transaction_id] = {}
+
+        payload_map[row.transaction_id][row.field_code] = (
+            row.field_value if isinstance(row.field_value, dict) else {}
+        )
+
+    return payload_map
+
+
+def _parse_operation_datetime(operation_date: date, payload: dict):
+    inputs = payload.get("inputs") or {}
+
+    gauging_date = clean_optional_text(inputs.get("gaugingDate"))
+    gauging_time = clean_optional_text(inputs.get("gaugingTime"))
+
+    if gauging_date and gauging_time:
+        try:
+            return datetime.fromisoformat(f"{gauging_date}T{gauging_time}")
+        except Exception:
+            pass
+
+    return datetime.combine(operation_date, datetime_time(0, 0))
+
+
+def _extract_out_turn_values_from_transaction(db: Session, transaction: OperationTransaction):
+    template = (
+        db.query(OperationTemplate)
+        .filter(OperationTemplate.id == transaction.operation_template_id)
+        .first()
+    )
+
+    if not template:
+        return []
+
+    layout = str(template.entry_layout_type or "").strip()
+
+    payload_map = _build_out_turn_transaction_payload_map(db, [transaction.id])
+    payloads = payload_map.get(transaction.id, {})
+
+    if layout == "Tank Gauging":
+        return _extract_tank_gauging_out_turn(transaction, payloads.get("tank_gauging_payload") or {})
+    elif layout == "Multi-Tank Before/After":
+        return _extract_multi_tank_out_turn(transaction, payloads.get("multi_tank_payload") or {})
+    elif layout == "Stock Movement":
+        return _extract_stock_movement_out_turn(transaction, payloads.get("net_nsv"))
+    elif layout == "Vessel Cycle":
+        return _extract_stock_movement_out_turn(transaction, payloads.get("net_nsv"))
+
+    return []
+
+
+def _extract_tank_gauging_out_turn(transaction: OperationTransaction, payload: dict):
+    calculated = payload.get("calculated") or {}
+    inputs = payload.get("inputs") or {}
+
+    nsv = safe_float(calculated.get("nsvBbl"))
+    gsv = safe_float(calculated.get("gsvBbl"))
+    lt = safe_float(calculated.get("lt"))
+    mt = safe_float(calculated.get("mt"))
+
+    if nsv == 0 and gsv == 0:
+        return []
+
+    operation_datetime = _parse_operation_datetime(transaction.operation_date, payload)
+
+    return [
+        {
+            "transaction_id": transaction.id,
+            "ticket_number": get_transaction_ticket_number(transaction),
+            "operation_number": transaction.operation_number,
+            "accounting_date": transaction.operation_date,
+            "operation_datetime": operation_datetime,
+            "location_code": transaction.origin_location_code,
+            "tank_asset_code": transaction.primary_asset_code,
+            "product_name": transaction.product_name,
+            "tank_operation_code": clean_optional_text(inputs.get("tankOperationCode")) or "",
+            "tank_operation_label": clean_optional_text(inputs.get("tankOperationLabel")) or "",
+            "tank_operation_category": clean_optional_text(inputs.get("tankOperationCategory")) or "",
+            "tank_operation_sign": clean_optional_text(inputs.get("tankOperationSign")) or "",
+            "gsv": gsv,
+            "nsv": nsv,
+            "lt": lt,
+            "mt": mt,
+            "status": transaction.status,
+        }
+    ]
+
+
+def _extract_multi_tank_out_turn(transaction: OperationTransaction, payload: dict):
+    per_tank_after = ((payload.get("perTank") or {}).get("after") or {})
+    inputs = payload.get("inputs") or {}
+
+    if not per_tank_after:
+        return []
+
+    operation_datetime = _parse_operation_datetime(transaction.operation_date, payload)
+
+    results = []
+
+    for tank_key, tank_data in per_tank_after.items():
+        if not isinstance(tank_data, dict):
+            continue
+
+        nsv = safe_float(tank_data.get("NSV"))
+        gsv = safe_float(tank_data.get("GSV"))
+        lt = safe_float(tank_data.get("LT"))
+        mt = safe_float(tank_data.get("MT"))
+
+        if nsv == 0 and gsv == 0:
+            continue
+
+        results.append(
+            {
+                "transaction_id": transaction.id,
+                "ticket_number": get_transaction_ticket_number(transaction),
+                "operation_number": transaction.operation_number,
+                "accounting_date": transaction.operation_date,
+                "operation_datetime": operation_datetime,
+                "location_code": transaction.origin_location_code,
+                "tank_asset_code": tank_key,
+                "product_name": transaction.product_name,
+                "tank_operation_code": clean_optional_text(inputs.get("tankOperationCode")) or "",
+                "tank_operation_label": clean_optional_text(inputs.get("tankOperationLabel")) or "",
+                "tank_operation_category": clean_optional_text(inputs.get("tankOperationCategory")) or "",
+                "tank_operation_sign": clean_optional_text(inputs.get("tankOperationSign")) or "",
+                "gsv": gsv,
+                "nsv": nsv,
+                "lt": lt,
+                "mt": mt,
+                "status": transaction.status,
+            }
+        )
+
+    return results
+
+
+def _extract_stock_movement_out_turn(transaction: OperationTransaction, net_nsv_value):
+    nsv = safe_float(net_nsv_value)
+
+    if nsv == 0:
+        return []
+
+    operation_datetime = transaction.operation_start_datetime
+    if operation_datetime is None:
+        operation_datetime = datetime.combine(transaction.operation_date, datetime_time(0, 0))
+
+    return [
+        {
+            "transaction_id": transaction.id,
+            "ticket_number": get_transaction_ticket_number(transaction),
+            "operation_number": transaction.operation_number,
+            "accounting_date": transaction.operation_date,
+            "operation_datetime": operation_datetime,
+            "location_code": transaction.origin_location_code,
+            "tank_asset_code": transaction.primary_asset_code,
+            "product_name": transaction.product_name,
+            "tank_operation_code": "",
+            "tank_operation_label": "",
+            "tank_operation_category": "",
+            "tank_operation_sign": "",
+            "gsv": 0,
+            "nsv": nsv,
+            "lt": 0,
+            "mt": 0,
+            "status": transaction.status,
+        }
+    ]
+
+
+def get_out_turn_report_rows_from_transactions(
     db: Session,
-    ledger_rows: list[TankStockLedger],
-    date_from_value: date,
-    date_to_value: date,
+    location_code: str | None = None,
+    tank_asset_code: str | None = None,
+    product_name: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
 ):
-    date_range = build_date_range(date_from_value, date_to_value)
+    query = (
+        db.query(OperationTransaction)
+        .join(OperationTemplate, OperationTransaction.operation_template_id == OperationTemplate.id)
+        .join(OperationType, OperationTemplate.operation_type_code == OperationType.operation_type_code)
+        .filter(
+            OperationTransaction.status == "Approved",
+            OperationType.applicable_asset_type_code == "TANK",
+            OperationTemplate.entry_layout_type.in_([
+                "Tank Gauging",
+                "Multi-Tank Before/After",
+                "Stock Movement",
+                "Vessel Cycle",
+            ]),
+        )
+    )
+
+    cleaned_location_code = clean_optional_text(location_code)
+    cleaned_tank_asset_code = clean_optional_text(tank_asset_code)
+    cleaned_product_name = clean_optional_text(product_name)
+
+    if cleaned_location_code:
+        query = query.filter(
+            OperationTransaction.origin_location_code.ilike(cleaned_location_code)
+        )
+
+    if cleaned_tank_asset_code:
+        query = query.filter(
+            OperationTransaction.primary_asset_code.ilike(cleaned_tank_asset_code)
+        )
+
+    if cleaned_product_name:
+        query = query.filter(
+            OperationTransaction.product_name.ilike(cleaned_product_name)
+        )
+
+    date_from_value = parse_date_filter(date_from, "Date From")
+    date_to_value = parse_date_filter(date_to, "Date To")
+
+    if date_from_value:
+        query = query.filter(OperationTransaction.operation_date >= date_from_value)
+
+    if date_to_value:
+        query = query.filter(OperationTransaction.operation_date <= date_to_value)
+
+    transactions = query.order_by(
+        OperationTransaction.operation_date.asc(),
+        OperationTransaction.id.asc(),
+    ).all()
+
+    tx_ids = [tx.id for tx in transactions]
+    payload_map = _build_out_turn_transaction_payload_map(db, tx_ids)
+
+    template_cache = {}
+
+    extracted_rows = []
+
+    for tx in transactions:
+        if tx.operation_template_id is None:
+            continue
+
+        if tx.operation_template_id not in template_cache:
+            template_cache[tx.operation_template_id] = (
+                db.query(OperationTemplate)
+                .filter(OperationTemplate.id == tx.operation_template_id)
+                .first()
+            )
+
+        template = template_cache[tx.operation_template_id]
+
+        if not template:
+            continue
+
+        payloads = payload_map.get(tx.id, {})
+        entry_layout = str(template.entry_layout_type or "").strip()
+
+        if entry_layout == "Tank Gauging":
+            extracted_rows.extend(
+                _extract_tank_gauging_out_turn(tx, payloads.get("tank_gauging_payload") or {})
+            )
+        elif entry_layout == "Multi-Tank Before/After":
+            extracted_rows.extend(
+                _extract_multi_tank_out_turn(tx, payloads.get("multi_tank_payload") or {})
+            )
+        elif entry_layout in ("Stock Movement", "Vessel Cycle"):
+            extracted_rows.extend(
+                _extract_stock_movement_out_turn(tx, payloads.get("net_nsv"))
+            )
 
     grouped_rows = {}
 
-    for row in ledger_rows:
+    for row in extracted_rows:
         key = (
-            row.location_code,
-            row.tank_asset_code,
-            row.product_name or "",
+            row["location_code"],
+            row["tank_asset_code"],
         )
 
         if key not in grouped_rows:
@@ -461,208 +481,282 @@ def build_tank_stock_daily_summary_rows(
 
         grouped_rows[key].append(row)
 
-    daily_summary_rows = []
+    per_tank_rows = []
 
-    for key, rows in grouped_rows.items():
-        location_code, tank_asset_code, product_name_value = key
-
-        location = get_location_by_code(location_code, db)
-
-        sorted_rows = sorted(
-            rows,
-            key=lambda row: (
-                row.accounting_date or date.min,
-                row.accounting_day_start or datetime.min,
-                row.operation_date or date.min,
-                row.id,
+    for key, group_rows in grouped_rows.items():
+        sorted_group = sorted(
+            group_rows,
+            key=lambda item: (
+                item["accounting_date"] or date.min,
+                item["operation_datetime"] or datetime.min,
+                item["transaction_id"],
             ),
         )
 
-        tank_asset_name = ""
-        if sorted_rows:
-            tank_asset_name = sorted_rows[-1].tank_asset_name or ""
+        previous_gsv = 0
+        previous_nsv = 0
+        previous_lt = 0
+        previous_mt = 0
+        sequence = 0
 
-        previous_closing_gsv = 0
-        previous_closing_nsv = 0
-        previous_closing_lt = 0
-        previous_closing_mt = 0
+        for item in sorted_group:
+            current_gsv = safe_float(item["gsv"])
+            current_nsv = safe_float(item["nsv"])
+            current_lt = safe_float(item["lt"])
+            current_mt = safe_float(item["mt"])
 
-        rows_before_period = [
-            row
-            for row in sorted_rows
-            if row.accounting_date is not None
-            and row.accounting_date < date_from_value
-        ]
-
-        if rows_before_period:
-            last_before_period = rows_before_period[-1]
-            previous_snapshot = get_stock_snapshot_values(last_before_period)
-
-            previous_closing_gsv = previous_snapshot["gsv"]
-            previous_closing_nsv = previous_snapshot["nsv"]
-            previous_closing_lt = previous_snapshot["lt"]
-            previous_closing_mt = previous_snapshot["mt"]
-
-        for accounting_date_value in date_range:
-            day_rows = [
-                row
-                for row in sorted_rows
-                if row.accounting_date == accounting_date_value
-            ]
-
-            day_rows = sorted(
-                day_rows,
-                key=lambda row: (
-                    row.accounting_day_start or datetime.min,
-                    row.operation_date or date.min,
-                    row.id,
-                ),
-            )
-
-            opening_gsv = previous_closing_gsv
-            opening_nsv = previous_closing_nsv
-            opening_lt = previous_closing_lt
-            opening_mt = previous_closing_mt
-
-            opening_rows = [
-                row
-                for row in day_rows
-                if str(row.tank_operation_category or "").upper() == "OPENING"
-            ]
-
-            if opening_rows:
-                opening_snapshot = get_stock_snapshot_values(opening_rows[-1])
-
-                opening_gsv = opening_snapshot["gsv"]
-                opening_nsv = opening_snapshot["nsv"]
-                opening_lt = opening_snapshot["lt"]
-                opening_mt = opening_snapshot["mt"]
-
-            total_in_gsv = 0
-            total_in_nsv = 0
-            total_in_lt = 0
-            total_in_mt = 0
-
-            total_out_gsv = 0
-            total_out_nsv = 0
-            total_out_lt = 0
-            total_out_mt = 0
-
-            for row in day_rows:
-                sign = str(row.tank_operation_sign or "").upper()
-
-                if sign == "IN":
-                    total_in_gsv += safe_float(row.movement_gsv_bbl)
-                    total_in_nsv += safe_float(row.movement_nsv_bbl)
-                    total_in_lt += safe_float(row.movement_lt)
-                    total_in_mt += safe_float(row.movement_mt)
-
-                elif sign == "OUT":
-                    total_out_gsv += safe_float(row.movement_gsv_bbl)
-                    total_out_nsv += safe_float(row.movement_nsv_bbl)
-                    total_out_lt += safe_float(row.movement_lt)
-                    total_out_mt += safe_float(row.movement_mt)
-
-            book_closing_gsv = opening_gsv + total_in_gsv - total_out_gsv
-            book_closing_nsv = opening_nsv + total_in_nsv - total_out_nsv
-            book_closing_lt = opening_lt + total_in_lt - total_out_lt
-            book_closing_mt = opening_mt + total_in_mt - total_out_mt
-
-            actual_closing_gsv = book_closing_gsv
-            actual_closing_nsv = book_closing_nsv
-            actual_closing_lt = book_closing_lt
-            actual_closing_mt = book_closing_mt
-
-            last_ticket_number = None
-
-            if day_rows:
-                closing_rows = [
-                    row
-                    for row in day_rows
-                    if str(row.tank_operation_category or "").upper()
-                    == "CLOSING"
-                ]
-
-                if closing_rows:
-                    closing_source_row = closing_rows[-1]
-                else:
-                    closing_source_row = day_rows[-1]
-
-                closing_snapshot = get_stock_snapshot_values(closing_source_row)
-
-                actual_closing_gsv = closing_snapshot["gsv"]
-                actual_closing_nsv = closing_snapshot["nsv"]
-                actual_closing_lt = closing_snapshot["lt"]
-                actual_closing_mt = closing_snapshot["mt"]
-                last_ticket_number = closing_source_row.ticket_number
-
-            else:
-                actual_closing_gsv = opening_gsv
-                actual_closing_nsv = opening_nsv
-                actual_closing_lt = opening_lt
-                actual_closing_mt = opening_mt
-
-                book_closing_gsv = opening_gsv
-                book_closing_nsv = opening_nsv
-                book_closing_lt = opening_lt
-                book_closing_mt = opening_mt
-
-            loss_gain_gsv = actual_closing_gsv - book_closing_gsv
-            loss_gain_nsv = actual_closing_nsv - book_closing_nsv
-            loss_gain_lt = actual_closing_lt - book_closing_lt
-            loss_gain_mt = actual_closing_mt - book_closing_mt
-
-            daily_summary_rows.append(
+            per_tank_rows.append(
                 {
-                    "accounting_date": accounting_date_value,
-                    "location_code": location_code,
-                    "location_name": location.location_name if location else "",
-                    "tank_asset_code": tank_asset_code,
-                    "tank_asset_name": tank_asset_name,
-                    "product_name": product_name_value or None,
-                    "opening_gsv_bbl": round(opening_gsv, 3),
-                    "opening_nsv_bbl": round(opening_nsv, 3),
-                    "opening_lt": round(opening_lt, 3),
-                    "opening_mt": round(opening_mt, 3),
-                    "total_in_gsv_bbl": round(total_in_gsv, 3),
-                    "total_in_nsv_bbl": round(total_in_nsv, 3),
-                    "total_in_lt": round(total_in_lt, 3),
-                    "total_in_mt": round(total_in_mt, 3),
-                    "total_out_gsv_bbl": round(total_out_gsv, 3),
-                    "total_out_nsv_bbl": round(total_out_nsv, 3),
-                    "total_out_lt": round(total_out_lt, 3),
-                    "total_out_mt": round(total_out_mt, 3),
-                    "book_closing_gsv_bbl": round(book_closing_gsv, 3),
-                    "book_closing_nsv_bbl": round(book_closing_nsv, 3),
-                    "book_closing_lt": round(book_closing_lt, 3),
-                    "book_closing_mt": round(book_closing_mt, 3),
-                    "actual_closing_gsv_bbl": round(actual_closing_gsv, 3),
-                    "actual_closing_nsv_bbl": round(actual_closing_nsv, 3),
-                    "actual_closing_lt": round(actual_closing_lt, 3),
-                    "actual_closing_mt": round(actual_closing_mt, 3),
-                    "loss_gain_gsv_bbl": round(loss_gain_gsv, 3),
-                    "loss_gain_nsv_bbl": round(loss_gain_nsv, 3),
-                    "loss_gain_lt": round(loss_gain_lt, 3),
-                    "loss_gain_mt": round(loss_gain_mt, 3),
-                    "rows_count": len(day_rows),
-                    "last_ticket_number": last_ticket_number,
+                    "sequence": sequence,
+                    "location_code": item["location_code"],
+                    "tank_asset_code": item["tank_asset_code"],
+                    "product_name": item["product_name"],
+                    "transaction_id": item["transaction_id"],
+                    "ticket_number": item["ticket_number"],
+                    "operation_number": item["operation_number"],
+                    "accounting_date": item["accounting_date"],
+                    "operation_datetime": item["operation_datetime"],
+                    "tank_operation_code": item["tank_operation_code"],
+                    "tank_operation_label": item["tank_operation_label"],
+                    "tank_operation_category": item["tank_operation_category"],
+                    "tank_operation_sign": item["tank_operation_sign"],
+                    "previous_gsv": previous_gsv,
+                    "previous_nsv": previous_nsv,
+                    "previous_lt": previous_lt,
+                    "previous_mt": previous_mt,
+                    "stock_after_gsv": current_gsv,
+                    "stock_after_nsv": current_nsv,
+                    "stock_after_lt": current_lt,
+                    "stock_after_mt": current_mt,
+                    "signed_net_gsv": current_gsv - previous_gsv,
+                    "signed_net_nsv": current_nsv - previous_nsv,
+                    "signed_net_lt": current_lt - previous_lt,
+                    "signed_net_mt": current_mt - previous_mt,
+                    "status": item["status"],
                 }
             )
 
-            previous_closing_gsv = actual_closing_gsv
-            previous_closing_nsv = actual_closing_nsv
-            previous_closing_lt = actual_closing_lt
-            previous_closing_mt = actual_closing_mt
+            previous_gsv = current_gsv
+            previous_nsv = current_nsv
+            previous_lt = current_lt
+            previous_mt = current_mt
+            sequence += 1
 
-    return sorted(
-        daily_summary_rows,
-        key=lambda row: (
-            row["accounting_date"],
-            row["location_code"],
-            row["tank_asset_code"],
-            row["product_name"] or "",
-        ),
+    per_tank_rows.sort(
+        key=lambda r: (
+            r["accounting_date"] or date.min,
+            r["operation_datetime"] or datetime.min,
+            r["location_code"] or "",
+            r["tank_asset_code"] or "",
+            r["transaction_id"] or 0,
+        )
     )
+
+    return per_tank_rows
+
+
+def build_out_turn_report_response_from_transaction(row: dict, db: Session):
+    location = get_location_by_code(row["location_code"], db)
+
+    previous_gsv = safe_float(row.get("previous_gsv") or 0)
+    previous_nsv = safe_float(row.get("previous_nsv") or 0)
+    previous_lt = safe_float(row.get("previous_lt") or 0)
+    previous_mt = safe_float(row.get("previous_mt") or 0)
+
+    stock_after_gsv = safe_float(row.get("stock_after_gsv") or 0)
+    stock_after_nsv = safe_float(row.get("stock_after_nsv") or 0)
+    stock_after_lt = safe_float(row.get("stock_after_lt") or 0)
+    stock_after_mt = safe_float(row.get("stock_after_mt") or 0)
+
+    signed_net_gsv = safe_float(row.get("signed_net_gsv")) if row.get("signed_net_gsv") is not None else (stock_after_gsv - previous_gsv)
+    signed_net_nsv = safe_float(row.get("signed_net_nsv")) if row.get("signed_net_nsv") is not None else (stock_after_nsv - previous_nsv)
+    signed_net_lt = safe_float(row.get("signed_net_lt")) if row.get("signed_net_lt") is not None else (stock_after_lt - previous_lt)
+    signed_net_mt = safe_float(row.get("signed_net_mt")) if row.get("signed_net_mt") is not None else (stock_after_mt - previous_mt)
+
+    net_receipt_gsv = max(signed_net_gsv, 0)
+    net_receipt_nsv = max(signed_net_nsv, 0)
+    net_receipt_lt = max(signed_net_lt, 0)
+    net_receipt_mt = max(signed_net_mt, 0)
+
+    net_dispatch_gsv = max(-signed_net_gsv, 0)
+    net_dispatch_nsv = max(-signed_net_nsv, 0)
+    net_dispatch_lt = max(-signed_net_lt, 0)
+    net_dispatch_mt = max(-signed_net_mt, 0)
+
+    receipt_gsv = 0
+    receipt_nsv = 0
+    receipt_lt = 0
+    receipt_mt = 0
+
+    production_gsv = 0
+    production_nsv = 0
+    production_lt = 0
+    production_mt = 0
+
+    draining_gsv = 0
+    draining_nsv = 0
+    draining_lt = 0
+    draining_mt = 0
+
+    dispatch_gsv = 0
+    dispatch_nsv = 0
+    dispatch_lt = 0
+    dispatch_mt = 0
+
+    other_in_gsv = 0
+    other_in_nsv = 0
+    other_in_lt = 0
+    other_in_mt = 0
+
+    other_out_gsv = 0
+    other_out_nsv = 0
+    other_out_lt = 0
+    other_out_mt = 0
+
+    sign = str(row.get("tank_operation_sign") or "").upper()
+    category = normalize_material_balance_category(row.get("tank_operation_category"))
+
+    if sign == "IN":
+        if category == "RECEIPT":
+            receipt_gsv = signed_net_gsv
+            receipt_nsv = signed_net_nsv
+            receipt_lt = signed_net_lt
+            receipt_mt = signed_net_mt
+
+            net_receipt_gsv = receipt_gsv
+            net_receipt_nsv = receipt_nsv
+            net_receipt_lt = receipt_lt
+            net_receipt_mt = receipt_mt
+
+        elif category == "PRODUCTION":
+            production_gsv = signed_net_gsv
+            production_nsv = signed_net_nsv
+            production_lt = signed_net_lt
+            production_mt = signed_net_mt
+
+        else:
+            other_in_gsv = signed_net_gsv
+            other_in_nsv = signed_net_nsv
+            other_in_lt = signed_net_lt
+            other_in_mt = signed_net_mt
+
+            net_receipt_gsv = other_in_gsv
+            net_receipt_nsv = other_in_nsv
+            net_receipt_lt = other_in_lt
+            net_receipt_mt = other_in_mt
+
+    elif sign == "OUT":
+        if category == "DISPATCH":
+            dispatch_gsv = -signed_net_gsv
+            dispatch_nsv = -signed_net_nsv
+            dispatch_lt = -signed_net_lt
+            dispatch_mt = -signed_net_mt
+
+            net_dispatch_gsv = dispatch_gsv
+            net_dispatch_nsv = dispatch_nsv
+            net_dispatch_lt = dispatch_lt
+            net_dispatch_mt = dispatch_mt
+
+        elif category == "DRAINING":
+            draining_gsv = -signed_net_gsv
+            draining_nsv = -signed_net_nsv
+            draining_lt = -signed_net_lt
+            draining_mt = -signed_net_mt
+
+        else:
+            other_out_gsv = -signed_net_gsv
+            other_out_nsv = -signed_net_nsv
+            other_out_lt = -signed_net_lt
+            other_out_mt = -signed_net_mt
+
+            net_dispatch_gsv = other_out_gsv
+            net_dispatch_nsv = other_out_nsv
+            net_dispatch_lt = other_out_lt
+            net_dispatch_mt = other_out_mt
+
+    else:
+        if signed_net_gsv >= 0:
+            other_in_gsv = signed_net_gsv
+            other_in_nsv = signed_net_nsv
+            other_in_lt = signed_net_lt
+            other_in_mt = signed_net_mt
+            net_receipt_gsv = other_in_gsv
+            net_receipt_nsv = other_in_nsv
+            net_receipt_lt = other_in_lt
+            net_receipt_mt = other_in_mt
+        else:
+            other_out_gsv = -signed_net_gsv
+            other_out_nsv = -signed_net_nsv
+            other_out_lt = -signed_net_lt
+            other_out_mt = -signed_net_mt
+            net_dispatch_gsv = other_out_gsv
+            net_dispatch_nsv = other_out_nsv
+            net_dispatch_lt = other_out_lt
+            net_dispatch_mt = other_out_mt
+
+    return {
+        "ledger_id": row.get("transaction_id", 0) * 100000 + (row.get("sequence") or 0),
+        "transaction_id": row.get("transaction_id"),
+        "ticket_number": row.get("ticket_number") or "",
+        "operation_number": row.get("operation_number") or "",
+        "accounting_date": row.get("accounting_date"),
+        "operation_datetime": row.get("operation_datetime"),
+        "location_code": row.get("location_code") or "",
+        "location_name": location.location_name if location else "",
+        "tank_asset_code": row.get("tank_asset_code") or "",
+        "tank_asset_name": "",
+        "product_name": row.get("product_name") or "",
+        "tank_operation_code": row.get("tank_operation_code") or "",
+        "tank_operation_label": row.get("tank_operation_label") or "",
+        "tank_operation_category": row.get("tank_operation_category") or "",
+        "tank_operation_sign": row.get("tank_operation_sign") or "",
+        "previous_stock_gsv_bbl": round(previous_gsv, 3),
+        "previous_stock_nsv_bbl": round(previous_nsv, 3),
+        "previous_stock_lt": round(previous_lt, 3),
+        "previous_stock_mt": round(previous_mt, 3),
+        "stock_after_gsv_bbl": round(stock_after_gsv, 3),
+        "stock_after_nsv_bbl": round(stock_after_nsv, 3),
+        "stock_after_lt": round(stock_after_lt, 3),
+        "stock_after_mt": round(stock_after_mt, 3),
+        "receipt_gsv_bbl": round(receipt_gsv, 3),
+        "receipt_nsv_bbl": round(receipt_nsv, 3),
+        "receipt_lt": round(receipt_lt, 3),
+        "receipt_mt": round(receipt_mt, 3),
+        "production_gsv_bbl": round(production_gsv, 3),
+        "production_nsv_bbl": round(production_nsv, 3),
+        "production_lt": round(production_lt, 3),
+        "production_mt": round(production_mt, 3),
+        "draining_gsv_bbl": round(draining_gsv, 3),
+        "draining_nsv_bbl": round(draining_nsv, 3),
+        "draining_lt": round(draining_lt, 3),
+        "draining_mt": round(draining_mt, 3),
+        "dispatch_gsv_bbl": round(dispatch_gsv, 3),
+        "dispatch_nsv_bbl": round(dispatch_nsv, 3),
+        "dispatch_lt": round(dispatch_lt, 3),
+        "dispatch_mt": round(dispatch_mt, 3),
+        "other_in_gsv_bbl": round(other_in_gsv, 3),
+        "other_in_nsv_bbl": round(other_in_nsv, 3),
+        "other_in_lt": round(other_in_lt, 3),
+        "other_in_mt": round(other_in_mt, 3),
+        "other_out_gsv_bbl": round(other_out_gsv, 3),
+        "other_out_nsv_bbl": round(other_out_nsv, 3),
+        "other_out_lt": round(other_out_lt, 3),
+        "other_out_mt": round(other_out_mt, 3),
+        "net_receipt_gsv_bbl": round(net_receipt_gsv, 3),
+        "net_receipt_nsv_bbl": round(net_receipt_nsv, 3),
+        "net_receipt_lt": round(net_receipt_lt, 3),
+        "net_receipt_mt": round(net_receipt_mt, 3),
+        "net_dispatch_gsv_bbl": round(net_dispatch_gsv, 3),
+        "net_dispatch_nsv_bbl": round(net_dispatch_nsv, 3),
+        "net_dispatch_lt": round(net_dispatch_lt, 3),
+        "net_dispatch_mt": round(net_dispatch_mt, 3),
+        "signed_net_movement_gsv_bbl": round(signed_net_gsv, 3),
+        "signed_net_movement_nsv_bbl": round(signed_net_nsv, 3),
+        "signed_net_movement_lt": round(signed_net_lt, 3),
+        "signed_net_movement_mt": round(signed_net_mt, 3),
+        "status": "Approved",
+        "remarks": None,
+    }
 
 
 def add_volume_values(target: dict, prefix: str, row: TankStockLedger):
@@ -678,9 +772,16 @@ def get_material_balance_rows_for_continuity(
     tank_asset_code: str | None,
     product_name: str | None,
     date_to_value: date,
+    status: str | None = "Active",
 ):
-    query = db.query(TankStockLedger).filter(
-        TankStockLedger.status == "Active",
+    query = db.query(TankStockLedger)
+
+    cleaned_status = clean_optional_text(status)
+
+    if cleaned_status:
+        query = query.filter(TankStockLedger.status == cleaned_status)
+
+    query = query.filter(
         TankStockLedger.accounting_date != None,
         TankStockLedger.accounting_date <= date_to_value,
     )
@@ -1632,6 +1733,7 @@ def get_tank_stock_ledger_daily_summary(
     product_name: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
+    status: str | None = "Active",
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
@@ -1656,6 +1758,7 @@ def get_tank_stock_ledger_daily_summary(
         tank_asset_code=tank_asset_code,
         product_name=product_name,
         date_to_value=date_to_value,
+        status=status,
     )
 
     return build_tank_stock_daily_summary_rows(
@@ -1676,7 +1779,6 @@ def get_out_turn_report(
     product_name: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
-    status: str | None = "Active",
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
@@ -1686,18 +1788,17 @@ def get_out_turn_report(
         db,
     )
 
-    rows = get_out_turn_report_rows(
+    rows = get_out_turn_report_rows_from_transactions(
         db=db,
         location_code=location_code,
         tank_asset_code=tank_asset_code,
         product_name=product_name,
         date_from=date_from,
         date_to=date_to,
-        status=status,
     )
 
     return [
-        build_out_turn_report_response(row, db)
+        build_out_turn_report_response_from_transaction(row, db)
         for row in rows
     ]
 
@@ -1827,6 +1928,7 @@ def get_material_balance_report(
     product_name: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
+    status: str | None = "Active",
     unit: str | None = "nsv",
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
@@ -1878,6 +1980,7 @@ def get_material_balance_report(
         tank_asset_code=tank_asset_code,
         product_name=product_name,
         date_to_value=date_to_value,
+        status=status,
     )
 
     tank_rows = build_dynamic_material_balance_tank_rows(

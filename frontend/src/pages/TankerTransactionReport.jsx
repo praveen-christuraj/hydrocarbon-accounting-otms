@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getTankerTransactionReport } from '../api/tankerTransactionReportApi'
+import { getCompanyReportProfiles } from '../api/companyReportProfileApi'
 import PaginationControls, {
   paginateRows,
 } from '../components/common/PaginationControls'
@@ -71,15 +72,13 @@ const getCellValue = (row, column) => {
 }
 
 function TankerTransactionReport({ locations = [], assets = [] }) {
-  const today = new Date().toISOString().slice(0, 10)
-
   const [filters, setFilters] = useState({
-    date_from: today,
-    date_to: today,
+    date_from: '',
+    date_to: '',
     location_code: '',
     asset_code: '',
     convoy_number: '',
-    status: '',
+    status: 'Approved',
     search: '',
   })
 
@@ -107,6 +106,20 @@ function TankerTransactionReport({ locations = [], assets = [] }) {
       )
     })
   }, [activeAssets])
+
+  const [profile, setProfile] = useState(null)
+
+  useEffect(() => {
+    ;(async () => {
+      try {
+        const profiles = await getCompanyReportProfiles()
+        const activeProfile = profiles.find((p) => p.status === 'Active') || profiles[0]
+        if (activeProfile) setProfile(activeProfile)
+      } catch {
+        // non-critical; print will fall back to plain header
+      }
+    })()
+  }, [])
 
   const loadReport = async () => {
     try {
@@ -147,7 +160,7 @@ function TankerTransactionReport({ locations = [], assets = [] }) {
       location_code: '',
       asset_code: '',
       convoy_number: '',
-      status: '',
+      status: 'Approved',
       search: '',
     })
     setCurrentPage(1)
@@ -236,6 +249,25 @@ function TankerTransactionReport({ locations = [], assets = [] }) {
 
   return (
     <div>
+      {profile && (
+        <div className="print-report-header print-only">
+          <div className="print-company-block">
+            {profile.logoUrl ? (
+              <img src={profile.logoUrl} alt={`${profile.companyName} Logo`} className="print-company-logo" />
+            ) : (
+              <div className="print-logo-placeholder">{profile.logoText || 'LOGO'}</div>
+            )}
+            <div>
+              <h1>{profile.companyName}</h1>
+              <p>{profile.systemName}</p>
+              <p>{profile.reportSubtitle || 'Tanker Transaction Report'}</p>
+            </div>
+          </div>
+          <div className="print-report-ticket">
+            <small>Generated: {new Date().toLocaleString()}</small>
+          </div>
+        </div>
+      )}
       <div className="page-title">
         <div>
           <h2>Tanker Transaction Report</h2>
@@ -476,6 +508,14 @@ function TankerTransactionReport({ locations = [], assets = [] }) {
         totalRows={rows.length}
         onPageChange={setCurrentPage}
       />
+
+      {profile && (
+        <div className="print-only" style={{ marginTop: 20, fontSize: 11, color: '#555' }}>
+          <p>{profile.footerFormula}</p>
+          <p>{profile.footerNote}</p>
+          <p><strong>Printed:</strong> {new Date().toLocaleString()}</p>
+        </div>
+      )}
 
       {selectedRow && (
         <div className="report-detail-panel no-print">

@@ -332,7 +332,7 @@ def get_tanker_transaction_report(
     location_code: str | None = None,
     asset_code: str | None = None,
     convoy_number: str | None = None,
-    status: str | None = None,
+    status: str | None = "Approved",
     search: str | None = None,
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),

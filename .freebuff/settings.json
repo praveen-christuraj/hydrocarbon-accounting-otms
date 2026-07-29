@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "startup": {},
+  "skills": {
+    "preloaded": [
+      "agentic-jujutsu",
+      "browser",
+      "flow-nexus-swarm",
+      "flow-nexus-platform",
+      "github-code-review",
+      "flow-nexus-neural",
+      "github-project-management",
+      "github-multi-repo",
+      "worker-benchmarks",
+      "github-release-management",
+      "graphify",
+      "github-workflow-automation",
+      "performance-analysis",
+      "hive-mind-advanced",
+      "sparc-methodology",
+      "pinokio",
+      "swarm-advanced",
+      "worker-integration",
+      "stream-chain"
+    ]
+  }
+}
