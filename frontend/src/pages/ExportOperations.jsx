@@ -366,6 +366,7 @@ function DataEntryTab({ loggedInUser, canManage }) {
       setLoading(true)
       const payload = {
         ...form,
+        volume: Number(form.volume || 0),
         override: permitOverride,
         block_entries: (form.block_entries || []).length
           ? form.block_entries.map((entry) => ({ block_code: entry.block_code, volume: Number(entry.volume || 0) }))
