@@ -9,16 +9,16 @@ const qs = (params = {}) => {
   return sp.toString()
 }
 
-export const getFSOOTRReport = (params) => apiGet(`/fso/reports/otr?${qs(params)}`)
+export const getFSOOTRReport = (params) => apiGet(`/reports/fso/otr?${qs(params)}`)
 export const getFSOMaterialBalanceReport = (params) =>
-  apiGet(`/fso/reports/material-balance?${qs(params)}`)
-export const getFSOOutturnReport = (params) => apiGet(`/fso/reports/outturn?${qs(params)}`)
+  apiGet(`/reports/fso/material-balance?${qs(params)}`)
+export const getFSOOutturnReport = (params) => apiGet(`/reports/fso/outturn?${qs(params)}`)
 
 export const downloadFSOOTRXlsx = (params) =>
-  apiDownload(`/fso/reports/otr/export/xlsx?${qs(params)}`, 'fso_otr.xlsx')
+  apiDownload(`/reports/fso/otr/export/xlsx?${qs(params)}`, 'fso_otr.xlsx')
 
 export const downloadFSOMaterialBalanceXlsx = (params) =>
-  apiDownload(`/fso/reports/material-balance/export/xlsx?${qs(params)}`, 'fso_material_balance.xlsx')
+  apiDownload(`/reports/fso/material-balance/export/xlsx?${qs(params)}`, 'fso_material_balance.xlsx')
 
 export const downloadFSOOutturnXlsx = (params) =>
-  apiDownload(`/fso/reports/outturn/export/xlsx?${qs(params)}`, 'fso_outturn.xlsx')
+  apiDownload(`/reports/fso/outturn/export/xlsx?${qs(params)}`, 'fso_outturn.xlsx')

@@ -42,6 +42,7 @@ from app.routers.tank_stock_ledger import (
     get_ledger_operation_datetime,
     build_out_turn_report_response,
     build_tank_stock_daily_summary_rows,
+    get_out_turn_report_rows,
 )
 from app.services.transaction_helpers import parse_date_filter
 from app.services.material_balance_helpers import (
@@ -120,66 +121,6 @@ def build_mapping_response(db: Session, mapping: MovementMapping):
         "source_tickets": [{"ticket_number": i.ticket_number, "ticket_label": i.ticket_label, "movement_date": i.movement_date, "operation_number": i.operation_number} for i in source],
         "target_tickets": [{"ticket_number": i.ticket_number, "ticket_label": i.ticket_label, "movement_date": i.movement_date, "operation_number": i.operation_number} for i in target],
 }
-
-
-def get_out_turn_report_rows(
-    db: Session,
-    location_code: str | None = None,
-    tank_asset_code: str | None = None,
-    product_name: str | None = None,
-    date_from: str | None = None,
-    date_to: str | None = None,
-    status: str | None = "Active",
-):
-    query = db.query(TankStockLedger)
-
-    cleaned_location_code = clean_optional_text(location_code)
-    cleaned_tank_asset_code = clean_optional_text(tank_asset_code)
-    cleaned_product_name = clean_optional_text(product_name)
-    cleaned_status = clean_optional_text(status)
-
-    if cleaned_status:
-        query = query.filter(TankStockLedger.status == cleaned_status)
-
-    if cleaned_location_code:
-        query = query.filter(
-            TankStockLedger.location_code.ilike(cleaned_location_code)
-        )
-
-    if cleaned_tank_asset_code:
-        query = query.filter(
-            TankStockLedger.tank_asset_code.ilike(cleaned_tank_asset_code)
-        )
-
-    if cleaned_product_name:
-        query = query.filter(
-            TankStockLedger.product_name.ilike(cleaned_product_name)
-        )
-
-    date_from_value = parse_date_filter(date_from, "Date From")
-    date_to_value = parse_date_filter(date_to, "Date To")
-
-    if date_from_value:
-        query = query.filter(TankStockLedger.accounting_date >= date_from_value)
-
-    if date_to_value:
-        query = query.filter(TankStockLedger.accounting_date <= date_to_value)
-
-    rows = query.all()
-
-    rows = sorted(
-        rows,
-        key=lambda row: (
-            row.accounting_date or date.min,
-            get_ledger_operation_datetime(row) or datetime.min,
-            row.location_code or "",
-            row.tank_asset_code or "",
-            row.product_name or "",
-            row.id,
-        ),
-    )
-
-    return rows
 
 
 def _build_out_turn_transaction_payload_map(db: Session, transaction_ids: list[int]):
@@ -695,7 +636,7 @@ def build_out_turn_report_response_from_transaction(row: dict, db: Session):
             net_dispatch_mt = other_out_mt
 
     return {
-        "ledger_id": row.get("transaction_id", 0) * 100000 + (row.get("sequence") or 0),
+        "ledger_id": row.get("transaction_id", 0) * 1000000 + (row.get("sequence") or 0),
         "transaction_id": row.get("transaction_id"),
         "ticket_number": row.get("ticket_number") or "",
         "operation_number": row.get("operation_number") or "",
@@ -704,7 +645,7 @@ def build_out_turn_report_response_from_transaction(row: dict, db: Session):
         "location_code": row.get("location_code") or "",
         "location_name": location.location_name if location else "",
         "tank_asset_code": row.get("tank_asset_code") or "",
-        "tank_asset_name": "",
+        "tank_asset_name": getattr(get_asset_by_code(row.get("tank_asset_code") or "", db), "asset_name", ""),
         "product_name": row.get("product_name") or "",
         "tank_operation_code": row.get("tank_operation_code") or "",
         "tank_operation_label": row.get("tank_operation_label") or "",

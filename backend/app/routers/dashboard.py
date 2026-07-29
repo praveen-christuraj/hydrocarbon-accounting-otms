@@ -40,7 +40,7 @@ from app.dependencies.permissions import require_user_permission
 from app.services.audit_service import create_audit_log
 from app.utils.helpers import clean_optional_text, get_asset_by_code, get_current_user_display_name, get_location_by_code, safe_float
 from app.routers.shuttle_fso_voyages import get_shuttle_voyage_by_key
-from app.routers.tank_stock_ledger import build_fso_material_balance, build_fso_otr_report, build_fso_outturn_report
+from app.routers.reports import build_fso_material_balance, build_fso_otr_report, build_fso_outturn_report
 from app.services.transaction_helpers import approved_transaction_not_on_correction_hold
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])

@@ -1,16 +1,12 @@
 from datetime import datetime, timedelta, date, time as datetime_time
 from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
-import io
-import openpyxl
-from openpyxl.utils import get_column_letter
 
 from app.database import get_db
-from app.models import TankStockLedger, LocationAccountingDaySetting, MaterialBalanceTemplate, MaterialBalanceTemplateColumn, OperationTransaction, OperationTransactionValue, User
-from app.schemas import TankStockLedgerResponse, TankStockLedgerSummaryResponse, TankStockLedgerDailySummaryResponse, OutTurnReportResponse, MaterialBalanceDynamicReportResponse, FSOOTRReportResponse, FSOMaterialBalanceReportResponse, FSOOutturnReportResponse
+from app.models import TankStockLedger, LocationAccountingDaySetting, MaterialBalanceTemplate, MaterialBalanceTemplateColumn, User
+from app.schemas import TankStockLedgerResponse, TankStockLedgerSummaryResponse, TankStockLedgerDailySummaryResponse, MaterialBalanceDynamicReportResponse
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import require_user_permission
 from app.services.audit_service import create_audit_log
@@ -214,10 +210,9 @@ def get_tank_stock_rows_for_daily_summary(
     if cleaned_status:
         query = query.filter(TankStockLedger.status == cleaned_status)
 
-    if TankStockLedger.accounting_date != None:
-        query = query.filter(
-            TankStockLedger.accounting_date <= date_to_value,
-        )
+    query = query.filter(
+        TankStockLedger.accounting_date <= date_to_value,
+    )
 
     cleaned_location_code = clean_optional_text(location_code)
     cleaned_tank_asset_code = clean_optional_text(tank_asset_code)
@@ -357,6 +352,9 @@ def build_out_turn_report_response(
     other_out_nsv = 0
     other_out_lt = 0
     other_out_mt = 0
+
+    sign = str(row.tank_operation_sign or "").upper()
+    category = normalize_material_balance_category(row.tank_operation_category)
 
     if sign == "IN":
         if category == "RECEIPT":
@@ -781,9 +779,9 @@ def get_material_balance_rows_for_continuity(
     tank_asset_code: str | None,
     product_name: str | None,
     date_to_value: date,
+    status: str | None = "Active",
 ):
     query = db.query(TankStockLedger).filter(
-        TankStockLedger.status == "Active",
         TankStockLedger.accounting_date != None,
         TankStockLedger.accounting_date <= date_to_value,
     )
@@ -791,6 +789,10 @@ def get_material_balance_rows_for_continuity(
     cleaned_location_code = clean_optional_text(location_code)
     cleaned_tank_asset_code = clean_optional_text(tank_asset_code)
     cleaned_product_name = clean_optional_text(product_name)
+    cleaned_status = clean_optional_text(status)
+
+    if cleaned_status:
+        query = query.filter(TankStockLedger.status == cleaned_status)
 
     if cleaned_location_code:
         query = query.filter(
@@ -1130,316 +1132,7 @@ def consolidate_dynamic_material_balance_rows_by_location(
     )
 
 
-def build_fso_otr_report(
-    db: Session,
-    location_code: str,
-    fso_asset_code: str,
-    date_from: date,
-    date_to: date,
-    shuttle_number: str | None = None,
-):
-    from app.services.transaction_helpers import approved_transaction_not_on_correction_hold
 
-    loc_code = clean_optional_text(location_code)
-    asset_code = clean_optional_text(fso_asset_code)
-    sn = clean_optional_text(shuttle_number)
-
-    q = (
-        db.query(OperationTransaction, OperationTransactionValue)
-        .join(OperationTransactionValue, OperationTransactionValue.transaction_id == OperationTransaction.id)
-        .filter(
-            OperationTransaction.status == APPROVED_TRANSACTION_STATUS,
-            approved_transaction_not_on_correction_hold(db),
-            OperationTransaction.origin_location_code == loc_code,
-            OperationTransaction.primary_asset_code == asset_code,
-            OperationTransaction.operation_date >= date_from,
-            OperationTransaction.operation_date <= date_to,
-            OperationTransactionValue.field_code == "fso_payload",
-        )
-        .order_by(OperationTransaction.operation_date.asc(), OperationTransaction.id.asc())
-    )
-    if sn:
-        q = q.filter(OperationTransaction.convoy_number == sn)
-
-    rows = []
-    totals = {
-        "receipt": 0.0,
-        "export": 0.0,
-        "movement": 0.0,
-        "variance": 0.0,
-        "compare_variance": 0.0,
-    }
-
-    for tx, val in q.all():
-        payload = val.field_value if isinstance(val.field_value, dict) else {}
-        meta = payload.get("meta") or {}
-        inputs = payload.get("inputs") or {}
-        net = ((payload.get("calculated") or {}).get("net") or {})
-
-        event_time = inputs.get("event_time")
-        op_label = str(meta.get("operation_label") or "").strip() or "FSO"
-        op_sign = str(meta.get("operation_sign") or "").strip().upper()
-
-        net_stock = float(safe_float(net.get("net_stock_bbl")))
-        net_water = float(safe_float(net.get("net_water_bbl")))
-        movement_qty = abs(net_stock) + abs(net_water)
-
-        vessel_qty = float(safe_float(inputs.get("vessel_quantity_bbl")))
-        variance = abs(net_stock + net_water) - vessel_qty
-
-        src_discharge = float(safe_float(meta.get("source_shuttle_discharge_bbl")))
-        compare_var = movement_qty - src_discharge if op_sign == "IN" and src_discharge > 0 else 0.0
-
-        setting = get_active_location_day_setting(db, loc_code, tx.operation_date)
-        day_start = setting.day_start_time if setting else datetime_time(0, 0)
-        acc_date = compute_accounting_date(tx.operation_date, event_time, day_start)
-
-        row = {
-            "transaction_id": tx.id,
-            "ticket_number": get_transaction_ticket_number(tx),
-            "accounting_date": acc_date,
-            "operation_date": tx.operation_date,
-            "event_time": event_time,
-            "location_code": loc_code,
-            "fso_asset_code": asset_code,
-            "shuttle_number": inputs.get("shuttle_number") or meta.get("shuttle_number") or tx.convoy_number,
-            "operation_label": op_label,
-            "operation_sign": op_sign,
-            "vessel_name": inputs.get("vessel_name"),
-            "vessel_quantity_bbl": vessel_qty,
-            "opening_stock_bbl": float(safe_float(inputs.get("opening_stock_bbl"))),
-            "opening_water_bbl": float(safe_float(inputs.get("opening_water_bbl"))),
-            "closing_stock_bbl": float(safe_float(inputs.get("closing_stock_bbl"))),
-            "closing_water_bbl": float(safe_float(inputs.get("closing_water_bbl"))),
-            "net_stock_bbl": net_stock,
-            "net_water_bbl": net_water,
-            "movement_qty_bbl": movement_qty,
-            "variance_bbl": variance,
-            "source_shuttle_discharge_bbl": src_discharge,
-            "compare_variance_bbl": compare_var,
-            "remarks": inputs.get("remarks"),
-        }
-        rows.append(row)
-
-        totals["movement"] += movement_qty
-        totals["variance"] += variance
-        totals["compare_variance"] += compare_var
-        if op_sign == "IN":
-            totals["receipt"] += movement_qty
-        elif op_sign == "OUT":
-            totals["export"] += movement_qty
-
-    return rows, totals
-
-
-def build_fso_material_balance(
-    db: Session,
-    location_code: str,
-    fso_asset_code: str,
-    date_from: date,
-    date_to: date,
-):
-    from app.services.transaction_helpers import approved_transaction_not_on_correction_hold
-
-    loc_code = clean_optional_text(location_code)
-    asset_code = clean_optional_text(fso_asset_code)
-
-    q = (
-        db.query(OperationTransaction, OperationTransactionValue)
-        .join(OperationTransactionValue, OperationTransactionValue.transaction_id == OperationTransaction.id)
-        .filter(
-            OperationTransaction.status == APPROVED_TRANSACTION_STATUS,
-            approved_transaction_not_on_correction_hold(db),
-            OperationTransaction.origin_location_code == loc_code,
-            OperationTransaction.primary_asset_code == asset_code,
-            OperationTransaction.operation_date >= date_from,
-            OperationTransaction.operation_date <= date_to,
-            OperationTransactionValue.field_code == "fso_payload",
-        )
-        .order_by(OperationTransaction.operation_date.asc(), OperationTransaction.id.asc())
-    )
-
-    buckets = {}
-    for tx, val in q.all():
-        payload = val.field_value if isinstance(val.field_value, dict) else {}
-        meta = payload.get("meta") or {}
-        inputs = payload.get("inputs") or {}
-        net = ((payload.get("calculated") or {}).get("net") or {})
-
-        setting = get_active_location_day_setting(db, loc_code, tx.operation_date)
-        day_start = setting.day_start_time if setting else datetime_time(0, 0)
-        acc_date = compute_accounting_date(tx.operation_date, inputs.get("event_time"), day_start)
-
-        buckets.setdefault(acc_date, []).append((tx, meta, inputs, net))
-
-    dates = sorted([d for d in buckets.keys() if d >= date_from and d <= date_to])
-    rows = []
-    prev_physical_close = None
-
-    for acc_date in dates:
-        items = buckets[acc_date]
-
-        def sort_key(item):
-            tx, meta, inputs, net = item
-            t = inputs.get("event_time") or "00:00"
-            return (str(tx.operation_date), str(t), tx.id)
-
-        items = sorted(items, key=sort_key)
-
-        if prev_physical_close is None:
-            opening = float(safe_float(items[0][2].get("opening_stock_bbl")))
-        else:
-            opening = prev_physical_close
-
-        receipt = 0.0
-        export = 0.0
-
-        for tx, meta, inputs, net in items:
-            op_sign = str(meta.get("operation_sign") or "").strip().upper()
-            net_stock = float(safe_float(net.get("net_stock_bbl")))
-            net_water = float(safe_float(net.get("net_water_bbl")))
-            qty = abs(net_stock) + abs(net_water)
-
-            if op_sign == "IN":
-                receipt += qty
-            elif op_sign == "OUT":
-                export += qty
-
-        book_close = opening + receipt - export
-
-        last_inputs = items[-1][2]
-        physical_close = float(safe_float(last_inputs.get("closing_stock_bbl")))
-        physical_close_water = float(safe_float(last_inputs.get("closing_water_bbl")))
-        loss_gain = physical_close - book_close
-
-        rows.append(
-            {
-                "accounting_date": acc_date,
-                "opening_stock_bbl": opening,
-                "receipt_bbl": receipt,
-                "export_bbl": export,
-                "book_closing_bbl": book_close,
-                "physical_closing_bbl": physical_close,
-                "physical_closing_water_bbl": physical_close_water,
-                "loss_gain_bbl": loss_gain,
-            }
-        )
-
-        prev_physical_close = physical_close
-
-    return rows
-
-
-def build_fso_outturn_report(
-    db: Session,
-    location_code: str,
-    fso_asset_code: str,
-    date_from: date,
-    date_to: date,
-):
-    from app.services.transaction_helpers import approved_transaction_not_on_correction_hold
-
-    loc_code = clean_optional_text(location_code)
-    asset_code = clean_optional_text(fso_asset_code)
-
-    q = (
-        db.query(OperationTransaction, OperationTransactionValue)
-        .join(OperationTransactionValue, OperationTransactionValue.transaction_id == OperationTransaction.id)
-        .filter(
-            OperationTransaction.status == APPROVED_TRANSACTION_STATUS,
-            approved_transaction_not_on_correction_hold(db),
-            OperationTransaction.origin_location_code == loc_code,
-            OperationTransaction.primary_asset_code == asset_code,
-            OperationTransaction.operation_date >= date_from,
-            OperationTransaction.operation_date <= date_to,
-            OperationTransactionValue.field_code == "fso_payload",
-        )
-        .order_by(OperationTransaction.operation_date.asc(), OperationTransaction.id.asc())
-    )
-
-    def _sf(v):
-        try:
-            return float(v or 0.0)
-        except Exception:
-            return 0.0
-
-    def _abs_qty(net_stock, net_water):
-        return abs(_sf(net_stock)) + abs(_sf(net_water))
-
-    buckets = {}
-    for tx, val in q.all():
-        payload = val.field_value if isinstance(val.field_value, dict) else {}
-        meta = payload.get("meta") or {}
-        inputs = payload.get("inputs") or {}
-        net = ((payload.get("calculated") or {}).get("net") or {})
-
-        event_time = inputs.get("event_time")
-
-        setting = get_active_location_day_setting(db, loc_code, tx.operation_date)
-        day_start = setting.day_start_time if setting else datetime_time(0, 0)
-        acc_date = compute_accounting_date(tx.operation_date, event_time, day_start)
-
-        shuttle_no = (
-            inputs.get("shuttle_number")
-            or meta.get("shuttle_number")
-            or tx.convoy_number
-            or ""
-        ).strip()
-        if shuttle_no == "":
-            continue
-
-        key = (acc_date, shuttle_no)
-        buckets.setdefault(key, {"receipt": 0.0, "discharge": 0.0})
-
-        op_sign = str(meta.get("operation_sign") or "").strip().upper()
-
-        net_stock = net.get("net_stock_bbl")
-        net_water = net.get("net_water_bbl")
-        qty = _abs_qty(net_stock, net_water)
-
-        if op_sign == "IN":
-            buckets[key]["receipt"] += qty
-
-        src = meta.get("source_shuttle_discharge_bbl")
-        if src is not None:
-            buckets[key]["discharge"] = max(buckets[key]["discharge"], _sf(src))
-
-    rows = []
-    totals = {"discharge": 0.0, "receipt": 0.0, "variance": 0.0}
-
-    for (acc_date, shuttle_no) in sorted(buckets.keys()):
-        discharge = float(buckets[(acc_date, shuttle_no)]["discharge"])
-        receipt = float(buckets[(acc_date, shuttle_no)]["receipt"])
-        variance = receipt - discharge
-        pct = (variance / discharge * 100.0) if discharge != 0 else 0.0
-
-        rows.append(
-            {
-                "accounting_date": acc_date,
-                "shuttle_number": shuttle_no,
-                "shuttle_discharge_bbl": discharge,
-                "fso_receipt_bbl": receipt,
-                "variance_bbl": variance,
-                "variance_pct": pct,
-            }
-        )
-
-        totals["discharge"] += discharge
-        totals["receipt"] += receipt
-        totals["variance"] += variance
-
-    totals_pct = (totals["variance"] / totals["discharge"] * 100.0) if totals["discharge"] != 0 else 0.0
-    return rows, totals, totals_pct
-
-
-def _xlsx_autofit(ws):
-    for col in ws.columns:
-        max_len = 0
-        col_letter = get_column_letter(col[0].column)
-        for cell in col:
-            v = "" if cell.value is None else str(cell.value)
-            max_len = max(max_len, len(v))
-        ws.column_dimensions[col_letter].width = min(max(10, max_len + 2), 45)
 
 
 @router.get("", response_model=list[TankStockLedgerResponse])
@@ -1612,42 +1305,6 @@ def get_tank_stock_ledger_daily_summary(
         date_from_value=date_from_value,
         date_to_value=date_to_value,
     )
-
-
-@router.get(
-    "/out-turn-report",
-    response_model=list[OutTurnReportResponse],
-)
-def get_out_turn_report(
-    location_code: str | None = None,
-    tank_asset_code: str | None = None,
-    product_name: str | None = None,
-    date_from: str | None = None,
-    date_to: str | None = None,
-    status: str | None = "Active",
-    current_user: User = Depends(get_current_user_from_token),
-    db: Session = Depends(get_db),
-):
-    require_user_permission(
-        current_user,
-        "View Out-Turn Report",
-        db,
-    )
-
-    rows = get_out_turn_report_rows(
-        db=db,
-        location_code=location_code,
-        tank_asset_code=tank_asset_code,
-        product_name=product_name,
-        date_from=date_from,
-        date_to=date_to,
-        status=status,
-    )
-
-    return [
-        build_out_turn_report_response(row, db)
-        for row in rows
-    ]
 
 
 @router.get("/out-turn-report/validation")
@@ -1858,242 +1515,4 @@ def get_material_balance_report(
     }
 
 
-@router.get("/fso/reports/otr", response_model=FSOOTRReportResponse)
-def get_fso_otr_report(
-    location_code: str,
-    fso_asset_code: str,
-    date_from: str,
-    date_to: str,
-    shuttle_number: str | None = None,
-    current_user: User = Depends(get_current_user_from_token),
-    db: Session = Depends(get_db),
-):
-    require_user_permission(current_user, "View FSO Tracking", db)
-    df = parse_date_filter(date_from, "date_from")
-    dt = parse_date_filter(date_to, "date_to")
 
-    rows, totals = build_fso_otr_report(db, location_code, fso_asset_code, df, dt, shuttle_number)
-    return {
-        "rows": rows,
-        "total_receipt_bbl": totals["receipt"],
-        "total_export_bbl": totals["export"],
-        "total_movement_bbl": totals["movement"],
-        "total_variance_bbl": totals["variance"],
-        "total_compare_variance_bbl": totals["compare_variance"],
-    }
-
-
-@router.get("/fso/reports/material-balance", response_model=FSOMaterialBalanceReportResponse)
-def get_fso_material_balance_report(
-    location_code: str,
-    fso_asset_code: str,
-    date_from: str,
-    date_to: str,
-    current_user: User = Depends(get_current_user_from_token),
-    db: Session = Depends(get_db),
-):
-    require_user_permission(current_user, "View FSO Tracking", db)
-    df = parse_date_filter(date_from, "date_from")
-    dt = parse_date_filter(date_to, "date_to")
-    rows = build_fso_material_balance(db, location_code, fso_asset_code, df, dt)
-    return {"rows": rows}
-
-
-@router.get("/fso/reports/outturn", response_model=FSOOutturnReportResponse)
-def fso_report_outturn(
-    location_code: str,
-    fso_asset_code: str,
-    date_from: str,
-    date_to: str,
-    current_user: User = Depends(get_current_user_from_token),
-    db: Session = Depends(get_db),
-):
-    require_user_permission(current_user, "View FSO Tracking", db)
-    df = parse_date_filter(date_from, "date_from")
-    dt = parse_date_filter(date_to, "date_to")
-
-    rows, totals, totals_pct = build_fso_outturn_report(db, location_code, fso_asset_code, df, dt)
-    return {
-        "rows": rows,
-        "total_shuttle_discharge_bbl": totals["discharge"],
-        "total_fso_receipt_bbl": totals["receipt"],
-        "total_variance_bbl": totals["variance"],
-        "total_variance_pct": totals_pct,
-    }
-
-
-@router.get("/fso/reports/otr/export/xlsx")
-def fso_report_otr_xlsx(
-    location_code: str,
-    fso_asset_code: str,
-    date_from: str,
-    date_to: str,
-    shuttle_number: str | None = None,
-    current_user: User = Depends(get_current_user_from_token),
-    db: Session = Depends(get_db),
-):
-    require_user_permission(current_user, "View FSO Tracking", db)
-    df = parse_date_filter(date_from, "date_from")
-    dt = parse_date_filter(date_to, "date_to")
-    rows, totals = build_fso_otr_report(db, location_code, fso_asset_code, df, dt, shuttle_number)
-
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "FSO OTR"
-
-    headers = [
-        "Ticket", "Acc Date", "Op Date", "Time", "Operation", "Sign",
-        "Shuttle", "Vessel", "Vessel Qty",
-        "Open Stock", "Open Water", "Close Stock", "Close Water",
-        "Net Stock", "Net Water", "Move Qty",
-        "Variance", "Shuttle Discharge", "Compare Var", "Remarks",
-    ]
-    ws.append(headers)
-
-    for r in rows:
-        ws.append([
-            r["ticket_number"],
-            str(r["accounting_date"]),
-            str(r["operation_date"]),
-            r.get("event_time") or "",
-            r["operation_label"],
-            r["operation_sign"],
-            r.get("shuttle_number") or "",
-            r.get("vessel_name") or "",
-            round(float(r["vessel_quantity_bbl"]), 3),
-            round(float(r["opening_stock_bbl"]), 3),
-            round(float(r["opening_water_bbl"]), 3),
-            round(float(r["closing_stock_bbl"]), 3),
-            round(float(r["closing_water_bbl"]), 3),
-            round(float(r["net_stock_bbl"]), 3),
-            round(float(r["net_water_bbl"]), 3),
-            round(float(r["movement_qty_bbl"]), 3),
-            round(float(r["variance_bbl"]), 3),
-            round(float(r["source_shuttle_discharge_bbl"]), 3),
-            round(float(r["compare_variance_bbl"]), 3),
-            r.get("remarks") or "",
-        ])
-
-    ws2 = wb.create_sheet("Totals")
-    ws2.append(["Total Receipt", totals["receipt"]])
-    ws2.append(["Total Export", totals["export"]])
-    ws2.append(["Total Movement", totals["movement"]])
-    ws2.append(["Total Variance", totals["variance"]])
-    ws2.append(["Total Compare Variance", totals["compare_variance"]])
-
-    _xlsx_autofit(ws)
-    _xlsx_autofit(ws2)
-
-    stream = io.BytesIO()
-    wb.save(stream)
-    stream.seek(0)
-
-    filename = f"fso_otr_{location_code}_{fso_asset_code}_{date_from}_{date_to}.xlsx"
-    return StreamingResponse(
-        stream,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
-
-
-@router.get("/fso/reports/outturn/export/xlsx")
-def fso_report_outturn_xlsx(
-    location_code: str,
-    fso_asset_code: str,
-    date_from: str,
-    date_to: str,
-    current_user: User = Depends(get_current_user_from_token),
-    db: Session = Depends(get_db),
-):
-    require_user_permission(current_user, "View FSO Tracking", db)
-    df = parse_date_filter(date_from, "date_from")
-    dt = parse_date_filter(date_to, "date_to")
-
-    rows, totals, totals_pct = build_fso_outturn_report(db, location_code, fso_asset_code, df, dt)
-
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "FSO Outturn"
-
-    headers = ["Acc Date", "Shuttle Number", "Shuttle Discharge", "FSO Receipt", "Variance", "Variance %"]
-    ws.append(headers)
-
-    for r in rows:
-        ws.append([
-            str(r["accounting_date"]),
-            r["shuttle_number"],
-            round(float(r["shuttle_discharge_bbl"]), 3),
-            round(float(r["fso_receipt_bbl"]), 3),
-            round(float(r["variance_bbl"]), 3),
-            round(float(r["variance_pct"]), 3),
-        ])
-
-    ws2 = wb.create_sheet("Totals")
-    ws2.append(["Total Shuttle Discharge", totals["discharge"]])
-    ws2.append(["Total FSO Receipt", totals["receipt"]])
-    ws2.append(["Total Variance", totals["variance"]])
-    ws2.append(["Total Variance %", totals_pct])
-
-    _xlsx_autofit(ws)
-    _xlsx_autofit(ws2)
-
-    stream = io.BytesIO()
-    wb.save(stream)
-    stream.seek(0)
-
-    filename = f"fso_outturn_{location_code}_{fso_asset_code}_{date_from}_{date_to}.xlsx"
-    return StreamingResponse(
-        stream,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
-
-
-@router.get("/fso/reports/material-balance/export/xlsx")
-def fso_report_mb_xlsx(
-    location_code: str,
-    fso_asset_code: str,
-    date_from: str,
-    date_to: str,
-    current_user: User = Depends(get_current_user_from_token),
-    db: Session = Depends(get_db),
-):
-    require_user_permission(current_user, "View FSO Tracking", db)
-    df = parse_date_filter(date_from, "date_from")
-    dt = parse_date_filter(date_to, "date_to")
-    rows = build_fso_material_balance(db, location_code, fso_asset_code, df, dt)
-
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "FSO Material Balance"
-
-    headers = [
-        "Acc Date", "Opening", "Receipt", "Export",
-        "Book Closing", "Physical Closing", "Closing Water", "Loss/Gain",
-    ]
-    ws.append(headers)
-
-    for r in rows:
-        ws.append([
-            str(r["accounting_date"]),
-            round(float(r["opening_stock_bbl"]), 3),
-            round(float(r["receipt_bbl"]), 3),
-            round(float(r["export_bbl"]), 3),
-            round(float(r["book_closing_bbl"]), 3),
-            round(float(r["physical_closing_bbl"]), 3),
-            round(float(r["physical_closing_water_bbl"]), 3),
-            round(float(r["loss_gain_bbl"]), 3),
-        ])
-
-    _xlsx_autofit(ws)
-
-    stream = io.BytesIO()
-    wb.save(stream)
-    stream.seek(0)
-
-    filename = f"fso_mb_{location_code}_{fso_asset_code}_{date_from}_{date_to}.xlsx"
-    return StreamingResponse(
-        stream,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )

@@ -1066,13 +1066,16 @@ def create_tank_stock_ledger_from_approved_transaction(
                 existing.tank_operation_sign = op_sign
                 existing.updated_at = datetime.now()
             else:
+                asset_obj = get_asset_by_code(tank_key, db)
+                tank_asset_name = asset_obj.asset_name if asset_obj else tank_key
+
                 ledger = TankStockLedger(
                     transaction_id=transaction.id,
                     ticket_number=get_transaction_ticket_number(transaction),
                     operation_number=transaction.operation_number,
                     location_code=transaction.origin_location_code,
                     tank_asset_code=tank_key,
-                    tank_asset_name=tank_key,
+                    tank_asset_name=tank_asset_name,
                     operation_date=transaction.operation_date,
                     product_name=clean_optional_text(transaction.product_name),
                     accounting_date=transaction.operation_date,
@@ -1109,6 +1112,20 @@ def create_tank_stock_ledger_from_approved_transaction(
                 entries.append(ledger)
 
         if entries:
+            from app.routers.reports import rebuild_tank_stock_running_balances
+
+            rebuilt = set()
+            for e in entries:
+                key = (e.location_code, e.tank_asset_code, e.product_name)
+                if key not in rebuilt:
+                    rebuild_tank_stock_running_balances(
+                        db=db,
+                        location_code=e.location_code,
+                        tank_asset_code=e.tank_asset_code,
+                        product_name=e.product_name,
+                    )
+                    rebuilt.add(key)
+
             db.flush()
             return entries, transaction.origin_location_code, {}
 
