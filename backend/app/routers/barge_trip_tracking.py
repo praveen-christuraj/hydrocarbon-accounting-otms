@@ -39,6 +39,17 @@ from app.services.transaction_helpers import (
     require_approved_transaction_for_tracking,
     transaction_has_pending_correction_request,
 )
+from app.services.tracking_helpers import (
+    get_trip_by_convoy_or_none,
+    ensure_trip_not_closed,
+    load_multi_tank_payload,
+    build_multitank_comparison_json_v2 as build_multitank_comparison_json,
+    build_multitank_seal_checks,
+    resolve_comparison_stages,
+    get_payload_stage,
+    require_barge_tracking_ready_for_closure as _require_barge_tracking_ready_for_closure,
+    ensure_barge_unload_comparison as _ensure_barge_unload_comparison,
+)
 
 router = APIRouter(prefix="/barge-trip", tags=["Barge / Trip Tracking"])
 
@@ -47,395 +58,10 @@ class TripStatusUpdateRequest(BaseModel):
     remarks: str | None = None
 
 
-def get_trip_by_convoy_or_none(db: Session, convoy_number: str | None):
-    convoy = clean_optional_text(convoy_number)
-    if convoy is None:
-        return None
-    return db.query(Trip).filter(Trip.convoy_number.ilike(convoy)).first()
-
-
-def ensure_trip_not_closed(trip: Trip | None):
-    if not trip:
-        return
-    if str(trip.status or "").strip().upper() == "CLOSED":
-        raise HTTPException(
-            status_code=400,
-            detail="Trip is CLOSED for this convoy. Reopen the trip to continue.",
-        )
-
-
-def load_multi_tank_payload(db: Session, transaction_id: int):
-    row = (
-        db.query(OperationTransactionValue)
-        .filter(
-            OperationTransactionValue.transaction_id == transaction_id,
-            OperationTransactionValue.field_code == "multi_tank_payload",
-        )
-        .first()
-    )
-    if not row or row.field_value is None:
-        return None
-    if isinstance(row.field_value, dict):
-        return row.field_value
-    try:
-        return __import__("json").loads(str(row.field_value))
-    except Exception:
-        return None
-
-
-def resolve_comparison_stages(comparison_type: str):
-    t = (comparison_type or "").upper()
-    left_stage = "after"
-    right_stage = "before"
-    if "UNLOAD_BEFORE_VS_UNLOAD_AFTER" in t:
-        left_stage = "before"
-        right_stage = "after"
-    if "LOAD_PREV_VS_LOAD_CURRENT" in t:
-        left_stage = "after"
-        right_stage = "before"
-    if "LOAD_AFTER_VS_UNLOAD_BEFORE" in t:
-        left_stage = "after"
-        right_stage = "before"
-    return left_stage, right_stage
-
-
-def get_payload_stage(payload: dict, stage_key: str):
-    inputs = (payload.get("inputs") or {}).get(stage_key) or {}
-    per_tank = (payload.get("perTank") or {}).get(stage_key) or {}
-    totals = (payload.get("calculated") or {}).get(stage_key) or {}
-    return {
-        "inputs": inputs,
-        "per_tank": per_tank,
-        "totals": totals,
-    }
-
-
-def build_multitank_seal_checks(left_payload: dict, right_payload: dict):
-    def norm(v):
-        return str(v or "").strip()
-
-    left_temp = (((left_payload.get("seals") or {}).get("after") or {}).get("temporary") or {})
-    right_temp = (((right_payload.get("seals") or {}).get("before") or {}).get("temporary") or {})
-
-    seal_fields = [
-        ("C1", "sealC1"),
-        ("C2", "sealC2"),
-        ("M1", "sealM1"),
-        ("M2", "sealM2"),
-    ]
-
-    checks = []
-    for seal_name, key in seal_fields:
-        sender_val = norm(left_temp.get(key))
-        receiver_val = norm(right_temp.get(key))
-        status = "MATCH"
-        if sender_val == "" and receiver_val == "":
-            status = "MISSING_BOTH"
-        elif sender_val == "":
-            status = "MISSING_SENDER"
-        elif receiver_val == "":
-            status = "MISSING_RECEIVER"
-        elif sender_val != receiver_val:
-            status = "MISMATCH"
-        checks.append({
-            "seal_name": seal_name,
-            "sender": sender_val,
-            "receiver": receiver_val,
-            "status": status,
-        })
-
-    seal_mismatch = any(
-        c["status"] in ("MISMATCH", "MISSING_SENDER", "MISSING_RECEIVER")
-        for c in checks
-    )
-    return checks, seal_mismatch
-
-
-def build_multitank_comparison_json(
-    left_tx: OperationTransaction,
-    right_tx: OperationTransaction,
-    comparison_type: str,
-    left_payload: dict,
-    right_payload: dict,
-):
-    left_stage, right_stage = resolve_comparison_stages(comparison_type)
-    l = get_payload_stage(left_payload, left_stage)
-    r = get_payload_stage(right_payload, right_stage)
-
-    tank_ids = set()
-    tank_ids.update((left_payload.get("meta") or {}).get("tankIds") or [])
-    tank_ids.update((right_payload.get("meta") or {}).get("tankIds") or [])
-    tank_ids.update(list((l["per_tank"] or {}).keys()))
-    tank_ids.update(list((r["per_tank"] or {}).keys()))
-    tank_ids = [str(x) for x in tank_ids if str(x).strip()]
-    tank_ids.sort()
-
-    per_tank_rows = []
-    for tid in tank_ids:
-        lp = (l["per_tank"] or {}).get(tid) or {}
-        rp = (r["per_tank"] or {}).get(tid) or {}
-        per_tank_rows.append({
-            "tank_id": tid,
-            "left": {
-                "total_dip": lp.get("totalDip", 0),
-                "water_dip": lp.get("waterDip", 0),
-                "tov": lp.get("tovCorrected", 0),
-                "fw": lp.get("fwCorrected", 0),
-            },
-            "right": {
-                "total_dip": rp.get("totalDip", 0),
-                "water_dip": rp.get("waterDip", 0),
-                "tov": rp.get("tovCorrected", 0),
-                "fw": rp.get("fwCorrected", 0),
-            },
-            "delta": {
-                "tov": (lp.get("tovCorrected", 0) or 0) - (rp.get("tovCorrected", 0) or 0),
-                "fw": (lp.get("fwCorrected", 0) or 0) - (rp.get("fwCorrected", 0) or 0),
-            },
-        })
-
-    def pick_totals(obj: dict):
-        keys = [
-            "TOV", "FW", "GOV", "GSV", "BSW", "NSV", "LT", "MT",
-            "API60", "VCF", "ltFactor", "table11Method",
-        ]
-        return {k: obj.get(k) for k in keys if k in obj}
-
-    left_totals = pick_totals(l["totals"] or {})
-    right_totals = pick_totals(r["totals"] or {})
-
-    def n(v):
-        try:
-            return float(v)
-        except Exception:
-            return 0.0
-
-    delta_totals = {}
-    for k in ["TOV", "FW", "GOV", "GSV", "BSW", "NSV", "LT", "MT"]:
-        delta_totals[k] = n(left_totals.get(k)) - n(right_totals.get(k))
-
-    seal_checks, seal_mismatch = build_multitank_seal_checks(left_payload, right_payload)
-
-    summary_json = {
-        "comparison_type": comparison_type,
-        "asset_code": left_tx.primary_asset_code,
-        "seal_checks": seal_checks,
-        "seal_mismatch": seal_mismatch,
-        "left": {
-            "transaction_id": left_tx.id,
-            "ticket_number": get_transaction_ticket_number(left_tx),
-            "stage": left_stage,
-            "operation_date": str(left_tx.operation_date) if left_tx.operation_date else "",
-            "location_code": left_tx.origin_location_code or "",
-            "inputs": l["inputs"],
-            "totals": left_totals,
-        },
-        "right": {
-            "transaction_id": right_tx.id,
-            "ticket_number": get_transaction_ticket_number(right_tx),
-            "stage": right_stage,
-            "operation_date": str(right_tx.operation_date) if right_tx.operation_date else "",
-            "location_code": right_tx.origin_location_code or "",
-            "inputs": r["inputs"],
-            "totals": right_totals,
-        },
-        "delta": {"totals": delta_totals},
-        "units": {
-            "dip": ((left_payload.get("meta") or {}).get("inputXUnit") or "mm"),
-            "volume": ((left_payload.get("meta") or {}).get("outputUnit") or ""),
-        },
-    }
-
-    per_tank_json = {"tanks": per_tank_rows}
-    return summary_json, per_tank_json
-
-
-def require_barge_tracking_ready_for_closure(trip: Trip, db: Session):
-    approved_transactions = (
-        db.query(OperationTransaction)
-        .filter(
-            OperationTransaction.convoy_number.ilike(trip.convoy_number),
-            OperationTransaction.status == APPROVED_TRANSACTION_STATUS,
-            OperationTransaction.primary_asset_type_code.ilike("BARGE"),
-        )
-        .all()
-    )
-
-    approved_asset_codes = {
-        str(tx.primary_asset_code or "").strip()
-        for tx in approved_transactions
-        if str(tx.primary_asset_code or "").strip()
-    }
-
-    if len(approved_asset_codes) == 0:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot close barge movement because no Approved barge tickets were found.",
-        )
-
-    if len(approved_transactions) < 2:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot close barge movement before both sender and receiver transactions are Approved.",
-        )
-
-    comparisons = (
-        db.query(TripComparison)
-        .filter(TripComparison.trip_id == trip.id)
-        .all()
-    )
-
-    compared_asset_codes = set()
-    for comparison in comparisons:
-        if str(comparison.comparison_type or "").strip() != "LOAD_AFTER_vs_UNLOAD_BEFORE":
-            continue
-
-        left_tx = (
-            db.query(OperationTransaction)
-            .filter(OperationTransaction.id == comparison.left_transaction_id)
-            .first()
-        )
-        right_tx = (
-            db.query(OperationTransaction)
-            .filter(OperationTransaction.id == comparison.right_transaction_id)
-            .first()
-        )
-
-        if not left_tx or not right_tx:
-            continue
-        if left_tx.status != APPROVED_TRANSACTION_STATUS:
-            continue
-        if right_tx.status != APPROVED_TRANSACTION_STATUS:
-            continue
-        if transaction_has_pending_correction_request(db, left_tx.id):
-            continue
-        if transaction_has_pending_correction_request(db, right_tx.id):
-            continue
-        if str(left_tx.primary_asset_code or "").strip().lower() != str(
-            right_tx.primary_asset_code or ""
-        ).strip().lower():
-            continue
-
-        asset_code = str(left_tx.primary_asset_code or "").strip()
-        if asset_code:
-            compared_asset_codes.add(asset_code)
-
-    pending_asset_codes = sorted(list(approved_asset_codes - compared_asset_codes))
-    if pending_asset_codes:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot close convoy because comparison is pending for barge(s): " + ", ".join(pending_asset_codes),
-        )
-
-
-def ensure_barge_unload_comparison(
-    db: Session,
-    trip: Trip,
-    asset_code: str,
-    unload_tx: OperationTransaction,
-    current_user: User,
-    remarks: str | None = None,
-):
-    if not trip or not unload_tx:
-        return None
-
-    require_approved_transaction_for_tracking(unload_tx, "barge comparison", db=db)
-
-    asset = str(asset_code or "").strip()
-    if not asset:
-        return None
-
-    comparison_type = "LOAD_AFTER_vs_UNLOAD_BEFORE"
-
-    latest_load_event = (
-        db.query(TripEvent)
-        .filter(
-            TripEvent.trip_id == trip.id,
-            TripEvent.asset_code == asset,
-            TripEvent.event_type.in_(["LOAD_1", "LOAD_2_TOPUP"]),
-            TripEvent.operation_transaction_id.isnot(None),
-        )
-        .order_by(TripEvent.sequence_no.desc(), TripEvent.id.desc())
-        .first()
-    )
-
-    if not latest_load_event or not latest_load_event.operation_transaction_id:
-        return None
-
-    left_tx = (
-        db.query(OperationTransaction)
-        .filter(OperationTransaction.id == latest_load_event.operation_transaction_id)
-        .first()
-    )
-
-    require_approved_transaction_for_tracking(left_tx, "barge comparison", db=db)
-
-    existing = (
-        db.query(TripComparison)
-        .filter(
-            TripComparison.trip_id == trip.id,
-            TripComparison.comparison_type == comparison_type,
-            TripComparison.left_transaction_id == left_tx.id,
-            TripComparison.right_transaction_id == unload_tx.id,
-        )
-        .first()
-    )
-    if existing:
-        return existing
-
-    left_payload = load_multi_tank_payload(db, left_tx.id)
-    right_payload = load_multi_tank_payload(db, unload_tx.id)
-
-    if not left_payload or not right_payload:
-        return None
-
-    summary_json, per_tank_json = build_multitank_comparison_json(
-        left_tx=left_tx,
-        right_tx=unload_tx,
-        comparison_type=comparison_type,
-        left_payload=left_payload,
-        right_payload=right_payload,
-    )
-
-    created_by_display = get_current_user_display_name(current_user)
-
-    new_cmp = TripComparison(
-        trip_id=trip.id,
-        comparison_type=comparison_type,
-        left_transaction_id=left_tx.id,
-        right_transaction_id=unload_tx.id,
-        summary_json=summary_json,
-        per_tank_json=per_tank_json,
-        created_by=created_by_display,
-        remarks=clean_optional_text(remarks) or "Auto-created on UNLOAD event tagging",
-    )
-
-    db.add(new_cmp)
-    db.flush()
-
-    create_audit_log(
-        db=db,
-        module_name="Barge Tracking",
-        action="Auto Create Barge Comparison",
-        current_user=current_user,
-        entity_type="TripComparison",
-        entity_id=new_cmp.id,
-        entity_label=f"{trip.convoy_number} | {asset} | {comparison_type}",
-        ticket_number=get_transaction_ticket_number(left_tx),
-        operation_number=left_tx.operation_number,
-        remarks="Auto-created from trip event tagging",
-        request_path="/barge-trip/trip-events",
-        details={
-            "convoy_number": trip.convoy_number,
-            "trip_id": trip.id,
-            "asset_code": asset,
-            "comparison_type": comparison_type,
-            "left_transaction_id": left_tx.id,
-            "right_transaction_id": unload_tx.id,
-        },
-    )
-
-    return new_cmp
+# All helper functions delegated to app.services.tracking_helpers
+# ---------------------------------------------------------------------------
+# The canonical implementations live in app/services/tracking_helpers.py
+# ---------------------------------------------------------------------------
 
 
 @router.get("/convoy-tracker", response_model=ConvoyTrackerResponse)
@@ -491,12 +117,13 @@ def get_convoy_tracker(
     }
 
 
-@router.get("/barge-tracking", response_model=ConvoyTrackerResponse)
+@router.get("/barge-tracking", response_model=ConvoyTrackerResponse, deprecated=True, description="Deprecated: use GET /barge-trip/convoy-tracker instead")
 def get_barge_tracking(
     convoy_number: str,
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
+    """Deprecated. Delegates to /barge-trip/convoy-tracker."""
     return get_convoy_tracker(
         convoy_number=convoy_number,
         current_user=current_user,
@@ -577,7 +204,7 @@ def create_trip_event(
                 trip_for_cmp = db.query(Trip).filter(Trip.convoy_number.ilike(convoy)).first()
                 if trip_for_cmp:
                     ensure_trip_not_closed(trip_for_cmp)
-                    ensure_barge_unload_comparison(
+                    _ensure_barge_unload_comparison(
                         db=db,
                         trip=trip_for_cmp,
                         asset_code=asset_code,
@@ -728,7 +355,7 @@ def create_trip_event(
     )
 
     if tx and str(new_event.event_type or "").strip().upper() == "UNLOAD":
-        ensure_barge_unload_comparison(
+        _ensure_barge_unload_comparison(
             db=db,
             trip=trip,
             asset_code=asset_code,
@@ -1035,7 +662,7 @@ def close_trip(
     if str(trip.status or "").upper() == "CLOSED":
         return {"message": "Barge movement already CLOSED", "trip_id": trip.id, "status": trip.status}
 
-    require_barge_tracking_ready_for_closure(trip, db)
+    _require_barge_tracking_ready_for_closure(trip, db)
 
     before_status = trip.status
     trip.status = "CLOSED"

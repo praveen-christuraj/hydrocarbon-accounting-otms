@@ -75,8 +75,8 @@ function ExportOperations({ loggedInUser }) {
   ]
 
   return (
-    <div>
-      <div className="page-title">
+    <div className="export-operations-page">
+      <div className="page-title no-print">
         <div>
           <h2>Export Operations</h2>
           <p>Manage export volumes, permits, and configurations across locations and entities.</p>
@@ -131,7 +131,26 @@ function DashboardTab({ loggedInUser }) {
 
   useEffect(() => { load() }, [])
 
-  const kpiColors = ['#e3f2fd', '#e8f5e9', '#fff3e0', '#f3e5f5', '#e0f7fa', '#fce4ec', '#e8eaf6', '#fff8e1']
+  const blockColumns = useMemo(() => {
+    if (!dash?.blocks_summary?.length) return []
+    return [...new Set(dash.blocks_summary.map((b) => b.block_code))].sort()
+  }, [dash])
+
+  const groupedBlockRows = useMemo(() => {
+    if (!dash?.blocks_summary?.length) return []
+    const map = {}
+    dash.blocks_summary.forEach((b) => {
+      const key = `${b.location_code}|${b.entity_code}|${b.quarter}`
+      if (!map[key]) {
+        map[key] = { location_name: b.location_name, location_code: b.location_code, entity_name: b.entity_name, entity_code: b.entity_code, quarter: b.quarter, permit_count: 0, total_export: 0, total_permit: 0, blocks: {} }
+      }
+      map[key].blocks[b.block_code] = b
+      map[key].permit_count += b.permit_count
+      map[key].total_export += b.export_volume
+      map[key].total_permit += b.permit_volume
+    })
+    return Object.values(map)
+  }, [dash])
 
   return (
     <div>
@@ -168,39 +187,6 @@ function DashboardTab({ loggedInUser }) {
       </div>
       {dash && (
         <>
-          {/* Dynamic per-location KPI cards */}
-          {(dash.locations_kpi || []).length > 0 && (
-            <div className="kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '1rem', margin: '1rem 0' }}>
-              {(dash.locations_kpi || []).map((loc, idx) => (
-                <div key={loc.location_code} className="kpi-card" style={{ background: kpiColors[idx % kpiColors.length], padding: '1rem', borderRadius: '8px', textAlign: 'center' }}>
-                  <p style={{ margin: 0, fontWeight: 600, fontSize: '0.9rem', color: '#333' }}>{loc.location_name}</p>
-                  <h3 style={{ margin: '0.25rem 0', fontSize: '1.8rem' }}>{fmt(loc.total_export_volume)}</h3>
-                  <p style={{ margin: 0, fontSize: '0.8rem', color: '#666' }}>Exported</p>
-                  <p style={{ margin: '0.25rem 0 0', fontSize: '0.8rem', color: '#666' }}>Permit: {fmt(loc.total_permit_volume)} | Remaining: {fmt(loc.total_remaining_volume)}</p>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Overall totals */}
-          <div className="kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '1rem', margin: '1rem 0' }}>
-            <div className="kpi-card" style={{ background: '#e3f2fd', padding: '1rem', borderRadius: '8px', textAlign: 'center' }}>
-              <h3 style={{ margin: 0, fontSize: '2rem' }}>{fmt(dash.total_export_volume)}</h3>
-              <p style={{ margin: '0.25rem 0 0', color: '#555' }}>Total Exported</p>
-            </div>
-            <div className="kpi-card" style={{ background: '#e8f5e9', padding: '1rem', borderRadius: '8px', textAlign: 'center' }}>
-              <h3 style={{ margin: 0, fontSize: '2rem' }}>{dash.total_permits}</h3>
-              <p style={{ margin: '0.25rem 0 0', color: '#555' }}>Active Permits</p>
-            </div>
-            <div className="kpi-card" style={{ background: '#fff3e0', padding: '1rem', borderRadius: '8px', textAlign: 'center' }}>
-              <h3 style={{ margin: 0, fontSize: '2rem' }}>{fmt(dash.total_permit_volume)}</h3>
-              <p style={{ margin: '0.25rem 0 0', color: '#555' }}>Total Permit Vol</p>
-            </div>
-            <div className="kpi-card" style={{ background: '#f3e5f5', padding: '1rem', borderRadius: '8px', textAlign: 'center' }}>
-              <h3 style={{ margin: 0, fontSize: '2rem' }}>{fmt(dash.total_remaining_permit_volume)}</h3>
-              <p style={{ margin: '0.25rem 0 0', color: '#555' }}>Remaining Permit Vol</p>
-            </div>
-          </div>
 
           {dash.permit_insufficient_count > 0 && (
             <div className="warn-box" style={{ background: '#fff3cd', border: '1px solid #ffc107', padding: '1rem', borderRadius: '8px', marginBottom: '1rem' }}>
@@ -208,24 +194,34 @@ function DashboardTab({ loggedInUser }) {
             </div>
           )}
 
-          {/* Block Summary Table */}
-          <div className="section-title"><h3>Blocks Summary (Export vs Permit)</h3></div>
-          <table>
-            <thead><tr><th>Location</th><th>Entity</th><th>Block</th><th>Quarter</th><th>Export Vol</th><th>Permit Vol</th><th>Used Permit</th><th>Remaining</th><th>Usage %</th><th>Permits</th></tr></thead>
-            <tbody>
-              {!dash.blocks_summary?.length ? <tr><td colSpan="10" className="empty-table">No data</td></tr> :
-                dash.blocks_summary.map((b, idx) => (
-                  <tr key={idx} style={b.usage_pct >= dash.insufficient_threshold_pct ? { background: '#fff3cd' } : {}}>
-                    <td>{b.location_name}</td><td>{b.entity_name || '-'}</td>
-                    <td>{b.block_name}</td><td>{b.quarter || '-'}</td>
-                    <td>{fmt(b.export_volume)}</td><td>{fmt(b.permit_volume)}</td>
-                    <td>{fmt(b.used_permit_volume)}</td><td>{fmt(b.remaining_permit_volume)}</td>
-                    <td>{b.usage_pct}%</td><td>{b.permit_count}</td>
-                  </tr>
-                ))
-              }
-            </tbody>
-          </table>
+          {/* Block Summary Table — blocks as columns */}
+          <div className="section-title"><h3>Blocks Summary</h3></div>
+          <div style={{ overflowX: 'auto' }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Location</th><th>Entity</th><th>Quarter</th><th>Permits</th>
+                  {blockColumns.map((bc) => <th key={bc} colSpan={2}>{bc}<br /><span style={{ fontWeight: 400, fontSize: '0.75rem' }}>Export / Permit</span></th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {!groupedBlockRows.length ? <tr><td colSpan={3 + blockColumns.length * 2} className="empty-table">No data</td></tr> :
+                  groupedBlockRows.map((g, idx) => (
+                    <tr key={idx}>
+                      <td>{g.location_name}</td><td>{g.entity_name || '-'}</td><td>{g.quarter || '-'}</td><td>{g.permit_count}</td>
+                      {blockColumns.map((bc) => {
+                        const b = g.blocks[bc]
+                        return [
+                          <td key={`${bc}-exp`} style={b && b.usage_pct >= (dash?.insufficient_threshold_pct || 90) ? { background: '#fff3cd' } : {}}>{b ? fmt(b.export_volume) : '-'}</td>,
+                          <td key={`${bc}-per`} style={{ fontSize: '0.8rem' }}>{b ? fmt(b.permit_volume) : '-'}</td>,
+                        ]
+                      })}
+                    </tr>
+                  ))
+                }
+              </tbody>
+            </table>
+          </div>
 
           {/* Recent Exports */}
           <div className="section-title" style={{ marginTop: '1rem' }}><h3>Recent Exports (Last 10)</h3></div>
@@ -721,23 +717,41 @@ function DataEntryTab({ loggedInUser, canManage }) {
       </form>
 
       <div className="section-title"><h3>Export Transactions ({txns.length})</h3></div>
-      <table>
-        <thead><tr><th>BL Date</th><th>Vessel</th><th>Quarter</th><th>Location</th><th>Entity</th><th>Block</th><th>Volume</th><th>Consignee</th><th>Destination</th><th>Country</th><th>Permit #</th><th>Remarks</th><th>Action</th></tr></thead>
-        <tbody>
-          {!txns.length ? <tr><td colSpan="13" className="empty-table">No export transactions.</td></tr> :
-            txns.map((tx) => (
-              <tr key={tx.id}>
-                <td>{tx.bl_date}</td><td>{tx.vessel_name || '-'}</td><td>{tx.quarter}</td><td>{tx.location_name || tx.location_code}</td>
-                <td>{tx.entity_name || tx.entity_code}</td><td>{tx.block_name || tx.block_code}</td>
-                <td>{fmt(tx.volume)}</td><td>{tx.consignee}</td><td>{tx.destination}</td>
-                <td>{tx.country}</td><td>{tx.permit_number || '-'}</td>
-                <td style={{ maxWidth: '150px', whiteSpace: 'normal', wordBreak: 'break-word' }}>{tx.remarks || '-'}</td>
-                <td><button onClick={() => startEdit(tx)} disabled={!canManage}>Edit</button><button onClick={() => remove(tx)} disabled={!canManage}>Delete</button></td>
-              </tr>
-            ))
-          }
-        </tbody>
-      </table>
+      <div style={{ overflowX: 'auto' }}>
+        <table>
+          <thead><tr><th>BL Date</th><th>Vessel</th><th>Quarter</th><th>Location</th><th>Entity</th><th colSpan={2}>Consignee / Dest.</th><th>Permit #</th><th>Remarks</th><th>Action</th></tr></thead>
+          <tbody>
+            {!txns.length ? <tr><td colSpan="10" className="empty-table">No export transactions.</td></tr> :
+              (() => {
+                const grouped = {}
+                txns.forEach((tx) => {
+                  const key = `${tx.bl_date}|${tx.vessel_name || ''}|${tx.location_code}|${tx.entity_code}|${tx.consignee}|${tx.destination}|${tx.country}|${tx.quarter}|${tx.permit_number || ''}`
+                  if (!grouped[key]) {
+                    grouped[key] = { ...tx, blockEntries: [] }
+                  }
+                  grouped[key].blockEntries.push({ block_name: tx.block_name || tx.block_code, block_code: tx.block_code, volume: tx.volume })
+                })
+                return Object.values(grouped).map((g) => (
+                  <tr key={g.id}>
+                    <td rowSpan={1}>{g.bl_date}</td><td>{g.vessel_name || '-'}</td><td>{g.quarter}</td>
+                    <td>{g.location_name || g.location_code}</td><td>{g.entity_name || g.entity_code}</td>
+                    <td colSpan={2}>{g.consignee} / {g.destination} / {g.country}</td>
+                    <td>{g.permit_number || '-'}</td>
+                    <td style={{ maxWidth: '120px', whiteSpace: 'normal', wordBreak: 'break-word' }}>{g.remarks || '-'}</td>
+                    <td>
+                      {g.blockEntries.map((be, bi) => (
+                        <div key={bi} style={{ fontSize: '0.85rem', whiteSpace: 'nowrap' }}>{be.block_name}: {fmt(be.volume)}</div>
+                      ))}
+                      <button onClick={() => startEdit(txns.find(t => t.id === g.id))} disabled={!canManage} style={{ marginTop: '0.25rem' }}>Edit</button>
+                      <button onClick={() => remove(txns.find(t => t.id === g.id))} disabled={!canManage}>Delete</button>
+                    </td>
+                  </tr>
+                ))
+              })()
+            }
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
@@ -1141,7 +1155,7 @@ function PermitConfig({ canManage }) {
     if (m < 9) return 'Q3'
     return 'Q4'
   }
-  const [form, setForm] = useState({ permit_number: '', location_code: '', entity_code: '', block_code: '', permit_quarter: getCurrentQuarter(), permit_year: new Date().getFullYear(), permit_volume: '', supplementary_permit: 'No', permit_status: 'Active', permit_remarks: '' })
+  const [form, setForm] = useState({ permit_number: '', location_code: '', entity_code: '', block_code: '', block_codes: [], permit_quarter: getCurrentQuarter(), permit_year: new Date().getFullYear(), permit_volume: '', supplementary_permit: 'No', permit_status: 'Active', permit_remarks: '' })
   const [editing, setEditing] = useState(null)
   const [loading, setLoading] = useState(false)
   const [filters, setFilters] = useState({ location_code: '' })
@@ -1174,7 +1188,7 @@ function PermitConfig({ canManage }) {
 
   const handleEntityChange = (e) => {
     const entityCode = e.target.value
-    setForm((c) => ({ ...c, entity_code: entityCode, block_code: '' }))
+    setForm((c) => ({ ...c, entity_code: entityCode, block_code: '', block_codes: [] }))
   }
 
   const getFilteredBlocks = (entityCode) => {
@@ -1322,8 +1336,10 @@ function PermitConfig({ canManage }) {
     if (!canManage) return
     try {
       setLoading(true)
+      const blockCodes = form.block_codes?.length ? form.block_codes : (form.block_code ? [form.block_code] : [])
       const payload = {
         ...form,
+        block_codes: blockCodes,
         quarter: buildPermitQuarterValue(form.permit_quarter, form.permit_year),
         permit_volume: Number(form.permit_volume || 0),
         status: form.permit_status,
@@ -1331,7 +1347,7 @@ function PermitConfig({ canManage }) {
       }
       if (editing?.id) await updateExportPermit(editing.id, payload)
       else await createExportPermit(payload)
-      setEditing(null); setForm({ permit_number: '', location_code: '', entity_code: '', block_code: '', permit_quarter: getCurrentQuarter(), permit_year: new Date().getFullYear(), permit_volume: '', supplementary_permit: 'No', permit_status: 'Active', permit_remarks: '' }); setSuccessMsg(editing?.id ? 'Permit updated successfully' : 'Permit created successfully'); await load()
+      setEditing(null); setForm({ permit_number: '', location_code: '', entity_code: '', block_code: '', block_codes: [], permit_quarter: getCurrentQuarter(), permit_year: new Date().getFullYear(), permit_volume: '', supplementary_permit: 'No', permit_status: 'Active', permit_remarks: '' }); setSuccessMsg(editing?.id ? 'Permit updated successfully' : 'Permit created successfully'); await load()
     } catch (e) { alert(e.message) } finally { setLoading(false) }
   }
 
@@ -1479,11 +1495,28 @@ function PermitConfig({ canManage }) {
             {sortOptions(entities, 'entity_name', 'entity_code')}
           </select>
         </div>
-        <div><label>Block *</label>
-          <select value={form.block_code} onChange={(e) => setForm((c) => ({ ...c, block_code: e.target.value }))} required disabled={!canManage}>
-            <option value="">Select</option>
-            {sortOptions(filteredBlocks, 'block_name', 'block_code')}
-          </select>
+        <div style={{ gridColumn: '1 / -1' }}><label>Blocks (check all that apply)</label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginTop: '0.25rem' }}>
+            {filteredBlocks.map((b) => {
+              const checked = form.block_codes?.includes(b.block_code) || (!form.block_codes?.length && form.block_code === b.block_code)
+              return (
+                <label key={b.block_code} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer', padding: '0.25rem 0.5rem', borderRadius: '4px', background: checked ? '#e3f2fd' : '#f5f5f5', border: '1px solid ' + (checked ? '#1976d2' : '#ddd') }}>
+                  <input type="checkbox" checked={checked} onChange={() => {
+                    const cur = form.block_codes || []
+                    let next
+                    if (checked) {
+                      next = cur.filter((x) => x !== b.block_code)
+                    } else {
+                      next = [...cur, b.block_code]
+                    }
+                    setForm((c) => ({ ...c, block_codes: next, block_code: next[0] || b.block_code }))
+                  }} disabled={!canManage} />
+                  {b.block_name} ({b.block_code})
+                </label>
+              )
+            })}
+            {!filteredBlocks.length && <span style={{ color: '#999' }}>No blocks available for selected entity</span>}
+          </div>
         </div>
         <div><label>Quarter *</label>
           <select value={form.permit_quarter} onChange={(e) => setForm((c) => ({ ...c, permit_quarter: e.target.value }))} required disabled={!canManage}>
@@ -1511,23 +1544,25 @@ function PermitConfig({ canManage }) {
         <div><label>Remarks</label><input value={form.permit_remarks} onChange={(e) => setForm((c) => ({ ...c, permit_remarks: e.target.value }))} disabled={!canManage} /></div>
         <div>
           <button type="submit" disabled={loading || !canManage}>{loading ? '...' : editing?.id ? 'Update' : 'Add'}</button>
-          {editing && <button onClick={() => { setEditing(null); setForm({ permit_number: '', location_code: '', entity_code: '', block_code: '', permit_quarter: getCurrentQuarter(), permit_year: new Date().getFullYear(), permit_volume: '', supplementary_permit: 'No', permit_status: 'Active', permit_remarks: '' }) }}>Cancel</button>}
+          {editing && <button onClick={() => { setEditing(null); setForm({ permit_number: '', location_code: '', entity_code: '', block_code: '', block_codes: [], permit_quarter: getCurrentQuarter(), permit_year: new Date().getFullYear(), permit_volume: '', supplementary_permit: 'No', permit_status: 'Active', permit_remarks: '' }) }}>Cancel</button>}
         </div>
       </form>
       <table>
-        <thead><tr><th>Permit #</th><th>Quarter</th><th>Location</th><th>Entity</th><th>Block</th><th>Permit Vol</th><th>Used</th><th>Remaining</th><th>Suppl.</th><th>Status</th><th>Remarks</th><th>Action</th></tr></thead>
+        <thead><tr><th>Permit #</th><th>Quarter</th><th>Location</th><th>Entity</th><th>Blocks</th><th>Permit Vol</th><th>Used</th><th>Remaining</th><th>Suppl.</th><th>Status</th><th>Remarks</th><th>Action</th></tr></thead>
         <tbody>
           {!items.length ? <tr><td colSpan="12" className="empty-table">No permits</td></tr> :
             items.map((i) => (
               <tr key={i.id}>
                 <td>{i.permit_number}</td><td>{i.quarter}</td><td>{i.location_name || i.location_code}</td>
-                <td>{i.entity_name || i.entity_code}</td><td>{i.block_name || i.block_code}</td>
+                <td>{i.entity_name || i.entity_code}</td>
+                <td>{(i.block_names && i.block_names.length ? i.block_names : [i.block_name || i.block_code]).join(', ')}</td>
                 <td>{fmt(i.permit_volume)}</td><td>{fmt(i.used_volume)}</td><td>{fmt(i.remaining_volume)}</td>
                 <td>{i.supplementary_permit}</td><td>{i.status}</td><td>{i.remarks || '-'}</td>
                 <td><button onClick={() => {
                   const parsed = splitPermitQuarterValue(i.quarter)
+                  const codes = (i.block_codes && i.block_codes.length ? i.block_codes : [i.block_code].filter(Boolean))
                   setEditing(i)
-                  setForm({ permit_number: i.permit_number, location_code: i.location_code, entity_code: i.entity_code, block_code: i.block_code, permit_quarter: parsed.quarter, permit_year: parsed.year, permit_volume: i.permit_volume, supplementary_permit: i.supplementary_permit, permit_status: i.status || 'Active', permit_remarks: i.remarks || '' })
+                  setForm({ permit_number: i.permit_number, location_code: i.location_code, entity_code: i.entity_code, block_code: codes[0] || '', block_codes: codes, permit_quarter: parsed.quarter, permit_year: parsed.year, permit_volume: i.permit_volume, supplementary_permit: i.supplementary_permit, permit_status: i.status || 'Active', permit_remarks: i.remarks || '' })
                 }} disabled={!canManage}>Edit</button>
                 <button onClick={() => remove(i)} disabled={!canManage}>Delete</button></td>
               </tr>

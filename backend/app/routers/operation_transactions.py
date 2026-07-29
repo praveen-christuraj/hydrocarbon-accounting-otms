@@ -52,6 +52,12 @@ from app.routers.operation_tasks import (
     close_operation_approval_tasks_for_transaction,
 )
 from app.services.transaction_helpers import get_operation_type_by_code
+from app.services.tracking_helpers import (
+    get_trip_by_convoy_or_none,
+    ensure_trip_not_closed,
+    get_or_create_shuttle_voyage_v2 as _get_or_create_shuttle_voyage_v2,
+    load_multi_tank_payload as _load_multi_tank_payload_v2,
+)
 
 router = APIRouter(prefix="/operation-transactions", tags=["Operation Transactions"])
 
@@ -103,20 +109,6 @@ def generate_operation_ticket_number(db, location_code, asset_code, operation_da
             continue
     next_serial_number = max(serial_numbers) + 1 if serial_numbers else 1
     return f"{ticket_prefix}-{next_serial_number:03d}"
-
-
-def normalize_jsonb_value(value):
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value.isoformat()
-    if hasattr(value, "isoformat"):
-        return value.isoformat()
-    if isinstance(value, list):
-        return [normalize_jsonb_value(item) for item in value]
-    if isinstance(value, dict):
-        return {str(key): normalize_jsonb_value(item_value) for key, item_value in value.items()}
-    return value
 
 
 def build_operation_transaction_response(
@@ -445,30 +437,27 @@ def get_filtered_operation_transaction_rows(
 # a shared module like app.services.trip_service or app.services.operation_service)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Shared helper functions delegated to app.services.tracking_helpers
+# ---------------------------------------------------------------------------
+# Canonical implementations live in app/services/tracking_helpers.py
+#
+# These wrapper functions preserve the local signature so existing callers
+# within this module continue to work without changes.
+
 def get_trip_by_convoy_or_none(db: Session, convoy_number: str | None):
-    if not convoy_number:
-        return None
-    return db.query(Trip).filter(Trip.convoy_number.ilike(convoy_number)).first()
+    from app.services.tracking_helpers import get_trip_by_convoy_or_none as _fn
+    return _fn(db, convoy_number)
 
 
 def ensure_trip_not_closed(trip: Trip | None):
-    if trip is None:
-        return
-    if str(trip.status or "").strip().upper() == "CLOSED":
-        raise HTTPException(
-            status_code=400,
-            detail=f"Trip '{trip.convoy_number}' is already CLOSED. Cannot modify.",
-        )
+    from app.services.tracking_helpers import ensure_trip_not_closed as _fn
+    return _fn(trip)
 
 
 def ensure_shuttle_voyage_not_closed(voyage: ShuttleVoyage | None):
-    if voyage is None:
-        return
-    if str(voyage.status or "").strip().upper() == "CLOSED":
-        raise HTTPException(
-            status_code=400,
-            detail=f"Shuttle voyage '{voyage.voyage_number}' is already CLOSED.",
-        )
+    from app.services.tracking_helpers import ensure_shuttle_voyage_not_closed as _fn
+    return _fn(voyage)
 
 
 def get_or_create_shuttle_voyage(
@@ -478,64 +467,13 @@ def get_or_create_shuttle_voyage(
     shuttle_asset_code: str,
     current_user: User,
 ):
-    if not shuttle_number:
-        raise HTTPException(
-            status_code=400,
-            detail="Shuttle number (convoy number) is required for Shuttle Tracking.",
-        )
-
-    created_by_display = get_current_user_display_name(current_user)
-
-    existing = (
-        db.query(ShuttleVoyage)
-        .filter(ShuttleVoyage.convoy_number.ilike(shuttle_number))
-        .order_by(ShuttleVoyage.id.desc())
-        .first()
-    )
-
-    if existing:
-        return existing
-
-    from datetime import date as date_type
-    today_str = date_type.today().strftime("%Y%m%d")
-    prefix = f"VOY-{today_str}"
-    count = (
-        db.query(ShuttleVoyage)
-        .filter(ShuttleVoyage.voyage_number.ilike(f"{prefix}%"))
-        .count()
-    )
-    voyage_number = f"{prefix}-{count + 1:04d}"
-
-    voyage = ShuttleVoyage(
-        voyage_number=voyage_number,
+    return _get_or_create_shuttle_voyage_v2(
+        db=db,
         convoy_number=shuttle_number,
         shuttle_asset_code=shuttle_asset_code,
         location_code=location_code,
-        status="OPEN",
-        created_by=created_by_display,
-    )
-    db.add(voyage)
-    db.flush()
-
-    create_audit_log(
-        db=db,
-        module_name="Shuttle Voyage",
-        action="Create Shuttle Voyage",
         current_user=current_user,
-        entity_type="ShuttleVoyage",
-        entity_id=voyage.id,
-        entity_label=voyage.voyage_number,
-        operation_number=None,
-        remarks="Auto-created on Shuttle Tracking ticket approval",
-        request_path="/operation-transactions/{transaction_id}/status",
-        details={
-            "convoy_number": shuttle_number,
-            "shuttle_asset_code": shuttle_asset_code,
-            "location_code": location_code,
-        },
     )
-
-    return voyage
 
 
 def validate_operation_status_transition(current_status, next_status):
@@ -803,9 +741,14 @@ def auto_create_barge_tracking_on_approval(
                 if not existing_cmp:
                     left_payload = load_multi_tank_payload(db, left_tx.id)
                     right_payload = load_multi_tank_payload(db, transaction.id)
-
                     if left_payload and right_payload:
-                        summary_json, per_tank_json = build_multitank_comparison_json(
+                        # Use v2 (perTank TOV/FW format) consistently with the
+                        # frontend's multi_tank_payload structure. v1 (ullage/volume/mass
+                        # format) was the older schema — keeping both was a latent bug.
+                        from app.services.tracking_helpers import (
+                            build_multitank_comparison_json_v2 as _build_comparison_v2,
+                        )
+                        summary_json, per_tank_json = _build_comparison_v2(
                             left_tx=left_tx,
                             right_tx=transaction,
                             comparison_type="LOAD_AFTER_vs_UNLOAD_BEFORE",
@@ -830,97 +773,7 @@ def auto_create_barge_tracking_on_approval(
 
 
 def load_multi_tank_payload(db: Session, transaction_id: int):
-    row = (
-        db.query(OperationTransactionValue)
-        .filter(
-            OperationTransactionValue.transaction_id == transaction_id,
-            OperationTransactionValue.field_code == "multi_tank_payload",
-        )
-        .first()
-    )
-    if row is None:
-        return None
-    return row.field_value if isinstance(row.field_value, dict) else None
-
-
-def build_multitank_comparison_json(
-    left_tx,
-    right_tx,
-    comparison_type: str,
-    left_payload: dict,
-    right_payload: dict,
-):
-    summary = {}
-    per_tank = {}
-
-    left_tanks = (left_payload.get("tanks") or {}) if isinstance(left_payload, dict) else {}
-    right_tanks = (right_payload.get("tanks") or {}) if isinstance(right_payload, dict) else {}
-
-    all_tank_keys = set(list(left_tanks.keys()) + list(right_tanks.keys()))
-
-    for tank_key in sorted(all_tank_keys):
-        left_tank = left_tanks.get(tank_key, {}) if isinstance(left_tanks, dict) else {}
-        right_tank = right_tanks.get(tank_key, {}) if isinstance(right_tanks, dict) else {}
-
-        left_after = (left_tank.get("after") or {}) if isinstance(left_tank, dict) else {}
-        right_before = (right_tank.get("before") or {}) if isinstance(right_tank, dict) else {}
-
-        left_ullage = left_after.get("ullage")
-        right_ullage = right_before.get("ullage")
-        left_temp = left_after.get("temperature")
-        right_temp = right_before.get("temperature")
-        left_volume = left_after.get("volume")
-        right_volume = right_before.get("volume")
-        left_mass = left_after.get("mass")
-        right_mass = right_before.get("mass")
-        left_density = left_after.get("density")
-        right_density = right_before.get("density")
-
-        try:
-            ullage_diff = round(float(right_ullage or 0) - float(left_ullage or 0), 2) if left_ullage is not None and right_ullage is not None else None
-        except (ValueError, TypeError):
-            ullage_diff = None
-
-        try:
-            volume_diff = round(float(right_volume or 0) - float(left_volume or 0), 2) if left_volume is not None and right_volume is not None else None
-        except (ValueError, TypeError):
-            volume_diff = None
-
-        try:
-            mass_diff = round(float(right_mass or 0) - float(left_mass or 0), 2) if left_mass is not None and right_mass is not None else None
-        except (ValueError, TypeError):
-            mass_diff = None
-
-        per_tank[tank_key] = {
-            "left": {
-                "ullage": normalize_jsonb_value(left_ullage),
-                "temperature": normalize_jsonb_value(left_temp),
-                "volume": normalize_jsonb_value(left_volume),
-                "mass": normalize_jsonb_value(left_mass),
-                "density": normalize_jsonb_value(left_density),
-            },
-            "right": {
-                "ullage": normalize_jsonb_value(right_ullage),
-                "temperature": normalize_jsonb_value(right_temp),
-                "volume": normalize_jsonb_value(right_volume),
-                "mass": normalize_jsonb_value(right_mass),
-                "density": normalize_jsonb_value(right_density),
-            },
-            "difference": {
-                "ullage": ullage_diff,
-                "volume": volume_diff,
-                "mass": mass_diff,
-            },
-        }
-
-        # Accumulate totals for summary
-        for vol_key, diff_val in [("volume", volume_diff), ("mass", mass_diff)]:
-            if diff_val is not None:
-                summary[vol_key] = summary.get(vol_key, 0) + diff_val
-
-    summary = {k: round(v, 2) for k, v in summary.items()}
-
-    return summary, per_tank
+    return _load_multi_tank_payload_v2(db, transaction_id)
 
 
 def create_tank_stock_ledger_from_approved_transaction(
@@ -982,153 +835,10 @@ def create_tank_stock_ledger_from_approved_transaction(
         # try to approve without payload data.
         return None, None, None
 
+    # Multi-Tank Before/After is a BARGE / VESSEL layout, not a tank layout.
+    # TankStockLedger should only track single-tank Tank Gauging entries.
+    # Barge/vessel stock is tracked via VesselStockLedger instead.
     if entry_layout == "Multi-Tank Before/After":
-        payload_row = (
-            db.query(OperationTransactionValue)
-            .filter(
-                OperationTransactionValue.transaction_id == transaction.id,
-                OperationTransactionValue.field_code == "multi_tank_payload",
-            )
-            .first()
-        )
-
-        if not payload_row or not payload_row.field_value:
-            return None, None, None
-
-        payload = (
-            payload_row.field_value
-            if isinstance(payload_row.field_value, dict)
-            else {}
-        )
-
-        per_tank = ((payload.get("perTank") or {}).get("before") or {})
-        per_tank_after = ((payload.get("perTank") or {}).get("after") or {})
-
-        if not per_tank or not per_tank_after:
-            return None, None, None
-
-        created_by_display = get_current_user_display_name(current_user)
-        entries = []
-
-        for tank_key in sorted(per_tank.keys()):
-            before_data = per_tank.get(tank_key) or {}
-            after_data = per_tank_after.get(tank_key) or {}
-
-            previous_gsv = safe_float(before_data.get("GSV"))
-            previous_nsv = safe_float(before_data.get("NSV"))
-            previous_lt = safe_float(before_data.get("LT"))
-            previous_mt = safe_float(before_data.get("MT"))
-
-            current_gsv = safe_float(after_data.get("GSV"))
-            current_nsv = safe_float(after_data.get("NSV"))
-            current_lt = safe_float(after_data.get("LT"))
-            current_mt = safe_float(after_data.get("MT"))
-
-            movement_gsv = current_gsv - previous_gsv
-            movement_nsv = current_nsv - previous_nsv
-            movement_lt = current_lt - previous_lt
-            movement_mt = current_mt - previous_mt
-
-            net = movement_gsv
-            if net > 0:
-                op_sign = "IN"
-            elif net < 0:
-                op_sign = "OUT"
-            else:
-                op_sign = "SET"
-
-            existing = (
-                db.query(TankStockLedger)
-                .filter(
-                    TankStockLedger.transaction_id == transaction.id,
-                    TankStockLedger.tank_asset_code == tank_key,
-                )
-                .first()
-            )
-
-            if existing:
-                existing.previous_stock_gsv_bbl = previous_gsv
-                existing.previous_stock_nsv_bbl = previous_nsv
-                existing.previous_stock_lt = previous_lt
-                existing.previous_stock_mt = previous_mt
-                existing.stock_gsv_bbl = current_gsv
-                existing.stock_nsv_bbl = current_nsv
-                existing.stock_lt = current_lt
-                existing.stock_mt = current_mt
-                existing.movement_gsv_bbl = movement_gsv
-                existing.movement_nsv_bbl = movement_nsv
-                existing.movement_lt = movement_lt
-                existing.movement_mt = movement_mt
-                existing.running_balance_gsv_bbl = current_gsv
-                existing.running_balance_nsv_bbl = current_nsv
-                existing.running_balance_lt = current_lt
-                existing.running_balance_mt = current_mt
-                existing.tank_operation_sign = op_sign
-                existing.updated_at = datetime.now()
-            else:
-                asset_obj = get_asset_by_code(tank_key, db)
-                tank_asset_name = asset_obj.asset_name if asset_obj else tank_key
-
-                ledger = TankStockLedger(
-                    transaction_id=transaction.id,
-                    ticket_number=get_transaction_ticket_number(transaction),
-                    operation_number=transaction.operation_number,
-                    location_code=transaction.origin_location_code,
-                    tank_asset_code=tank_key,
-                    tank_asset_name=tank_asset_name,
-                    operation_date=transaction.operation_date,
-                    product_name=clean_optional_text(transaction.product_name),
-                    accounting_date=transaction.operation_date,
-                    accounting_day_start=None,
-                    accounting_day_end=None,
-                    accounting_day_setting_id=None,
-                    tank_operation_code="MULTI-TANK",
-                    tank_operation_label="Multi-Tank Before/After",
-                    tank_operation_category="SET",
-                    tank_operation_sign=op_sign,
-                    movement_gsv_bbl=movement_gsv,
-                    movement_nsv_bbl=movement_nsv,
-                    movement_lt=movement_lt,
-                    movement_mt=movement_mt,
-                    stock_gsv_bbl=current_gsv,
-                    stock_nsv_bbl=current_nsv,
-                    stock_lt=current_lt,
-                    stock_mt=current_mt,
-                    previous_stock_gsv_bbl=previous_gsv,
-                    previous_stock_nsv_bbl=previous_nsv,
-                    previous_stock_lt=previous_lt,
-                    previous_stock_mt=previous_mt,
-                    running_balance_gsv_bbl=current_gsv,
-                    running_balance_nsv_bbl=current_nsv,
-                    running_balance_lt=current_lt,
-                    running_balance_mt=current_mt,
-                    source_payload=normalize_jsonb_value(payload),
-                    status="Active",
-                    created_by=created_by_display,
-                    remarks="Auto-created when Multi-Tank Before/After ticket was approved",
-                )
-                db.add(ledger)
-                db.flush()
-                entries.append(ledger)
-
-        if entries:
-            from app.routers.reports import rebuild_tank_stock_running_balances
-
-            rebuilt = set()
-            for e in entries:
-                key = (e.location_code, e.tank_asset_code, e.product_name)
-                if key not in rebuilt:
-                    rebuild_tank_stock_running_balances(
-                        db=db,
-                        location_code=e.location_code,
-                        tank_asset_code=e.tank_asset_code,
-                        product_name=e.product_name,
-                    )
-                    rebuilt.add(key)
-
-            db.flush()
-            return entries, transaction.origin_location_code, {}
-
         return None, None, None
 
     return None, None, None

@@ -5068,5 +5068,21 @@ textarea:focus {
   .screen-only { display: none !important; }
 }
 
+/* Export Operations print — override global body * visibility:hidden from MTR blocks */
+@media print {
+  .export-operations-page,
+  .export-operations-page * {
+    visibility: visible !important;
+  }
+  .export-operations-page {
+    display: block !important;
+    position: relative;
+  }
+  .export-operations-page .no-print,
+  .export-operations-page .no-print * {
+    display: none !important;
+  }
+}
+
 /* screen behavior */
 .print-only { display: none; }

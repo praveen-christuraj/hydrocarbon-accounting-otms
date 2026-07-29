@@ -1969,6 +1969,14 @@ class ExportTransaction(Base):
     updated_at = Column(DateTime, nullable=False, server_default=func.now())
 
 
+class ExportPermitBlockAssignment(Base):
+    __tablename__ = "export_permit_block_assignments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    permit_id = Column(Integer, ForeignKey("export_permits.id", ondelete="CASCADE"), nullable=False, index=True)
+    block_code = Column(String(50), ForeignKey("export_blocks.block_code", ondelete="RESTRICT"), nullable=False, index=True)
+
+
 class ExportConsignee(Base):
     __tablename__ = "export_consignees"
 

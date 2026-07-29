@@ -6,7 +6,7 @@ from sqlalchemy import func
 from app.database import get_db
 from app.models import (
     ExportLocation, ExportEntity, ExportLocationEntity, ExportEntityBlock,
-    ExportBlock, ExportPermit, ExportTransaction, ExportConfig, ExportConsignee, User
+    ExportBlock, ExportPermit, ExportPermitBlockAssignment, ExportTransaction, ExportConfig, ExportConsignee, User
 )
 from app.schemas import (
     ExportLocationCreate, ExportLocationResponse,
@@ -161,6 +161,29 @@ def validate_permit_limit(required_volume: float, remaining_volume: float, permi
     )
 
 
+def get_permit_block_codes(db: Session, permit: ExportPermit) -> list[str]:
+    assignments = db.query(ExportPermitBlockAssignment).filter(ExportPermitBlockAssignment.permit_id == permit.id).all()
+    if assignments:
+        return [a.block_code for a in assignments]
+    return [permit.block_code] if permit.block_code else []
+
+
+def sync_permit_block_assignments(db: Session, permit: ExportPermit, block_codes: list[str]):
+    db.query(ExportPermitBlockAssignment).filter(ExportPermitBlockAssignment.permit_id == permit.id).delete()
+    for bc in block_codes:
+        db.add(ExportPermitBlockAssignment(permit_id=permit.id, block_code=bc))
+    db.commit()
+
+
+def get_permit_block_names(db: Session, permit: ExportPermit) -> list[str]:
+    codes = get_permit_block_codes(db, permit)
+    names = []
+    for code in codes:
+        blk = db.query(ExportBlock).filter(ExportBlock.block_code == code).first()
+        names.append(blk.block_name if blk else code)
+    return names
+
+
 def build_delete_blocker_error(entity_type: str, has_active_blocks: bool = False, has_active_entities: bool = False):
     if entity_type == "entity" and has_active_blocks:
         raise HTTPException(status_code=400, detail="Cannot delete entity because it has active blocks")
@@ -186,14 +209,26 @@ def resolve_permit_allocation(db: Session, location_code: str, entity_code: str,
             return []
         raise HTTPException(status_code=400, detail="No active permit found for the selected block and quarter")
 
+    # Filter permits that have this block in their assignments (or have no assignments but match block_code)
+    valid_permits = []
+    for p in candidate_permits:
+        codes = get_permit_block_codes(db, p)
+        if block_code in codes:
+            valid_permits.append(p)
+
+    if not valid_permits:
+        if override:
+            return []
+        raise HTTPException(status_code=400, detail="No active permit found for the selected block and quarter")
+
     ordered = []
     if permit_number:
-        matching = [p for p in candidate_permits if p.permit_number == permit_number]
-        other = [p for p in candidate_permits if p.permit_number != permit_number]
+        matching = [p for p in valid_permits if p.permit_number == permit_number]
+        other = [p for p in valid_permits if p.permit_number != permit_number]
         ordered.extend(matching)
         ordered.extend(other)
     else:
-        ordered = candidate_permits
+        ordered = valid_permits
 
     ordered = sorted(
         ordered,
@@ -277,6 +312,8 @@ def build_permit_response(permit, db):
     ent = db.query(ExportEntity).filter(ExportEntity.entity_code == permit.entity_code).first()
     blk = db.query(ExportBlock).filter(ExportBlock.block_code == permit.block_code).first()
     used_vol = calculate_used_permit_volume(db, permit)
+    block_codes = get_permit_block_codes(db, permit)
+    block_names = get_permit_block_names(db, permit)
     return {
         "id": permit.id,
         "permit_number": permit.permit_number,
@@ -286,6 +323,8 @@ def build_permit_response(permit, db):
         "entity_name": ent.entity_name if ent else None,
         "block_code": permit.block_code,
         "block_name": blk.block_name if blk else None,
+        "block_codes": block_codes,
+        "block_names": block_names,
         "quarter": permit.quarter,
         "permit_volume": permit.permit_volume,
         "supplementary_permit": permit.supplementary_permit,
@@ -672,7 +711,9 @@ def create_export_permit(data: ExportPermitCreate, db: Session = Depends(get_db)
     existing = db.query(ExportPermit).filter(ExportPermit.permit_number == data.permit_number).first()
     if existing:
         raise HTTPException(status_code=400, detail="Permit number already exists")
-    permit = ExportPermit(**data.model_dump(), created_by=current_user.full_name or current_user.username)
+    payload = data.model_dump()
+    block_codes = payload.pop("block_codes", []) or []
+    permit = ExportPermit(**payload, created_by=current_user.full_name or current_user.username)
     if is_quarter_expired(permit.quarter):
         permit.status = "Expired"
         if not permit.remarks:
@@ -680,6 +721,10 @@ def create_export_permit(data: ExportPermitCreate, db: Session = Depends(get_db)
     db.add(permit)
     db.commit()
     db.refresh(permit)
+    if not block_codes and permit.block_code:
+        block_codes = [permit.block_code]
+    if block_codes:
+        sync_permit_block_assignments(db, permit, block_codes)
     create_audit_log(db, "Export Operations", "Create Export Permit", current_user, entity_type="ExportPermit", entity_id=permit.id, entity_label=permit.permit_number)
     return build_permit_response(permit, db)
 
@@ -691,6 +736,7 @@ def update_export_permit(permit_id: int, data: ExportPermitUpdate, db: Session =
     if not permit:
         raise HTTPException(status_code=404, detail="Export permit not found")
     update_data = {k: v for k, v in data.model_dump().items() if v is not None}
+    block_codes = update_data.pop("block_codes", None)
     for k, v in update_data.items():
         setattr(permit, k, v)
     if permit.quarter and is_quarter_expired(permit.quarter) and permit.status == "Active":
@@ -699,6 +745,8 @@ def update_export_permit(permit_id: int, data: ExportPermitUpdate, db: Session =
             permit.remarks = "Auto-expired after quarter ended"
     db.commit()
     db.refresh(permit)
+    if block_codes is not None:
+        sync_permit_block_assignments(db, permit, block_codes)
     create_audit_log(db, "Export Operations", "Update Export Permit", current_user, entity_type="ExportPermit", entity_id=permit.id, entity_label=permit.permit_number)
     return build_permit_response(permit, db)
 
@@ -710,6 +758,7 @@ def delete_export_permit(permit_id: int, db: Session = Depends(get_db), current_
     if not permit:
         raise HTTPException(status_code=404, detail="Export permit not found")
     permit.status = "Inactive"
+    db.query(ExportPermitBlockAssignment).filter(ExportPermitBlockAssignment.permit_id == permit_id).delete()
     db.commit()
     create_audit_log(db, "Export Operations", "Delete Export Permit", current_user, entity_type="ExportPermit", entity_id=permit.id, entity_label=permit.permit_number)
     return {"detail": "Export permit deleted"}
@@ -891,6 +940,7 @@ def bulk_upload_export_permits(data: PermitBulkUploadRequest, db: Session = Depe
     require_user_permission(current_user, "Manage Export Operations", db)
     created = 0
     errors = []
+    created_permits = []
     for item in data.items:
         try:
             quarter_code = build_permit_quarter_code(item.quarter, item.year)
@@ -915,10 +965,15 @@ def bulk_upload_export_permits(data: PermitBulkUploadRequest, db: Session = Depe
                 if not permit.remarks:
                     permit.remarks = "Auto-expired after quarter ended"
             db.add(permit)
+            created_permits.append(permit)
             created += 1
         except Exception as e:
             errors.append({"item": item.model_dump(), "error": str(e)})
     db.commit()
+    for permit in created_permits:
+        db.refresh(permit)
+        if permit.block_code:
+            sync_permit_block_assignments(db, permit, [permit.block_code])
     create_audit_log(db, "Export Operations", "Bulk Upload Permits", current_user, details={"created": created, "errors": len(errors)})
     return {"created": created, "errors": errors, "total": len(data.items)}
 
@@ -1101,7 +1156,8 @@ def get_export_dashboard(
     if entity_code:
         permit_q = permit_q.filter(ExportPermit.entity_code == entity_code)
     if block_code:
-        permit_q = permit_q.filter(ExportPermit.block_code == block_code)
+        permit_ids = db.query(ExportPermitBlockAssignment.permit_id).filter(ExportPermitBlockAssignment.block_code == block_code).subquery()
+        permit_q = permit_q.filter(ExportPermit.id.in_(permit_ids))
     if quarter:
         permit_q = permit_q.filter(ExportPermit.quarter == quarter)
 
@@ -1170,24 +1226,24 @@ def get_export_dashboard(
         tx_block_q = tx_block_q.filter(ExportTransaction.bl_date <= to_date)
     tx_block_q = tx_block_q.group_by(ExportTransaction.location_code, ExportTransaction.block_code).all()
 
-    # also fetch per-block permits
+    # also fetch per-block permits (via block assignments)
     permit_block_q = db.query(
         ExportPermit.location_code,
         ExportPermit.entity_code,
-        ExportPermit.block_code,
+        ExportPermitBlockAssignment.block_code,
         ExportPermit.quarter,
         func.coalesce(func.sum(ExportPermit.permit_volume), 0).label("perm_vol"),
         func.count(ExportPermit.id).label("cnt"),
-    ).filter(ExportPermit.status == "Active")
+    ).join(ExportPermitBlockAssignment, ExportPermitBlockAssignment.permit_id == ExportPermit.id).filter(ExportPermit.status == "Active")
     if location_code:
         permit_block_q = permit_block_q.filter(ExportPermit.location_code == location_code)
     if entity_code:
         permit_block_q = permit_block_q.filter(ExportPermit.entity_code == entity_code)
     if block_code:
-        permit_block_q = permit_block_q.filter(ExportPermit.block_code == block_code)
+        permit_block_q = permit_block_q.filter(ExportPermitBlockAssignment.block_code == block_code)
     if quarter:
         permit_block_q = permit_block_q.filter(ExportPermit.quarter == quarter)
-    permit_block_q = permit_block_q.group_by(ExportPermit.location_code, ExportPermit.entity_code, ExportPermit.block_code, ExportPermit.quarter).all()
+    permit_block_q = permit_block_q.group_by(ExportPermit.location_code, ExportPermit.entity_code, ExportPermitBlockAssignment.block_code, ExportPermit.quarter).all()
 
     # Merge
     tx_map = {}

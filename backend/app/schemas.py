@@ -2754,6 +2754,7 @@ class ExportPermitBase(BaseModel):
     supplementary_permit: str = "No"
     remarks: Optional[str] = None
     status: str = "Active"
+    block_codes: list[str] = []
 
 
 class ExportPermitCreate(ExportPermitBase):
@@ -2770,6 +2771,7 @@ class ExportPermitUpdate(BaseModel):
     supplementary_permit: Optional[str] = None
     remarks: Optional[str] = None
     status: Optional[str] = None
+    block_codes: Optional[list[str]] = None
 
 
 class ExportPermitResponse(ExportPermitBase):
@@ -2777,6 +2779,7 @@ class ExportPermitResponse(ExportPermitBase):
     location_name: Optional[str] = None
     entity_name: Optional[str] = None
     block_name: Optional[str] = None
+    block_names: list[str] = []
     used_volume: Optional[float] = None
     remaining_volume: Optional[float] = None
     created_by: Optional[str] = None

@@ -43,112 +43,28 @@ from app.services.transaction_helpers import (
     approved_transaction_not_on_correction_hold,
     parse_date_filter,
 )
+from app.services.tracking_helpers import (
+    get_shuttle_voyage_by_key,
+    ensure_shuttle_voyage_not_closed,
+    get_or_create_shuttle_voyage_v1 as get_or_create_shuttle_voyage,
+    get_fso_voyage_by_key,
+    ensure_fso_voyage_not_closed,
+    get_or_create_fso_voyage,
+    get_trip_by_convoy_or_none,
+    _sf,
+    _abs_qty,
+    _norm,
+    _norm_op,
+    _op_code,
+    _op_label,
+    _is_loading,
+    _is_sts_in,
+    _is_sts_out,
+    _is_unloading,
+    _is_top_up,
+)
 
 router = APIRouter(prefix="/shuttle-fso", tags=["Shuttle / FSO Voyages"])
-
-
-def get_shuttle_voyage_by_key(db: Session, location_code: str, shuttle_number: str, shuttle_asset_code: str):
-    lc = clean_optional_text(location_code)
-    sn = clean_optional_text(shuttle_number)
-    ac = clean_optional_text(shuttle_asset_code)
-    if not lc or not sn or not ac:
-        return None
-    return (
-        db.query(ShuttleVoyage)
-        .filter(
-            ShuttleVoyage.location_code.ilike(lc),
-            ShuttleVoyage.shuttle_number.ilike(sn),
-            ShuttleVoyage.shuttle_asset_code.ilike(ac),
-        )
-        .first()
-    )
-
-
-def ensure_shuttle_voyage_not_closed(voyage: ShuttleVoyage | None):
-    if not voyage:
-        return
-    if str(voyage.status or "").strip().upper() == "CLOSED":
-        raise HTTPException(
-            status_code=400,
-            detail="Shuttle voyage is CLOSED for this key. Reopen the voyage to continue.",
-        )
-
-
-def get_or_create_shuttle_voyage(
-    db: Session,
-    location_code: str,
-    shuttle_number: str,
-    shuttle_asset_code: str,
-    current_user: User,
-):
-    voyage = get_shuttle_voyage_by_key(db, location_code, shuttle_number, shuttle_asset_code)
-    if voyage:
-        return voyage
-
-    created_by_display = get_current_user_label(current_user)
-    voyage = ShuttleVoyage(
-        location_code=str(location_code).strip(),
-        shuttle_number=str(shuttle_number).strip(),
-        shuttle_asset_code=str(shuttle_asset_code).strip(),
-        status="OPEN",
-        created_by=created_by_display,
-        remarks=None,
-    )
-    db.add(voyage)
-    db.flush()
-    return voyage
-
-
-def get_fso_voyage_by_key(db: Session, location_code: str, shuttle_number: str, fso_asset_code: str):
-    lc = clean_optional_text(location_code)
-    sn = clean_optional_text(shuttle_number)
-    ac = clean_optional_text(fso_asset_code)
-    if not lc or not sn or not ac:
-        return None
-    return (
-        db.query(FSOVoyage)
-        .filter(
-            FSOVoyage.location_code.ilike(lc),
-            FSOVoyage.shuttle_number.ilike(sn),
-            FSOVoyage.fso_asset_code.ilike(ac),
-        )
-        .first()
-    )
-
-
-def ensure_fso_voyage_not_closed(voyage: FSOVoyage | None):
-    if not voyage:
-        return
-    if str(voyage.status or "").strip().upper() == "CLOSED":
-        raise HTTPException(
-            status_code=400,
-            detail="FSO voyage is CLOSED for this key. Reopen the voyage to continue.",
-        )
-
-
-def get_or_create_fso_voyage(
-    db: Session,
-    location_code: str,
-    shuttle_number: str,
-    fso_asset_code: str,
-    current_user: User,
-):
-    voyage = get_fso_voyage_by_key(db, location_code, shuttle_number, fso_asset_code)
-    if voyage:
-        return voyage
-
-    created_by_display = get_current_user_label(current_user)
-    voyage = FSOVoyage(
-        location_code=str(location_code).strip(),
-        shuttle_number=str(shuttle_number).strip(),
-        fso_asset_code=str(fso_asset_code).strip(),
-        status="OPEN",
-        created_by=created_by_display,
-        remarks=None,
-    )
-    db.add(voyage)
-    db.flush()
-    return voyage
 
 
 def get_shuttle_payload_for_transaction(db: Session, transaction_id: int):
@@ -413,56 +329,6 @@ def get_shuttle_tracking(
     db: Session = Depends(get_db),
 ):
     require_user_permission(current_user, "View Shuttle Tracking", db)
-
-    def _norm(v):
-        return str(v or "").strip().upper()
-
-    def _abs_qty(net_stock, net_water):
-        try:
-            return abs(float(net_stock or 0.0)) + abs(float(net_water or 0.0))
-        except Exception:
-            return 0.0
-
-    def _op_code(meta):
-        return _norm(meta.get("vessel_operation_code"))
-
-    def _op_label(meta):
-        return _norm(meta.get("vessel_operation_label"))
-
-    def _is_loading(meta):
-        code = _op_code(meta)
-        if code == "LOADING":
-            return True
-        label = _op_label(meta)
-        return ("LOADING" in label) and ("UNLOADING" not in label)
-
-    def _is_sts_in(meta):
-        code = _op_code(meta)
-        if code == "STS_IN":
-            return True
-        label = _op_label(meta)
-        return "STS IN" in label or "STS_IN" in label
-
-    def _is_sts_out(meta):
-        code = _op_code(meta)
-        if code == "STS_OUT":
-            return True
-        label = _op_label(meta)
-        return "STS OUT" in label or "STS_OUT" in label
-
-    def _is_unloading(meta):
-        code = _op_code(meta)
-        if code == "UNLOADING":
-            return True
-        label = _op_label(meta)
-        return ("UNLOADING" in label) or ("UNLOAD" in label)
-
-    def _is_top_up(meta):
-        code = _op_code(meta)
-        if code == "TOP_UP":
-            return True
-        label = _op_label(meta)
-        return ("TOP UP" in label) or ("TOP-UP" in label) or ("TOP_UP" in label)
 
     df = parse_date_filter(date_from, "date_from")
     dt = parse_date_filter(date_to, "date_to")
@@ -893,15 +759,6 @@ def export_shuttle_voyage_xlsx(
     loc = get_location_by_code(loc_code, db)
     asset = get_asset_by_code(asset_code, db)
 
-    def _sf(v):
-        try:
-            return float(v or 0.0)
-        except Exception:
-            return 0.0
-
-    def _abs_qty(net_stock, net_water):
-        return abs(_sf(net_stock)) + abs(_sf(net_water))
-
     receipt_total = 0.0
     discharge_total = 0.0
     last_closing_stock = 0.0
@@ -993,41 +850,6 @@ def get_fso_tracking(
 ):
     require_user_permission(current_user, "View FSO Tracking", db)
 
-    def _sf(v):
-        try:
-            return float(v or 0.0)
-        except Exception:
-            return 0.0
-
-    def _abs_qty(net_stock, net_water):
-        try:
-            return abs(float(net_stock or 0.0)) + abs(float(net_water or 0.0))
-        except Exception:
-            return 0.0
-
-    def _norm(v):
-        return str(v or "").strip().upper()
-
-    def _sh_op_code(meta):
-        return _norm((meta or {}).get("vessel_operation_code"))
-
-    def _sh_op_label(meta):
-        return _norm((meta or {}).get("vessel_operation_label"))
-
-    def _sh_is_unloading(meta):
-        code = _sh_op_code(meta)
-        if code == "UNLOADING":
-            return True
-        label = _sh_op_label(meta)
-        return ("UNLOADING" in label) or ("UNLOAD" in label)
-
-    def _sh_is_sts_out(meta):
-        code = _sh_op_code(meta)
-        if code == "STS_OUT":
-            return True
-        label = _sh_op_label(meta)
-        return "STS OUT" in label or "STS_OUT" in label
-
     def _build_shuttle_discharge_fallback(pairs):
         if not pairs:
             return {}
@@ -1097,7 +919,7 @@ def get_fso_tracking(
             net_stock = _sf(net.get("net_stock_bbl"))
             net_water = _sf(net.get("net_water_bbl"))
             qty = _abs_qty(net_stock, net_water)
-            if _sh_is_unloading(meta) and (not _sh_is_sts_out(meta)):
+            if _is_unloading(meta) and (not _is_sts_out(meta)):
                 key = f"{loc_code}|{sh_num}"
                 out[key] = float(out.get(key, 0.0)) + qty
         return out
@@ -1407,8 +1229,8 @@ def get_fso_tracking(
         opening_water = _safe_float(meta.get("opening_water_bbl"))
         closing_stock = _safe_float(meta.get("closing_stock_bbl"))
         closing_water = _safe_float(meta.get("closing_water_bbl"))
-        net_stock = _safe_float(meta.get("net_stock_bbl"))
-        net_water = _safe_float(meta.get("net_water_bbl"))
+        net_stock = _safe_float(net_calc.get("net_stock_bbl"))
+        net_water = _safe_float(net_calc.get("net_water_bbl"))
         vessel_qty = _safe_float(meta.get("vessel_quantity_bbl"))
         variance = _safe_float(meta.get("variance_bbl"))
 
@@ -1504,56 +1326,6 @@ def build_shuttle_summary_rows(
     page: int = 1,
     page_size: int = 20,
 ):
-    def _norm(v):
-        return str(v or "").strip().upper()
-
-    def _abs_qty(net_stock, net_water):
-        try:
-            return abs(float(net_stock or 0.0)) + abs(float(net_water or 0.0))
-        except Exception:
-            return 0.0
-
-    def _op_code(meta):
-        return _norm(meta.get("vessel_operation_code"))
-
-    def _op_label(meta):
-        return _norm(meta.get("vessel_operation_label"))
-
-    def _is_loading(meta):
-        code = _op_code(meta)
-        if code == "LOADING":
-            return True
-        label = _op_label(meta)
-        return ("LOADING" in label) and ("UNLOADING" not in label)
-
-    def _is_sts_in(meta):
-        code = _op_code(meta)
-        if code == "STS_IN":
-            return True
-        label = _op_label(meta)
-        return "STS IN" in label or "STS_IN" in label
-
-    def _is_sts_out(meta):
-        code = _op_code(meta)
-        if code == "STS_OUT":
-            return True
-        label = _op_label(meta)
-        return "STS OUT" in label or "STS_OUT" in label
-
-    def _is_unloading(meta):
-        code = _op_code(meta)
-        if code == "UNLOADING":
-            return True
-        label = _op_label(meta)
-        return ("UNLOADING" in label) or ("UNLOAD" in label)
-
-    def _is_top_up(meta):
-        code = _op_code(meta)
-        if code == "TOP_UP":
-            return True
-        label = _op_label(meta)
-        return ("TOP UP" in label) or ("TOP-UP" in label) or ("TOP_UP" in label)
-
     lc = clean_optional_text(location_code)
     sn = clean_optional_text(shuttle_number)
     ac = clean_optional_text(shuttle_asset_code)
