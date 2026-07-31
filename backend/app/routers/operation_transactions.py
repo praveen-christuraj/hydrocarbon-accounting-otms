@@ -466,6 +466,7 @@ def get_or_create_shuttle_voyage(
     shuttle_number: str,
     shuttle_asset_code: str,
     current_user: User,
+    request_path: str | None = None,
 ):
     return _get_or_create_shuttle_voyage_v2(
         db=db,
@@ -473,6 +474,7 @@ def get_or_create_shuttle_voyage(
         shuttle_asset_code=shuttle_asset_code,
         location_code=location_code,
         current_user=current_user,
+        request_path=request_path,
     )
 
 
@@ -1921,6 +1923,7 @@ def update_operation_transaction_status(
                 shuttle_number=transaction.convoy_number or "",
                 shuttle_asset_code=transaction.primary_asset_code,
                 current_user=current_user,
+                request_path=f"/operation-transactions/{transaction.id}/status",
             )
             ensure_shuttle_voyage_not_closed(voyage)
 

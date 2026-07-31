@@ -263,11 +263,15 @@ def get_or_create_shuttle_voyage_v2(
     shuttle_asset_code: str,
     location_code: str,
     current_user: User,
+    request_path: str | None = None,
 ):
     """
-    Version 2: Used by operation_transactions.py.
-    Creates ShuttleVoyage with voyage_number, convoy_number fields.
-    This version is triggered on ticket approval for shuttle tracking.
+    Version 2: Used by operation_transactions.py (and operation_entries.py
+    when a Shuttle Tracking ticket is saved).
+
+    The ShuttleVoyage composite key is location_code + shuttle_number +
+    shuttle_asset_code. Tickets store the shuttle number in the
+    convoy_number column, so the value arrives here as `convoy_number`.
     """
     if not convoy_number:
         raise HTTPException(
@@ -277,33 +281,23 @@ def get_or_create_shuttle_voyage_v2(
 
     created_by_display = get_current_user_display_name(current_user)
 
-    existing = (
-        db.query(ShuttleVoyage)
-        .filter(ShuttleVoyage.convoy_number.ilike(convoy_number))
-        .order_by(ShuttleVoyage.id.desc())
-        .first()
+    existing = get_shuttle_voyage_by_key(
+        db,
+        location_code=location_code,
+        shuttle_number=convoy_number,
+        shuttle_asset_code=shuttle_asset_code,
     )
 
     if existing:
         return existing
 
-    from datetime import date as date_type
-    today_str = date_type.today().strftime("%Y%m%d")
-    prefix = f"VOY-{today_str}"
-    count = (
-        db.query(ShuttleVoyage)
-        .filter(ShuttleVoyage.voyage_number.ilike(f"{prefix}%"))
-        .count()
-    )
-    voyage_number = f"{prefix}-{count + 1:04d}"
-
     voyage = ShuttleVoyage(
-        voyage_number=voyage_number,
-        convoy_number=convoy_number,
-        shuttle_asset_code=shuttle_asset_code,
-        location_code=location_code,
+        location_code=str(location_code).strip(),
+        shuttle_number=str(convoy_number).strip(),
+        shuttle_asset_code=str(shuttle_asset_code).strip(),
         status="OPEN",
         created_by=created_by_display,
+        remarks=None,
     )
     db.add(voyage)
     db.flush()
@@ -315,12 +309,12 @@ def get_or_create_shuttle_voyage_v2(
         current_user=current_user,
         entity_type="ShuttleVoyage",
         entity_id=voyage.id,
-        entity_label=voyage.voyage_number,
+        entity_label=f"{location_code}-{shuttle_asset_code}-{convoy_number}",
         operation_number=None,
-        remarks="Auto-created on Shuttle Tracking ticket approval",
-        request_path="/operation-transactions/{transaction_id}/status",
+        remarks="Auto-created for Shuttle Tracking voyage",
+        request_path=request_path or "/operation-entries",
         details={
-            "convoy_number": convoy_number,
+            "shuttle_number": convoy_number,
             "shuttle_asset_code": shuttle_asset_code,
             "location_code": location_code,
         },
