@@ -2,8 +2,13 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   getFlowmeterRecords,
 } from '../api/flowmeterApi'
+import { useCompanyPrintProfile } from '../hooks/useCompanyPrintProfile'
+import CompanyPrintHeader from '../components/reports/CompanyPrintHeader'
+import CompanyPrintFooter from '../components/reports/CompanyPrintFooter'
 
 function FlowmeterRecordEntry({ locations = [], assets = [] }) {
+  const profile = useCompanyPrintProfile()
+
   const [rows, setRows] = useState([])
   const [filters, setFilters] = useState({
     locationCode: '',
@@ -111,6 +116,7 @@ function FlowmeterRecordEntry({ locations = [], assets = [] }) {
   return (
     <>
       <div className="print-only mtr-page">
+        <CompanyPrintHeader profile={profile} defaultSubtitle="Flowmeter Records Report" />
         <div className="mtr-header">
           <h1>FLOWMETER RECORDS REPORT</h1>
           <div className="mtr-sub">
@@ -166,9 +172,10 @@ function FlowmeterRecordEntry({ locations = [], assets = [] }) {
             )}
           </tbody>
         </table>
+        <CompanyPrintFooter profile={profile} />
       </div>
 
-      <div>
+      <div className="screen-only">
       <div className="page-title">
         <div>
           <h2>Flowmeter Records</h2>

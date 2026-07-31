@@ -99,7 +99,7 @@ app.add_middleware(
 )
 
 from app.routers import (
-    asset_assignments, asset_calibration_tables, asset_types, assets,
+    admin_db_browser, asset_assignments, asset_calibration_tables, asset_types, assets,
     audit_logs, auth, backup_restore, barge_seal_master, barge_trip_tracking,
     calibration_templates, company_report_profiles, correction_requests, dashboard,
     export_operations,
@@ -108,10 +108,12 @@ from app.routers import (
     operation_tasks, operation_templates, operation_transactions, operation_types,
     permissions, prime_mover_tanker_links, reports, role_permissions, roles,
     shuttle_fso_voyages, system_notifications, table11_factors, tank_operations,
-    tank_stock_ledger, tanker_tracking, user_locations, user_roles, users, vessel_operations,
+    tank_operation_summary, tank_stock_ledger, tanker_tracking, user_locations, user_roles, users, vessel_operations,
     vessel_stock_ledger, workflow_policies,
+    out_turn_summary,
 )
 
+app.include_router(admin_db_browser.router)
 app.include_router(asset_assignments.router)
 app.include_router(export_operations.router)
 app.include_router(asset_calibration_tables.router)
@@ -137,6 +139,7 @@ app.include_router(operation_templates.router)
 app.include_router(operation_templates.layout_detail_router)
 app.include_router(operation_transactions.router)
 app.include_router(operation_types.router)
+app.include_router(out_turn_summary.router)
 app.include_router(permissions.router)
 app.include_router(prime_mover_tanker_links.router)
 app.include_router(reports.router)
@@ -146,6 +149,7 @@ app.include_router(shuttle_fso_voyages.router)
 app.include_router(system_notifications.router)
 app.include_router(table11_factors.router)
 app.include_router(tank_operations.router)
+app.include_router(tank_operation_summary.router)
 app.include_router(tank_stock_ledger.router)
 app.include_router(tanker_tracking.router)
 app.include_router(user_locations.router)

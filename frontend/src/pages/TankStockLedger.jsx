@@ -389,7 +389,7 @@ function TankStockLedger({ locations, assets }) {
   }
 
   return (
-    <div>
+    <div className="tank-stock-ledger-page">
       {profile && (
         <div className="print-report-header">
           <div className="print-company-block">

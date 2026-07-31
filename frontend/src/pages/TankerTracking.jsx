@@ -790,6 +790,7 @@ function TankerTracking({
 
   return (
     <div>
+      <div className="screen-only">
       {confirmRevokeGroup && (
         <div className="confirm-overlay">
           <div className="confirm-dialog">
@@ -1807,6 +1808,7 @@ function TankerTracking({
           )}
         </div>
       )}
+      </div>
 
       {printGroup && (
         <div className="print-only">
@@ -1814,6 +1816,7 @@ function TankerTracking({
         </div>
       )}
 
+      <div className="screen-only">
       {successMsg && (
         <div className="success-box" onClick={() => setSuccessMsg('')}>
           {successMsg}
@@ -1824,6 +1827,7 @@ function TankerTracking({
           {errorMsg}
         </div>
       )}
+      </div>
     </div>
   )
 }

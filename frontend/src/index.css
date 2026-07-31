@@ -1585,7 +1585,7 @@ textarea:focus {
 
 @media print {
   @page {
-    size: A4 portrait;
+    size: A4 landscape;
     margin: 12mm;
   }
 
@@ -2439,8 +2439,10 @@ textarea:focus {
 }
 
 /* ===== Printable Out-Turn Report ===== */
-.print-report-header {
-  display: none;
+@media screen {
+  .print-report-header {
+    display: none;
+  }
 }
 
 .print-report-meta {
@@ -2610,6 +2612,36 @@ textarea:focus {
 }
 
 @media print {
+  .op-transaction-register-page,
+  .op-transaction-register-page * {
+    visibility: visible !important;
+  }
+  .op-transaction-register-page {
+    display: block !important;
+    position: relative;
+  }
+  .op-transaction-register-page .no-print,
+  .op-transaction-register-page .no-print * {
+    display: none !important;
+  }
+}
+
+@media print {
+  .tank-stock-ledger-page,
+  .tank-stock-ledger-page * {
+    visibility: visible !important;
+  }
+  .tank-stock-ledger-page {
+    display: block !important;
+    position: relative;
+  }
+  .tank-stock-ledger-page .no-print,
+  .tank-stock-ledger-page .no-print * {
+    display: none !important;
+  }
+}
+
+@media print {
   .material-balance-report-page,
   .material-balance-report-page * {
     visibility: visible !important;
@@ -2715,6 +2747,408 @@ textarea:focus {
   }
 
   .material-balance-report-page th {
+    background: #e5e7eb !important;
+    font-weight: 700;
+  }
+
+  @page {
+    size: A4 landscape;
+    margin: 10mm;
+  }
+}
+
+.tank-operation-summary-page .tank-operation-summary-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tank-operation-summary-page .tank-operation-summary-table-wrap table {
+  width: 100%;
+  min-width: max-content;
+  white-space: nowrap;
+  overflow: visible;
+  border-radius: 10px;
+}
+
+.tank-operation-summary-page .tank-operation-summary-table-wrap thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+@media print {
+  .tank-operation-summary-page,
+  .tank-operation-summary-page * {
+    visibility: visible !important;
+  }
+
+  .tank-operation-summary-page {
+    display: block !important;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    background: white !important;
+    color: black !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+  }
+
+  .tank-operation-summary-page form,
+  .tank-operation-summary-page .page-title,
+  .tank-operation-summary-page .info-box,
+  .tank-operation-summary-page button {
+    display: none !important;
+  }
+
+  .tank-operation-summary-page .print-report-header {
+    display: block !important;
+    margin-bottom: 14px;
+    border-bottom: 2px solid #000;
+    padding-bottom: 10px;
+  }
+
+  .tank-operation-summary-page .print-report-header h2 {
+    margin: 0;
+    text-align: center;
+    font-size: 18px;
+    color: black !important;
+  }
+
+  .tank-operation-summary-page .print-report-meta {
+    color: black !important;
+  }
+
+  .tank-operation-summary-page .section-title {
+    margin-top: 12px;
+    margin-bottom: 8px;
+  }
+
+  .tank-operation-summary-page .section-title h3 {
+    margin: 0;
+    font-size: 14px;
+    color: black !important;
+  }
+
+  .tank-operation-summary-page .section-title p {
+    font-size: 11px;
+    color: black !important;
+  }
+
+  .tank-operation-summary-page .tank-operation-summary-table-wrap {
+    overflow: visible !important;
+    border: none !important;
+    border-radius: 0 !important;
+  }
+
+  .tank-operation-summary-page table {
+    display: table !important;
+    width: 100%;
+    min-width: 0 !important;
+    white-space: normal !important;
+    border-collapse: collapse;
+    page-break-inside: auto;
+    overflow: visible !important;
+  }
+
+  .tank-operation-summary-page thead {
+    display: table-header-group;
+    background: #e5e7eb !important;
+    color: black !important;
+  }
+
+  .tank-operation-summary-page thead th {
+    position: static;
+  }
+
+  .tank-operation-summary-page tbody {
+    display: table-row-group;
+  }
+
+  .tank-operation-summary-page tr {
+    page-break-inside: avoid;
+    page-break-after: auto;
+  }
+
+  .tank-operation-summary-page th,
+  .tank-operation-summary-page td {
+    border: 1px solid #000;
+    padding: 4px;
+    font-size: 7px;
+    color: black !important;
+    vertical-align: top;
+  }
+
+  .tank-operation-summary-page th {
+    background: #e5e7eb !important;
+    font-weight: 700;
+  }
+
+  @page {
+    size: A4 landscape;
+    margin: 10mm;
+  }
+}
+
+.out-turn-summary-page .out-turn-summary-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.out-turn-summary-page .out-turn-summary-table-wrap table {
+  width: 100%;
+  min-width: max-content;
+  white-space: nowrap;
+  overflow: visible;
+  border-radius: 10px;
+}
+
+.out-turn-summary-page .out-turn-summary-table-wrap thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.out-turn-summary-page .column-config-modal {
+  width: min(760px, 100%);
+  background: white;
+  border-radius: 16px;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.3);
+  overflow: hidden;
+}
+
+.out-turn-summary-page .column-config-modal .modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  background: #0f172a;
+  color: white;
+}
+
+.out-turn-summary-page .column-config-modal .modal-header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: white;
+}
+
+.out-turn-summary-page .column-config-modal .modal-close {
+  background: transparent;
+  color: white;
+  font-size: 22px;
+  line-height: 1;
+  padding: 0 6px;
+  margin: 0;
+}
+
+.out-turn-summary-page .column-config-modal .modal-description {
+  margin: 0;
+  padding: 12px 20px;
+  font-size: 13px;
+  color: #64748b;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.out-turn-summary-page .column-config-groups {
+  padding: 8px 20px 16px;
+  max-height: 55vh;
+  overflow-y: auto;
+}
+
+.out-turn-summary-page .column-config-group h4 {
+  margin: 14px 0 8px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #1e40af;
+}
+
+.out-turn-summary-page .column-config-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+
+.out-turn-summary-page .column-config-row:hover {
+  background: #f8fafc;
+}
+
+.out-turn-summary-page .column-config-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.out-turn-summary-page .column-config-check input {
+  width: auto;
+  height: auto;
+}
+
+.out-turn-summary-page .column-config-check span {
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.out-turn-summary-page .column-config-check code {
+  font-size: 11px;
+  color: #64748b;
+  background: #f1f5f9;
+  padding: 2px 6px;
+  border-radius: 5px;
+}
+
+.out-turn-summary-page .column-config-move {
+  display: flex;
+  gap: 4px;
+}
+
+.out-turn-summary-page .column-config-move button {
+  margin: 0;
+  padding: 4px 9px;
+  font-size: 13px;
+  background: #e2e8f0;
+  color: #334155;
+}
+
+.out-turn-summary-page .column-config-move button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.out-turn-summary-page .modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 20px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.out-turn-summary-page .modal-actions .primary-action {
+  background: #2563eb;
+  color: white;
+}
+
+.out-turn-summary-page .modal-actions .primary-action:hover {
+  background: #1d4ed8;
+}
+
+@media print {
+  .out-turn-summary-page,
+  .out-turn-summary-page * {
+    visibility: visible !important;
+  }
+
+  .out-turn-summary-page {
+    display: block !important;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    background: white !important;
+    color: black !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+  }
+
+  .out-turn-summary-page form,
+  .out-turn-summary-page .page-title,
+  .out-turn-summary-page .info-box,
+  .out-turn-summary-page button {
+    display: none !important;
+  }
+
+  .out-turn-summary-page .print-report-header {
+    display: block !important;
+    margin-bottom: 14px;
+    border-bottom: 2px solid #000;
+    padding-bottom: 10px;
+  }
+
+  .out-turn-summary-page .print-report-header h2 {
+    margin: 0;
+    text-align: center;
+    font-size: 18px;
+    color: black !important;
+  }
+
+  .out-turn-summary-page .print-report-meta {
+    color: black !important;
+  }
+
+  .out-turn-summary-page .section-title {
+    margin-top: 12px;
+    margin-bottom: 8px;
+  }
+
+  .out-turn-summary-page .section-title h3 {
+    margin: 0;
+    font-size: 14px;
+    color: black !important;
+  }
+
+  .out-turn-summary-page .section-title p {
+    font-size: 11px;
+    color: black !important;
+  }
+
+  .out-turn-summary-page .out-turn-summary-table-wrap {
+    overflow: visible !important;
+    border: none !important;
+    border-radius: 0 !important;
+  }
+
+  .out-turn-summary-page table {
+    display: table !important;
+    width: 100%;
+    min-width: 0 !important;
+    white-space: normal !important;
+    border-collapse: collapse;
+    page-break-inside: auto;
+    overflow: visible !important;
+  }
+
+  .out-turn-summary-page thead {
+    display: table-header-group;
+    background: #e5e7eb !important;
+    color: black !important;
+  }
+
+  .out-turn-summary-page thead th {
+    position: static;
+  }
+
+  .out-turn-summary-page tbody {
+    display: table-row-group;
+  }
+
+  .out-turn-summary-page tr {
+    page-break-inside: avoid;
+    page-break-after: auto;
+  }
+
+  .out-turn-summary-page th,
+  .out-turn-summary-page td {
+    border: 1px solid #000;
+    padding: 4px;
+    font-size: 7px;
+    color: black !important;
+    vertical-align: top;
+  }
+
+  .out-turn-summary-page th {
     background: #e5e7eb !important;
     font-weight: 700;
   }
@@ -3785,7 +4219,7 @@ textarea:focus {
   }
 
   @page {
-    size: A4 portrait;
+    size: A4 landscape;
     margin: 8mm;
   }
 }
@@ -4066,7 +4500,7 @@ textarea:focus {
   }
 
   @page {
-    size: A4 portrait;
+    size: A4 landscape;
     margin: 5mm;
   }
 }
@@ -4360,7 +4794,7 @@ textarea:focus {
   }
 
   @page {
-    size: A4 portrait;
+    size: A4 landscape;
     margin: 5mm;
   }
 }
@@ -4528,13 +4962,17 @@ textarea:focus {
 }
 
 @media print {
-  /* Hide the app chrome */
+  /* Hide the app chrome when printing register/ledger pages from the live DOM */
   .topbar,
   .no-print,
-  .page-title,
-  .info-box:not(.print-only-card),
-  .two-column-grid,
-  button {
+  .op-transaction-register-page .page-title,
+  .op-transaction-register-page .info-box:not(.print-only-card),
+  .op-transaction-register-page .two-column-grid,
+  .op-transaction-register-page button,
+  .tank-stock-ledger-page .page-title,
+  .tank-stock-ledger-page .info-box:not(.print-only-card),
+  .tank-stock-ledger-page .two-column-grid,
+  .tank-stock-ledger-page button {
     display: none !important;
   }
 
@@ -4560,7 +4998,7 @@ textarea:focus {
 
   /* A4 page settings */
   @page {
-    size: A4 portrait;
+    size: A4 landscape;
     margin: 10mm;
   }
 
@@ -4665,12 +5103,21 @@ textarea:focus {
   }
 }
 @media print {
-  @page { size: A4 portrait; margin: 10mm; }
+  @page { size: A4 landscape; margin: 10mm; }
   .no-print { display: none !important; }
   .print-only { display: block !important; }
   body { background: #fff !important; color: #000 !important; }
-  table { width: 100% !important; border-collapse: collapse !important; }
-  th, td { border: 1px solid #000 !important; padding: 3px 4px !important; font-size: 10px !important; }
+  /* Compact table overrides scoped to register/ledger so they do not bleed into report tables */
+  .op-transaction-register-page table,
+  .tank-stock-ledger-page table { width: 100% !important; border-collapse: collapse !important; }
+  .op-transaction-register-page th,
+  .op-transaction-register-page td,
+  .tank-stock-ledger-page th,
+  .tank-stock-ledger-page td {
+    border: 1px solid #000 !important;
+    padding: 3px 4px !important;
+    font-size: 10px !important;
+  }
 }
 .print-only { display: none; }
 
@@ -5007,7 +5454,7 @@ textarea:focus {
    MTR Print Layout (A4)
    ========================= */
 @media print {
-  @page { size: A4 portrait; margin: 10mm; }
+  @page { size: A4 landscape; margin: 10mm; }
 
   .no-print { display: none !important; }
   .print-only { display: block !important; }
@@ -5086,3 +5533,25 @@ textarea:focus {
 
 /* screen behavior */
 .print-only { display: none; }
+
+.company-print-footer {
+  display: none;
+}
+
+/* =========================
+   Print Page Orientation
+   ========================= */
+@media print {
+  .company-print-footer {
+    display: block !important;
+    margin-top: 18px;
+    border-top: 1px solid #000;
+    padding-top: 7px;
+    font-size: 10px;
+    color: #000;
+  }
+
+  .company-print-footer p {
+    margin: 2px 0;
+  }
+}

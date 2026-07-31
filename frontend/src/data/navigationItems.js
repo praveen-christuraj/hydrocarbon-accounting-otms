@@ -242,6 +242,18 @@ export const navigationItems = [
         permission: 'View Tank Stock Ledger',
       },
       {
+        label: 'Tank Operation Summary',
+        path: '/tank-operation-summary',
+        disabled: false,
+        permission: 'View Tank Operation Summary',
+      },
+      {
+        label: 'Out-Turn Summary',
+        path: '/out-turn-summary',
+        disabled: false,
+        permission: 'View Out-Turn Summary',
+      },
+      {
         label: 'Out-Turn Report',
         path: '/out-turn-report',
         disabled: false,
@@ -333,6 +345,12 @@ export const navigationItems = [
         path: '/material-balance-template-master',
         disabled: false,
         permission: 'View Material Balance Template',
+      },
+      {
+        label: 'Database Browser',
+        path: '/database-browser',
+        disabled: false,
+        requiredPermission: 'View Database Browser',
       },
       {
         label: 'Audit Logs',

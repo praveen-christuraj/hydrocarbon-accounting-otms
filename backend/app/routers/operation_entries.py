@@ -34,12 +34,12 @@ from app.routers.operation_transactions import (
     build_operation_transaction_response,
     generate_operation_number,
     generate_operation_ticket_number,
-    normalize_jsonb_value,
     get_trip_by_convoy_or_none,
     ensure_trip_not_closed,
     ensure_shuttle_voyage_not_closed,
     get_or_create_shuttle_voyage,
 )
+from app.routers.reports import normalize_jsonb_value
 
 router = APIRouter(prefix="/operation-entries", tags=["Operation Entries"])
 

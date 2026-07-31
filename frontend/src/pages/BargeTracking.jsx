@@ -7,8 +7,13 @@ import {
   closeTrip,
   reopenTrip,
 } from '../api/bargeTrackingApi'
+import { useCompanyPrintProfile } from '../hooks/useCompanyPrintProfile'
+import CompanyPrintHeader from '../components/reports/CompanyPrintHeader'
+import CompanyPrintFooter from '../components/reports/CompanyPrintFooter'
 
 function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
+  const profile = useCompanyPrintProfile()
+
   const [convoyNumber, setConvoyNumber] = useState('')
   const [loading, setLoading] = useState(false)
   const [tracker, setTracker] = useState(null)
@@ -514,6 +519,7 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
   }
 return (
     <div>
+      <div className="screen-only">
       {confirmAction && (
         <div className="confirm-overlay">
           <div className="confirm-dialog">
@@ -541,10 +547,12 @@ return (
           </div>
         </div>
       )}
+      </div>
 
       {/* Compact Barge MTR / Reconciliation Report */}
       {printReport.open && printReport.comparison && (
         <div className="printable-report barge-mtr-report">
+          <CompanyPrintHeader profile={profile} defaultSubtitle="Barge MTR / Reconciliation Report" />
           {(() => {
             const cmp = printReport.comparison
             const summary = cmp.summary_json || {}
@@ -837,6 +845,7 @@ return (
                   </div>
                 </div>
 
+                <CompanyPrintFooter profile={profile} />
                 <div className="barge-mtr-footer">
                   Printed from Hydrocarbon Accounting System | Barge Tracking
                 </div>
@@ -852,6 +861,7 @@ return (
         </div>
       )}
 
+      <div className="screen-only">
       <div className="page-title">
         <div>
           <h2>Barge Tracking</h2>
@@ -1270,6 +1280,7 @@ return (
           {errorMsg}
         </div>
       )}
+      </div>
     </div>
   )
 }

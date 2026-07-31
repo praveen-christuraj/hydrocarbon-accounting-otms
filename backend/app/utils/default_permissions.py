@@ -470,6 +470,21 @@ STANDARD_PERMISSIONS = [
         "description": "Can view Material Balance Report from tank stock ledger",
     },
     {
+        "permission_name": "View Tank Operation Summary",
+        "module_name": "Reports",
+        "description": "Can view Tank Operation Summary report from tank gauging payloads",
+    },
+    {
+        "permission_name": "View Out-Turn Summary",
+        "module_name": "Reports",
+        "description": "Can view Out-Turn Summary report from tank gauging payloads",
+    },
+    {
+        "permission_name": "Manage Out-Turn Summary",
+        "module_name": "Reports",
+        "description": "Can configure Out-Turn Summary report columns applied to all users",
+    },
+    {
         "permission_name": "View Material Balance Template",
         "module_name": "Configuration",
         "description": "Can view Material Balance template configuration",

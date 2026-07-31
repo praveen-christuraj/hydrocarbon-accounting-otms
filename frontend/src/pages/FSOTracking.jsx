@@ -7,6 +7,9 @@ import {
   downloadFSOMaterialBalanceXlsx,
   downloadFSOOutturnXlsx,
 } from '../api/fsoReportApi'
+import { useCompanyPrintProfile } from '../hooks/useCompanyPrintProfile'
+import CompanyPrintHeader from '../components/reports/CompanyPrintHeader'
+import CompanyPrintFooter from '../components/reports/CompanyPrintFooter'
 
 const downloadCsv = (filename, headers, rows) => {
   const escape = (v) => {
@@ -28,6 +31,8 @@ const downloadCsv = (filename, headers, rows) => {
 }
 
 function FSOTracking({ locations = [], assets = [] }) {
+  const profile = useCompanyPrintProfile()
+
   const [tab, setTab] = useState('OTR') // OTR | MB | OUTTURN
   const [loading, setLoading] = useState(false)
   const [successMsg, setSuccessMsg] = useState('')
@@ -215,6 +220,7 @@ function FSOTracking({ locations = [], assets = [] }) {
   return (
     <>
       <div className="print-only mtr-page">
+        <CompanyPrintHeader profile={profile} defaultSubtitle="FSO MTR Report" />
         <div className="mtr-header">
           <h1>FSO MTR REPORT</h1>
           <div className="mtr-sub">
@@ -323,6 +329,7 @@ function FSOTracking({ locations = [], assets = [] }) {
           </>
         )}
 
+        <CompanyPrintFooter profile={profile} />
         <div className="mtr-footer">
           <div>System: Hydrocarbon Accounting</div>
           <div>Module: FSO Reports</div>

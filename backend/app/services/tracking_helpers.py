@@ -22,13 +22,13 @@ from app.models import (
     Trip,
     TripEvent,
     TripComparison,
-    TripEventCreate,
     OperationTransaction,
     OperationTransactionValue,
     ShuttleVoyage,
     FSOVoyage,
     User,
 )
+from app.schemas import TripEventCreate
 from app.utils.helpers import (
     clean_optional_text,
     get_transaction_ticket_number,

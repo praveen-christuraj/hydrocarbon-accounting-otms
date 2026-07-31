@@ -2952,3 +2952,19 @@ class PermitBulkUploadItem(BaseModel):
 
 class PermitBulkUploadRequest(BaseModel):
     items: list[PermitBulkUploadItem]
+
+
+# -------------------------
+# Out-Turn Summary Schemas
+# -------------------------
+
+class OutTurnSummaryColumnConfig(BaseModel):
+    key: str
+    label: str
+    group: str = "Base"
+    enabled: bool = True
+    order: int = 0
+
+
+class OutTurnSummaryConfigUpdate(BaseModel):
+    columns: list[OutTurnSummaryColumnConfig]

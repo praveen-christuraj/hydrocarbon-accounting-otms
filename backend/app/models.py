@@ -1998,3 +1998,13 @@ class ExportConfig(Base):
     status = Column(String(20), nullable=False, default="Active")
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class OutTurnSummaryConfig(Base):
+    __tablename__ = "out_turn_summary_configs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    columns_json = Column(JSONB, nullable=False, default=list)
+    updated_by = Column(String(150), nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now())

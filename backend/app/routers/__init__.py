@@ -1,5 +1,5 @@
 from app.routers import (
-    asset_assignments,
+    admin_db_browser, asset_assignments,
     asset_calibration_tables,
     asset_types,
     assets,
@@ -41,7 +41,7 @@ from app.routers import (
 )
 
 __all__ = [
-    "asset_assignments",
+    "admin_db_browser", "asset_assignments",
     "asset_calibration_tables",
     "asset_types",
     "assets",

@@ -12,6 +12,9 @@ import {
   getEntityBlocks, createEntityBlock, deleteEntityBlock,
   getExportConsignees, createExportConsignee, updateExportConsignee, deleteExportConsignee,
 } from '../api/exportOperationsApi'
+import { useCompanyPrintProfile } from '../hooks/useCompanyPrintProfile'
+import CompanyPrintHeader from '../components/reports/CompanyPrintHeader'
+import CompanyPrintFooter from '../components/reports/CompanyPrintFooter'
 
 const fmt = (v, d = 2) => {
   const n = Number(v || 0)
@@ -757,6 +760,8 @@ function DataEntryTab({ loggedInUser, canManage }) {
 }
 
 function ReportsTab({ loggedInUser }) {
+  const profile = useCompanyPrintProfile()
+
   const [report, setReport] = useState(null)
   const [loading, setLoading] = useState(false)
   const [locations, setLocations] = useState([])
@@ -795,6 +800,7 @@ function ReportsTab({ loggedInUser }) {
 
   return (
     <div>
+      <CompanyPrintHeader profile={profile} defaultSubtitle="Export Report" />
       <div className="report-filter-panel no-print" style={{ marginTop: '1rem' }}>
         <div><label>Location</label>
           <select value={filters.location_code} onChange={(e) => setFilters((c) => ({ ...c, location_code: e.target.value }))}>
@@ -844,6 +850,7 @@ function ReportsTab({ loggedInUser }) {
           </table>
         </div>
       )}
+      <CompanyPrintFooter profile={profile} />
     </div>
   )
 }
@@ -1361,7 +1368,7 @@ function PermitConfig({ canManage }) {
 
   return (
     <div>
-      <div className="report-filter-panel no-print">
+      <div className="report-filter-panel no-print" style={{ marginTop: '1rem' }}>
         <div><label>Location</label>
           <select value={filters.location_code} onChange={(e) => setFilters((c) => ({ ...c, location_code: e.target.value }))}>
             <option value="">All</option>

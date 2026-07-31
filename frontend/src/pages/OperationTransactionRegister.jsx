@@ -167,7 +167,7 @@ function OperationTransactionRegister({
   }, [totalRows, pageSize])
 
   return (
-    <div>
+    <div className="op-transaction-register-page">
       {profile && (
         <div className="print-report-header">
           <div className="print-company-block">
@@ -479,6 +479,13 @@ function OperationTransactionRegister({
       {errorMsg && (
         <div className="error-box" onClick={() => setErrorMsg('')}>
           {errorMsg}
+        </div>
+      )}
+
+      {profile && (
+        <div className="print-only" style={{ marginTop: 20, fontSize: 11, color: '#555' }}>
+          <p>{profile.footerFormula}</p>
+          <p>{profile.footerNote}</p>
         </div>
       )}
     </div>

@@ -32,6 +32,8 @@ import LocationOperationAvailability from './pages/LocationOperationAvailability
 import LocationOperationSummary from './pages/LocationOperationSummary'
 import OperationTransactionRegister from './pages/OperationTransactionRegister'
 import TankStockLedger from './pages/TankStockLedger'
+import TankOperationSummary from './pages/TankOperationSummary'
+import OutTurnSummary from './pages/OutTurnSummary'
 import OutTurnReport from './pages/OutTurnReport'
 import MaterialBalanceReport from './pages/MaterialBalanceReport'
 import MaterialBalanceTemplateMaster from './pages/MaterialBalanceTemplateMaster'
@@ -60,6 +62,7 @@ import ProfileSecurity from './pages/ProfileSecurity'
 import SystemNotificationMaster from './pages/SystemNotificationMaster'
 import SystemNotificationCenter from './components/SystemNotificationCenter'
 import BackupRecovery from './pages/BackupRecovery'
+import DatabaseBrowser from './pages/DatabaseBrowser'
 import ExportOperations from './pages/ExportOperations'
 
 import { getCurrentUser, logoutUser } from './api/authApi'
@@ -725,6 +728,18 @@ function AppContent({
           />
 
           <Route
+            path="/database-browser"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View Database Browser"
+                fallbackMessage="You do not have permission to view the Database Browser."
+              >
+                <DatabaseBrowser />
+              </PermissionGuard>
+            }
+          />
+          <Route
             path="/audit-logs"
             element={
               <PermissionGuard
@@ -1114,6 +1129,34 @@ function AppContent({
                 fallbackMessage="You do not have permission to view Tank Stock Ledger."
               >
                 <TankStockLedger locations={locations} assets={assets} />
+              </PermissionGuard>
+            }
+          />
+          <Route
+            path="/tank-operation-summary"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View Tank Operation Summary"
+                fallbackMessage="You do not have permission to view Tank Operation Summary."
+              >
+                <TankOperationSummary locations={locations} assets={assets} />
+              </PermissionGuard>
+            }
+          />
+          <Route
+            path="/out-turn-summary"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View Out-Turn Summary"
+                fallbackMessage="You do not have permission to view Out-Turn Summary."
+              >
+                <OutTurnSummary
+                  locations={locations}
+                  assets={assets}
+                  loggedInUser={loggedInUser}
+                />
               </PermissionGuard>
             }
           />

@@ -8,6 +8,9 @@ import {
 } from '../api/shuttleTrackingApi'
 import { createOperationEntry } from '../api/operationEntryApi'
 import { getVesselOperations } from '../api/vesselOperationApi'
+import { useCompanyPrintProfile } from '../hooks/useCompanyPrintProfile'
+import CompanyPrintHeader from '../components/reports/CompanyPrintHeader'
+import CompanyPrintFooter from '../components/reports/CompanyPrintFooter'
 
 const defaultFilters = {
   date_from: '',
@@ -32,6 +35,8 @@ function ShuttleTracking({
   loggedInUser,
 }) {
   const navigate = useNavigate()
+
+  const profile = useCompanyPrintProfile()
 
   const isAdminBootstrap =
     String(loggedInUser?.username || '').toLowerCase() === 'admin'
@@ -925,6 +930,7 @@ function ShuttleTracking({
         </div>
       )}
       <div className="print-only mtr-page">
+        <CompanyPrintHeader profile={profile} defaultSubtitle="Shuttle Voyage MTR" />
         {selectedGroup ? (
           <>
             <div className="mtr-header">
@@ -985,6 +991,7 @@ function ShuttleTracking({
               </tbody>
             </table>
 
+            <CompanyPrintFooter profile={profile} />
             <div className="mtr-footer">
               <div>System: Hydrocarbon Accounting</div>
               <div>Module: Shuttle Tracking</div>
