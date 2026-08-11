@@ -13,6 +13,7 @@ import {
 } from '../../utils/tankQuantityEngine'
 
 const LONG_TON_TO_METRIC_TON = 1.01605
+const normalizeCode = (value) => String(value || '').trim().toUpperCase()
 
 const emptyTankInput = {
   tankOperationCode: '',
@@ -149,7 +150,7 @@ function TankGaugingLayout({
 
     const matchingTables = assetCalibrationTables.filter((table) => {
       return (
-        table.assetCode === selectedAsset.assetCode &&
+        normalizeCode(table.assetCode) === normalizeCode(selectedAsset.assetCode) &&
         table.status === 'Active'
       )
     })

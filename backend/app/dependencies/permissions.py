@@ -27,10 +27,12 @@ def user_has_permission(
     permission = (
         db.query(Permission)
         .join(RolePermission, RolePermission.permission_id == Permission.id)
+        .join(Role, Role.id == RolePermission.role_id)
         .filter(
             RolePermission.role_id.in_(user_role_ids),
-            Permission.permission_name == permission_name,
+            Permission.permission_name.ilike(permission_name),
             Permission.status == "Active",
+            Role.status == "Active",
         )
         .first()
     )
@@ -46,7 +48,7 @@ def is_admin_user(user: User, db: Session) -> bool:
         for r in (
             db.query(Role)
             .join(UserRole, UserRole.role_id == Role.id)
-            .filter(UserRole.user_id == user.id)
+            .filter(UserRole.user_id == user.id, Role.status == "Active")
             .all()
         )
         if str(r.role_name or "").strip() != ""
@@ -93,7 +95,12 @@ def get_role_ids_with_permission(db: Session, permission_name: str):
 def get_user_role_ids(db: Session, user: User):
     return {
         row.role_id
-        for row in db.query(UserRole).filter(UserRole.user_id == user.id).all()
+        for row in (
+            db.query(UserRole)
+            .join(Role, Role.id == UserRole.role_id)
+            .filter(UserRole.user_id == user.id, Role.status == "Active")
+            .all()
+        )
     }
 
 
@@ -120,6 +127,11 @@ def get_action_code_for_status_change(next_status: str):
     return status_action_map.get(next_status)
 
 
+def _normalize_policy_code(value):
+    text = str(value or "").strip().lower()
+    return text if text else None
+
+
 def evaluate_operation_workflow_policy(
     db: Session,
     current_user: User,
@@ -129,6 +141,11 @@ def evaluate_operation_workflow_policy(
     asset_type_code: str | None,
     location_code: str | None,
 ):
+    # Administrators can never be locked out by a mis-configured policy;
+    # they are the only ones who can fix the policy in the first place.
+    if is_admin_user(current_user, db):
+        return True, "Administrator bypass", None
+
     policies = (
         db.query(OperationWorkflowPolicy)
         .filter(
@@ -139,14 +156,21 @@ def evaluate_operation_workflow_policy(
         .all()
     )
 
+    ctx_operation_type = _normalize_policy_code(operation_type_code)
+    ctx_asset_type = _normalize_policy_code(asset_type_code)
+    ctx_location = _normalize_policy_code(location_code)
+
     def matches(policy: OperationWorkflowPolicy):
-        if policy.operation_type_code and policy.operation_type_code != operation_type_code:
+        policy_operation_type = _normalize_policy_code(policy.operation_type_code)
+        policy_asset_type = _normalize_policy_code(policy.asset_type_code)
+        policy_location = _normalize_policy_code(policy.location_code)
+        if policy_operation_type and policy_operation_type != ctx_operation_type:
             return False
         if policy.operation_template_id and policy.operation_template_id != operation_template_id:
             return False
-        if policy.asset_type_code and policy.asset_type_code != asset_type_code:
+        if policy_asset_type and policy_asset_type != ctx_asset_type:
             return False
-        if policy.location_code and policy.location_code != location_code:
+        if policy_location and policy_location != ctx_location:
             return False
         return True
 
@@ -156,7 +180,12 @@ def evaluate_operation_workflow_policy(
 
     user_role_ids = {
         row.role_id
-        for row in db.query(UserRole).filter(UserRole.user_id == current_user.id).all()
+        for row in (
+            db.query(UserRole)
+            .join(Role, Role.id == UserRole.role_id)
+            .filter(UserRole.user_id == current_user.id, Role.status == "Active")
+            .all()
+        )
     }
 
     for policy in matched:
@@ -182,7 +211,16 @@ def evaluate_operation_workflow_policy(
         if allowed_role_ids.intersection(user_role_ids):
             return True, "Allowed by role in workflow policy", policy
 
-    return False, "No matching role/user allowance in matched workflow policies", matched[0]
+    blocking = matched[0]
+    return (
+        False,
+        (
+            f"Workflow policy '{blocking.policy_name}' restricts who may perform this action, "
+            "and none of your roles are listed on it. An administrator can add your role "
+            "under Operation Workflow Policy."
+        ),
+        blocking,
+    )
 
 
 def find_matching_operation_workflow_policy(
@@ -203,14 +241,18 @@ def find_matching_operation_workflow_policy(
         .all()
     )
 
+    ctx_operation_type = _normalize_policy_code(operation_type_code)
+    ctx_asset_type = _normalize_policy_code(asset_type_code)
+    ctx_location = _normalize_policy_code(location_code)
+
     for policy in policies:
-        if policy.operation_type_code and policy.operation_type_code != operation_type_code:
+        if _normalize_policy_code(policy.operation_type_code) and _normalize_policy_code(policy.operation_type_code) != ctx_operation_type:
             continue
         if policy.operation_template_id and policy.operation_template_id != operation_template_id:
             continue
-        if policy.asset_type_code and policy.asset_type_code != asset_type_code:
+        if _normalize_policy_code(policy.asset_type_code) and _normalize_policy_code(policy.asset_type_code) != ctx_asset_type:
             continue
-        if policy.location_code and policy.location_code != location_code:
+        if _normalize_policy_code(policy.location_code) and _normalize_policy_code(policy.location_code) != ctx_location:
             continue
         return policy
 
@@ -233,25 +275,27 @@ def build_logged_in_user_response(user: User, db: Session):
     from app.utils.password_policy import build_security_flags
 
     role_data = None
+    roles_data = []
     permissions_data = []
 
-    # Determine role_data first (from user_roles)
-    user_role_assignment = (
-        db.query(UserRole)
+    role_assignments = (
+        db.query(UserRole, Role)
         .join(Role, Role.id == UserRole.role_id)
-        .filter(UserRole.user_id == user.id)
-        .first()
+        .filter(UserRole.user_id == user.id, Role.status == "Active")
+        .order_by(Role.role_name, Role.id)
+        .all()
     )
 
-    if user_role_assignment:
-        role = db.query(Role).filter(Role.id == user_role_assignment.role_id).first()
-        if role:
-            role_data = {
-                "id": role.id,
-                "role_name": role.role_name,
-                "description": role.description,
-                "status": role.status,
-            }
+    for user_role_assignment, role in role_assignments:
+        role_payload = {
+            "id": role.id,
+            "role_name": role.role_name,
+            "description": role.description,
+            "status": role.status,
+        }
+        roles_data.append(role_payload)
+        if role_data is None:
+            role_data = role_payload
 
     # If admin user, return ALL active permissions regardless of role assignment
     if is_admin_user(user, db):
@@ -271,12 +315,19 @@ def build_logged_in_user_response(user: User, db: Session):
             }
             for permission in all_permissions
         ]
-    elif user_role_assignment and role:
+    elif roles_data:
+        role_ids = [role_entry["id"] for role_entry in roles_data]
         permissions = (
             db.query(Permission)
             .join(RolePermission, RolePermission.permission_id == Permission.id)
-            .filter(RolePermission.role_id == role.id)
+            .join(Role, Role.id == RolePermission.role_id)
+            .filter(
+                RolePermission.role_id.in_(role_ids),
+                Permission.status == "Active",
+                Role.status == "Active",
+            )
             .order_by(Permission.module_name, Permission.permission_name)
+            .distinct()
             .all()
         )
 
@@ -312,10 +363,18 @@ def build_logged_in_user_response(user: User, db: Session):
         "status": user.status,
         "security": build_security_flags(user),
         "role": role_data,
+        "roles": roles_data,
         "permissions": permissions_data,
         "assigned_location_codes": assigned_location_codes,
         "all_locations_access": all_locations_access,
     }
+
+
+def normalize_location_code(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip().casefold()
+    return normalized or None
 
 
 def get_user_location_codes(user: User, db: Session) -> set[str] | None:
@@ -331,7 +390,11 @@ def get_user_location_codes(user: User, db: Session) -> set[str] | None:
         .filter(UserLocation.user_id == user.id)
         .all()
     )
-    return {row[0] for row in codes}
+    return {
+        normalized_code
+        for row in codes
+        if (normalized_code := normalize_location_code(row[0])) is not None
+    }
 
 
 def apply_location_filter(query, model, user: User, db: Session, column_name: str = "location_code"):
@@ -351,4 +414,4 @@ def apply_location_filter(query, model, user: User, db: Session, column_name: st
     if not allowed_codes:
         return query.filter(sqlalchemy.literal(False))  # no access to any location
     col = getattr(model, column_name)
-    return query.filter(col.in_(allowed_codes))
+    return query.filter(sqlalchemy.func.lower(col).in_(allowed_codes))

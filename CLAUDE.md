@@ -8,7 +8,40 @@ Rules:
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
 
-## Recent Fixes (2026-07-15)
+## Recent Fixes (2026-08-11) - RBAC Flow Hardening
+
+### Approve Blocked Despite Full Permissions (root cause found 2026-08-11)
+- **Root cause was DATA, not code**: workflow policy #1 "OPERATION_APPROVAL" (created 2026-06-03, action=APPROVE, no context filters) listed ONLY the Admin role. The Operation Workflow Policy layer gates actions AFTER RBAC permissions — when an active policy matches, only its listed roles may act, regardless of Role Permission Assignment.
+- Data fix: added Operator role to policy #1 (manageable via Operation Workflow Policy page).
+- **workflow_policies.py**: `/operation-workflow-policies/check` no longer requires "View Operation Workflow Policy" — it is a self-scoped check any authenticated user needs.
+- **permissions.py**: `evaluate_operation_workflow_policy` + `find_matching_operation_workflow_policy` now compare context codes (operation type, asset type, location) case-insensitively; added admin bypass so admins can't be locked out; denial reason now names the blocking policy.
+- **OperationTransactionDetail.jsx**: UI now distinguishes "missing RBAC permission" from "blocked by workflow policy '<name>'" in both the disabled-button hints and the modal error messages (stores reason/policy name from the check response).
+- Reference RBAC survey of spatiumddi-main & OpenConstructionERP-main done — see conversation notes; key borrowable patterns: router-level `require_resource_permission` dependency factory, `None`-means-no-filter admin scoping, audit row on every denial, approver ≠ submitter rule.
+
+### Critical RBAC Bugs Fixed
+1. **Global Asset Visibility** — Global assets (scope='Global') now appear for location-scoped users when operation type is available
+2. **Case-Insensitive Location Filtering** — Location codes "AGGE"/"agge" now match correctly via `func.lower()` normalization
+3. **Multi-Role Permission Aggregation** — Users with multiple roles now get permissions from ALL active roles
+4. **Inactive Role Bypass** — Inactive/deleted roles no longer grant permissions (filtered by `Role.status == "Active"`)
+5. **Tank Operation Summary Visibility** — Approved Operation Entry tickets now appear in summary (fixed case-sensitive layout matching)
+6. **Operation Transaction Register (Non-Admin)** — Non-admin users can now see paged register (fixed location filter + multi-role support)
+
+### RBAC Hardening Additions
+- **Diagnostics Endpoint** — `GET /auth/me/rbac-diagnostics` shows user's actual permissions, roles, location scopes
+- **Regression Test Suite** — `backend/tests/test_rbac_regression.py` with 6 test classes covering all fix scenarios
+- **RBAC Hardening Guide** — `RBAC_HARDENING_GUIDE.md` with best practices, checklist for 57+ pages, common patterns
+
+### Files Modified (11 total)
+**Backend Routers:** assets.py, auth.py, operation_entries.py, operation_transactions.py, tank_operations.py, vessel_operations.py  
+**Backend Dependencies:** permissions.py  
+**Backend Utils:** helpers.py (added `normalize_location_code()`, `apply_location_filter()`)  
+**Backend Tests:** test_rbac_regression.py (NEW)  
+**Frontend:** authApi.js, OperationEntry.jsx  
+**Documentation:** RBAC_HARDENING_GUIDE.md (NEW), RBAC_FIX_SUMMARY.md (NEW)
+
+---
+
+## Previous Fixes (2026-07-15)
 
 ### Critical Bugs Fixed
 - **users.py**: Added missing `datetime` import (was causing `NameError` on user creation)

@@ -2,7 +2,7 @@ from datetime import datetime, date
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import func
 import io
 import csv
 
@@ -11,8 +11,6 @@ from app.models import (
     OperationTransaction,
     OperationTransactionValue,
     OperationTemplate,
-    OperationType,
-    Location,
     Asset,
     User,
 )
@@ -80,11 +78,9 @@ def get_all_possible_columns(db: Session, location_code: str | None = None):
     query = (
         db.query(OperationTransaction)
         .join(OperationTemplate, OperationTransaction.operation_template_id == OperationTemplate.id)
-        .join(OperationType, OperationTemplate.operation_type_code == OperationType.operation_type_code)
         .filter(
             OperationTransaction.status == APPROVED_TRANSACTION_STATUS,
-            OperationType.applicable_asset_type_code == "TANK",
-            OperationTemplate.entry_layout_type == "Tank Gauging",
+            func.lower(func.trim(OperationTemplate.entry_layout_type)) == "tank gauging",
         )
     )
 
@@ -168,11 +164,9 @@ def get_filtered_tank_operation_summary_rows(
     query = (
         db.query(OperationTransaction)
         .join(OperationTemplate, OperationTransaction.operation_template_id == OperationTemplate.id)
-        .join(OperationType, OperationTemplate.operation_type_code == OperationType.operation_type_code)
         .filter(
             OperationTransaction.status == APPROVED_TRANSACTION_STATUS,
-            OperationType.applicable_asset_type_code == "TANK",
-            OperationTemplate.entry_layout_type == "Tank Gauging",
+            func.lower(func.trim(OperationTemplate.entry_layout_type)) == "tank gauging",
         )
     )
 

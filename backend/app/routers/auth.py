@@ -194,6 +194,7 @@ def login_user(
         "token_type": "bearer",
         "user": logged_in_user,
         "role": logged_in_user["role"],
+        "roles": logged_in_user["roles"],
         "permissions": logged_in_user["permissions"],
     }
 
@@ -277,6 +278,7 @@ def verify_login_2fa(
         "token_type": "bearer",
         "user": logged_in_user,
         "role": logged_in_user["role"],
+        "roles": logged_in_user["roles"],
         "permissions": logged_in_user["permissions"],
     }
 
@@ -292,7 +294,60 @@ def get_logged_in_user(
     return {
         "user": logged_in_user,
         "role": logged_in_user["role"],
+        "roles": logged_in_user["roles"],
         "permissions": logged_in_user["permissions"],
+    }
+
+
+@router.get("/me/rbac-diagnostics")
+def get_rbac_diagnostics(
+    current_user: User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db),
+):
+    """
+    Debug endpoint: shows exactly what permissions, roles, and location scopes
+    are being applied to the current user. Helps diagnose RBAC access issues.
+    """
+    from app.dependencies.permissions import (
+        get_user_permissions, get_user_location_codes, is_super_admin
+    )
+    from sqlalchemy import func
+
+    super_admin = is_super_admin(current_user, db)
+    user_perms = get_user_permissions(current_user, db)
+    location_codes = get_user_location_codes(current_user, db)
+
+    user_roles = db.query(UserRole).filter(UserRole.user_id == current_user.id).all()
+    role_details = []
+    for ur in user_roles:
+        role = ur.role
+        role_perms = db.query(Role.id, Role.role_name, Role.status).filter(
+            Role.id == role.id
+        ).first()
+        if role_perms:
+            perm_count = (
+                db.query(func.count(RolePermission.id))
+                .filter(RolePermission.role_id == role.id)
+                .scalar() or 0
+            )
+            role_details.append({
+                "role_id": role.id,
+                "role_name": role.role_name,
+                "status": role.status,
+                "permission_count": perm_count,
+            })
+
+    return {
+        "user_id": current_user.id,
+        "username": current_user.username,
+        "full_name": current_user.full_name,
+        "is_super_admin": super_admin,
+        "assigned_roles": role_details,
+        "active_role_count": sum(1 for r in role_details if r["status"] == "Active"),
+        "granted_permission_count": len(user_perms),
+        "granted_permissions": sorted(user_perms),
+        "assigned_location_codes": sorted(location_codes),
+        "location_count": len(location_codes),
     }
 
 

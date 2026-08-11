@@ -33,6 +33,7 @@ from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
     apply_location_filter,
     get_user_location_codes,
+    normalize_location_code,
     require_user_permission,
     get_required_permission_for_status_change,
     get_action_code_for_status_change,
@@ -1098,7 +1099,9 @@ def get_operation_transactions_paged(
 
     allowed = get_user_location_codes(current_user, db)
     if allowed is not None:
-        base_query = base_query.filter(OperationTransaction.origin_location_code.in_(allowed))
+        base_query = base_query.filter(
+            func.lower(OperationTransaction.origin_location_code).in_(allowed)
+        )
 
     if date_from:
         base_query = base_query.filter(OperationTransaction.operation_date >= date_from)
@@ -1150,7 +1153,9 @@ def get_operation_transactions_paged(
     )
 
     if allowed is not None:
-        count_query = count_query.filter(OperationTransaction.origin_location_code.in_(allowed))
+        count_query = count_query.filter(
+            func.lower(OperationTransaction.origin_location_code).in_(allowed)
+        )
 
     if date_from:
         count_query = count_query.filter(OperationTransaction.operation_date >= date_from)
@@ -1357,10 +1362,10 @@ def create_operation_transaction(
     allowed = get_user_location_codes(current_user, db)
     if allowed is not None:
         origin = clean_optional_text(transaction.origin_location_code)
-        if origin and origin not in allowed:
+        if origin and normalize_location_code(origin) not in allowed:
             raise HTTPException(status_code=403, detail="Origin location is not in your assigned scope")
         dest = clean_optional_text(transaction.destination_location_code)
-        if dest and dest not in allowed:
+        if dest and normalize_location_code(dest) not in allowed:
             raise HTTPException(status_code=403, detail="Destination location is not in your assigned scope")
 
     created_by_display = get_current_user_display_name(current_user)
@@ -1444,7 +1449,7 @@ def update_operation_transaction(
 
     allowed = get_user_location_codes(current_user, db)
     if allowed is not None:
-        if existing_transaction.origin_location_code not in allowed:
+        if normalize_location_code(existing_transaction.origin_location_code) not in allowed:
             raise HTTPException(status_code=403, detail="This transaction's location is not in your assigned scope")
 
     if existing_transaction.status not in ["Draft", "Rejected"]:
@@ -1474,10 +1479,10 @@ def update_operation_transaction(
 
     if allowed is not None:
         origin = clean_optional_text(transaction.origin_location_code)
-        if origin and origin not in allowed:
+        if origin and normalize_location_code(origin) not in allowed:
             raise HTTPException(status_code=403, detail="Origin location is not in your assigned scope")
         dest = clean_optional_text(transaction.destination_location_code)
-        if dest and dest not in allowed:
+        if dest and normalize_location_code(dest) not in allowed:
             raise HTTPException(status_code=403, detail="Destination location is not in your assigned scope")
 
     existing_transaction.operation_type_code = operation_type.operation_type_code
@@ -1566,7 +1571,10 @@ def delete_operation_transaction(
         )
 
     allowed = get_user_location_codes(current_user, db)
-    if allowed is not None and existing_transaction.origin_location_code not in allowed:
+    if (
+        allowed is not None
+        and normalize_location_code(existing_transaction.origin_location_code) not in allowed
+    ):
         raise HTTPException(status_code=403, detail="This transaction's location is not in your assigned scope")
 
     if existing_transaction.status not in ["Draft", "Rejected"]:

@@ -1,5 +1,8 @@
 # Python
 __pycache__/
+
+# Python runtime / embedded distribution (local only)
+Python/
 *.py[cod]
 *$py.class
 *.so

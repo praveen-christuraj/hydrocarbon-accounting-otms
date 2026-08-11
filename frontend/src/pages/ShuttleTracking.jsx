@@ -28,6 +28,8 @@ const escapeCsvValue = (value) => {
   return text
 }
 
+const normalizeCode = (value) => String(value || '').trim().toUpperCase()
+
 function ShuttleTracking({
   locations = [],
   assets = [],
@@ -337,7 +339,10 @@ function ShuttleTracking({
   useEffect(() => {
     const loadOps = async () => {
       const loc = String(createForm.originLocationCode || '').trim()
-      const asset = assets.find((a) => a.assetCode === createForm.primaryAssetCode)
+      const selectedAssetCode = normalizeCode(createForm.primaryAssetCode)
+      const asset = assets.find(
+        (a) => normalizeCode(a.assetCode) === selectedAssetCode
+      )
       const assetType = String(asset?.assetTypeCode || '').trim()
 
       if (!loc || !assetType) {

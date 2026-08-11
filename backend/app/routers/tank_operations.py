@@ -9,6 +9,7 @@ from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
     apply_location_filter,
     get_user_location_codes,
+    normalize_location_code,
     require_user_permission,
 )
 from app.services.audit_service import create_audit_log
@@ -245,7 +246,10 @@ def create_tank_operation(
     validated_data = validate_tank_operation(tank_operation, db)
 
     allowed = get_user_location_codes(current_user, db)
-    if allowed is not None and validated_data["location_code"] not in allowed:
+    if (
+        allowed is not None
+        and normalize_location_code(validated_data["location_code"]) not in allowed
+    ):
         raise HTTPException(
             status_code=403,
             detail="Location is not in your assigned scope",
@@ -317,7 +321,10 @@ def update_tank_operation(
         )
 
     allowed = get_user_location_codes(current_user, db)
-    if allowed is not None and existing_tank_operation.location_code not in allowed:
+    if (
+        allowed is not None
+        and normalize_location_code(existing_tank_operation.location_code) not in allowed
+    ):
         raise HTTPException(
             status_code=403,
             detail="Location is not in your assigned scope",
@@ -334,7 +341,10 @@ def update_tank_operation(
         tank_operation_id,
     )
 
-    if allowed is not None and validated_data["location_code"] not in allowed:
+    if (
+        allowed is not None
+        and normalize_location_code(validated_data["location_code"]) not in allowed
+    ):
         raise HTTPException(
             status_code=403,
             detail="Location is not in your assigned scope",
@@ -411,7 +421,10 @@ def delete_tank_operation(
         )
 
     allowed = get_user_location_codes(current_user, db)
-    if allowed is not None and existing_tank_operation.location_code not in allowed:
+    if (
+        allowed is not None
+        and normalize_location_code(existing_tank_operation.location_code) not in allowed
+    ):
         raise HTTPException(
             status_code=403,
             detail="Location is not in your assigned scope",

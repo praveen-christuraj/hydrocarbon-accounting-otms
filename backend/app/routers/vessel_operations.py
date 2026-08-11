@@ -6,7 +6,12 @@ from app.database import get_db
 from app.models import VesselOperation, Location, AssetType, User
 from app.schemas import VesselOperationCreate, VesselOperationResponse
 from app.dependencies.auth import get_current_user_from_token
-from app.dependencies.permissions import require_user_permission
+from app.dependencies.permissions import (
+    apply_location_filter,
+    get_user_location_codes,
+    normalize_location_code,
+    require_user_permission,
+)
 from app.services.audit_service import create_audit_log
 from app.utils.helpers import clean_optional_text, normalize_code
 
@@ -119,6 +124,7 @@ def get_vessel_operations(
     require_user_permission(current_user, "View Vessel Operation", db)
 
     q = db.query(VesselOperation)
+    q = apply_location_filter(q, VesselOperation, current_user, db)
 
     lc = clean_optional_text(location_code)
     if lc:
@@ -161,6 +167,15 @@ def create_vessel_operation(
     require_user_permission(current_user, "Manage Vessel Operation", db)
 
     d = validate_vessel_operation(vessel_operation, db)
+    allowed = get_user_location_codes(current_user, db)
+    if (
+        allowed is not None
+        and normalize_location_code(d["location_code"]) not in allowed
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Location is not in your assigned scope",
+        )
 
     row = VesselOperation(
         location_code=d["location_code"],
@@ -216,7 +231,25 @@ def update_vessel_operation(
     if not existing:
         raise HTTPException(status_code=404, detail="Vessel operation not found")
 
+    allowed = get_user_location_codes(current_user, db)
+    if (
+        allowed is not None
+        and normalize_location_code(existing.location_code) not in allowed
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Location is not in your assigned scope",
+        )
+
     d = validate_vessel_operation(vessel_operation, db, vessel_operation_id)
+    if (
+        allowed is not None
+        and normalize_location_code(d["location_code"]) not in allowed
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Location is not in your assigned scope",
+        )
     before_data = {
         "location_code": existing.location_code,
         "applicable_asset_type_code": existing.applicable_asset_type_code,
@@ -282,6 +315,16 @@ def delete_vessel_operation(
     existing = db.query(VesselOperation).filter(VesselOperation.id == vessel_operation_id).first()
     if not existing:
         raise HTTPException(status_code=404, detail="Vessel operation not found")
+
+    allowed = get_user_location_codes(current_user, db)
+    if (
+        allowed is not None
+        and normalize_location_code(existing.location_code) not in allowed
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Location is not in your assigned scope",
+        )
 
     deleted_data = {
         "location_code": existing.location_code,

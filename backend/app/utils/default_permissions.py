@@ -445,6 +445,16 @@ STANDARD_PERMISSIONS = [
         "description": "Can view reports",
     },
     {
+        "permission_name": "View Database Browser",
+        "module_name": "System",
+        "description": "Can view the database browser",
+    },
+    {
+        "permission_name": "Manage System Settings",
+        "module_name": "System Settings",
+        "description": "Can manage system-wide settings",
+    },
+    {
         "permission_name": "Export Reports",
         "module_name": "Reports",
         "description": "Can export reports",

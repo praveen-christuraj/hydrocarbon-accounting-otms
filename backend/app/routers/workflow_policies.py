@@ -275,7 +275,9 @@ def check_operation_workflow_policy(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "View Operation Workflow Policy", db)
+    # Self-scoped check: any authenticated user may ask whether THEY can perform
+    # an action, so no view permission is required here. The enforcement itself
+    # happens in the status-change endpoints.
     allowed, reason, matched = evaluate_operation_workflow_policy(
         db=db,
         current_user=current_user,

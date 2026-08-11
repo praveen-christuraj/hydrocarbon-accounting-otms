@@ -104,7 +104,7 @@ function RolePermissionAssignment({
   }
 
   return (
-    <div>
+    <div className="role-permission-page">
       <div className="page-title">
         <div>
           <h2>Role Permission Assignment</h2>

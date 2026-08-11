@@ -22,6 +22,7 @@ from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
     apply_location_filter,
     get_user_location_codes,
+    normalize_location_code,
     require_user_permission,
     evaluate_operation_workflow_policy,
 )
@@ -332,10 +333,10 @@ def create_operation_entry(
     allowed = get_user_location_codes(current_user, db)
     if allowed is not None:
         origin = clean_optional_text(entry.transaction.origin_location_code)
-        if origin and origin not in allowed:
+        if origin and normalize_location_code(origin) not in allowed:
             raise HTTPException(status_code=403, detail="Origin location is not in your assigned scope")
         dest = clean_optional_text(entry.transaction.destination_location_code)
-        if dest and dest not in allowed:
+        if dest and normalize_location_code(dest) not in allowed:
             raise HTTPException(status_code=403, detail="Destination location is not in your assigned scope")
 
     (

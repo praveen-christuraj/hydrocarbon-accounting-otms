@@ -1594,6 +1594,7 @@ function OperationTransactionDetail({ loggedInUser }) {
   const [pendingRemarks, setPendingRemarks] = useState('')
   const [pendingReviewConfirmed, setPendingReviewConfirmed] = useState(false)
   const [workflowActionAllow, setWorkflowActionAllow] = useState({})
+  const [workflowActionReason, setWorkflowActionReason] = useState({})
   const [reportProfiles, setReportProfiles] = useState([])
   const [selectedReportProfileName, setSelectedReportProfileName] = useState(
     loadSelectedReportProfileName
@@ -1757,6 +1758,7 @@ function OperationTransactionDetail({ loggedInUser }) {
       }
       const actions = ['SUBMIT', 'APPROVE', 'REJECT', 'CANCEL', 'RECALL']
       const out = {}
+      const reasons = {}
       for (const action of actions) {
         try {
           const res = await checkOperationWorkflowPolicy({
@@ -1764,11 +1766,17 @@ function OperationTransactionDetail({ loggedInUser }) {
             ...payloadBase,
           })
           out[action] = Boolean(res?.allowed)
+          reasons[action] = {
+            reason: res?.reason || '',
+            policyName: res?.matched_policy_name || '',
+          }
         } catch {
           out[action] = true
+          reasons[action] = { reason: '', policyName: '' }
         }
       }
       setWorkflowActionAllow(out)
+      setWorkflowActionReason(reasons)
     }
     loadWorkflowChecks()
   }, [transaction?.id, transaction?.operationTypeCode, transaction?.operationTemplateId, transaction?.primaryAssetTypeCode, transaction?.locationCode])
@@ -1787,26 +1795,52 @@ function OperationTransactionDetail({ loggedInUser }) {
       return
     }
 
+    const policyBlockedMessage = (actionCode, actionLabel) => {
+      const info = workflowActionReason[actionCode] || {}
+      const policyLabel = info.policyName ? ` '${info.policyName}'` : ''
+      return (
+        `A workflow policy${policyLabel} restricts who may ${actionLabel} this transaction, ` +
+        'and your role is not listed on it. An administrator can add your role in the ' +
+        'Operation Workflow Policy page.'
+      )
+    }
+
     if (
       (nextStatus === 'Submitted' || nextStatus === 'Draft') &&
       !((nextStatus === 'Draft' ? canRecallTransaction : canSubmitTransaction))
     ) {
-      setErrorMsg('You do not have permission to submit or recall operation transactions.')
+      if (canSubmitTransactionBase) {
+        setErrorMsg(policyBlockedMessage(nextStatus === 'Draft' ? 'RECALL' : 'SUBMIT', nextStatus === 'Draft' ? 'recall' : 'submit'))
+      } else {
+        setErrorMsg('You do not have permission to submit or recall operation transactions.')
+      }
       return
     }
 
     if (nextStatus === 'Approved' && !canApproveTransaction) {
-      setErrorMsg('You do not have permission to approve operation transactions.')
+      if (canApproveTransactionBase) {
+        setErrorMsg(policyBlockedMessage('APPROVE', 'approve'))
+      } else {
+        setErrorMsg('You do not have permission to approve operation transactions.')
+      }
       return
     }
 
     if (nextStatus === 'Rejected' && !canRejectTransaction) {
-      setErrorMsg('You do not have permission to reject operation transactions.')
+      if (canRejectTransactionBase) {
+        setErrorMsg(policyBlockedMessage('REJECT', 'reject'))
+      } else {
+        setErrorMsg('You do not have permission to reject operation transactions.')
+      }
       return
     }
 
     if (nextStatus === 'Cancelled' && !canCancelTransaction) {
-      setErrorMsg('You do not have permission to cancel operation transactions.')
+      if (canCancelTransactionBase) {
+        setErrorMsg(policyBlockedMessage('CANCEL', 'cancel'))
+      } else {
+        setErrorMsg('You do not have permission to cancel operation transactions.')
+      }
       return
     }
 
@@ -2109,6 +2143,15 @@ function OperationTransactionDetail({ loggedInUser }) {
     return <span className="warning-text">{message}</span>
   }
 
+  const actionBlockedMessage = (actionCode, hasBasePermission, permissionLabel) => {
+    if (!hasBasePermission) {
+      return `No ${permissionLabel} permission.`
+    }
+    const info = workflowActionReason[actionCode] || {}
+    const policyLabel = info.policyName ? ` '${info.policyName}'` : ''
+    return `Blocked by workflow policy${policyLabel} — your role is not listed on it.`
+  }
+
   const renderStatusActions = () => {
     if (!transaction) {
       return null
@@ -2136,7 +2179,7 @@ function OperationTransactionDetail({ loggedInUser }) {
               Review & Submit
             </button>
           ) : (
-            renderDisabledMessage('No Submit permission.')
+            renderDisabledMessage(actionBlockedMessage('SUBMIT', canSubmitTransactionBase, 'Submit'))
           )}
 
           {canCancelTransaction && (
@@ -2164,7 +2207,7 @@ function OperationTransactionDetail({ loggedInUser }) {
               Review & Approve
             </button>
           ) : (
-            renderDisabledMessage('No Approve permission.')
+            renderDisabledMessage(actionBlockedMessage('APPROVE', canApproveTransactionBase, 'Approve'))
           )}
 
           {canRejectTransaction ? (
@@ -2176,7 +2219,7 @@ function OperationTransactionDetail({ loggedInUser }) {
               Review & Reject
             </button>
           ) : (
-            renderDisabledMessage('No Reject permission.')
+            renderDisabledMessage(actionBlockedMessage('REJECT', canRejectTransactionBase, 'Reject'))
           )}
 
           {canSubmitTransaction ? (
@@ -2188,7 +2231,7 @@ function OperationTransactionDetail({ loggedInUser }) {
               Review & Recall to Draft
             </button>
           ) : (
-            renderDisabledMessage('No Recall permission.')
+            renderDisabledMessage(actionBlockedMessage('RECALL', canSubmitTransactionBase, 'Recall'))
           )}
         </>
       )
@@ -2206,7 +2249,7 @@ function OperationTransactionDetail({ loggedInUser }) {
               Review & Re-submit
             </button>
           ) : (
-            renderDisabledMessage('No Submit permission.')
+            renderDisabledMessage(actionBlockedMessage('SUBMIT', canSubmitTransactionBase, 'Submit'))
           )}
 
           {canCancelTransaction && (

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import or_
+from sqlalchemy import false, func, or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -7,8 +7,8 @@ from app.models import Asset, AssetType, Location, AssetCalibrationTable, AssetA
 from app.schemas import AssetCreate, AssetResponse
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
-    apply_location_filter,
     get_user_location_codes,
+    normalize_location_code,
     require_user_permission,
 )
 from app.services.audit_service import create_audit_log
@@ -30,7 +30,20 @@ def get_assets(
 ):
     require_user_permission(current_user, "View Asset", db)
     query = db.query(Asset).order_by(Asset.id)
-    query = apply_location_filter(query, Asset, current_user, db)
+
+    allowed_codes = get_user_location_codes(current_user, db)
+    if allowed_codes is None:
+        pass
+    elif not allowed_codes:
+        query = query.filter(false)
+    else:
+        query = query.filter(
+            or_(
+                Asset.asset_scope.ilike("Global"),
+                func.lower(Asset.location_code).in_(allowed_codes),
+            )
+        )
+
     if search:
         query = query.filter(
             or_(
@@ -116,7 +129,8 @@ def create_asset(
             )
 
         allowed = get_user_location_codes(current_user, db)
-        if allowed is not None and location_code not in allowed:
+        normalized_location = normalize_location_code(location_code)
+        if allowed is not None and normalized_location not in allowed:
             raise HTTPException(
                 status_code=403,
                 detail="Location is not in your assigned scope",
@@ -196,7 +210,11 @@ def update_asset(
         )
 
     allowed = get_user_location_codes(current_user, db)
-    if allowed is not None and existing_asset.location_code and existing_asset.location_code not in allowed:
+    if (
+        allowed is not None
+        and existing_asset.location_code
+        and normalize_location_code(existing_asset.location_code) not in allowed
+    ):
         raise HTTPException(status_code=403, detail="This asset's location is not in your assigned scope")
 
     duplicate_asset = db.query(Asset).filter(

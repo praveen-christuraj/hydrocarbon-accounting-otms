@@ -8,7 +8,27 @@ import {
 } from './authToken'
 
 const convertLoggedInUserFromApi = (data) => {
-  const user = data.user
+  const user = data.user || data
+  const backendRoles = Array.isArray(user.roles) ? user.roles : []
+  const fallbackRole = user.role ? [user.role] : []
+  const mappedRoles = [...backendRoles, ...fallbackRole]
+    .filter(Boolean)
+    .map((role) => ({
+      id: role.id,
+      roleName: role.role_name || role.roleName || role.name || '',
+      description: role.description || '',
+      status: role.status,
+    }))
+    .filter((role) => role.roleName)
+
+  const primaryRole = mappedRoles[0]
+    ? {
+        id: mappedRoles[0].id,
+        roleName: mappedRoles[0].roleName,
+        description: mappedRoles[0].description,
+        status: mappedRoles[0].status,
+      }
+    : null
 
   return {
     id: user.id,
@@ -21,18 +41,14 @@ const convertLoggedInUserFromApi = (data) => {
     designation: user.designation || '',
     status: user.status,
     security: user.security || {},
-    role: user.role
-      ? {
-          id: user.role.id,
-          roleName: user.role.role_name,
-          description: user.role.description || '',
-          status: user.role.status,
-        }
-      : null,
+    role: primaryRole,
+    roles: mappedRoles,
+    roleName: primaryRole?.roleName || '',
+    role_name: primaryRole?.roleName || '',
     permissions: (user.permissions || []).map((permission) => ({
       id: permission.id,
-      permissionName: permission.permission_name,
-      moduleName: permission.module_name,
+      permissionName: permission.permission_name || permission.permissionName,
+      moduleName: permission.module_name || permission.moduleName,
       description: permission.description || '',
       status: permission.status,
     })),

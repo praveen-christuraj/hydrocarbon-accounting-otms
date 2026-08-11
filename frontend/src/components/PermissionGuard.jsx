@@ -34,6 +34,15 @@ function PermissionGuard({
       return String(roleName || '').toLowerCase() === 'admin'
     })
 
+    if (!isAdmin && currentUser?.role) {
+      const roleName = String(
+        currentUser.role.role_name || currentUser.role.roleName || currentUser.roleName || ''
+      ).toLowerCase()
+      if (roleName === 'admin') {
+        return true
+      }
+    }
+
     if (isAdmin) {
       return true
     }

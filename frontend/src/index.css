@@ -445,6 +445,13 @@ textarea:focus {
   margin-top: 8px;
 }
 
+.role-permission-page .permission-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .permission-card {
   display: flex;
   flex-direction: row;
@@ -455,6 +462,12 @@ textarea:focus {
   border-radius: 10px;
   background: #f8fafc;
   cursor: pointer;
+}
+
+.role-permission-page .permission-card {
+  gap: 8px;
+  padding: 10px 11px;
+  min-height: 78px;
 }
 
 .permission-card:hover {
@@ -468,10 +481,22 @@ textarea:focus {
   margin-top: 2px;
 }
 
+.role-permission-page .permission-card input {
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+  flex-shrink: 0;
+}
+
 .permission-card strong {
   display: block;
   font-size: 14px;
   color: #0f172a;
+}
+
+.role-permission-page .permission-card strong {
+  font-size: 12px;
+  line-height: 1.25;
 }
 
 .permission-card span {
@@ -479,6 +504,12 @@ textarea:focus {
   margin-top: 3px;
   font-size: 13px;
   color: #64748b;
+}
+
+.role-permission-page .permission-card span {
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 1.25;
 }
 
 .permission-list {
@@ -512,6 +543,24 @@ textarea:focus {
   color: #b45309;
   font-size: 13px;
   font-weight: 700;
+}
+
+@media (max-width: 1400px) {
+  .role-permission-page .permission-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1100px) {
+  .role-permission-page .permission-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 820px) {
+  .role-permission-page .permission-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 /* Responsive */
