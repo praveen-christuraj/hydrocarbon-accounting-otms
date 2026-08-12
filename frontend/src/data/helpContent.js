@@ -221,14 +221,11 @@ export const helpContent = {
   '/tank-stock-ledger': {
     title: 'Tank Stock Ledger Help',
     description:
-      'Tank Stock Ledger shows approved Tank Gauging stock movements and running balances.',
+      'This legacy page is disabled in the frontend. Use Tank Operation Summary and Out-Turn Summary instead.',
     points: [
-      'Ledger rows are created automatically when a Tank Gauging ticket is approved.',
-      'SET operations declare the running balance, usually Opening Stock or Closing Stock.',
-      'IN operations increase stock, such as Receipt or Production.',
-      'OUT operations decrease stock, such as Dispatch or Draining.',
-      'Use filters to view ledger rows by location, tank, product, status, and date range.',
-      'Stock Summary groups movements by Location, Tank, and Product.',
+      'Tank Operation Summary is the active page for chronological approved tank entries.',
+      'Out-Turn Summary is the active page for previous-vs-current subtraction workflow.',
+      'The legacy Tank Stock Ledger code is still retained in the project.',
     ],
   },
 
@@ -271,14 +268,10 @@ export const helpContent = {
   '/out-turn-report': {
     title: 'Out-Turn Report Help',
     description:
-      'Out-Turn Report shows approved Tank Gauging tickets in chronological order and calculates net receipt or dispatch values from previous and current tank stock.',
+      'This legacy page is disabled in the frontend. Use Out-Turn Summary instead.',
     points: [
-      'Tank Gauging quantity is treated as the stock available in the tank after the operation.',
-      'Receipt volume is calculated as current stock after receipt minus previous stock.',
-      'Dispatch volume is calculated as previous stock minus current stock after dispatch.',
-      'Opening and Closing Stock entries are stock declarations and are not treated as receipt or dispatch movement.',
-      'The report uses accounting date, so it respects the location-wise accounting day window such as 06:01 to 06:00 or 08:01 to 08:00.',
-      'The first entry for each tank/product should normally be Opening Stock so previous stock is known.',
+      'Out-Turn Summary is the active page for approved entries and previous-value subtraction logic.',
+      'The legacy Out-Turn Report code is still retained in the project.',
     ],
   },
 

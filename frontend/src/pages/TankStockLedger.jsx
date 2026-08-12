@@ -9,7 +9,7 @@ import PaginationControls, {
   paginateRows,
 } from '../components/common/PaginationControls'
 
-function TankStockLedger({ locations, assets }) {
+function TankStockLedger({ locations, assets, loggedInUser }) {
   const emptyFilters = {
     locationCode: '',
     tankAssetCode: '',
@@ -33,10 +33,34 @@ function TankStockLedger({ locations, assets }) {
   const [errorMsg, setErrorMsg] = useState('')
 
   const [profile, setProfile] = useState(null)
+  const isAdminBootstrap =
+    String(loggedInUser?.username || '').toLowerCase() === 'admin'
+  const hasAllLocationsAccess = loggedInUser?.allLocationsAccess === 'Yes'
+  const normalizeCode = (value) => String(value ?? '').trim().toLowerCase()
+  const scopedLocationCodeSet = useMemo(() => {
+    return new Set(
+      (loggedInUser?.assignedLocationCodes || [])
+        .map(normalizeCode)
+        .filter(Boolean)
+    )
+  }, [loggedInUser])
 
   const activeLocations = useMemo(() => {
-    return (locations || []).filter((location) => location.status === 'Active')
-  }, [locations])
+    const statusFiltered = (locations || []).filter(
+      (location) => location.status === 'Active'
+    )
+    if (isAdminBootstrap || hasAllLocationsAccess) {
+      return statusFiltered
+    }
+    return statusFiltered.filter((location) =>
+      scopedLocationCodeSet.has(normalizeCode(location.locationCode))
+    )
+  }, [
+    locations,
+    isAdminBootstrap,
+    hasAllLocationsAccess,
+    scopedLocationCodeSet,
+  ])
 
   const activeTankAssets = useMemo(() => {
     return (assets || []).filter((asset) => {

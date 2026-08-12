@@ -21,10 +21,10 @@ from app.schemas import (
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
     apply_location_filter,
-    get_user_location_codes,
-    normalize_location_code,
     require_user_permission,
     evaluate_operation_workflow_policy,
+    ensure_location_in_user_scope,
+    ensure_operation_type_available_for_location,
 )
 from app.services.audit_service import create_audit_log
 from app.utils.helpers import (
@@ -283,6 +283,37 @@ def validate_operation_entry(
     )
 
 
+def ensure_operation_entry_locations_in_scope(
+    transaction_payload,
+    current_user: User,
+    db: Session,
+):
+    ensure_location_in_user_scope(
+        current_user,
+        db,
+        clean_optional_text(transaction_payload.origin_location_code),
+        "Origin location",
+    )
+    ensure_location_in_user_scope(
+        current_user,
+        db,
+        clean_optional_text(transaction_payload.destination_location_code),
+        "Destination location",
+    )
+    ensure_location_in_user_scope(
+        current_user,
+        db,
+        clean_optional_text(transaction_payload.sender_location_code),
+        "Sender location",
+    )
+    ensure_location_in_user_scope(
+        current_user,
+        db,
+        clean_optional_text(transaction_payload.receiver_location_code),
+        "Receiver location",
+    )
+
+
 @router.get(
     "/",
     response_model=list[OperationEntryResponse],
@@ -330,14 +361,7 @@ def create_operation_entry(
         db,
     )
 
-    allowed = get_user_location_codes(current_user, db)
-    if allowed is not None:
-        origin = clean_optional_text(entry.transaction.origin_location_code)
-        if origin and normalize_location_code(origin) not in allowed:
-            raise HTTPException(status_code=403, detail="Origin location is not in your assigned scope")
-        dest = clean_optional_text(entry.transaction.destination_location_code)
-        if dest and normalize_location_code(dest) not in allowed:
-            raise HTTPException(status_code=403, detail="Destination location is not in your assigned scope")
+    ensure_operation_entry_locations_in_scope(entry.transaction, current_user, db)
 
     (
         template,
@@ -347,6 +371,12 @@ def create_operation_entry(
         value_map,
         transaction_operation_type_code,
     ) = validate_operation_entry(entry, db)
+
+    ensure_operation_type_available_for_location(
+        db=db,
+        location_code=entry.transaction.origin_location_code,
+        operation_type_code=transaction_operation_type_code,
+    )
 
     policy_allowed, policy_reason, _ = evaluate_operation_workflow_policy(
         db=db,
@@ -482,6 +512,13 @@ def update_operation_entry(
             detail="Operation entry not found",
         )
 
+    ensure_location_in_user_scope(
+        current_user,
+        db,
+        existing_transaction.origin_location_code,
+        "Origin location",
+    )
+
     if existing_transaction.status not in ["Draft", "Rejected"]:
         raise HTTPException(
             status_code=400,
@@ -495,6 +532,8 @@ def update_operation_entry(
     trip = get_trip_by_convoy_or_none(db, convoy_to_check)
     ensure_trip_not_closed(trip)
 
+    ensure_operation_entry_locations_in_scope(entry.transaction, current_user, db)
+
     (
         template,
         operation_type,
@@ -503,6 +542,12 @@ def update_operation_entry(
         value_map,
         transaction_operation_type_code,
     ) = validate_operation_entry(entry, db)
+
+    ensure_operation_type_available_for_location(
+        db=db,
+        location_code=entry.transaction.origin_location_code,
+        operation_type_code=transaction_operation_type_code,
+    )
 
     policy_allowed, policy_reason, _ = evaluate_operation_workflow_policy(
         db=db,
@@ -622,6 +667,13 @@ def delete_operation_entry(
             status_code=404,
             detail="Operation entry not found",
         )
+
+    ensure_location_in_user_scope(
+        current_user,
+        db,
+        existing_transaction.origin_location_code,
+        "Origin location",
+    )
 
     if existing_transaction.status not in ["Draft", "Rejected"]:
         raise HTTPException(

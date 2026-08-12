@@ -689,6 +689,14 @@ function OperationEntry({
   const [prefillApplied, setPrefillApplied] = useState(false)
 
   const normalizeCode = (value) => String(value ?? '').trim().toLowerCase()
+  const hasAllLocationsAccess = loggedInUser?.allLocationsAccess === 'Yes'
+  const scopedLocationCodeSet = useMemo(() => {
+    return new Set(
+      (loggedInUser?.assignedLocationCodes || [])
+        .map(normalizeCode)
+        .filter(Boolean)
+    )
+  }, [loggedInUser])
 
   const prefill = useMemo(() => {
     const params = new URLSearchParams(location.search)
@@ -832,45 +840,63 @@ function OperationEntry({
     }
   }, [prefill.mode, prefill.senderTransactionId])
 
-  const availableOperationTypes = useMemo(() => {
+  const operationTypeOptions = useMemo(() => {
     const statusFiltered = operationTypes.filter(
       (item) => item.status === 'Active'
     )
 
-    const userLocationCodes = (loggedInUser?.assignedLocationCodes || []).map(
-      normalizeCode
-    )
-    const hasAllLocationsAccess = loggedInUser?.allLocationsAccess === 'Yes'
-    const isAdmin =
-      String(loggedInUser?.username || '').toLowerCase() === 'admin'
-    const hasCreatePermission = hasPermission('Create Operation Entry')
-
-    if (isAdmin || hasAllLocationsAccess || hasCreatePermission) {
-      return statusFiltered
+    if (isAdminBootstrap || hasAllLocationsAccess) {
+      return statusFiltered.map((item) => ({
+        ...item,
+        disabled: false,
+      }))
     }
 
-    // Build set of operation type codes configured at the user's assigned locations
     const activeAvail = (locationOperationAvailability || []).filter(
       (x) => x.status === 'Active'
     )
     const allowedOpTypeCodes = new Set()
     activeAvail
-      .filter((x) => userLocationCodes.includes(normalizeCode(x.locationCode)))
+      .filter((x) => scopedLocationCodeSet.has(normalizeCode(x.locationCode)))
       .forEach((x) => allowedOpTypeCodes.add(normalizeCode(x.operationTypeCode)))
 
-    return statusFiltered.filter((ot) =>
-      allowedOpTypeCodes.has(normalizeCode(ot.operationTypeCode))
-    )
-  }, [operationTypes, locationOperationAvailability, loggedInUser])
+    return statusFiltered.map((ot) => ({
+      ...ot,
+      disabled: !allowedOpTypeCodes.has(normalizeCode(ot.operationTypeCode)),
+    }))
+  }, [
+    operationTypes,
+    locationOperationAvailability,
+    scopedLocationCodeSet,
+    isAdminBootstrap,
+    hasAllLocationsAccess,
+  ])
+
+  const availableOperationTypes = useMemo(() => {
+    return operationTypeOptions.filter((item) => !item.disabled)
+  }, [operationTypeOptions])
 
   const activeOperationTemplates = operationTemplates.filter(
     (item) => item.status === 'Active'
   )
 
   const activeAssets = assets.filter((item) => item.status === 'Active')
-  const activeLocations = locations.filter((item) => item.status === 'Active')
+  const activeLocations = useMemo(() => {
+    const statusFiltered = locations.filter((item) => item.status === 'Active')
+    if (isAdminBootstrap || hasAllLocationsAccess) {
+      return statusFiltered
+    }
+    return statusFiltered.filter((item) =>
+      scopedLocationCodeSet.has(normalizeCode(item.locationCode))
+    )
+  }, [
+    locations,
+    isAdminBootstrap,
+    hasAllLocationsAccess,
+    scopedLocationCodeSet,
+  ])
 
-  const selectedOperationType = availableOperationTypes.find((item) => {
+  const selectedOperationType = operationTypeOptions.find((item) => {
     return item.operationTypeCode === entry.operationTypeCode
   })
 
@@ -924,19 +950,11 @@ function OperationEntry({
       return []
     }
 
-    const hasAllLocationsAccess = loggedInUser?.allLocationsAccess === 'Yes'
-    const isAdmin =
-      String(loggedInUser?.username || '').toLowerCase() === 'admin'
-
-    const normalizedUserLocationCodes = new Set(
-      (loggedInUser?.assignedLocationCodes || []).map(normalizeCode)
-    )
-
     // If an origin location has been selected, narrow filtering to that location
     // Otherwise, use the user's assigned location codes
     const locationFilter = entry.originLocationCode
       ? [normalizeCode(entry.originLocationCode)]
-      : [...normalizedUserLocationCodes]
+      : [...scopedLocationCodeSet]
 
     return activeAssets.filter((asset) => {
       // Must match the operation type's applicable asset type
@@ -948,7 +966,7 @@ function OperationEntry({
       }
 
       // Admin / all-locations-access users see all matching assets
-      if (isAdmin || hasAllLocationsAccess) {
+      if (isAdminBootstrap || hasAllLocationsAccess) {
         return true
       }
 
@@ -965,7 +983,14 @@ function OperationEntry({
       // Fallback: include the asset (safety net for undefined scope)
       return true
     })
-  }, [activeAssets, selectedOperationType, entry.originLocationCode, loggedInUser])
+  }, [
+    activeAssets,
+    selectedOperationType,
+    entry.originLocationCode,
+    scopedLocationCodeSet,
+    isAdminBootstrap,
+    hasAllLocationsAccess,
+  ])
 
   const selectedAsset = activeAssets.find((asset) => {
     return asset.assetCode === entry.primaryAssetCode
@@ -1726,13 +1751,15 @@ function OperationEntry({
           >
             <option value="">Select Operation Type</option>
 
-            {availableOperationTypes.map((operationType) => (
+            {operationTypeOptions.map((operationType) => (
               <option
                 key={operationType.id}
                 value={operationType.operationTypeCode}
+                disabled={operationType.disabled}
               >
                 {operationType.operationTypeName} (
                 {operationType.operationTypeCode})
+                {operationType.disabled ? ' - Not enabled for your location' : ''}
               </option>
             ))}
           </select>

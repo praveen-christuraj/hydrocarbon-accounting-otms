@@ -323,10 +323,18 @@ def _extract_payload_columns(payload: dict) -> dict:
     return extract_tank_gauging_columns(payload)
 
 
-def _build_all_column_definitions(db: Session, location_code: str | None = None):
+def _build_all_column_definitions(
+    db: Session,
+    location_code: str | None = None,
+    current_user: User | None = None,
+):
     definitions = list(BASE_COLUMNS)
 
-    query = _get_transaction_query(db, location_code=location_code)
+    query = _get_transaction_query(
+        db,
+        location_code=location_code,
+        current_user=current_user,
+    )
     transactions = query.limit(100).all()
 
     input_keys = set()
@@ -540,7 +548,6 @@ def get_out_turn_summary_rows(
         key = (
             tx.origin_location_code or "",
             tx.primary_asset_code or "",
-            tx.product_name or "",
         )
 
         if key not in grouped:
@@ -584,8 +591,12 @@ def get_out_turn_summary_rows(
     return rows
 
 
-def build_available_columns_response(db: Session, location_code: str | None = None):
-    definitions = _build_all_column_definitions(db, location_code)
+def build_available_columns_response(
+    db: Session,
+    location_code: str | None = None,
+    current_user: User | None = None,
+):
+    definitions = _build_all_column_definitions(db, location_code, current_user=current_user)
     configured = _load_configured_columns(db, definitions)
 
     return {
@@ -606,7 +617,11 @@ def get_out_turn_summary_columns(
         db,
     )
 
-    return build_available_columns_response(db, location_code)
+    return build_available_columns_response(
+        db,
+        location_code,
+        current_user=current_user,
+    )
 
 
 @router.get("/config")
@@ -707,7 +722,11 @@ def get_out_turn_summary(
         current_user=current_user,
     )
 
-    column_response = build_available_columns_response(db, location_code)
+    column_response = build_available_columns_response(
+        db,
+        location_code,
+        current_user=current_user,
+    )
 
     return {
         "columns": column_response["columns"],

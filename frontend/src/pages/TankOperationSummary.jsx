@@ -8,7 +8,7 @@ import PaginationControls, {
   paginateRows,
 } from '../components/common/PaginationControls'
 
-function TankOperationSummary({ locations, assets }) {
+function TankOperationSummary({ locations, assets, loggedInUser }) {
   const emptyFilters = {
     locationCode: '',
     tankAssetCode: '',
@@ -26,14 +26,47 @@ function TankOperationSummary({ locations, assets }) {
   const [errorMsg, setErrorMsg] = useState('')
 
   const [profile, setProfile] = useState(null)
+  const isAdminBootstrap =
+    String(loggedInUser?.username || '').toLowerCase() === 'admin'
+  const hasAllLocationsAccess = loggedInUser?.allLocationsAccess === 'Yes'
+  const normalizeCode = (value) => String(value ?? '').trim().toLowerCase()
+  const scopedLocationCodeSet = useMemo(() => {
+    return new Set(
+      (loggedInUser?.assignedLocationCodes || [])
+        .map(normalizeCode)
+        .filter(Boolean)
+    )
+  }, [loggedInUser])
 
   const activeLocations = useMemo(() => {
-    return (locations || []).filter((location) => location.status === 'Active')
-  }, [locations])
+    const statusFiltered = (locations || []).filter(
+      (location) => location.status === 'Active'
+    )
+    if (isAdminBootstrap || hasAllLocationsAccess) {
+      return statusFiltered
+    }
+    return statusFiltered.filter((location) =>
+      scopedLocationCodeSet.has(normalizeCode(location.locationCode))
+    )
+  }, [
+    locations,
+    isAdminBootstrap,
+    hasAllLocationsAccess,
+    scopedLocationCodeSet,
+  ])
 
   const activeTankAssets = useMemo(() => {
     return (assets || []).filter((asset) => {
       if (asset.status !== 'Active') {
+        return false
+      }
+
+      if (
+        !isAdminBootstrap &&
+        !hasAllLocationsAccess &&
+        asset.locationCode &&
+        !scopedLocationCodeSet.has(normalizeCode(asset.locationCode))
+      ) {
         return false
       }
 
@@ -43,7 +76,13 @@ function TankOperationSummary({ locations, assets }) {
 
       return true
     })
-  }, [assets, filters.locationCode])
+  }, [
+    assets,
+    filters.locationCode,
+    isAdminBootstrap,
+    hasAllLocationsAccess,
+    scopedLocationCodeSet,
+  ])
 
   const loadReport = async (activeFilters = filters) => {
     try {

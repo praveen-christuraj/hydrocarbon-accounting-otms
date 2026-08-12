@@ -74,7 +74,11 @@ def extract_tank_gauging_columns(payload: dict):
     return result
 
 
-def get_all_possible_columns(db: Session, location_code: str | None = None):
+def get_all_possible_columns(
+    db: Session,
+    location_code: str | None = None,
+    current_user: User | None = None,
+):
     query = (
         db.query(OperationTransaction)
         .join(OperationTemplate, OperationTransaction.operation_template_id == OperationTemplate.id)
@@ -83,6 +87,11 @@ def get_all_possible_columns(db: Session, location_code: str | None = None):
             func.lower(func.trim(OperationTemplate.entry_layout_type)) == "tank gauging",
         )
     )
+
+    if current_user is not None:
+        query = apply_location_filter(
+            query, OperationTransaction, current_user, db, column_name="origin_location_code"
+        )
 
     if location_code:
         query = query.filter(OperationTransaction.origin_location_code.ilike(location_code))
@@ -204,11 +213,15 @@ def get_filtered_tank_operation_summary_rows(
         query = query.filter(OperationTransaction.operation_date <= date_to_value)
 
     transactions = query.order_by(
-        OperationTransaction.operation_date.desc(),
-        OperationTransaction.id.desc(),
+        OperationTransaction.operation_date.asc(),
+        OperationTransaction.id.asc(),
     ).all()
 
-    all_columns = get_all_possible_columns(db, cleaned_location_code)
+    all_columns = get_all_possible_columns(
+        db,
+        cleaned_location_code,
+        current_user=current_user,
+    )
 
     results = []
     for tx in transactions:

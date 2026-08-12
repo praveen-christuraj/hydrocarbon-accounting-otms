@@ -236,9 +236,9 @@ export const navigationItems = [
     type: 'dropdown',
     items: [
       {
-        label: 'Tank Stock Ledger',
+        label: 'Tank Stock Ledger (Legacy - Disabled)',
         path: '/tank-stock-ledger',
-        disabled: false,
+        disabled: true,
         permission: 'View Tank Stock Ledger',
       },
       {
@@ -254,9 +254,9 @@ export const navigationItems = [
         permission: 'View Out-Turn Summary',
       },
       {
-        label: 'Out-Turn Report',
+        label: 'Out-Turn Report (Legacy - Disabled)',
         path: '/out-turn-report',
-        disabled: false,
+        disabled: true,
         permission: 'View Out-Turn Report',
       },
       {

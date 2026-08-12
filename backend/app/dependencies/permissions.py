@@ -9,6 +9,7 @@ from app.models import (
     RolePermission,
     UserRole,
     UserLocation,
+    LocationOperationAvailability,
     OperationWorkflowPolicy,
     OperationWorkflowPolicyRole,
     OperationWorkflowPolicyUser,
@@ -377,6 +378,13 @@ def normalize_location_code(value: str | None) -> str | None:
     return normalized or None
 
 
+def normalize_operation_type_code(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip().casefold()
+    return normalized or None
+
+
 def get_user_location_codes(user: User, db: Session) -> set[str] | None:
     """
     Returns the set of location codes the user is allowed to access.
@@ -395,6 +403,72 @@ def get_user_location_codes(user: User, db: Session) -> set[str] | None:
         for row in codes
         if (normalized_code := normalize_location_code(row[0])) is not None
     }
+
+
+def user_has_location_access(user: User, db: Session, location_code: str | None) -> bool:
+    allowed_codes = get_user_location_codes(user, db)
+    if allowed_codes is None:
+        return True
+    normalized_location_code = normalize_location_code(location_code)
+    return normalized_location_code is not None and normalized_location_code in allowed_codes
+
+
+def ensure_location_in_user_scope(
+    user: User,
+    db: Session,
+    location_code: str | None,
+    field_label: str = "Location",
+):
+    if location_code is None or str(location_code).strip() == "":
+        return
+    if user_has_location_access(user, db, location_code):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail=f"{field_label} is not in your assigned scope",
+    )
+
+
+def is_operation_type_available_for_location(
+    db: Session,
+    location_code: str | None,
+    operation_type_code: str | None,
+) -> bool:
+    normalized_location_code = normalize_location_code(location_code)
+    normalized_operation_type_code = normalize_operation_type_code(operation_type_code)
+
+    if normalized_location_code is None or normalized_operation_type_code is None:
+        return False
+
+    availability = (
+        db.query(LocationOperationAvailability.id)
+        .filter(
+            LocationOperationAvailability.status == "Active",
+            sqlalchemy.func.lower(sqlalchemy.func.trim(LocationOperationAvailability.location_code))
+            == normalized_location_code,
+            sqlalchemy.func.lower(sqlalchemy.func.trim(LocationOperationAvailability.operation_type_code))
+            == normalized_operation_type_code,
+        )
+        .first()
+    )
+
+    return availability is not None
+
+
+def ensure_operation_type_available_for_location(
+    db: Session,
+    location_code: str | None,
+    operation_type_code: str | None,
+):
+    if is_operation_type_available_for_location(db, location_code, operation_type_code):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            "The selected operation type is not enabled for the selected origin location. "
+            "Update Location Operation Availability before creating or editing this entry."
+        ),
+    )
 
 
 def apply_location_filter(query, model, user: User, db: Session, column_name: str = "location_code"):

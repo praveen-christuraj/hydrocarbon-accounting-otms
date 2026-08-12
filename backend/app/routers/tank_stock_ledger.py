@@ -86,8 +86,12 @@ def get_filtered_tank_stock_ledger_rows(
     date_from: str | None = None,
     date_to: str | None = None,
     status: str | None = None,
+    current_user: User | None = None,
 ):
     query = db.query(TankStockLedger)
+
+    if current_user is not None:
+        query = apply_location_filter(query, TankStockLedger, current_user, db)
 
     cleaned_location_code = clean_optional_text(location_code)
     cleaned_tank_asset_code = clean_optional_text(tank_asset_code)
@@ -202,8 +206,12 @@ def get_tank_stock_rows_for_daily_summary(
     product_name: str | None,
     date_to_value: date,
     status: str | None = "Active",
+    current_user: User | None = None,
 ):
     query = db.query(TankStockLedger)
+
+    if current_user is not None:
+        query = apply_location_filter(query, TankStockLedger, current_user, db)
 
     cleaned_status = clean_optional_text(status)
 
@@ -336,8 +344,12 @@ def get_out_turn_report_rows(
     date_from: str | None = None,
     date_to: str | None = None,
     status: str | None = "Active",
+    current_user: User | None = None,
 ):
     query = db.query(TankStockLedger)
+
+    if current_user is not None:
+        query = apply_location_filter(query, TankStockLedger, current_user, db)
 
     cleaned_location_code = clean_optional_text(location_code)
     cleaned_tank_asset_code = clean_optional_text(tank_asset_code)
@@ -1014,6 +1026,7 @@ def get_tank_stock_ledger(
         date_from=date_from,
         date_to=date_to,
         status=status,
+        current_user=current_user,
     )
 
     return [
@@ -1050,6 +1063,7 @@ def get_tank_stock_ledger_summary(
         date_from=date_from,
         date_to=date_to,
         status=status,
+        current_user=current_user,
     )
 
     summary_map = {}
@@ -1151,6 +1165,7 @@ def get_tank_stock_ledger_daily_summary(
         product_name=product_name,
         date_to_value=date_to_value,
         status=status,
+        current_user=current_user,
     )
 
     return build_tank_stock_daily_summary_rows(
@@ -1188,6 +1203,7 @@ def validate_out_turn_report_tank_sequence(
         date_from=None,
         date_to=date_to,
         status="Active",
+        current_user=current_user,
     )
 
     visible_rows = []
@@ -1367,6 +1383,5 @@ def get_material_balance_report(
         "columns": build_dynamic_material_balance_columns_response(columns),
         "rows": report_rows,
     }
-
 
 

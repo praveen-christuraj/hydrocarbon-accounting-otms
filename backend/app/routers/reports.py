@@ -22,7 +22,7 @@ from app.schemas import (
     FSOMaterialBalanceReportResponse, FSOOutturnReportResponse,
 )
 from app.dependencies.auth import get_current_user_from_token
-from app.dependencies.permissions import require_user_permission
+from app.dependencies.permissions import apply_location_filter, require_user_permission
 from app.services.audit_service import create_audit_log
 from app.utils.helpers import (
     safe_float, clean_optional_text, get_transaction_ticket_number,
@@ -320,6 +320,7 @@ def get_out_turn_report_rows_from_transactions(
     product_name: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
+    current_user: User | None = None,
 ):
     query = (
         db.query(OperationTransaction)
@@ -336,6 +337,11 @@ def get_out_turn_report_rows_from_transactions(
             ]),
         )
     )
+
+    if current_user is not None:
+        query = apply_location_filter(
+            query, OperationTransaction, current_user, db, column_name="origin_location_code"
+        )
 
     cleaned_location_code = clean_optional_text(location_code)
     cleaned_tank_asset_code = clean_optional_text(tank_asset_code)
@@ -1403,6 +1409,7 @@ def get_tank_stock_ledger(
         date_from=date_from,
         date_to=date_to,
         status=status,
+        current_user=current_user,
     )
 
     return [
@@ -1438,6 +1445,7 @@ def get_tank_stock_ledger_summary(
         date_from=date_from,
         date_to=date_to,
         status="Active",
+        current_user=current_user,
     )
 
     summary_map = {}
@@ -1539,6 +1547,7 @@ def get_tank_stock_ledger_daily_summary(
         product_name=product_name,
         date_to_value=date_to_value,
         status=status,
+        current_user=current_user,
     )
 
     return build_tank_stock_daily_summary_rows(
@@ -1575,6 +1584,7 @@ def get_out_turn_report(
         product_name=product_name,
         date_from=date_from,
         date_to=date_to,
+        current_user=current_user,
     )
 
     return [
@@ -1610,6 +1620,7 @@ def validate_out_turn_report_tank_sequence(
         date_from=None,
         date_to=date_to,
         status="Active",
+        current_user=current_user,
     )
 
     visible_rows = []

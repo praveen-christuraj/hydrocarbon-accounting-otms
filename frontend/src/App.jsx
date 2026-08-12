@@ -31,10 +31,8 @@ import OperationEntry from './pages/OperationEntry'
 import LocationOperationAvailability from './pages/LocationOperationAvailability'
 import LocationOperationSummary from './pages/LocationOperationSummary'
 import OperationTransactionRegister from './pages/OperationTransactionRegister'
-import TankStockLedger from './pages/TankStockLedger'
 import TankOperationSummary from './pages/TankOperationSummary'
 import OutTurnSummary from './pages/OutTurnSummary'
-import OutTurnReport from './pages/OutTurnReport'
 import MaterialBalanceReport from './pages/MaterialBalanceReport'
 import MaterialBalanceTemplateMaster from './pages/MaterialBalanceTemplateMaster'
 import OperationTransactionDetail from './pages/OperationTransactionDetail'
@@ -140,6 +138,28 @@ function PageHelp() {
         </div>
       )}
     </>
+  )
+}
+
+function LegacyPageDisabled({ title, description, primaryPath, primaryLabel }) {
+  return (
+    <div>
+      <div className="page-title">
+        <div>
+          <h2>{title}</h2>
+          <p>{description}</p>
+        </div>
+      </div>
+
+      <div className="info-box">
+        This legacy page is kept in the codebase, but it is disabled from the
+        active frontend workflow.
+      </div>
+
+      <div className="info-box">
+        Use <Link to={primaryPath}>{primaryLabel}</Link> instead.
+      </div>
+    </div>
   )
 }
 
@@ -1128,7 +1148,12 @@ function AppContent({
                 requiredPermission="View Tank Stock Ledger"
                 fallbackMessage="You do not have permission to view Tank Stock Ledger."
               >
-                <TankStockLedger locations={locations} assets={assets} />
+                <LegacyPageDisabled
+                  title="Tank Stock Ledger"
+                  description="This legacy report page has been disabled from the active frontend workflow."
+                  primaryPath="/tank-operation-summary"
+                  primaryLabel="Tank Operation Summary"
+                />
               </PermissionGuard>
             }
           />
@@ -1140,7 +1165,11 @@ function AppContent({
                 requiredPermission="View Tank Operation Summary"
                 fallbackMessage="You do not have permission to view Tank Operation Summary."
               >
-                <TankOperationSummary locations={locations} assets={assets} />
+                <TankOperationSummary
+                  locations={locations}
+                  assets={assets}
+                  loggedInUser={loggedInUser}
+                />
               </PermissionGuard>
             }
           />
@@ -1168,9 +1197,11 @@ function AppContent({
                 requiredPermission="View Out-Turn Report"
                 fallbackMessage="You do not have permission to view Out-Turn Report."
               >
-                <OutTurnReport
-                  locations={locations}
-                  assets={assets}
+                <LegacyPageDisabled
+                  title="Out-Turn Report"
+                  description="This legacy report page has been disabled from the active frontend workflow."
+                  primaryPath="/out-turn-summary"
+                  primaryLabel="Out-Turn Summary"
                 />
               </PermissionGuard>
             }

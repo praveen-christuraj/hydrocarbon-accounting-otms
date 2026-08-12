@@ -38,6 +38,7 @@ from app.dependencies.permissions import (
     get_required_permission_for_status_change,
     get_action_code_for_status_change,
     evaluate_operation_workflow_policy,
+    ensure_location_in_user_scope,
 )
 from app.services.audit_service import create_audit_log
 from app.utils.helpers import (
@@ -1758,6 +1759,13 @@ def get_operation_transaction_detail(
     if transaction is None:
         raise HTTPException(status_code=404, detail="Operation transaction not found")
 
+    ensure_location_in_user_scope(
+        current_user,
+        db,
+        transaction.origin_location_code,
+        "Origin location",
+    )
+
     operation_type = get_operation_type_by_code(transaction.operation_type_code, db)
     location = get_location_by_code(transaction.origin_location_code, db)
     primary_asset = get_asset_by_code(transaction.primary_asset_code, db)
@@ -1824,6 +1832,13 @@ def update_operation_transaction_status(
             status_code=404,
             detail="Operation transaction not found",
         )
+
+    ensure_location_in_user_scope(
+        current_user,
+        db,
+        transaction.origin_location_code,
+        "Origin location",
+    )
 
     trip = None
     if str(transaction.primary_asset_type_code or "").strip().upper() == "BARGE":
@@ -2111,6 +2126,13 @@ def get_operation_transaction_status_history(
             status_code=404,
             detail="Operation transaction not found",
         )
+
+    ensure_location_in_user_scope(
+        current_user,
+        db,
+        transaction.origin_location_code,
+        "Origin location",
+    )
 
     history = (
         db.query(OperationTransactionStatusHistory)
