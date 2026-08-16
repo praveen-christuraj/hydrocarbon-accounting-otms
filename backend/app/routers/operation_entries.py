@@ -210,14 +210,21 @@ def validate_operation_entry(
                 detail="Only Active destination location can be used",
             )
 
-    if operation_type.requires_sender_location == "Yes":
+    # Shuttle Tracking sub-entries (unloading, STS in/out, top-up) are created
+    # against an already-approved voyage — the voyage itself provides the movement
+    # context, so sender/receiver location is not applicable for these entries.
+    is_shuttle_tracking = (
+        str(template.entry_layout_type or "").strip() == "Shuttle Tracking"
+    )
+
+    if operation_type.requires_sender_location == "Yes" and not is_shuttle_tracking:
         if not entry.transaction.sender_location_code:
             raise HTTPException(
                 status_code=400,
                 detail="Sender location is required for this operation type",
             )
 
-    if operation_type.requires_receiver_location == "Yes":
+    if operation_type.requires_receiver_location == "Yes" and not is_shuttle_tracking:
         if not entry.transaction.receiver_location_code:
             raise HTTPException(
                 status_code=400,
