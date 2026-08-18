@@ -7,6 +7,17 @@ def normalize_code(value: str):
     return str(value or "").strip().upper()
 
 
+def normalize_entry_layout_type(value):
+    """
+    Normalizes an Operation Template entry layout type for comparison.
+
+    Entry layout types are stored verbatim as entered/selected, so comparisons
+    must be case-insensitive and whitespace tolerant (e.g. "tank gauging",
+    " Tank Gauging " and "Tank Gauging" all refer to the same layout).
+    """
+    return " ".join(str(value or "").split()).lower()
+
+
 def normalize_yes_no(value):
     normalized = str(value or "").strip().lower()
     if normalized in {"yes", "true", "1", "y"}:

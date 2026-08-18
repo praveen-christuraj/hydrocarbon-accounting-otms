@@ -1354,7 +1354,11 @@ function OperationEntry({
       return
     }
 
+    // Shuttle Tracking entries are captured from the Shuttle Tracking page,
+    // which has no sender / receiver location row, so those locations are not
+    // applicable to this layout and must not be enforced.
     if (
+      !isShuttleTracking &&
       selectedOperationType?.requiresSenderLocation === 'Yes' &&
       entry.senderLocationCode.trim() === ''
     ) {
@@ -1363,6 +1367,7 @@ function OperationEntry({
     }
 
     if (
+      !isShuttleTracking &&
       selectedOperationType?.requiresReceiverLocation === 'Yes' &&
       entry.receiverLocationCode.trim() === ''
     ) {
@@ -1671,6 +1676,12 @@ function OperationEntry({
     setEntry(emptyEntry)
     setEditId(null)
   }
+  const isShuttleTrackingLayout = useMemo(() => {
+    return String(selectedTemplate?.entryLayoutType || '')
+      .toLowerCase()
+      .includes('shuttle tracking')
+  }, [selectedTemplate])
+
   const showConvoyNumber = useMemo(() => {
     const layout = String(selectedTemplate?.entryLayoutType || '').toLowerCase()
 
@@ -1871,7 +1882,10 @@ function OperationEntry({
         <div>
           <label>
             Sender Location{' '}
-            {selectedOperationType?.requiresSenderLocation === 'Yes' ? '*' : ''}
+            {!isShuttleTrackingLayout &&
+            selectedOperationType?.requiresSenderLocation === 'Yes'
+              ? '*'
+              : ''}
           </label>
           <select
             name="senderLocationCode"
@@ -1892,7 +1906,8 @@ function OperationEntry({
         <div>
           <label>
             Receiver Location{' '}
-            {selectedOperationType?.requiresReceiverLocation === 'Yes'
+            {!isShuttleTrackingLayout &&
+            selectedOperationType?.requiresReceiverLocation === 'Yes'
               ? '*'
               : ''}
           </label>

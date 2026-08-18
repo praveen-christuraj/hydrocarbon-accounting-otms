@@ -1,5 +1,6 @@
 from datetime import datetime, date
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -7,7 +8,6 @@ from app.models import (
     OperationTransaction,
     OperationTransactionValue,
     OperationTemplate,
-    OperationType,
     OutTurnSummaryConfig,
     User,
 )
@@ -275,11 +275,9 @@ def _get_transaction_query(
     query = (
         db.query(OperationTransaction)
         .join(OperationTemplate, OperationTransaction.operation_template_id == OperationTemplate.id)
-        .join(OperationType, OperationTemplate.operation_type_code == OperationType.operation_type_code)
         .filter(
             OperationTransaction.status == APPROVED_TRANSACTION_STATUS,
-            OperationType.applicable_asset_type_code == "TANK",
-            OperationTemplate.entry_layout_type == "Tank Gauging",
+            func.lower(func.trim(OperationTemplate.entry_layout_type)) == "tank gauging",
         )
     )
 

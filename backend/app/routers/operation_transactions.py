@@ -48,6 +48,7 @@ from app.utils.helpers import (
     get_location_name_by_code,
     get_location_by_code,
     get_asset_by_code,
+    normalize_entry_layout_type,
 )
 from app.routers.operation_tasks import (
     create_operation_approval_task_for_transaction,
@@ -513,7 +514,7 @@ def validate_multi_tank_seals_before_submit(
         .first()
     )
 
-    if not template or (template.entry_layout_type or "") != "Multi-Tank Before/After":
+    if not template or normalize_entry_layout_type(template.entry_layout_type) != "multi-tank before/after":
         return None
 
     payload_row = (
@@ -807,10 +808,26 @@ def create_tank_stock_ledger_from_approved_transaction(
     if not template:
         return None, None, None
 
-    entry_layout = str(template.entry_layout_type or "").strip()
+    entry_layout = normalize_entry_layout_type(template.entry_layout_type)
+
+    # Barge / vessel layouts are tracked through VesselStockLedger, never
+    # through TankStockLedger, so they are excluded here regardless of payload.
+    NON_TANK_LAYOUTS = (
+        "multi-tank before/after",
+        "stock movement",
+        "vessel cycle",
+    )
+
+    is_tank_gauging_layout = (
+        entry_layout == "tank gauging"
+        or (
+            entry_layout not in NON_TANK_LAYOUTS
+            and str(template.calculation_engine or "").strip().lower() == "tank quantity"
+        )
+    )
 
     # --- Tank Gauging entries: delegate to reports.py ---
-    if entry_layout in ("Tank Gauging",):
+    if is_tank_gauging_layout:
         gauge_payload_row = (
             db.query(OperationTransactionValue)
             .filter(
@@ -842,7 +859,7 @@ def create_tank_stock_ledger_from_approved_transaction(
     # Multi-Tank Before/After is a BARGE / VESSEL layout, not a tank layout.
     # TankStockLedger should only track single-tank Tank Gauging entries.
     # Barge/vessel stock is tracked via VesselStockLedger instead.
-    if entry_layout == "Multi-Tank Before/After":
+    if entry_layout == "multi-tank before/after":
         return None, None, None
 
     return None, None, None
@@ -862,9 +879,9 @@ def create_or_update_vessel_stock_ledger_from_approved_transaction(
     if not template:
         return None, None
 
-    layout = str(template.entry_layout_type or "").strip()
+    layout = normalize_entry_layout_type(template.entry_layout_type)
 
-    if layout in ["Stock Movement", "Vessel Cycle"]:
+    if layout in ["stock movement", "vessel cycle"]:
         from app.routers.vessel_stock_ledger import (
             create_or_update_vessel_stock_ledger_from_approved_transaction as _create_vessel_ledger,
         )
@@ -878,7 +895,7 @@ def create_or_update_vessel_stock_ledger_from_approved_transaction(
             return None, None
         return result, {}
 
-    if layout in ["Multi-Tank Before/After"]:
+    if layout in ["multi-tank before/after"]:
         payload_row = (
             db.query(OperationTransactionValue)
             .filter(
@@ -1939,7 +1956,7 @@ def update_operation_transaction_status(
                 .first()
             )
 
-        if template and str(template.entry_layout_type or "").strip() == "Shuttle Tracking":
+        if template and normalize_entry_layout_type(template.entry_layout_type) == "shuttle tracking":
             voyage = get_or_create_shuttle_voyage(
                 db=db,
                 location_code=transaction.origin_location_code,
