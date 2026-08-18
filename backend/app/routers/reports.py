@@ -3,7 +3,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 import io
 import openpyxl
 from openpyxl.utils import get_column_letter
@@ -11,7 +11,7 @@ from openpyxl.utils import get_column_letter
 from app.database import get_db
 from app.models import (
     TankStockLedger, LocationAccountingDaySetting, MaterialBalanceTemplate,
-    MaterialBalanceTemplateColumn, OperationTransaction, OperationTransactionValue, OperationType,
+    MaterialBalanceTemplateColumn, OperationTransaction, OperationTransactionValue,
     MovementMapping, MovementMappingItem, MovementMappingComparison, User,
     OperationTemplate,
 )
@@ -27,7 +27,7 @@ from app.services.audit_service import create_audit_log
 from app.utils.helpers import (
     safe_float, clean_optional_text, get_transaction_ticket_number,
     get_location_by_code, get_current_user_display_name, get_asset_by_code,
-    normalize_code,
+    normalize_code, normalize_entry_layout_type,
 )
 from app.config import APPROVED_TRANSACTION_STATUS
 from app.routers.tank_stock_ledger import (
@@ -178,18 +178,18 @@ def _extract_out_turn_values_from_transaction(db: Session, transaction: Operatio
     if not template:
         return []
 
-    layout = str(template.entry_layout_type or "").strip()
+    layout = normalize_entry_layout_type(template.entry_layout_type)
 
     payload_map = _build_out_turn_transaction_payload_map(db, [transaction.id])
     payloads = payload_map.get(transaction.id, {})
 
-    if layout == "Tank Gauging":
+    if layout == "tank gauging":
         return _extract_tank_gauging_out_turn(transaction, payloads.get("tank_gauging_payload") or {})
-    elif layout == "Multi-Tank Before/After":
+    elif layout == "multi-tank before/after":
         return _extract_multi_tank_out_turn(transaction, payloads.get("multi_tank_payload") or {})
-    elif layout == "Stock Movement":
+    elif layout == "stock movement":
         return _extract_stock_movement_out_turn(transaction, payloads.get("net_nsv"))
-    elif layout == "Vessel Cycle":
+    elif layout == "vessel cycle":
         return _extract_stock_movement_out_turn(transaction, payloads.get("net_nsv"))
 
     return []
@@ -325,15 +325,13 @@ def get_out_turn_report_rows_from_transactions(
     query = (
         db.query(OperationTransaction)
         .join(OperationTemplate, OperationTransaction.operation_template_id == OperationTemplate.id)
-        .join(OperationType, OperationTemplate.operation_type_code == OperationType.operation_type_code)
         .filter(
-            OperationTransaction.status == "Approved",
-            OperationType.applicable_asset_type_code == "TANK",
-            OperationTemplate.entry_layout_type.in_([
-                "Tank Gauging",
-                "Multi-Tank Before/After",
-                "Stock Movement",
-                "Vessel Cycle",
+            OperationTransaction.status == APPROVED_TRANSACTION_STATUS,
+            func.lower(func.trim(OperationTemplate.entry_layout_type)).in_([
+                "tank gauging",
+                "multi-tank before/after",
+                "stock movement",
+                "vessel cycle",
             ]),
         )
     )
@@ -400,17 +398,17 @@ def get_out_turn_report_rows_from_transactions(
             continue
 
         payloads = payload_map.get(tx.id, {})
-        entry_layout = str(template.entry_layout_type or "").strip()
+        entry_layout = normalize_entry_layout_type(template.entry_layout_type)
 
-        if entry_layout == "Tank Gauging":
+        if entry_layout == "tank gauging":
             extracted_rows.extend(
                 _extract_tank_gauging_out_turn(tx, payloads.get("tank_gauging_payload") or {})
             )
-        elif entry_layout == "Multi-Tank Before/After":
+        elif entry_layout == "multi-tank before/after":
             extracted_rows.extend(
                 _extract_multi_tank_out_turn(tx, payloads.get("multi_tank_payload") or {})
             )
-        elif entry_layout in ("Stock Movement", "Vessel Cycle"):
+        elif entry_layout in ("stock movement", "vessel cycle"):
             extracted_rows.extend(
                 _extract_stock_movement_out_turn(tx, payloads.get("net_nsv"))
             )
@@ -2805,13 +2803,13 @@ def is_tank_gauging_transaction(
     if not template:
         return False
 
-    entry_layout_type = str(template.entry_layout_type or "").strip()
-    calculation_engine = str(template.calculation_engine or "").strip()
+    entry_layout_type = normalize_entry_layout_type(template.entry_layout_type)
+    calculation_engine = str(template.calculation_engine or "").strip().lower()
 
-    if entry_layout_type == "Tank Gauging":
+    if entry_layout_type == "tank gauging":
         return True
 
-    if calculation_engine == "Tank Quantity":
+    if calculation_engine == "tank quantity":
         return True
 
     payload = get_tank_gauging_payload_for_transaction(
