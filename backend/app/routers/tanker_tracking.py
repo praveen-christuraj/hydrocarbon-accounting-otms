@@ -1,5 +1,6 @@
 from datetime import datetime, date, timezone
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -59,6 +60,18 @@ def parse_json_field_value(value):
 # ---------------------------------------------------------------------------
 # Payload extraction helpers
 # ---------------------------------------------------------------------------
+
+
+def is_tanker_transaction(transaction: OperationTransaction) -> bool:
+    """
+    True when the ticket was captured for a tanker asset.
+
+    Used as the fallback check when the `tanker_payload` value is missing (for
+    example tickets approved before the payload field existed) so the tracking
+    workflow can still be completed.
+    """
+    asset_type_code = str(transaction.primary_asset_type_code or "").upper()
+    return "TANKER" in asset_type_code
 
 
 def get_tanker_payload_for_transaction(
@@ -834,17 +847,19 @@ def build_tanker_tracking_groups(tickets: list[dict], db: Session):
     for ticket in tickets:
         convoy = clean_optional_text(ticket.get("convoy_number"))
 
-        if convoy is None:
-            continue
+        # Approved tickets are never hidden from tracking. A ticket captured
+        # without a convoy number still shows up (with a warning) so the missing
+        # data can be corrected instead of the ticket silently disappearing.
+        convoy_label = convoy or "NO-CONVOY"
 
         tanker_asset_code = clean_optional_text(ticket.get("tanker_asset_code")) or "UNKNOWN_TANKER"
 
-        group_key = f"{convoy}::{tanker_asset_code}"
+        group_key = f"{convoy_label}::{tanker_asset_code}"
 
         if group_key not in grouped:
             grouped[group_key] = {
                 "group_key": group_key,
-                "convoy_number": convoy,
+                "convoy_number": convoy or "",
                 "tanker_asset_code": ticket.get("tanker_asset_code"),
                 "tanker_asset_name": ticket.get("tanker_asset_name"),
                 "tanker_chassis_number": ticket.get("tanker_chassis_number"),
@@ -875,12 +890,6 @@ def build_tanker_tracking_groups(tickets: list[dict], db: Session):
             if ticket.get("movement_role") == "SENDER"
         ]
 
-        receiver_tickets = [
-            ticket
-            for ticket in sorted_tickets
-            if ticket.get("movement_role") == "RECEIVER"
-        ]
-
         unknown_tickets = [
             ticket
             for ticket in sorted_tickets
@@ -902,6 +911,65 @@ def build_tanker_tracking_groups(tickets: list[dict], db: Session):
         if len(sender_tickets) > 1:
             warning_messages.append(
                 "Multiple sender tickets found for this convoy/tanker. First sender ticket is used for comparison."
+            )
+
+        # Receiver tickets = tickets explicitly detected as receivers plus the
+        # remaining tickets whose role could not be detected. Without this an
+        # approved unloading/receipt ticket captured on a generic operation type
+        # would never appear in tracking (so it could not be compared or closed).
+        receiver_tickets = [
+            ticket
+            for ticket in sorted_tickets
+            if ticket.get("movement_role") == "RECEIVER"
+            or (
+                ticket.get("movement_role") == "UNKNOWN"
+                and ticket is not sender_ticket
+            )
+        ]
+
+        undetected_receivers = [
+            ticket
+            for ticket in receiver_tickets
+            if ticket.get("movement_role") == "UNKNOWN"
+        ]
+
+        if undetected_receivers:
+            warning_messages.append(
+                f"{len(undetected_receivers)} ticket(s) were treated as receiver tickets because the sender/receiver role could not be detected from the operation type."
+            )
+
+        missing_convoy_tickets = [
+            ticket
+            for ticket in sorted_tickets
+            if clean_optional_text(ticket.get("convoy_number")) is None
+        ]
+
+        if missing_convoy_tickets:
+            ticket_labels = ", ".join(
+                str(ticket.get("ticket_number") or ticket.get("transaction_id"))
+                for ticket in missing_convoy_tickets
+            )
+            warning_messages.append(
+                "Convoy number is missing for: "
+                + ticket_labels
+                + ". Receipt acknowledgement and closure need a convoy number."
+            )
+
+        missing_payload_tickets = [
+            ticket
+            for ticket in sorted_tickets
+            if ticket.get("payload_missing")
+        ]
+
+        if missing_payload_tickets:
+            ticket_labels = ", ".join(
+                str(ticket.get("ticket_number") or ticket.get("transaction_id"))
+                for ticket in missing_payload_tickets
+            )
+            warning_messages.append(
+                "Tanker payload is missing for: "
+                + ticket_labels
+                + ". Quantities, dips and seals are shown as blank until the ticket is corrected."
             )
 
         latest_receiver_ticket = receiver_tickets[-1] if receiver_tickets else None
@@ -993,17 +1061,32 @@ def get_tanker_tracking_rows(
     status: str | None = None,
     search: str | None = None,
 ):
-    query = (
-        db.query(OperationTransaction)
-        .join(
-            OperationTransactionValue,
-            OperationTransactionValue.transaction_id == OperationTransaction.id,
-        )
+    # Approved tanker tickets must always reach Tanker Tracking - including
+    # tickets that were approved before the tanker payload was stored, or that
+    # were captured through a layout which does not write `tanker_payload`.
+    # Those tickets are still listed (with a warning) so receipt
+    # acknowledgement, receiver entry, comparison and closure keep working.
+    tanker_payload_exists = (
+        db.query(OperationTransactionValue.id)
         .filter(
+            OperationTransactionValue.transaction_id == OperationTransaction.id,
             OperationTransactionValue.field_code == "tanker_payload",
             OperationTransactionValue.field_value != None,
+        )
+        .exists()
+    )
+
+    query = (
+        db.query(OperationTransaction)
+        .filter(
             OperationTransaction.status == APPROVED_TRANSACTION_STATUS,
             approved_transaction_not_on_correction_hold(db),
+            or_(
+                tanker_payload_exists,
+                func.lower(
+                    func.coalesce(OperationTransaction.primary_asset_type_code, "")
+                ).like("%tanker%"),
+            ),
         )
     )
 
@@ -1054,15 +1137,17 @@ def get_tanker_tracking_rows(
 
     for transaction in transactions:
         tanker_payload = get_tanker_payload_for_transaction(db, transaction.id)
-
-        if not tanker_payload:
-            continue
+        payload_missing = not tanker_payload
 
         ticket = build_tanker_tracking_ticket(
             transaction=transaction,
-            tanker_payload=tanker_payload,
+            tanker_payload=tanker_payload or {},
             db=db,
         )
+
+        # Internal flag (not part of the API response) - surfaced as a group
+        # warning so users know why quantities/seals are empty.
+        ticket["payload_missing"] = payload_missing
 
         if cleaned_tanker_asset_code:
             ticket_tanker_code = clean_optional_text(ticket.get("tanker_asset_code"))
@@ -1245,15 +1330,15 @@ def get_tanker_sender_reference(
         sender_transaction.id,
     )
 
-    if not tanker_payload:
+    if not tanker_payload and not is_tanker_transaction(sender_transaction):
         raise HTTPException(
             status_code=400,
-            detail="Selected sender transaction does not have tanker payload",
+            detail="Selected sender transaction is not a tanker ticket",
         )
 
     sender_ticket = build_tanker_tracking_ticket(
         transaction=sender_transaction,
-        tanker_payload=tanker_payload,
+        tanker_payload=tanker_payload or {},
         db=db,
     )
 
@@ -1364,10 +1449,10 @@ def acknowledge_tanker_receipt(
         sender_transaction.id,
     )
 
-    if not tanker_payload:
+    if not tanker_payload and not is_tanker_transaction(sender_transaction):
         raise HTTPException(
             status_code=400,
-            detail="Selected sender transaction does not have tanker payload",
+            detail="Selected sender transaction is not a tanker ticket",
         )
 
     existing_acknowledgement = get_tanker_acknowledgement_by_sender(
@@ -1389,7 +1474,7 @@ def acknowledge_tanker_receipt(
 
     sender_ticket = build_tanker_tracking_ticket(
         transaction=sender_transaction,
-        tanker_payload=tanker_payload,
+        tanker_payload=tanker_payload or {},
         db=db,
     )
 

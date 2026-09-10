@@ -42,6 +42,7 @@ from app.services.transaction_helpers import (
 from app.services.tracking_helpers import (
     get_trip_by_convoy_or_none,
     ensure_trip_not_closed,
+    ensure_barge_trip_timeline as _ensure_barge_trip_timeline,
     load_multi_tank_payload,
     build_multitank_comparison_json_v2 as build_multitank_comparison_json,
     build_multitank_seal_checks,
@@ -396,9 +397,21 @@ def get_trip_timeline_by_convoy(
     if convoy is None:
         raise HTTPException(status_code=400, detail="convoy_number is required")
 
-    trip = db.query(Trip).filter(Trip.convoy_number.ilike(convoy)).first()
+    trip, timeline_changed = _ensure_barge_trip_timeline(
+        db=db,
+        convoy_number=convoy,
+        current_user=current_user,
+    )
+
     if not trip:
         raise HTTPException(status_code=404, detail="Trip not found for this convoy number")
+
+    if timeline_changed:
+        # Approved tickets existed without a trip row / events (e.g. tickets
+        # approved before auto-creation was added). Persist the rebuilt timeline
+        # so unloading, comparison and closure all work from Barge Tracking.
+        db.commit()
+        db.refresh(trip)
 
     events = (
         db.query(TripEvent)
@@ -449,7 +462,18 @@ def get_trip_timeline_by_convoy(
             .first()
         )
 
-        if (cmp.summary_json is None or cmp.per_tank_json is None) and left_tx and right_tx:
+        stored_seal_checks = (cmp.summary_json or {}).get("seal_checks")
+        seal_checks_missing = (
+            not isinstance(stored_seal_checks, list) or len(stored_seal_checks) == 0
+        )
+
+        needs_rebuild = (
+            cmp.summary_json is None
+            or cmp.per_tank_json is None
+            or seal_checks_missing
+        )
+
+        if needs_rebuild and left_tx and right_tx:
             left_payload = load_multi_tank_payload(db, left_tx.id)
             right_payload = load_multi_tank_payload(db, right_tx.id)
             if left_payload and right_payload:
@@ -460,7 +484,9 @@ def get_trip_timeline_by_convoy(
                     left_payload=left_payload,
                     right_payload=right_payload,
                 )
-                if cmp.summary_json is None:
+                if cmp.summary_json is None or seal_checks_missing:
+                    # Older comparisons were stored without seal checks, so the
+                    # printed MTR report could not show seal match/mismatch.
                     cmp.summary_json = auto_summary
                 if cmp.per_tank_json is None:
                     cmp.per_tank_json = auto_per_tank
@@ -493,6 +519,12 @@ def get_trip_timeline_by_convoy(
     if did_backfill:
         db.commit()
 
+    warnings = []
+    if timeline_changed:
+        warnings.append(
+            "Trip timeline was rebuilt from the Approved barge tickets of this convoy."
+        )
+
     return {
         "trip": {
             "id": trip.id,
@@ -506,6 +538,8 @@ def get_trip_timeline_by_convoy(
         },
         "events": event_rows,
         "comparisons": comparison_rows,
+        "timeline_rebuilt": timeline_changed,
+        "warnings": warnings,
     }
 
 

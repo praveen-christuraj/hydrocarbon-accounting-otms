@@ -54,10 +54,19 @@ from app.routers.operation_tasks import (
     create_operation_approval_task_for_transaction,
     close_operation_approval_tasks_for_transaction,
 )
-from app.services.transaction_helpers import get_operation_type_by_code
+from app.config import APPROVED_TRANSACTION_STATUS
+from app.services.transaction_helpers import (
+    get_operation_type_by_code,
+    get_transaction_value_text,
+    resolve_barge_event_type_from_ticket,
+)
 from app.services.tracking_helpers import (
+    ensure_barge_trip_timeline,
+    ensure_barge_unload_comparison,
+    ensure_trip_event_for_transaction,
     get_trip_by_convoy_or_none,
     ensure_trip_not_closed,
+    is_barge_transaction,
     get_or_create_shuttle_voyage_v2 as _get_or_create_shuttle_voyage_v2,
     load_multi_tank_payload as _load_multi_tank_payload_v2,
 )
@@ -588,32 +597,9 @@ def validate_multi_tank_seals_before_submit(
     }
 
 
-def get_transaction_value_text(db: Session, transaction_id: int, field_code: str):
-    v = (
-        db.query(OperationTransactionValue)
-        .filter(
-            OperationTransactionValue.transaction_id == transaction_id,
-            OperationTransactionValue.field_code == field_code,
-        )
-        .first()
-    )
-    if not v:
-        return None
-    if v.field_value is None:
-        return None
-    return str(v.field_value).strip()
-
-
-def resolve_barge_event_type_from_ticket(db: Session, transaction: OperationTransaction):
-    stage = get_transaction_value_text(db, transaction.id, "barge_event_type")
-    if stage:
-        stage_u = stage.strip().upper()
-        if stage_u in ["LOAD_1", "LOAD_2_TOPUP", "UNLOAD", "STS"]:
-            return stage_u
-    code_u = str(transaction.operation_type_code or "").upper()
-    if any(k in code_u for k in ["UNLOAD", "DISCHARGE", "RECEIPT", "RECEIVE"]):
-        return "UNLOAD"
-    return None
+# get_transaction_value_text() and resolve_barge_event_type_from_ticket() are
+# imported from app.services.transaction_helpers (canonical implementations).
+# They are re-exported here so existing imports keep working.
 
 
 def auto_create_trip_event_on_submit(
@@ -629,150 +615,65 @@ def auto_create_barge_tracking_on_approval(
     transaction: OperationTransaction,
     current_user: User,
 ):
+    """
+    Barge counterpart of the automatic tracking hook run on Approval.
+
+    Uses the shared self-healing helpers so the convoy trip row, every missing
+    timeline event (old approved tickets included) and the load-vs-unload
+    comparison are created together. Without this the Barge Tracking page used
+    to answer "Trip not found for this convoy number" for convoys whose tickets
+    were approved before the hook existed.
+    """
     convoy = clean_optional_text(transaction.convoy_number)
     if convoy is None:
         return None, None, None
 
-    if str(transaction.primary_asset_type_code or "").strip().upper() != "BARGE":
-        return None, None, None
-
-    if transaction.status != "Approved":
+    if transaction.status != APPROVED_TRANSACTION_STATUS:
         return None, None, None
 
     asset_code = str(transaction.primary_asset_code or "").strip()
     if not asset_code:
         return None, None, None
 
-    created_by_display = get_current_user_display_name(current_user)
+    if not is_barge_transaction(db, transaction):
+        return None, None, None
 
-    trip = db.query(Trip).filter(Trip.convoy_number.ilike(convoy)).first()
-    if not trip:
-        trip = Trip(
-            convoy_number=convoy,
-            primary_barge_asset_code=asset_code,
-            status="OPEN",
-            created_by=created_by_display,
-            remarks=None,
-        )
-        db.add(trip)
-        db.flush()
+    trip, _ = ensure_barge_trip_timeline(
+        db=db,
+        convoy_number=convoy,
+        current_user=current_user,
+        remarks="Auto-created on Approval",
+    )
+
+    if trip is None:
+        return None, None, None
 
     ensure_trip_not_closed(trip)
 
-    chosen = resolve_barge_event_type_from_ticket(db, transaction)
-
-    if chosen is None:
-        prev_load = (
-            db.query(TripEvent)
-            .filter(
-                TripEvent.trip_id == trip.id,
-                TripEvent.asset_code == asset_code,
-                TripEvent.event_type.in_(["LOAD_1", "LOAD_2_TOPUP"]),
-            )
-            .order_by(TripEvent.sequence_no.desc(), TripEvent.id.desc())
-            .first()
-        )
-        chosen = "LOAD_1" if not prev_load else "LOAD_2_TOPUP"
-
-    existing = (
-        db.query(TripEvent)
-        .filter(TripEvent.operation_transaction_id == transaction.id)
-        .first()
+    new_event, _ = ensure_trip_event_for_transaction(
+        db=db,
+        trip=trip,
+        transaction=transaction,
+        current_user=current_user,
+        remarks="Auto-created on Approval",
     )
-
-    if existing:
-        existing.event_type = chosen
-        existing.location_code = clean_optional_text(transaction.origin_location_code) or existing.location_code
-        existing.asset_code = asset_code
-        existing.event_datetime = transaction.operation_start_datetime or existing.event_datetime
-        existing.updated_at = datetime.now()
-        new_event = existing
-    else:
-        max_seq = (
-            db.query(func.max(TripEvent.sequence_no))
-            .filter(TripEvent.trip_id == trip.id)
-            .scalar()
-        )
-        seq = (max_seq or 0) + 1
-
-        new_event = TripEvent(
-            trip_id=trip.id,
-            event_type=chosen,
-            location_code=clean_optional_text(transaction.origin_location_code),
-            asset_code=asset_code,
-            operation_transaction_id=transaction.id,
-            sequence_no=seq,
-            event_datetime=transaction.operation_start_datetime or datetime.now(),
-            created_by=created_by_display,
-            remarks="Auto-created on Approval",
-        )
-        db.add(new_event)
-        db.flush()
 
     new_cmp = None
 
-    if chosen == "UNLOAD":
-        latest_load = (
-            db.query(TripEvent)
-            .filter(
-                TripEvent.trip_id == trip.id,
-                TripEvent.asset_code == asset_code,
-                TripEvent.event_type.in_(["LOAD_1", "LOAD_2_TOPUP"]),
-                TripEvent.operation_transaction_id.isnot(None),
+    if str(new_event.event_type or "").strip().upper() == "UNLOAD":
+        try:
+            new_cmp = ensure_barge_unload_comparison(
+                db=db,
+                trip=trip,
+                asset_code=asset_code,
+                unload_tx=transaction,
+                current_user=current_user,
+                remarks="Auto-created on UNLOAD Approval",
             )
-            .order_by(TripEvent.sequence_no.desc(), TripEvent.id.desc())
-            .first()
-        )
-
-        if latest_load and latest_load.operation_transaction_id:
-            left_tx = (
-                db.query(OperationTransaction)
-                .filter(OperationTransaction.id == latest_load.operation_transaction_id)
-                .first()
-            )
-
-            if left_tx and left_tx.status == "Approved":
-                existing_cmp = (
-                    db.query(TripComparison)
-                    .filter(
-                        TripComparison.trip_id == trip.id,
-                        TripComparison.comparison_type == "LOAD_AFTER_vs_UNLOAD_BEFORE",
-                        TripComparison.left_transaction_id == left_tx.id,
-                        TripComparison.right_transaction_id == transaction.id,
-                    )
-                    .first()
-                )
-
-                if not existing_cmp:
-                    left_payload = load_multi_tank_payload(db, left_tx.id)
-                    right_payload = load_multi_tank_payload(db, transaction.id)
-                    if left_payload and right_payload:
-                        # Use v2 (perTank TOV/FW format) consistently with the
-                        # frontend's multi_tank_payload structure. v1 (ullage/volume/mass
-                        # format) was the older schema — keeping both was a latent bug.
-                        from app.services.tracking_helpers import (
-                            build_multitank_comparison_json_v2 as _build_comparison_v2,
-                        )
-                        summary_json, per_tank_json = _build_comparison_v2(
-                            left_tx=left_tx,
-                            right_tx=transaction,
-                            comparison_type="LOAD_AFTER_vs_UNLOAD_BEFORE",
-                            left_payload=left_payload,
-                            right_payload=right_payload,
-                        )
-
-                        new_cmp = TripComparison(
-                            trip_id=trip.id,
-                            comparison_type="LOAD_AFTER_vs_UNLOAD_BEFORE",
-                            left_transaction_id=left_tx.id,
-                            right_transaction_id=transaction.id,
-                            summary_json=summary_json,
-                            per_tank_json=per_tank_json,
-                            created_by=created_by_display,
-                            remarks="Auto-created on UNLOAD Approval",
-                        )
-                        db.add(new_cmp)
-                        db.flush()
+        except HTTPException:
+            # The load ticket is not approved yet - the comparison is created
+            # later (on the next approval or when Barge Tracking loads).
+            new_cmp = None
 
     return trip, new_event, new_cmp
 

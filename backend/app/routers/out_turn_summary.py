@@ -398,6 +398,15 @@ def _get_or_create_config(db: Session):
 
 
 def _load_configured_columns(db: Session, available_definitions: list[dict]):
+    """
+    Merge the saved column configuration with the currently available columns.
+
+    The saved configuration is authoritative: a column the user switched off
+    stays off after a refresh, including columns that were not part of the
+    catalogue when the configuration was saved (a filtered report, a column
+    discovered later, ...). Newly discovered columns are appended disabled so
+    they never silently re-enable a report the user already configured.
+    """
     config = _get_saved_config(db)
 
     if config is None or not config.columns_json:
@@ -411,38 +420,54 @@ def _load_configured_columns(db: Session, available_definitions: list[dict]):
             continue
 
         key = item.get("key")
-        source = available_map.get(key)
-
-        if source is None:
-            continue
+        source = available_map.get(key) or {}
 
         configured.append(
             {
                 "key": key,
-                "label": item.get("label") or source["label"],
-                "group": item.get("group") or source["group"],
+                "label": item.get("label") or source.get("label") or key,
+                "group": item.get("group") or source.get("group") or "Base",
                 "enabled": bool(item.get("enabled", True)),
-                "order": int(item.get("order") or len(configured)),
+                "order": int(
+                    item.get("order")
+                    if item.get("order") is not None
+                    else len(configured)
+                ),
             }
         )
 
     known_keys = {item["key"] for item in configured}
+    next_order = max([item["order"] for item in configured] or [0]) + 1
 
     for item in available_definitions:
-        if item["key"] not in known_keys:
-            configured.append(
-                {
-                    "key": item["key"],
-                    "label": item["label"],
-                    "group": item["group"],
-                    "enabled": item["enabled"],
-                    "order": item["order"],
-                }
-            )
+        if item["key"] in known_keys:
+            continue
+
+        configured.append(
+            {
+                "key": item["key"],
+                "label": item["label"],
+                "group": item["group"],
+                "enabled": False,
+                "order": next_order,
+            }
+        )
+        next_order += 1
 
     configured.sort(key=lambda item: item["order"])
 
     return configured
+
+
+def _standard_available_definitions(db: Session, current_user: User | None):
+    """
+    Column catalogue used for the saved configuration.
+
+    Discovery deliberately ignores the report location filter so the catalogue
+    does not shrink/expand with the selected filter (that is what made saved
+    configurations look like they were reset).
+    """
+    return _build_all_column_definitions(db, None, current_user=current_user)
 
 
 def _build_row(
@@ -594,7 +619,7 @@ def build_available_columns_response(
     location_code: str | None = None,
     current_user: User | None = None,
 ):
-    definitions = _build_all_column_definitions(db, location_code, current_user=current_user)
+    definitions = _standard_available_definitions(db, current_user=current_user)
     configured = _load_configured_columns(db, definitions)
 
     return {
@@ -635,8 +660,13 @@ def get_out_turn_summary_config(
 
     config = _get_or_create_config(db)
 
+    if not config.columns_json:
+        return {"columns": []}
+
+    definitions = _standard_available_definitions(db, current_user=current_user)
+
     return {
-        "columns": config.columns_json or [],
+        "columns": _load_configured_columns(db, definitions),
     }
 
 
@@ -689,8 +719,12 @@ def update_out_turn_summary_config(
 
     db.commit()
 
+    # Return the same normalised column list the report sends on refresh, so
+    # what the user sees right after saving is exactly what they get later.
+    definitions = _standard_available_definitions(db, current_user=current_user)
+
     return {
-        "columns": config.columns_json,
+        "columns": _load_configured_columns(db, definitions),
     }
 
 

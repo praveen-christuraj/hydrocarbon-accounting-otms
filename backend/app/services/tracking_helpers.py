@@ -38,7 +38,9 @@ from app.utils.helpers import (
 )
 from app.services.audit_service import create_audit_log
 from app.services.transaction_helpers import (
+    get_transaction_value_text,
     require_approved_transaction_for_tracking,
+    resolve_barge_event_type_from_ticket,
     transaction_has_pending_correction_request,
 )
 from app.config import APPROVED_TRANSACTION_STATUS
@@ -138,6 +140,252 @@ def ensure_trip_not_closed(trip: Trip | None):
             status_code=400,
             detail="Trip is CLOSED for this convoy. Reopen the trip to continue.",
         )
+
+
+# ---------------------------------------------------------------------------
+# Barge trip / timeline self-healing
+#
+# Approved barge tickets must always be usable from Barge Tracking, even when
+# the Trip row or its timeline events were never written (tickets approved
+# before auto-creation existed, approvals made outside the status endpoint,
+# convoys whose trip row was removed, etc). These helpers rebuild the trip
+# and its timeline from the approved tickets instead of failing with
+# "Trip not found for this convoy number".
+# ---------------------------------------------------------------------------
+
+
+def is_barge_transaction(db: Session, transaction: OperationTransaction) -> bool:
+    """True when the ticket belongs to a barge asset."""
+    asset_type_code = str(transaction.primary_asset_type_code or "").strip().lower()
+
+    if asset_type_code:
+        return "barge" in asset_type_code
+
+    asset = get_asset_by_code(transaction.primary_asset_code, db)
+    asset_master_type = str(getattr(asset, "asset_type_code", "") or "").strip().lower()
+    return "barge" in asset_master_type
+
+
+def get_approved_barge_transactions_for_convoy(
+    db: Session,
+    convoy_number: str | None,
+):
+    """Approved barge tickets of a convoy, oldest first."""
+    convoy = clean_optional_text(convoy_number)
+    if convoy is None:
+        return []
+
+    transactions = (
+        db.query(OperationTransaction)
+        .filter(
+            OperationTransaction.convoy_number.ilike(convoy),
+            OperationTransaction.status == APPROVED_TRANSACTION_STATUS,
+        )
+        .order_by(
+            OperationTransaction.operation_date.asc(),
+            OperationTransaction.id.asc(),
+        )
+        .all()
+    )
+
+    return [tx for tx in transactions if is_barge_transaction(db, tx)]
+
+
+def _next_trip_event_sequence(db: Session, trip: Trip) -> int:
+    max_seq = (
+        db.query(func.max(TripEvent.sequence_no))
+        .filter(TripEvent.trip_id == trip.id)
+        .scalar()
+    )
+    return (max_seq or 0) + 1
+
+
+BARGE_EVENT_TYPES = [
+    "LOAD_1",
+    "LOAD_2_TOPUP",
+    "UNLOAD",
+    "STS",
+    "STS_OUT",
+    "STS_IN",
+    "SHUTTLE_RECEIPT",
+]
+
+
+def _explicit_barge_event_type(db: Session, transaction: OperationTransaction):
+    """Stage explicitly stored on the ticket (barge_event_type value field)."""
+    stage = get_transaction_value_text(db, transaction.id, "barge_event_type")
+
+    if not stage:
+        return None
+
+    stage_upper = stage.strip().upper()
+
+    return stage_upper if stage_upper in BARGE_EVENT_TYPES else None
+
+
+def _default_load_event_type(db: Session, trip: Trip, asset_code: str) -> str:
+    """First load of a barge is LOAD_1, later loads are top-ups."""
+    previous_load = (
+        db.query(TripEvent)
+        .filter(
+            TripEvent.trip_id == trip.id,
+            TripEvent.asset_code == asset_code,
+            TripEvent.event_type.in_(["LOAD_1", "LOAD_2_TOPUP"]),
+        )
+        .first()
+    )
+    return "LOAD_2_TOPUP" if previous_load else "LOAD_1"
+
+
+def ensure_trip_event_for_transaction(
+    db: Session,
+    trip: Trip,
+    transaction: OperationTransaction,
+    current_user: User | None = None,
+    remarks: str | None = None,
+):
+    """
+    Make sure an approved barge ticket has a timeline event.
+
+    Existing events are completed (never overwritten when already set) so
+    manual corrections survive a rebuild. Returns (event, changed).
+    """
+    asset_code = str(transaction.primary_asset_code or "").strip()
+    location_code = clean_optional_text(transaction.origin_location_code)
+    event_datetime = transaction.operation_start_datetime or datetime.now()
+
+    existing_event = (
+        db.query(TripEvent)
+        .filter(TripEvent.operation_transaction_id == transaction.id)
+        .first()
+    )
+
+    if existing_event:
+        changed = False
+
+        if asset_code and str(existing_event.asset_code or "").strip() != asset_code:
+            existing_event.asset_code = asset_code
+            changed = True
+
+        if location_code and clean_optional_text(existing_event.location_code) is None:
+            existing_event.location_code = location_code
+            changed = True
+
+        if existing_event.event_datetime is None:
+            existing_event.event_datetime = event_datetime
+            changed = True
+
+        explicit_stage = _explicit_barge_event_type(db, transaction)
+        resolved_stage = explicit_stage or resolve_barge_event_type_from_ticket(
+            db, transaction
+        )
+        existing_stage = str(existing_event.event_type or "").strip().upper()
+
+        if resolved_stage and (
+            not existing_stage
+            or (explicit_stage is not None and explicit_stage != existing_stage)
+        ):
+            existing_event.event_type = resolved_stage
+            changed = True
+
+        if changed:
+            existing_event.updated_at = datetime.now()
+
+        return existing_event, changed
+
+    event_type = resolve_barge_event_type_from_ticket(db, transaction) or (
+        _default_load_event_type(db, trip, asset_code)
+    )
+
+    new_event = TripEvent(
+        trip_id=trip.id,
+        event_type=event_type,
+        location_code=location_code,
+        asset_code=asset_code,
+        operation_transaction_id=transaction.id,
+        sequence_no=_next_trip_event_sequence(db, trip),
+        event_datetime=event_datetime,
+        created_by=get_current_user_display_name(current_user) or "System",
+        remarks=clean_optional_text(remarks) or "Auto-created from Approved barge ticket",
+    )
+
+    db.add(new_event)
+    db.flush()
+
+    return new_event, True
+
+
+def ensure_barge_trip_timeline(
+    db: Session,
+    convoy_number: str | None,
+    current_user: User | None = None,
+    remarks: str | None = None,
+):
+    """
+    Rebuild/repair a barge trip timeline from approved barge tickets.
+
+    Returns (trip, changed). `trip` is None when the convoy has neither a
+    trip nor any approved barge ticket (a genuinely unknown convoy).
+    """
+    convoy = clean_optional_text(convoy_number)
+    if convoy is None:
+        return None, False
+
+    transactions = get_approved_barge_transactions_for_convoy(db, convoy)
+
+    trip = db.query(Trip).filter(Trip.convoy_number.ilike(convoy)).first()
+
+    if trip is None and not transactions:
+        return None, False
+
+    changed = False
+
+    if trip is None:
+        primary_asset_code = str(transactions[0].primary_asset_code or "").strip() or None
+
+        trip = Trip(
+            convoy_number=convoy,
+            primary_barge_asset_code=primary_asset_code,
+            status="OPEN",
+            created_by=get_current_user_display_name(current_user) or "System",
+            remarks=clean_optional_text(remarks)
+            or "Auto-created from Approved barge tickets",
+        )
+        db.add(trip)
+        db.flush()
+        changed = True
+
+    for transaction in transactions:
+        event, event_changed = ensure_trip_event_for_transaction(
+            db=db,
+            trip=trip,
+            transaction=transaction,
+            current_user=current_user,
+        )
+
+        if not event_changed:
+            continue
+
+        changed = True
+
+        if str(event.event_type or "").strip().upper() != "UNLOAD":
+            continue
+
+        try:
+            ensure_barge_unload_comparison(
+                db=db,
+                trip=trip,
+                asset_code=event.asset_code,
+                unload_tx=transaction,
+                current_user=current_user,
+                remarks="Auto-created while rebuilding the barge timeline",
+            )
+        except HTTPException:
+            # No approved load ticket to compare against yet - the timeline
+            # is still usable, the comparison is created later.
+            continue
+
+    return trip, changed
 
 
 # ---------------------------------------------------------------------------
@@ -426,6 +674,82 @@ def build_multitank_seal_checks(left_payload: dict, right_payload: dict):
     return checks, seal_mismatch
 
 
+def build_multitank_permanent_seal_checks(left_payload: dict, right_payload: dict):
+    """
+    Compare the permanent (master) tank seals captured on both tickets.
+
+    The entry layout stores the tank master seals per position as
+    ``seals.after.tankSeals[tank][position]`` = {master, observed}. The left
+    (after) ticket is the sender snapshot and the right (before) ticket is the
+    receiver snapshot, so the report can print master vs both observations and
+    flag a seal that was opened or replaced in between.
+    """
+    def norm(v):
+        return str(v or "").strip()
+
+    left_seals = (
+        ((left_payload.get("seals") or {}).get("after") or {}).get("tankSeals") or {}
+    )
+    right_seals = (
+        ((right_payload.get("seals") or {}).get("before") or {}).get("tankSeals") or {}
+    )
+
+    tank_ids = sorted(
+        {
+            str(tank_id).strip()
+            for tank_id in list(left_seals.keys()) + list(right_seals.keys())
+            if str(tank_id).strip()
+        }
+    )
+
+    seal_positions = ["MH1", "MH2", "LOCK", "DIPHATCH"]
+
+    checks = []
+
+    for tank_id in tank_ids:
+        left_tank = left_seals.get(tank_id) or {}
+        right_tank = right_seals.get(tank_id) or {}
+
+        for position in seal_positions:
+            left_cell = left_tank.get(position) or {}
+            right_cell = right_tank.get(position) or {}
+
+            master = norm(left_cell.get("master") or right_cell.get("master"))
+            left_observed = norm(left_cell.get("observed"))
+            right_observed = norm(right_cell.get("observed"))
+
+            if not left_observed and not right_observed:
+                status = "MISSING_BOTH"
+            elif not left_observed:
+                status = "MISSING_SENDER"
+            elif not right_observed:
+                status = "MISSING_RECEIVER"
+            elif left_observed != right_observed:
+                status = "MISMATCH"
+            elif master and master != left_observed:
+                status = "MISMATCH"
+            else:
+                status = "MATCH"
+
+            checks.append(
+                {
+                    "tank_id": tank_id,
+                    "seal_name": position,
+                    "master": master,
+                    "sender": left_observed,
+                    "receiver": right_observed,
+                    "status": status,
+                }
+            )
+
+    mismatch = any(
+        check["status"] in ("MISMATCH", "MISSING_SENDER", "MISSING_RECEIVER")
+        for check in checks
+    )
+
+    return checks, mismatch
+
+
 def build_multitank_comparison_json_v2(
     left_tx: OperationTransaction,
     right_tx: OperationTransaction,
@@ -495,11 +819,17 @@ def build_multitank_comparison_json_v2(
 
     seal_checks, seal_mismatch = build_multitank_seal_checks(left_payload, right_payload)
 
+    permanent_seal_checks, permanent_seal_mismatch = (
+        build_multitank_permanent_seal_checks(left_payload, right_payload)
+    )
+
     summary_json = {
         "comparison_type": comparison_type,
         "asset_code": left_tx.primary_asset_code,
         "seal_checks": seal_checks,
         "seal_mismatch": seal_mismatch,
+        "permanent_seal_checks": permanent_seal_checks,
+        "permanent_seal_mismatch": permanent_seal_mismatch,
         "left": {
             "transaction_id": left_tx.id,
             "ticket_number": get_transaction_ticket_number(left_tx),
