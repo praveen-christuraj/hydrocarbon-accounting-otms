@@ -21,6 +21,7 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
 
   const [successMsg, setSuccessMsg] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
+  const [timelineWarning, setTimelineWarning] = useState('')
   const [confirmAction, setConfirmAction] = useState(null) // { type, message, data }
   const [promptModal, setPromptModal] = useState(null) // { type, message, default, value }
 
@@ -35,6 +36,29 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
   })
 
   const [nextStageByAsset, setNextStageByAsset] = useState({})
+
+  const BARGE_SEAL_STATUS_LABELS = {
+    MATCH: 'Matched',
+    MISMATCH: 'Mismatch',
+    MISSING_BOTH: 'Not Entered',
+    MISSING_SENDER: 'Sender Missing',
+    MISSING_RECEIVER: 'Receiver Missing',
+  }
+
+  const getBargeSealStatusLabel = (status) => {
+    const value = String(status || '').toUpperCase()
+
+    return (
+      BARGE_SEAL_STATUS_LABELS[value] ||
+      (value ? value.replace(/_/g, ' ') : '-')
+    )
+  }
+
+  const isBargeSealProblem = (status) => {
+    return ['MISMATCH', 'MISSING_SENDER', 'MISSING_RECEIVER'].includes(
+      String(status || '').toUpperCase()
+    )
+  }
 
 
   // Printable MTR-style Comparison Report
@@ -110,16 +134,37 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
     }
 
     setLoading(true)
-    try {
-      const trackerData = await getBargeTracking(clean)
-      setTracker(trackerData)
 
-      const timelineData = await getTripTimelineByConvoy(clean)
-      setTimeline(timelineData)
+    let trackerData = null
+
+    try {
+      trackerData = await getBargeTracking(clean)
+      setTracker(trackerData)
     } catch (e) {
       setTracker(null)
       setTimeline(null)
       setErrorMsg(e.message || 'Failed to load convoy')
+      setLoading(false)
+      return
+    }
+
+    try {
+      // Approved tickets stay visible even if the trip timeline cannot be
+      // read - never blank the whole page because of the timeline call.
+      const timelineData = await getTripTimelineByConvoy(clean)
+      setTimeline(timelineData)
+
+      if (Array.isArray(timelineData?.warnings) && timelineData.warnings.length > 0) {
+        setTimelineWarning(timelineData.warnings.join(' '))
+      } else {
+        setTimelineWarning('')
+      }
+    } catch (e) {
+      setTimeline(null)
+      setErrorMsg(
+        e.message ||
+          'Trip timeline could not be loaded. Approved tickets are still shown below.'
+      )
     } finally {
       setLoading(false)
     }
@@ -561,7 +606,16 @@ return (
             const sealChecks = Array.isArray(summary.seal_checks)
               ? summary.seal_checks
               : []
-            const sealMismatch = Boolean(summary.seal_mismatch)
+            const sealProblemCount = sealChecks.filter((s) =>
+              isBargeSealProblem(s.status)
+            ).length
+            const sealMismatch = sealProblemCount > 0
+            const sealSummary =
+              sealChecks.length === 0
+                ? 'Not Captured'
+                : sealMismatch
+                  ? `Mismatch (${sealProblemCount} of ${sealChecks.length})`
+                  : 'Matched'
 
             const leftTotals = left.totals || {}
             const rightTotals = right.totals || {}
@@ -602,6 +656,10 @@ return (
                     <strong>{cmp.comparison_type || '-'}</strong>
                     <span>Report Date</span>
                     <strong>{new Date().toLocaleString()}</strong>
+                    <span>Seal Result</span>
+                    <strong style={{ color: sealMismatch ? 'red' : 'inherit' }}>
+                      {sealSummary}
+                    </strong>
                   </div>
                 </div>
 
@@ -686,10 +744,12 @@ return (
                 <div className="barge-mtr-section">
                   <h2>
                     Seal Check{' '}
-                    {sealMismatch ? (
+                    {sealChecks.length === 0 ? (
+                      <span>(Not Captured)</span>
+                    ) : sealMismatch ? (
                       <span style={{ color: 'red' }}>(Mismatch)</span>
                     ) : (
-                      <span>(OK)</span>
+                      <span style={{ color: 'green' }}>(Matched)</span>
                     )}
                   </h2>
 
@@ -706,7 +766,9 @@ return (
                       {sealChecks.length === 0 ? (
                         <tr>
                           <td colSpan="4">
-                            No seal data recorded in this comparison.
+                            No seal data recorded in this comparison. Enter the
+                            temporary seals on the load and unload tickets to
+                            print the seal match / mismatch result.
                           </td>
                         </tr>
                       ) : (
@@ -715,9 +777,18 @@ return (
                             <td>
                               <strong>{s.seal_name}</strong>
                             </td>
-                            <td>{s.sender || '-'}</td>
-                            <td>{s.receiver || '-'}</td>
-                            <td>{s.status}</td>
+                            <td>{s.sender || s.sender_value || '-'}</td>
+                            <td>{s.receiver || s.receiver_value || '-'}</td>
+                            <td
+                              style={{
+                                color: isBargeSealProblem(s.status)
+                                  ? 'red'
+                                  : 'inherit',
+                                fontWeight: 'bold',
+                              }}
+                            >
+                              {getBargeSealStatusLabel(s.status)}
+                            </td>
                           </tr>
                         ))
                       )}
@@ -759,18 +830,23 @@ return (
                       <thead>
                         <tr>
                           <th>Tank</th>
-                          <th>S Dip</th>
+                          <th>S T.Dip</th>
+                          <th>S W.Dip</th>
                           <th>S TOV</th>
-                          <th>R Dip</th>
+                          <th>S FW</th>
+                          <th>R T.Dip</th>
+                          <th>R W.Dip</th>
                           <th>R TOV</th>
+                          <th>R FW</th>
                           <th>Δ TOV</th>
+                          <th>Δ FW</th>
                         </tr>
                       </thead>
 
                       <tbody>
                         {shownTanks.length === 0 ? (
                           <tr>
-                            <td colSpan="6">No per-tank rows saved.</td>
+                            <td colSpan="11">No per-tank rows saved.</td>
                           </tr>
                         ) : (
                           shownTanks.map((row) => {
@@ -782,10 +858,15 @@ return (
                               <tr key={String(row.tank_id)}>
                                 <td><strong>{row.tank_id}</strong></td>
                                 <td>{formatNumber(senderTank.total_dip, 1)}</td>
+                                <td>{formatNumber(senderTank.water_dip, 1)}</td>
                                 <td>{formatNumber(senderTank.tov)}</td>
+                                <td>{formatNumber(senderTank.fw)}</td>
                                 <td>{formatNumber(receiverTank.total_dip, 1)}</td>
+                                <td>{formatNumber(receiverTank.water_dip, 1)}</td>
                                 <td>{formatNumber(receiverTank.tov)}</td>
+                                <td>{formatNumber(receiverTank.fw)}</td>
                                 <td>{formatNumber(deltaTank.tov)}</td>
+                                <td>{formatNumber(deltaTank.fw)}</td>
                               </tr>
                             )
                           })
@@ -913,6 +994,12 @@ return (
               Tickets: <strong>{tracker.total_tickets}</strong> | Trip Status:{' '}
               <strong>{tripStatus}</strong>
             </p>
+
+            {!loading && timelineWarning && (
+              <div className="info-box no-print" style={{ marginBottom: '0.75rem' }}>
+                {timelineWarning}
+              </div>
+            )}
 
             {timeline?.trip?.id && (
               <div className="form-actions" style={{ marginTop: 10 }}>

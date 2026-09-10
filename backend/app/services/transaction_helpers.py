@@ -10,6 +10,7 @@ from app.models import (
     OperationTaskEvent,
     OperationTransaction,
     OperationTransactionStatusHistory,
+    OperationTransactionValue,
     OperationType,
     User,
 )
@@ -154,6 +155,63 @@ def create_approved_transaction_revoke_task(
         },
     )
     return task
+
+
+def get_transaction_value_text(db: Session, transaction_id: int, field_code: str):
+    """Return a single operation_transaction_values field as trimmed text."""
+    row = (
+        db.query(OperationTransactionValue)
+        .filter(
+            OperationTransactionValue.transaction_id == transaction_id,
+            OperationTransactionValue.field_code == field_code,
+        )
+        .first()
+    )
+
+    if not row or row.field_value is None:
+        return None
+
+    value = str(row.field_value).strip()
+    return value or None
+
+
+def resolve_barge_event_type_from_ticket(db: Session, transaction: OperationTransaction):
+    """
+    Canonical barge timeline event type for an approved barge ticket.
+
+    The entry screen stores the barge stage in the ticket value
+    `barge_event_type` (LOAD_1 / LOAD_2_TOPUP / UNLOAD / STS_OUT / STS_IN).
+    When that value is missing we fall back to the operation type code so
+    old tickets (created before the stage field existed) still land on the
+    timeline as UNLOAD.
+
+    Returns None when the stage cannot be derived - the caller then falls
+    back to LOAD_1 / LOAD_2_TOPUP based on the existing timeline.
+    """
+    stage = get_transaction_value_text(db, transaction.id, "barge_event_type")
+
+    if stage:
+        stage_upper = stage.strip().upper()
+        if stage_upper in [
+            "LOAD_1",
+            "LOAD_2_TOPUP",
+            "UNLOAD",
+            "STS",
+            "STS_OUT",
+            "STS_IN",
+            "SHUTTLE_RECEIPT",
+        ]:
+            return stage_upper
+
+    code_upper = str(transaction.operation_type_code or "").upper()
+
+    if any(
+        keyword in code_upper
+        for keyword in ["UNLOAD", "DISCHARGE", "RECEIPT", "RECEIVE"]
+    ):
+        return "UNLOAD"
+
+    return None
 
 
 def get_operation_type_by_code(operation_type_code: str | None, db: Session):

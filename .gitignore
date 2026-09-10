@@ -89,6 +89,12 @@ reports/
 backups/
 data/
 
+# ...but never ignore source code that lives in a "reports" folder.
+# Source files under frontend/src/components/reports/ were silently untracked
+# because of the reports/ rule above, which broke the pages importing them.
+!frontend/src/components/reports/
+!frontend/src/components/reports/**
+
 # Docker
 docker-compose.override.yml
 
