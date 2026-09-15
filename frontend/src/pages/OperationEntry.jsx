@@ -690,6 +690,7 @@ function OperationEntry({
 
   const normalizeCode = (value) => String(value ?? '').trim().toLowerCase()
   const hasAllLocationsAccess = loggedInUser?.allLocationsAccess === 'Yes'
+  // Reused for operation availability, origin/sender locations, and local assets.
   const scopedLocationCodeSet = useMemo(() => {
     return new Set(
       (loggedInUser?.assignedLocationCodes || [])
@@ -697,18 +698,6 @@ function OperationEntry({
         .filter(Boolean)
     )
   }, [loggedInUser])
-
-  // When user doesn't have all-locations-access, receiver/destination should
-  // show all locations. We use an empty set here and handle the filtering
-  // in the location filtering logic below.
-  const allLocationCodeSet = useMemo(() => {
-    if (isAdminBootstrap || hasAllLocationsAccess) {
-      return new Set()
-    }
-    // User without all-access: receiver/destination show all locations
-    // by not filtering (empty set means no filtering)
-    return new Set()
-  }, [isAdminBootstrap, hasAllLocationsAccess])
 
   const prefill = useMemo(() => {
     const params = new URLSearchParams(location.search)
@@ -893,23 +882,6 @@ function OperationEntry({
   )
 
   const activeAssets = assets.filter((item) => item.status === 'Active')
-  // Location set for origin/sender - filtered to user's assigned locations
-  const scopedLocationCodeSet = useMemo(() => {
-    return new Set(
-      (loggedInUser?.assignedLocationCodes || [])
-        .map(normalizeCode)
-        .filter(Boolean)
-    )
-  }, [loggedInUser])
-
-  // Location set for receiver/destination - shows all locations
-  // When user has all-locations-access, this is empty (no filtering)
-  // When user doesn't have all-access, this is also effectively empty
-  // because we want to show ALL locations regardless of assignment
-  const receiverDestinationLocationCodeSet = useMemo(() => {
-    // Empty set means no filtering - show all locations
-    return new Set()
-  }, [])
 
   const activeLocations = useMemo(() => {
     const statusFiltered = locations.filter((item) => item.status === 'Active')
