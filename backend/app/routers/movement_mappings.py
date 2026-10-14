@@ -6,7 +6,11 @@ from app.database import get_db
 from app.models import MovementMapping, MovementMappingItem, MovementMappingComparison, OperationTransaction, OperationTransactionValue, Asset, User
 from app.schemas import MovementMappingCreate, MovementMappingResponse, MovementMappingItemAddRequest
 from app.dependencies.auth import get_current_user_from_token
-from app.dependencies.permissions import require_user_permission
+from app.dependencies.permissions import (
+    apply_location_filter,
+    ensure_location_in_user_scope,
+    require_user_permission,
+)
 from app.services.audit_service import create_audit_log
 from app.utils.helpers import safe_float, clean_optional_text, get_transaction_ticket_number
 
@@ -148,6 +152,32 @@ def normalize_code(value: str):
     return value.strip().upper()
 
 
+def ensure_movement_mapping_scope(mapping: MovementMapping, current_user: User, db: Session):
+    ensure_location_in_user_scope(current_user, db, mapping.location_code, "Mapping location")
+
+
+def ensure_transaction_scope(transaction: OperationTransaction, current_user: User, db: Session):
+    ensure_location_in_user_scope(current_user, db, transaction.origin_location_code, "Transaction origin location")
+    ensure_location_in_user_scope(current_user, db, transaction.destination_location_code, "Transaction destination location")
+    ensure_location_in_user_scope(current_user, db, transaction.sender_location_code, "Transaction sender location")
+    ensure_location_in_user_scope(current_user, db, transaction.receiver_location_code, "Transaction receiver location")
+
+
+def ensure_mapping_items_scope(mapping: MovementMapping, current_user: User, db: Session):
+    ensure_movement_mapping_scope(mapping, current_user, db)
+    items = db.query(MovementMappingItem).filter(
+        MovementMappingItem.mapping_id == mapping.id
+    ).all()
+    transaction_ids = [item.transaction_id for item in items]
+    if not transaction_ids:
+        return
+    transactions = db.query(OperationTransaction).filter(
+        OperationTransaction.id.in_(transaction_ids)
+    ).all()
+    for transaction in transactions:
+        ensure_transaction_scope(transaction, current_user, db)
+
+
 @router.get("", response_model=list[MovementMappingResponse])
 def list_movement_mappings(
     mapping_type: str | None = None,
@@ -159,13 +189,14 @@ def list_movement_mappings(
 ):
     require_user_permission(current_user, "View Movement Mapping", db)
 
-    q = db.query(MovementMapping)
+    q = apply_location_filter(db.query(MovementMapping), MovementMapping, current_user, db)
 
     if clean_optional_text(mapping_type):
         q = q.filter(MovementMapping.mapping_type.ilike(mapping_type))
 
     if clean_optional_text(location_code):
-        q = q.filter(MovementMapping.location_code.ilike(location_code))
+        ensure_location_in_user_scope(current_user, db, location_code, "Mapping location")
+        q = q.filter(MovementMapping.location_code.ilike(location_code.strip()))
 
     if clean_optional_text(reference_number):
         q = q.filter(MovementMapping.reference_number.ilike(reference_number))
@@ -174,6 +205,8 @@ def list_movement_mappings(
         q = q.filter(MovementMapping.status.ilike(status))
 
     rows = q.order_by(MovementMapping.created_at.desc(), MovementMapping.id.desc()).all()
+    for row in rows:
+        ensure_mapping_items_scope(row, current_user, db)
     return [build_mapping_response(db, r) for r in rows]
 
 
@@ -188,6 +221,7 @@ def get_movement_mapping(
     m = db.query(MovementMapping).filter(MovementMapping.id == mapping_id).first()
     if not m:
         raise HTTPException(status_code=404, detail="Mapping not found")
+    ensure_mapping_items_scope(m, current_user, db)
 
     return build_mapping_response(db, m)
 
@@ -199,6 +233,10 @@ def create_movement_mapping(
     db: Session = Depends(get_db),
 ):
     require_user_permission(current_user, "Manage Movement Mapping", db)
+    location_code = clean_optional_text(request.location_code)
+    if not location_code:
+        raise HTTPException(status_code=400, detail="location_code is required")
+    ensure_location_in_user_scope(current_user, db, location_code, "Mapping location")
 
     created_by = (
         f"{current_user.full_name} ({current_user.username})"
@@ -208,7 +246,7 @@ def create_movement_mapping(
 
     m = MovementMapping(
         mapping_type=normalize_code(request.mapping_type),
-        location_code=normalize_code(request.location_code),
+        location_code=normalize_code(location_code),
         reference_number=str(request.reference_number or "").strip(),
         product_name=clean_optional_text(request.product_name),
         remarks=clean_optional_text(request.remarks),
@@ -254,6 +292,7 @@ def add_mapping_items(
     mapping = db.query(MovementMapping).filter(MovementMapping.id == mapping_id).first()
     if not mapping:
         raise HTTPException(status_code=404, detail="Mapping not found")
+    ensure_mapping_items_scope(mapping, current_user, db)
 
     if str(mapping.status).upper() == "CLOSED":
         raise HTTPException(status_code=400, detail="Mapping is CLOSED")
@@ -268,6 +307,7 @@ def add_mapping_items(
         tx = db.query(OperationTransaction).filter(OperationTransaction.id == tid).first()
         if not tx:
             raise HTTPException(status_code=404, detail=f"Transaction {tid} not found")
+        ensure_transaction_scope(tx, current_user, db)
 
         if tx.status != "Approved":
             raise HTTPException(status_code=400, detail=f"Only Approved transactions can be mapped (ticket {tid})")
@@ -341,6 +381,7 @@ def remove_mapping_item(
     mapping = db.query(MovementMapping).filter(MovementMapping.id == mapping_id).first()
     if not mapping:
         raise HTTPException(status_code=404, detail="Mapping not found")
+    ensure_mapping_items_scope(mapping, current_user, db)
 
     if str(mapping.status).upper() == "CLOSED":
         raise HTTPException(status_code=400, detail="Mapping is CLOSED")
@@ -392,6 +433,7 @@ def close_mapping(
     mapping = db.query(MovementMapping).filter(MovementMapping.id == mapping_id).first()
     if not mapping:
         raise HTTPException(status_code=404, detail="Mapping not found")
+    ensure_mapping_items_scope(mapping, current_user, db)
 
     if str(mapping.status).upper() == "CLOSED":
         return build_mapping_response(db, mapping)

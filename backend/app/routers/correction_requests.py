@@ -16,6 +16,7 @@ from app.schemas import (
 )
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
+    ensure_location_in_user_scope,
     require_user_permission,
     user_has_permission,
     get_role_ids_with_permission,
@@ -188,6 +189,8 @@ def create_approved_transaction_correction_request(
     )
     if not transaction:
         raise HTTPException(status_code=404, detail="Operation transaction not found")
+    ensure_location_in_user_scope(current_user, db, transaction.origin_location_code, "Origin location")
+    ensure_location_in_user_scope(current_user, db, transaction.destination_location_code, "Destination location")
     if transaction.status != APPROVED_TRANSACTION_STATUS:
         raise HTTPException(
             status_code=400,

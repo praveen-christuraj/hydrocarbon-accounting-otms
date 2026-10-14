@@ -51,8 +51,11 @@ function AssetCalibrationTable({
   const visibleRowLimit = 10
 
   const isAdminBootstrap =
-    loggedInUser &&
-    loggedInUser.username === 'admin'
+    loggedInUser?.isAdmin === true ||
+    String(loggedInUser?.username || '').trim().toLowerCase() === 'admin' ||
+    (Array.isArray(loggedInUser?.roles) && loggedInUser.roles.some((role) =>
+      String(role?.role_name || role?.roleName || '').trim().toLowerCase() === 'admin'
+    ))
   const hasPermission = (permissionName) => {
     if (isAdminBootstrap) return true
     if (!loggedInUser || !Array.isArray(loggedInUser.permissions)) return false

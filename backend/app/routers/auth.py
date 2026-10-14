@@ -4,7 +4,17 @@ from fastapi import APIRouter, Depends, HTTPException, Header, Request
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import TokenBlacklist, User, AuthLoginChallenge, PasswordResetRequest, Role, UserRole, OperationTask
+from app.models import (
+    TokenBlacklist,
+    User,
+    AuthLoginChallenge,
+    PasswordResetRequest,
+    Role,
+    Permission,
+    RolePermission,
+    UserRole,
+    OperationTask,
+)
 from app.dependencies.auth import hash_token
 from app.schemas import (
     LoginRequest,
@@ -15,6 +25,7 @@ from app.schemas import (
     TwoFASetupVerifyRequest,
     TwoFADisableRequest,
     RefreshTokenRequest,
+    LogoutRequest,
 )
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import require_user_permission
@@ -304,50 +315,56 @@ def get_rbac_diagnostics(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    """
-    Debug endpoint: shows exactly what permissions, roles, and location scopes
-    are being applied to the current user. Helps diagnose RBAC access issues.
-    """
-    from app.dependencies.permissions import (
-        get_user_permissions, get_user_location_codes, is_super_admin
-    )
+    """Return the current user's effective RBAC state for self-service support."""
     from sqlalchemy import func
+    from app.dependencies.permissions import (
+        get_user_permissions,
+        get_user_location_codes,
+        is_super_admin,
+    )
 
-    super_admin = is_super_admin(current_user, db)
-    user_perms = get_user_permissions(current_user, db)
-    location_codes = get_user_location_codes(current_user, db)
-
-    user_roles = db.query(UserRole).filter(UserRole.user_id == current_user.id).all()
+    role_rows = (
+        db.query(UserRole, Role)
+        .join(Role, Role.id == UserRole.role_id)
+        .filter(UserRole.user_id == current_user.id)
+        .order_by(Role.role_name, Role.id)
+        .all()
+    )
     role_details = []
-    for ur in user_roles:
-        role = ur.role
-        role_perms = db.query(Role.id, Role.role_name, Role.status).filter(
-            Role.id == role.id
-        ).first()
-        if role_perms:
-            perm_count = (
-                db.query(func.count(RolePermission.id))
-                .filter(RolePermission.role_id == role.id)
-                .scalar() or 0
+    for assignment, role in role_rows:
+        active_permission_count = (
+            db.query(func.count(RolePermission.id))
+            .join(Permission, Permission.id == RolePermission.permission_id)
+            .filter(
+                RolePermission.role_id == role.id,
+                Permission.status == "Active",
             )
-            role_details.append({
-                "role_id": role.id,
-                "role_name": role.role_name,
-                "status": role.status,
-                "permission_count": perm_count,
-            })
+            .scalar()
+            or 0
+        )
+        role_details.append({
+            "assignment_id": assignment.id,
+            "role_id": role.id,
+            "role_name": role.role_name,
+            "status": role.status,
+            "active_permission_count": active_permission_count,
+        })
 
+    granted_permissions = sorted(get_user_permissions(current_user, db))
+    allowed_locations = get_user_location_codes(current_user, db)
+    unrestricted_locations = allowed_locations is None
     return {
         "user_id": current_user.id,
         "username": current_user.username,
         "full_name": current_user.full_name,
-        "is_super_admin": super_admin,
+        "is_super_admin": is_super_admin(current_user, db),
         "assigned_roles": role_details,
-        "active_role_count": sum(1 for r in role_details if r["status"] == "Active"),
-        "granted_permission_count": len(user_perms),
-        "granted_permissions": sorted(user_perms),
-        "assigned_location_codes": sorted(location_codes),
-        "location_count": len(location_codes),
+        "active_role_count": sum(1 for role in role_details if role["status"] == "Active"),
+        "granted_permission_count": len(granted_permissions),
+        "granted_permissions": granted_permissions,
+        "assigned_location_codes": sorted(allowed_locations or set()),
+        "location_count": None if unrestricted_locations else len(allowed_locations or set()),
+        "all_locations_access": unrestricted_locations,
     }
 
 
@@ -496,27 +513,44 @@ def request_password_reset_with_rate_limit(
 
 @router.post("/logout")
 def logout_user(
+    payload: LogoutRequest | None = None,
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ):
-    if not authorization or not authorization.startswith("Bearer "):
-        # No valid token to revoke — still a successful logout client-side
-        return {"message": "Logged out successfully"}
+    from app.dependencies.auth import is_token_blacklisted
+    from app.utils.jwt import decode_access_token
 
-    token = authorization[7:].strip()
+    tokens_to_revoke: list[tuple[str, datetime]] = []
+    if authorization and authorization.startswith("Bearer "):
+        access_token = authorization[7:].strip()
+        try:
+            decoded_access = decode_access_token(access_token)
+            if decoded_access.get("token_type") == "access" and decoded_access.get("exp"):
+                tokens_to_revoke.append(
+                    (access_token, datetime.fromtimestamp(decoded_access["exp"], tz=timezone.utc))
+                )
+        except Exception:
+            # Logout is best-effort for an expired or malformed access token.
+            pass
+
+    refresh_token = str(payload.refresh_token or "").strip() if payload else ""
+    if refresh_token:
+        try:
+            decoded_refresh = decode_refresh_token(refresh_token)
+            if decoded_refresh.get("exp"):
+                tokens_to_revoke.append(
+                    (refresh_token, datetime.fromtimestamp(decoded_refresh["exp"], tz=timezone.utc))
+                )
+        except Exception:
+            pass
+
     try:
-        from app.utils.jwt import decode_access_token
-        payload = decode_access_token(token)
-        expires_at = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
-
-        blacklisted = TokenBlacklist(
-            token_hash=hash_token(token),
-            expires_at=expires_at,
-        )
-        db.add(blacklisted)
+        for token, expires_at in tokens_to_revoke:
+            if not is_token_blacklisted(token, db):
+                db.add(TokenBlacklist(token_hash=hash_token(token), expires_at=expires_at))
         db.commit()
     except Exception:
-        # Best-effort: don't fail logout if blacklist write fails
+        # Best-effort: don't fail logout if blacklist write fails.
         db.rollback()
 
     return {"message": "Logged out successfully"}
@@ -566,6 +600,16 @@ def refresh_access_token(
     new_refresh_token = create_refresh_token(
         data={"user_id": user.id, "username": user.username},
     )
+
+    refresh_expiry = decoded.get("exp")
+    if refresh_expiry:
+        db.add(
+            TokenBlacklist(
+                token_hash=hash_token(refresh_token_str),
+                expires_at=datetime.fromtimestamp(refresh_expiry, tz=timezone.utc),
+            )
+        )
+        db.commit()
 
     return {
         "access_token": new_access_token,

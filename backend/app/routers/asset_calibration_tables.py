@@ -1,11 +1,17 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import false, func, or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import AssetCalibrationTable, AssetCalibrationData, Asset, CalibrationTemplate, CalibrationTemplateColumn, User
 from app.schemas import AssetCalibrationTableCreate, AssetCalibrationTableResponse
 from app.dependencies.auth import get_current_user_from_token
-from app.dependencies.permissions import require_user_permission
+from app.dependencies.permissions import (
+    ensure_location_in_user_scope,
+    get_user_location_codes,
+    is_admin_user,
+    require_user_permission,
+)
 from app.services.audit_service import create_audit_log
 from app.utils.helpers import clean_optional_text
 
@@ -97,6 +103,14 @@ def build_asset_calibration_table_audit_snapshot(calibration_table: AssetCalibra
             for r in preview_rows
         ],
     }
+
+
+def ensure_asset_calibration_scope(asset: Asset, current_user: User, db: Session, *, write: bool = False):
+    if str(asset.asset_scope or "").strip().casefold() == "global":
+        if write and not is_admin_user(current_user, db):
+            raise HTTPException(status_code=403, detail="Only an administrator may change calibration data for Global assets")
+        return
+    ensure_location_in_user_scope(current_user, db, asset.location_code, "Asset location")
 
 
 def validate_asset_calibration_table(calibration_table: AssetCalibrationTableCreate, db: Session):
@@ -196,6 +210,8 @@ def validate_asset_calibration_table(calibration_table: AssetCalibrationTableCre
                     ),
                 )
 
+    return asset
+
 
 @router.get("", response_model=list[AssetCalibrationTableResponse])
 def get_asset_calibration_tables(
@@ -208,11 +224,20 @@ def get_asset_calibration_tables(
         db,
     )
 
-    calibration_tables = (
-        db.query(AssetCalibrationTable)
-        .order_by(AssetCalibrationTable.id)
-        .all()
-    )
+    query = db.query(AssetCalibrationTable)
+    allowed_codes = get_user_location_codes(current_user, db)
+    if allowed_codes is not None:
+        if not allowed_codes:
+            query = query.filter(false())
+        else:
+            visible_assets = db.query(Asset.asset_code).filter(
+                or_(
+                    Asset.asset_scope.ilike("Global"),
+                    func.lower(func.trim(Asset.location_code)).in_(allowed_codes),
+                )
+            )
+            query = query.filter(AssetCalibrationTable.asset_code.in_(visible_assets))
+    calibration_tables = query.order_by(AssetCalibrationTable.id).all()
 
     assets, templates, rows_by_table = _batch_load_references(db, calibration_tables)
 
@@ -234,7 +259,8 @@ def create_asset_calibration_table(
         db,
     )
 
-    validate_asset_calibration_table(calibration_table, db)
+    asset = validate_asset_calibration_table(calibration_table, db)
+    ensure_asset_calibration_scope(asset, current_user, db, write=True)
 
     new_calibration_table = AssetCalibrationTable(
         calibration_name=calibration_table.calibration_name.strip(),
@@ -306,12 +332,20 @@ def update_asset_calibration_table(
             detail="Asset calibration table not found",
         )
 
+    existing_asset = db.query(Asset).filter(
+        Asset.asset_code.ilike(existing_calibration_table.asset_code)
+    ).first()
+    if not existing_asset:
+        raise HTTPException(status_code=404, detail="Calibration asset not found")
+    ensure_asset_calibration_scope(existing_asset, current_user, db, write=True)
+
     assets, templates, rows_by_table = _batch_load_references(db, [existing_calibration_table])
     before_data = build_asset_calibration_table_audit_snapshot(
         existing_calibration_table, assets, templates, rows_by_table
     )
 
-    validate_asset_calibration_table(calibration_table, db)
+    asset = validate_asset_calibration_table(calibration_table, db)
+    ensure_asset_calibration_scope(asset, current_user, db, write=True)
 
     existing_calibration_table.calibration_name = (
         calibration_table.calibration_name.strip()
@@ -384,6 +418,13 @@ def delete_asset_calibration_table(
             status_code=404,
             detail="Asset calibration table not found",
         )
+
+    asset = db.query(Asset).filter(
+        Asset.asset_code.ilike(existing_calibration_table.asset_code)
+    ).first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Calibration asset not found")
+    ensure_asset_calibration_scope(asset, current_user, db, write=True)
 
     assets, templates, rows_by_table = _batch_load_references(db, [existing_calibration_table])
     deleted_data = build_asset_calibration_table_audit_snapshot(

@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import User, SystemNotification, SystemNotificationReceipt, UserRole, AssetAssignment
+from app.models import User, SystemNotification, SystemNotificationReceipt
 from app.schemas import (
     SystemNotificationCreate,
     SystemNotificationUpdate,
@@ -12,7 +12,15 @@ from app.schemas import (
     SystemNotificationReceiptResponse,
 )
 from app.dependencies.auth import get_current_user_from_token
-from app.dependencies.permissions import require_user_permission
+from app.dependencies.permissions import (
+    ensure_location_in_user_scope,
+    ensure_user_in_actor_location_scope,
+    get_user_location_codes as get_assigned_user_location_codes,
+    get_user_role_ids,
+    is_admin_user,
+    require_user_permission,
+    user_is_within_actor_location_scope,
+)
 from app.services.audit_service import create_audit_log
 from app.utils.helpers import clean_optional_text, normalize_yes_no, get_current_user_display_name
 
@@ -121,27 +129,67 @@ def validate_system_notification_payload(payload):
     }
 
 
-def get_user_location_codes(db: Session, user: User):
-    username = str(user.username or "").strip()
-    full_name = str(user.full_name or "").strip()
-    candidates = [value for value in {username, full_name} if value]
-    if not candidates:
-        return set()
+def notification_is_within_actor_scope(
+    current_user: User,
+    target_scope: str,
+    target_user_ids: list[int],
+    target_location_codes: list[str],
+    db: Session,
+) -> bool:
+    if is_admin_user(current_user, db):
+        return True
 
-    rows = (
-        db.query(AssetAssignment.assignment_location_code)
-        .filter(
-            AssetAssignment.status == "Active",
-            AssetAssignment.assigned_to.in_(candidates),
+    if target_scope in {"All Users", "Roles"}:
+        return False
+
+    if target_scope == "Specific Users":
+        users = db.query(User).filter(User.id.in_(target_user_ids or [])).all()
+        if not target_user_ids or len(users) != len(set(target_user_ids)):
+            return False
+        return all(
+            user_is_within_actor_location_scope(current_user, target, db)
+            for target in users
         )
-        .all()
+
+    if target_scope in {"Locations", "Roles + Locations"}:
+        normalized_targets = {
+            str(code or "").strip().casefold()
+            for code in (target_location_codes or [])
+            if str(code or "").strip()
+        }
+        if not normalized_targets:
+            return False
+        allowed_codes = get_assigned_user_location_codes(current_user, db)
+        return allowed_codes is None or normalized_targets.issubset(allowed_codes)
+
+    return False
+
+
+def ensure_notification_target_scope(
+    current_user: User,
+    target_scope: str,
+    target_user_ids: list[int],
+    target_location_codes: list[str],
+    db: Session,
+) -> None:
+    if notification_is_within_actor_scope(
+        current_user, target_scope, target_user_ids, target_location_codes, db
+    ):
+        if target_scope in {"Locations", "Roles + Locations"}:
+            for location_code in target_location_codes or []:
+                ensure_location_in_user_scope(
+                    current_user, db, location_code, "Notification target location"
+                )
+        if target_scope == "Specific Users":
+            for user_id in target_user_ids or []:
+                target_user = db.query(User).filter(User.id == user_id).first()
+                if target_user:
+                    ensure_user_in_actor_location_scope(current_user, target_user, db)
+        return
+    raise HTTPException(
+        status_code=403,
+        detail="Notification targets are outside your assigned scope",
     )
-    return {str(row[0] or "").strip() for row in rows if str(row[0] or "").strip()}
-
-
-def get_user_role_id(db: Session, user: User):
-    row = db.query(UserRole).filter(UserRole.user_id == user.id).first()
-    return row.role_id if row else None
 
 
 def notification_targets_user(db: Session, notification: SystemNotification, user: User):
@@ -154,16 +202,19 @@ def notification_targets_user(db: Session, notification: SystemNotification, use
         return user.id in target_user_ids
 
     target_role_ids = set(notification.target_role_ids_json or [])
-    user_role_id = get_user_role_id(db, user)
-    role_match = user_role_id in target_role_ids if user_role_id else False
+    user_role_ids = get_user_role_ids(db, user)
+    role_match = bool(target_role_ids.intersection(user_role_ids))
 
     target_location_codes = {
-        str(code or "").strip()
+        str(code or "").strip().casefold()
         for code in (notification.target_location_codes_json or [])
         if str(code or "").strip()
     }
-    user_location_codes = get_user_location_codes(db, user)
-    location_match = bool(target_location_codes.intersection(user_location_codes))
+    user_location_codes = get_assigned_user_location_codes(user, db)
+    location_match = (
+        user_location_codes is None
+        or bool(target_location_codes.intersection(user_location_codes))
+    )
 
     if target_scope == "Roles":
         return role_match
@@ -224,20 +275,26 @@ def build_system_notification_response(
     notification: SystemNotification,
     db: Session,
     receipt: SystemNotificationReceipt | None = None,
+    *,
+    include_target_details: bool = True,
+    include_delivery_stats: bool = True,
 ):
-    base_receipt_query = db.query(SystemNotificationReceipt).filter(
-        SystemNotificationReceipt.notification_id == notification.id
-    )
-    delivery_count = base_receipt_query.count()
-    seen_count = base_receipt_query.filter(
-        SystemNotificationReceipt.first_seen_at != None
-    ).count()
-    acknowledged_count = base_receipt_query.filter(
-        SystemNotificationReceipt.acknowledged_at != None
-    ).count()
-    dismissed_count = base_receipt_query.filter(
-        SystemNotificationReceipt.dismissed_at != None
-    ).count()
+    if include_delivery_stats:
+        base_receipt_query = db.query(SystemNotificationReceipt).filter(
+            SystemNotificationReceipt.notification_id == notification.id
+        )
+        delivery_count = base_receipt_query.count()
+        seen_count = base_receipt_query.filter(
+            SystemNotificationReceipt.first_seen_at != None
+        ).count()
+        acknowledged_count = base_receipt_query.filter(
+            SystemNotificationReceipt.acknowledged_at != None
+        ).count()
+        dismissed_count = base_receipt_query.filter(
+            SystemNotificationReceipt.dismissed_at != None
+        ).count()
+    else:
+        delivery_count = seen_count = acknowledged_count = dismissed_count = 0
 
     return {
         "id": notification.id,
@@ -247,10 +304,10 @@ def build_system_notification_response(
         "notification_type": notification.notification_type,
         "priority": notification.priority,
         "delivery_mode": notification.delivery_mode,
-        "target_scope": notification.target_scope,
-        "target_role_ids": notification.target_role_ids_json or [],
-        "target_user_ids": notification.target_user_ids_json or [],
-        "target_location_codes": notification.target_location_codes_json or [],
+        "target_scope": notification.target_scope if include_target_details else "Targeted",
+        "target_role_ids": (notification.target_role_ids_json or []) if include_target_details else [],
+        "target_user_ids": (notification.target_user_ids_json or []) if include_target_details else [],
+        "target_location_codes": (notification.target_location_codes_json or []) if include_target_details else [],
         "display_from": notification.display_from,
         "display_until": notification.display_until,
         "requires_acknowledgement": yes_no_to_bool(notification.requires_acknowledgement),
@@ -258,8 +315,8 @@ def build_system_notification_response(
         "banner_enabled": yes_no_to_bool(notification.banner_enabled),
         "auto_dismiss_seconds": notification.auto_dismiss_seconds,
         "status": notification.status,
-        "created_by_user_id": notification.created_by_user_id,
-        "created_by_display": notification.created_by_display,
+        "created_by_user_id": notification.created_by_user_id if include_target_details else None,
+        "created_by_display": notification.created_by_display if include_target_details else None,
         "published_at": notification.published_at,
         "deactivated_at": notification.deactivated_at,
         "deactivation_reason": notification.deactivation_reason,
@@ -301,7 +358,24 @@ def get_system_notifications(
     if cleaned_status and cleaned_status != "ALL":
         query = query.filter(SystemNotification.status == cleaned_status)
     rows = query.order_by(SystemNotification.created_at.desc(), SystemNotification.id.desc()).all()
-    return [build_system_notification_response(row, db) for row in rows]
+    visible_rows = [
+        row
+        for row in rows
+        if notification_is_within_actor_scope(
+            current_user,
+            row.target_scope or "All Users",
+            row.target_user_ids_json or [],
+            row.target_location_codes_json or [],
+            db,
+        )
+    ]
+    include_stats = is_admin_user(current_user, db)
+    return [
+        build_system_notification_response(
+            row, db, include_delivery_stats=include_stats
+        )
+        for row in visible_rows
+    ]
 
 
 @router.post("", response_model=SystemNotificationResponse)
@@ -312,6 +386,13 @@ def create_system_notification(
 ):
     require_user_permission(current_user, "Manage System Notification", db)
     data = validate_system_notification_payload(payload)
+    ensure_notification_target_scope(
+        current_user,
+        data["target_scope"],
+        data["target_user_ids"],
+        data["target_location_codes"],
+        db,
+    )
     status = clean_optional_text(getattr(payload, "status", None)) or "Draft"
     if status not in {"Draft", "Scheduled"}:
         status = "Draft"
@@ -355,7 +436,9 @@ def create_system_notification(
     )
     db.commit()
     db.refresh(notification)
-    return build_system_notification_response(notification, db)
+    return build_system_notification_response(
+            notification, db, include_delivery_stats=is_admin_user(current_user, db)
+        )
 
 
 @router.put("/{notification_id}", response_model=SystemNotificationResponse)
@@ -372,8 +455,22 @@ def update_system_notification(
     if notification.status == "Published":
         raise HTTPException(status_code=400, detail="Published notifications cannot be edited. Deactivate and create a new circular if needed.")
     ensure_notification_can_be_changed(notification)
+    ensure_notification_target_scope(
+        current_user,
+        notification.target_scope or "All Users",
+        notification.target_user_ids_json or [],
+        notification.target_location_codes_json or [],
+        db,
+    )
 
     data = validate_system_notification_payload(payload)
+    ensure_notification_target_scope(
+        current_user,
+        data["target_scope"],
+        data["target_user_ids"],
+        data["target_location_codes"],
+        db,
+    )
     old_status = notification.status
     requested_status = clean_optional_text(getattr(payload, "status", None))
     if requested_status in SYSTEM_NOTIFICATION_STATUSES and requested_status != "Published":
@@ -412,7 +509,9 @@ def update_system_notification(
     )
     db.commit()
     db.refresh(notification)
-    return build_system_notification_response(notification, db)
+    return build_system_notification_response(
+            notification, db, include_delivery_stats=is_admin_user(current_user, db)
+        )
 
 
 @router.post("/{notification_id}/publish", response_model=SystemNotificationResponse)
@@ -426,9 +525,18 @@ def publish_system_notification(
     notification = db.query(SystemNotification).filter(SystemNotification.id == notification_id).first()
     if not notification:
         raise HTTPException(status_code=404, detail="System notification not found")
+    ensure_notification_target_scope(
+        current_user,
+        notification.target_scope or "All Users",
+        notification.target_user_ids_json or [],
+        notification.target_location_codes_json or [],
+        db,
+    )
     ensure_notification_can_be_changed(notification)
     if notification.status == "Published":
-        return build_system_notification_response(notification, db)
+        return build_system_notification_response(
+            notification, db, include_delivery_stats=is_admin_user(current_user, db)
+        )
 
     old_status = notification.status
     notification.status = "Scheduled" if notification.display_from and notification.display_from > datetime.now() else "Published"
@@ -460,7 +568,9 @@ def publish_system_notification(
     )
     db.commit()
     db.refresh(notification)
-    return build_system_notification_response(notification, db)
+    return build_system_notification_response(
+            notification, db, include_delivery_stats=is_admin_user(current_user, db)
+        )
 
 
 @router.post("/{notification_id}/deactivate", response_model=SystemNotificationResponse)
@@ -474,8 +584,17 @@ def deactivate_system_notification(
     notification = db.query(SystemNotification).filter(SystemNotification.id == notification_id).first()
     if not notification:
         raise HTTPException(status_code=404, detail="System notification not found")
+    ensure_notification_target_scope(
+        current_user,
+        notification.target_scope or "All Users",
+        notification.target_user_ids_json or [],
+        notification.target_location_codes_json or [],
+        db,
+    )
     if notification.status == "Deactivated":
-        return build_system_notification_response(notification, db)
+        return build_system_notification_response(
+            notification, db, include_delivery_stats=is_admin_user(current_user, db)
+        )
 
     old_status = notification.status
     remarks = clean_optional_text(payload.remarks if payload else None) or "Notification deactivated"
@@ -501,7 +620,9 @@ def deactivate_system_notification(
     )
     db.commit()
     db.refresh(notification)
-    return build_system_notification_response(notification, db)
+    return build_system_notification_response(
+            notification, db, include_delivery_stats=is_admin_user(current_user, db)
+        )
 
 
 @router.get("/my", response_model=list[SystemNotificationResponse])
@@ -517,10 +638,16 @@ def get_my_system_notifications(
     )
     output = []
     for notification in notifications:
+        if not is_notification_display_active(notification):
+            continue
         if not notification_targets_user(db, notification, current_user):
             continue
         receipt = get_or_create_notification_receipt(db, notification, current_user)
-        output.append(build_system_notification_response(notification, db, receipt))
+        output.append(
+            build_system_notification_response(
+                notification, db, receipt, include_target_details=False, include_delivery_stats=False
+            )
+        )
     db.commit()
     return output
 
@@ -546,7 +673,11 @@ def get_active_system_notifications(
         if receipt.status in {"Dismissed", "Acknowledged"} and not yes_no_to_bool(notification.requires_acknowledgement):
             continue
         touch_notification_seen(receipt)
-        output.append(build_system_notification_response(notification, db, receipt))
+        output.append(
+            build_system_notification_response(
+                notification, db, receipt, include_target_details=False, include_delivery_stats=False
+            )
+        )
     db.commit()
     return output
 
@@ -558,7 +689,11 @@ def dismiss_system_notification(
     db: Session = Depends(get_db),
 ):
     notification = db.query(SystemNotification).filter(SystemNotification.id == notification_id).first()
-    if not notification or not notification_targets_user(db, notification, current_user):
+    if (
+        not notification
+        or not is_notification_display_active(notification)
+        or not notification_targets_user(db, notification, current_user)
+    ):
         raise HTTPException(status_code=404, detail="System notification not found")
     if yes_no_to_bool(notification.requires_acknowledgement):
         raise HTTPException(status_code=400, detail="This notification requires acknowledgement and cannot be dismissed")
@@ -585,7 +720,9 @@ def dismiss_system_notification(
     )
     db.commit()
     db.refresh(notification)
-    return build_system_notification_response(notification, db, receipt)
+    return build_system_notification_response(
+        notification, db, receipt, include_target_details=False, include_delivery_stats=False
+    )
 
 
 @router.post("/{notification_id}/acknowledge", response_model=SystemNotificationResponse)
@@ -596,7 +733,11 @@ def acknowledge_system_notification(
     db: Session = Depends(get_db),
 ):
     notification = db.query(SystemNotification).filter(SystemNotification.id == notification_id).first()
-    if not notification or not notification_targets_user(db, notification, current_user):
+    if (
+        not notification
+        or not is_notification_display_active(notification)
+        or not notification_targets_user(db, notification, current_user)
+    ):
         raise HTTPException(status_code=404, detail="System notification not found")
 
     receipt = get_or_create_notification_receipt(db, notification, current_user)
@@ -622,7 +763,9 @@ def acknowledge_system_notification(
     )
     db.commit()
     db.refresh(notification)
-    return build_system_notification_response(notification, db, receipt)
+    return build_system_notification_response(
+        notification, db, receipt, include_target_details=False, include_delivery_stats=False
+    )
 
 
 @router.get("/{notification_id}/delivery-report", response_model=list[SystemNotificationReceiptResponse])
@@ -635,9 +778,24 @@ def get_system_notification_delivery_report(
     notification = db.query(SystemNotification).filter(SystemNotification.id == notification_id).first()
     if not notification:
         raise HTTPException(status_code=404, detail="System notification not found")
-    return (
-        db.query(SystemNotificationReceipt)
+    ensure_notification_target_scope(
+        current_user,
+        notification.target_scope or "All Users",
+        notification.target_user_ids_json or [],
+        notification.target_location_codes_json or [],
+        db,
+    )
+    rows = (
+        db.query(SystemNotificationReceipt, User)
+        .join(User, User.id == SystemNotificationReceipt.user_id)
         .filter(SystemNotificationReceipt.notification_id == notification_id)
         .order_by(SystemNotificationReceipt.delivered_at.desc(), SystemNotificationReceipt.id.desc())
         .all()
     )
+    if get_assigned_user_location_codes(current_user, db) is not None:
+        rows = [
+            (receipt, recipient)
+            for receipt, recipient in rows
+            if user_is_within_actor_location_scope(current_user, recipient, db)
+        ]
+    return [receipt for receipt, _ in rows]

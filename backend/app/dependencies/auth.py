@@ -53,6 +53,12 @@ def get_current_user_from_token(
 
     payload = decode_access_token(token)
 
+    # Refresh tokens are separately signed but carry the same subject fields.
+    # Never accept them as bearer access tokens, or a 30-day refresh credential
+    # becomes a long-lived API credential.
+    if payload.get("token_type") != "access":
+        raise HTTPException(status_code=401, detail="Invalid token type")
+
     user_id = payload.get("user_id")
 
     if user_id is None:

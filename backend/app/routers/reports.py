@@ -22,7 +22,11 @@ from app.schemas import (
     FSOMaterialBalanceReportResponse, FSOOutturnReportResponse,
 )
 from app.dependencies.auth import get_current_user_from_token
-from app.dependencies.permissions import apply_location_filter, require_user_permission
+from app.dependencies.permissions import (
+    apply_location_filter,
+    ensure_location_in_user_scope,
+    require_user_permission,
+)
 from app.services.audit_service import create_audit_log
 from app.utils.helpers import (
     safe_float, clean_optional_text, get_transaction_ticket_number,
@@ -1735,6 +1739,9 @@ def get_material_balance_report(
             status_code=400,
             detail="Location is required for configurable Material Balance Report",
         )
+    ensure_location_in_user_scope(
+        current_user, db, cleaned_location_code, "Location"
+    )
 
     date_from_value = parse_date_filter(date_from, "Date From")
     date_to_value = parse_date_filter(date_to, "Date To")
@@ -2125,6 +2132,7 @@ def get_fso_otr_report(
     db: Session = Depends(get_db),
 ):
     require_user_permission(current_user, "View FSO Tracking", db)
+    ensure_location_in_user_scope(current_user, db, location_code, "Location")
     df = parse_date_filter(date_from, "date_from")
     dt = parse_date_filter(date_to, "date_to")
 
@@ -2149,6 +2157,7 @@ def get_fso_material_balance_report(
     db: Session = Depends(get_db),
 ):
     require_user_permission(current_user, "View FSO Tracking", db)
+    ensure_location_in_user_scope(current_user, db, location_code, "Location")
     df = parse_date_filter(date_from, "date_from")
     dt = parse_date_filter(date_to, "date_to")
     rows = build_fso_material_balance(db, location_code, fso_asset_code, df, dt)
@@ -2165,6 +2174,7 @@ def fso_report_outturn(
     db: Session = Depends(get_db),
 ):
     require_user_permission(current_user, "View FSO Tracking", db)
+    ensure_location_in_user_scope(current_user, db, location_code, "Location")
     df = parse_date_filter(date_from, "date_from")
     dt = parse_date_filter(date_to, "date_to")
 
@@ -2189,6 +2199,7 @@ def fso_report_otr_xlsx(
     db: Session = Depends(get_db),
 ):
     require_user_permission(current_user, "View FSO Tracking", db)
+    ensure_location_in_user_scope(current_user, db, location_code, "Location")
     df = parse_date_filter(date_from, "date_from")
     dt = parse_date_filter(date_to, "date_to")
     rows, totals = build_fso_otr_report(db, location_code, fso_asset_code, df, dt, shuttle_number)
@@ -2262,6 +2273,7 @@ def fso_report_outturn_xlsx(
     db: Session = Depends(get_db),
 ):
     require_user_permission(current_user, "View FSO Tracking", db)
+    ensure_location_in_user_scope(current_user, db, location_code, "Location")
     df = parse_date_filter(date_from, "date_from")
     dt = parse_date_filter(date_to, "date_to")
 
@@ -2315,6 +2327,7 @@ def fso_report_mb_xlsx(
     db: Session = Depends(get_db),
 ):
     require_user_permission(current_user, "View FSO Tracking", db)
+    ensure_location_in_user_scope(current_user, db, location_code, "Location")
     df = parse_date_filter(date_from, "date_from")
     dt = parse_date_filter(date_to, "date_to")
     rows = build_fso_material_balance(db, location_code, fso_asset_code, df, dt)
@@ -2369,15 +2382,18 @@ def rebuild_tank_stock_ledger(
         db,
     )
 
-    query = db.query(TankStockLedger).filter(
-        TankStockLedger.status == "Active",
-    )
+    query = apply_location_filter(
+        db.query(TankStockLedger), TankStockLedger, current_user, db
+    ).filter(TankStockLedger.status == "Active")
 
     cleaned_location_code = clean_optional_text(location_code)
     cleaned_tank_asset_code = clean_optional_text(tank_asset_code)
     cleaned_product_name = clean_optional_text(product_name)
 
     if cleaned_location_code:
+        ensure_location_in_user_scope(
+            current_user, db, cleaned_location_code, "Location"
+        )
         query = query.filter(TankStockLedger.location_code.ilike(cleaned_location_code))
 
     if cleaned_tank_asset_code:

@@ -14,7 +14,11 @@ from app.schemas import (
     FlowmeterConfigHistoryResponse,
 )
 from app.dependencies.auth import get_current_user_from_token
-from app.dependencies.permissions import require_user_permission
+from app.dependencies.permissions import (
+    apply_location_filter,
+    ensure_location_in_user_scope,
+    require_user_permission,
+)
 from app.services.audit_service import create_audit_log
 from app.utils.helpers import safe_float, clean_optional_text, get_current_user_display_name
 from app.config import APPROVED_TRANSACTION_STATUS
@@ -198,7 +202,10 @@ def get_flowmeter_configs(
     q = db.query(FlowmeterConfig)
 
     if location_code:
+        ensure_location_in_user_scope(current_user, db, location_code, "Location")
         q = q.filter(FlowmeterConfig.location_code.ilike(location_code.strip()))
+    else:
+        q = apply_location_filter(q, FlowmeterConfig, current_user, db)
     if asset_code:
         q = q.filter(FlowmeterConfig.asset_code.ilike(asset_code.strip()))
     if stream_name:
@@ -223,6 +230,11 @@ def create_flowmeter_config(
     require_user_permission(current_user, "Manage Flowmeter Config", db)
 
     location, asset = validate_flowmeter_asset(request.asset_code, db)
+    ensure_location_in_user_scope(current_user, db, location.location_code, "Location")
+    if request.meter_asset_code:
+        meter_asset = db.query(Asset).filter(Asset.asset_code.ilike(request.meter_asset_code.strip())).first()
+        if meter_asset and meter_asset.location_code:
+            ensure_location_in_user_scope(current_user, db, meter_asset.location_code, "Meter asset location")
 
     meter_label = str(request.meter_label or "").strip()
     if meter_label == "":
@@ -328,8 +340,14 @@ def update_flowmeter_config(
     row = db.query(FlowmeterConfig).filter(FlowmeterConfig.id == config_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Flowmeter config not found")
+    ensure_location_in_user_scope(current_user, db, row.location_code, "Existing location")
 
     location, asset = validate_flowmeter_asset(request.asset_code, db)
+    ensure_location_in_user_scope(current_user, db, location.location_code, "Location")
+    if request.meter_asset_code:
+        meter_asset = db.query(Asset).filter(Asset.asset_code.ilike(request.meter_asset_code.strip())).first()
+        if meter_asset and meter_asset.location_code:
+            ensure_location_in_user_scope(current_user, db, meter_asset.location_code, "Meter asset location")
 
     meter_label = str(request.meter_label or "").strip()
     if meter_label == "":
@@ -437,6 +455,7 @@ def delete_flowmeter_config(
     row = db.query(FlowmeterConfig).filter(FlowmeterConfig.id == config_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Flowmeter config not found")
+    ensure_location_in_user_scope(current_user, db, row.location_code, "Location")
 
     create_audit_log(
         db=db,
@@ -473,7 +492,7 @@ def get_flowmeter_config_history(
 ):
     require_user_permission(current_user, "View Flowmeter Config", db)
 
-    q = db.query(FlowmeterConfigHistory)
+    q = apply_location_filter(db.query(FlowmeterConfigHistory), FlowmeterConfigHistory, current_user, db)
     if asset_code:
         q = q.filter(FlowmeterConfigHistory.asset_code.ilike(asset_code.strip()))
     if stream_name:
@@ -529,7 +548,10 @@ def get_flowmeter_records(
     )
 
     if location_code:
+        ensure_location_in_user_scope(current_user, db, location_code, "Location")
         q = q.filter(OperationTransaction.origin_location_code.ilike(location_code.strip()))
+    else:
+        q = apply_location_filter(q, OperationTransaction, current_user, db, column_name="origin_location_code")
     if asset_code:
         q = q.filter(OperationTransaction.primary_asset_code.ilike(asset_code.strip()))
     if date_from:

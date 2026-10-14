@@ -18,6 +18,7 @@ from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
     apply_location_filter,
     get_user_location_codes,
+    ensure_location_in_user_scope,
     require_user_permission,
 )
 from app.services.audit_service import create_audit_log
@@ -93,8 +94,15 @@ def get_all_possible_columns(
             query, OperationTransaction, current_user, db, column_name="origin_location_code"
         )
 
-    if location_code:
-        query = query.filter(OperationTransaction.origin_location_code.ilike(location_code))
+    cleaned_location_code = clean_optional_text(location_code)
+    if cleaned_location_code and current_user is not None:
+        ensure_location_in_user_scope(
+            current_user, db, cleaned_location_code, "Origin location"
+        )
+    if cleaned_location_code:
+        query = query.filter(
+            OperationTransaction.origin_location_code.ilike(cleaned_location_code)
+        )
 
     transactions = query.limit(100).all()
 
@@ -189,6 +197,10 @@ def get_filtered_tank_operation_summary_rows(
     cleaned_product_name = clean_optional_text(product_name)
 
     if cleaned_location_code:
+        if current_user is not None:
+            ensure_location_in_user_scope(
+                current_user, db, cleaned_location_code, "Origin location"
+            )
         query = query.filter(
             OperationTransaction.origin_location_code.ilike(cleaned_location_code)
         )
@@ -245,7 +257,7 @@ def get_tank_operation_summary_columns(
         db,
     )
 
-    columns = get_all_possible_columns(db, location_code)
+    columns = get_all_possible_columns(db, location_code, current_user=current_user)
     return {"columns": columns}
 
 

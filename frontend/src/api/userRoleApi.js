@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiPost } from './apiClient'
+import { apiDelete, apiGet, apiPost, apiPut } from './apiClient'
 
 const convertUserRoleFromApi = (assignment) => {
   return {
@@ -23,6 +23,13 @@ export const saveUserRole = async (userId, roleId) => {
   })
 
   return convertUserRoleFromApi(data)
+}
+
+export const replaceUserRoles = async (userId, roleIds) => {
+  const data = await apiPut(`/user-roles/${Number(userId)}`, {
+    role_ids: roleIds.map(Number),
+  })
+  return data.map(convertUserRoleFromApi)
 }
 
 export const deleteUserRole = async (assignmentId) => {

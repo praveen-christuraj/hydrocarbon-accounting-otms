@@ -6,7 +6,15 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import sessionmaker
+
+
+@compiles(JSONB, "sqlite")
+def compile_jsonb_for_sqlite(_type, _compiler, **_kw):
+    """Use SQLite's JSON affinity for PostgreSQL JSONB model columns in tests."""
+    return "JSON"
 
 os.environ.setdefault("JWT_SECRET_KEY", secrets.token_urlsafe(32))
 os.environ.setdefault("ENCRYPTION_KEY", secrets.token_urlsafe(32))
@@ -50,9 +58,15 @@ def client(db):
             pass
 
     app.dependency_overrides[get_db] = override_get_db
-    with TestClient(app) as c:
+    # Do not enter TestClient's lifespan context: production startup migrations
+    # contain PostgreSQL-specific DDL, while this fixture uses SQLite. The tests
+    # create their schema explicitly and should not run application migrations.
+    c = TestClient(app)
+    try:
         yield c
-    app.dependency_overrides.clear()
+    finally:
+        c.close()
+        app.dependency_overrides.clear()
 
 
 def create_role_with_permission(db, role_name, permission_name, module_name="General"):

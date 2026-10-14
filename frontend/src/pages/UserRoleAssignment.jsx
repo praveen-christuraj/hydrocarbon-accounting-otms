@@ -1,9 +1,10 @@
-import { useState } from 'react'
-import { deleteUserRole, saveUserRole } from '../api/userRoleApi'
+import { useMemo, useState } from 'react'
+import { deleteUserRole, replaceUserRoles } from '../api/userRoleApi'
 import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
+import { isAdminUser, usePermissions } from '../hooks/usePermissions'
 
 function UserRoleAssignment({
   users,
@@ -13,95 +14,77 @@ function UserRoleAssignment({
   loggedInUser,
 }) {
   const [selectedUserId, setSelectedUserId] = useState('')
-  const [selectedRoleId, setSelectedRoleId] = useState('')
+  const [selectedRoleIds, setSelectedRoleIds] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(null)
-  const [fieldErrors, setFieldErrors] = useState({})
   const [page, setPage] = useState(1)
 
   const pageSize = usePageSize()
-  const userRoleAssignmentsFilters = useDataFilters(userRoleAssignments, useAutoColumns(userRoleAssignments), { module: 'User Role Assignment' })
-  const visibleItems = paginateRows(userRoleAssignmentsFilters.filteredRows, page, pageSize)
+  const filters = useDataFilters(userRoleAssignments, useAutoColumns(userRoleAssignments), { module: 'User Role Assignment' })
+  const visibleItems = paginateRows(filters.filteredRows, page, pageSize)
+  const { hasPermission } = usePermissions(loggedInUser)
 
-  const activeUsers = users.filter((user) => user.status === 'Active')
-  const activeRoles = roles.filter((role) => role.status === 'Active')
+  const activeUsers = users.filter((user) => user.status === 'Active' && !isAdminUser(user))
+  // The reserved bootstrap role is provisioned by the server and must not be
+  // granted interactively, even by users who can manage ordinary assignments.
+  const activeRoles = roles.filter(
+    (role) => role.status === 'Active' && String(role.roleName || '').trim().toLowerCase() !== 'admin'
+  )
+  const canManageUserRoleAssignment = hasPermission('Manage User Role Assignment')
 
-  const isAdminBootstrap =
-    String(loggedInUser?.username || '').toLowerCase() === 'admin'
+  const selectedUserAssignments = useMemo(
+    () => userRoleAssignments.filter((item) => String(item.userId) === String(selectedUserId)),
+    [userRoleAssignments, selectedUserId]
+  )
 
-  const hasPermission = (permissionName) => {
-    if (isAdminBootstrap) return true
-    if (!loggedInUser || !Array.isArray(loggedInUser.permissions)) return false
-    return loggedInUser.permissions.some(
-      (p) => p.permissionName === permissionName
+  const clearMessages = () => {
+    setError('')
+    setSuccess('')
+  }
+
+  const handleUserChange = (userId) => {
+    setSelectedUserId(userId)
+    setSelectedRoleIds(
+      userRoleAssignments
+        .filter((assignment) => String(assignment.userId) === String(userId))
+        .map((assignment) => Number(assignment.roleId))
+    )
+    setConfirmDelete(null)
+    clearMessages()
+  }
+
+  const handleRoleToggle = (roleId) => {
+    setSelectedRoleIds((current) =>
+      current.includes(roleId)
+        ? current.filter((id) => id !== roleId)
+        : [...current, roleId]
     )
   }
 
-  const canManageUserRoleAssignment = hasPermission(
-    'Manage User Role Assignment'
-  )
-
-  const clearError = () => setError('')
-  const clearSuccess = () => setSuccess('')
-
-  const validateAssignment = () => {
-    const errors = {}
-    if (selectedUserId === '') errors.userId = 'Please select a user'
-    if (selectedRoleId === '') errors.roleId = 'Please select a role'
-    setFieldErrors(errors)
-    return Object.keys(errors).length === 0
-  }
-
-  const handleSubmit = async (e) => {
-    e.preventDefault()
-    clearError()
-    clearSuccess()
-
+  const handleSubmit = async (event) => {
+    event.preventDefault()
+    clearMessages()
     if (!canManageUserRoleAssignment) {
       setError('You do not have permission to manage user role assignments.')
       return
     }
-
-    if (!validateAssignment()) return
+    if (selectedUserId === '') {
+      setError('Select an active user before assigning roles.')
+      return
+    }
 
     try {
       setLoading(true)
-
-      await saveUserRole(selectedUserId, selectedRoleId)
+      await replaceUserRoles(selectedUserId, selectedRoleIds)
       await reloadUserRoleAssignments()
-
-      setSelectedUserId('')
-      setSelectedRoleId('')
-      setFieldErrors({})
-      setSuccess('User role assigned successfully')
+      setSuccess('User roles saved successfully.')
     } catch (err) {
       setError(err.message)
     } finally {
       setLoading(false)
     }
-  }
-
-  const handleEdit = (assignment) => {
-    clearError()
-    clearSuccess()
-    setConfirmDelete(null)
-    setFieldErrors({})
-
-    if (!canManageUserRoleAssignment) {
-      setError('You do not have permission to manage user role assignments.')
-      return
-    }
-
-    setSelectedUserId(String(assignment.userId))
-    setSelectedRoleId(String(assignment.roleId))
-  }
-
-  const handleDeleteRequest = (assignment) => {
-    clearError()
-    clearSuccess()
-    setConfirmDelete(assignment.id)
   }
 
   const handleDeleteConfirm = async (assignment) => {
@@ -109,19 +92,13 @@ function UserRoleAssignment({
       setError('You do not have permission to manage user role assignments.')
       return
     }
-
     try {
       setLoading(true)
-
       await deleteUserRole(assignment.id)
       await reloadUserRoleAssignments()
+      setSelectedRoleIds((current) => current.filter((id) => id !== Number(assignment.roleId)))
       setConfirmDelete(null)
-      setSuccess('User role assignment removed successfully')
-
-      if (selectedUserId === String(assignment.userId)) {
-        setSelectedUserId('')
-        setSelectedRoleId('')
-      }
+      setSuccess('User role assignment removed successfully.')
     } catch (err) {
       setError(err.message)
     } finally {
@@ -129,13 +106,11 @@ function UserRoleAssignment({
     }
   }
 
-  const handleCancelEdit = () => {
+  const handleReset = () => {
     setSelectedUserId('')
-    setSelectedRoleId('')
-    setFieldErrors({})
-    clearError()
-    clearSuccess()
+    setSelectedRoleIds([])
     setConfirmDelete(null)
+    clearMessages()
   }
 
   return (
@@ -143,88 +118,87 @@ function UserRoleAssignment({
       <div className="page-title">
         <div>
           <h2>User Role Assignment</h2>
-          <p>Assign roles to users for access control.</p>
+          <p>Assign one or more roles to users. The server prevents assignments that would exceed your own active permissions.</p>
         </div>
-
-        <span className="record-count">
-          {userRoleAssignments.length} Assignments
-        </span>
+        <span className="record-count">{userRoleAssignments.length} Assignments</span>
       </div>
 
       {success && (
         <div className="success-box">
           {success}
-          <button className="error-close" onClick={clearSuccess} type="button">&times;</button>
+          <button className="error-close" onClick={() => setSuccess('')} type="button">&times;</button>
         </div>
       )}
-
       {error && (
         <div className="error-box">
           {error}
-          <button className="error-close" onClick={clearError} type="button">&times;</button>
+          <button className="error-close" onClick={() => setError('')} type="button">&times;</button>
         </div>
       )}
 
       {!canManageUserRoleAssignment && (
         <div className="info-box">
-          You have View User Role Assignment permission only. Create, edit, and
-          delete actions are disabled.
+          You have View User Role Assignment permission only. Create, edit, and delete actions are disabled.
         </div>
       )}
 
       {canManageUserRoleAssignment && (
         <form onSubmit={handleSubmit}>
           <div>
-            <label>Select User</label>
+            <label htmlFor="user-role-user">Select User</label>
             <select
+              id="user-role-user"
               value={selectedUserId}
-              onChange={(e) => { setSelectedUserId(e.target.value); setFieldErrors({ ...fieldErrors, userId: '' }) }}
-              aria-invalid={fieldErrors.userId ? 'true' : undefined}
+              onChange={(event) => handleUserChange(event.target.value)}
             >
               <option value="">Select User</option>
-
               {activeUsers.map((user) => (
                 <option key={user.id} value={user.id}>
                   {user.fullName} ({user.username})
                 </option>
               ))}
             </select>
-            {fieldErrors.userId && (
-              <small className="field-error">{fieldErrors.userId}</small>
-            )}
           </div>
 
-          <div>
-            <label>Select Role</label>
-            <select
-              value={selectedRoleId}
-              onChange={(e) => { setSelectedRoleId(e.target.value); setFieldErrors({ ...fieldErrors, roleId: '' }) }}
-              aria-invalid={fieldErrors.roleId ? 'true' : undefined}
-            >
-              <option value="">Select Role</option>
-
-              {activeRoles.map((role) => (
-                <option key={role.id} value={role.id}>
-                  {role.roleName}
-                </option>
-              ))}
-            </select>
-            {fieldErrors.roleId && (
-              <small className="field-error">{fieldErrors.roleId}</small>
-            )}
-          </div>
+          {selectedUserId && (
+            <fieldset className="full-width-field">
+              <legend>Roles for selected user</legend>
+              {activeRoles.length === 0 ? (
+                <div className="info-box">There are no active roles available for assignment.</div>
+              ) : (
+                <div className="permission-grid">
+                  {activeRoles.map((role) => {
+                    const roleId = Number(role.id)
+                    return (
+                      <label key={role.id} className="permission-card">
+                        <input
+                          type="checkbox"
+                          checked={selectedRoleIds.includes(roleId)}
+                          onChange={() => handleRoleToggle(roleId)}
+                        />
+                        <div>
+                          <strong>{role.roleName}</strong>
+                          <span>{role.description || 'No description'}</span>
+                        </div>
+                      </label>
+                    )
+                  })}
+                </div>
+              )}
+              <p className="field-hint">
+                {selectedRoleIds.length === 0
+                  ? 'No roles selected. Saving will remove this user’s ordinary role assignments.'
+                  : `${selectedRoleIds.length} role${selectedRoleIds.length === 1 ? '' : 's'} selected.`}
+              </p>
+            </fieldset>
+          )}
 
           <div className="form-actions">
-            <button type="submit" disabled={loading}>
-              {loading ? 'Please wait...' : 'Save Assignment'}
+            <button type="submit" disabled={loading || !selectedUserId}>
+              {loading ? 'Please wait...' : 'Save Roles'}
             </button>
-
-            {(selectedUserId !== '' || selectedRoleId !== '') && (
-              <button
-                type="button"
-                onClick={handleCancelEdit}
-                disabled={loading}
-              >
+            {(selectedUserId || selectedRoleIds.length > 0) && (
+              <button type="button" onClick={handleReset} disabled={loading} className="btn-secondary">
                 Clear
               </button>
             )}
@@ -234,15 +208,12 @@ function UserRoleAssignment({
 
       <div className="section-title">
         <h3>Assigned User Roles</h3>
-        <p>
-          Each user can currently have one role. Saving again will update the
-          selected user&apos;s role.
-        </p>
+        <p>Each row is one role assignment. The reserved Admin assignment is managed by system provisioning.</p>
       </div>
 
       <DataTableToolbar
-        filters={userRoleAssignmentsFilters}
-        columns={userRoleAssignmentsFilters.columns}
+        filters={filters}
+        columns={filters.columns}
         exportFileName="user-role-assignment"
         exportTitle="User Role Assignment"
       />
@@ -256,14 +227,10 @@ function UserRoleAssignment({
             {canManageUserRoleAssignment && <th>Actions</th>}
           </tr>
         </thead>
-
         <tbody>
           {userRoleAssignments.length === 0 ? (
             <tr>
-              <td
-                colSpan={canManageUserRoleAssignment ? 4 : 3}
-                className="empty-table"
-              >
+              <td colSpan={canManageUserRoleAssignment ? 4 : 3} className="empty-table">
                 No user roles assigned yet.
               </td>
             </tr>
@@ -272,47 +239,39 @@ function UserRoleAssignment({
               <tr key={assignment.id}>
                 <td>{assignment.fullName}</td>
                 <td>{assignment.username}</td>
-                <td>
-                  <span className="permission-badge">
-                    {assignment.roleName}
-                  </span>
-                </td>
-
+                <td><span className="permission-badge">{assignment.roleName}</span></td>
                 {canManageUserRoleAssignment && (
                   <td>
-                    <button
-                      type="button"
-                      onClick={() => handleEdit(assignment)}
-                    >
-                      Edit
-                    </button>
-
-                    {confirmDelete === assignment.id ? (
-                      <span>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteConfirm(assignment)}
-                          disabled={loading}
-                          className="btn-danger"
-                        >
-                          {loading ? 'Deleting...' : 'Confirm'}
+                    {String(assignment.roleName || '').toLowerCase() !== 'admin' && (
+                      <>
+                        <button type="button" onClick={() => handleUserChange(String(assignment.userId))}>
+                          Manage User Roles
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => setConfirmDelete(null)}
-                          disabled={loading}
-                          className="btn-secondary"
-                        >
-                          Cancel
-                        </button>
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteRequest(assignment)}
-                      >
-                        Delete
-                      </button>
+                        {confirmDelete === assignment.id ? (
+                          <span>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteConfirm(assignment)}
+                              disabled={loading}
+                              className="btn-danger"
+                            >
+                              {loading ? 'Deleting...' : 'Confirm'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDelete(null)}
+                              disabled={loading}
+                              className="btn-secondary"
+                            >
+                              Cancel
+                            </button>
+                          </span>
+                        ) : (
+                          <button type="button" onClick={() => setConfirmDelete(assignment.id)}>
+                            Delete
+                          </button>
+                        )}
+                      </>
                     )}
                   </td>
                 )}
@@ -322,14 +281,14 @@ function UserRoleAssignment({
         </tbody>
       </table>
 
-      <PaginationControls currentPage={page} totalRows={userRoleAssignmentsFilters.filteredRows.length} onPageChange={setPage} />
-
-      {activeUsers.length === 0 && (
-        <div className="info-box">
-          Please create at least one active user in User Master before assigning
-          roles.
-        </div>
+      {selectedUserId && selectedUserAssignments.length === 0 && (
+        <p className="field-hint">This user currently has no roles assigned.</p>
       )}
+      <PaginationControls
+        currentPage={page}
+        totalRows={filters.filteredRows.length}
+        onPageChange={setPage}
+      />
     </div>
   )
 }

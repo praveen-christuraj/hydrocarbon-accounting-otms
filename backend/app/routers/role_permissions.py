@@ -11,7 +11,12 @@ from app.schemas import (
     RolePermissionItem,
 )
 from app.dependencies.auth import get_current_user_from_token
-from app.dependencies.permissions import require_user_permission
+from app.dependencies.permissions import (
+    ensure_role_assignable_to_user,
+    ensure_role_permissions_within_actor_scope,
+    is_admin_role,
+    require_user_permission,
+)
 from app.services.audit_service import create_audit_log
 
 
@@ -112,6 +117,9 @@ def save_role_permissions(
             status_code=404,
             detail="Role not found",
         )
+    if is_admin_role(role):
+        raise HTTPException(status_code=403, detail="The reserved Admin role permissions are managed by system provisioning")
+    ensure_role_assignable_to_user(current_user, role, db)
 
     before_assigned_permissions = (
         db.query(Permission)
@@ -151,8 +159,20 @@ def save_role_permissions(
             status_code=400,
             detail="One or more permission IDs are invalid",
         )
+    if any(permission.status != "Active" for permission in permissions):
+        raise HTTPException(status_code=400, detail="Inactive permissions cannot be assigned")
 
     after_permission_ids = sorted(request.permission_ids)
+    added_ids = set(after_permission_ids) - set(before_permission_ids)
+    ensure_role_permissions_within_actor_scope(
+        current_user,
+        {
+            permission.permission_name
+            for permission in permissions
+            if permission.id in added_ids
+        },
+        db,
+    )
 
     after_permissions_info = [
         {

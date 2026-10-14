@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import or_
+from sqlalchemy import false, func, or_
 from sqlalchemy.orm import Session
 from datetime import date, time
 
@@ -13,7 +13,12 @@ from app.schemas import (
     LocationAccountingDaySettingResponse,
 )
 from app.dependencies.auth import get_current_user_from_token
-from app.dependencies.permissions import require_user_permission
+from app.dependencies.permissions import (
+    apply_location_filter,
+    ensure_location_in_user_scope,
+    get_user_location_codes,
+    require_user_permission,
+)
 from app.services.audit_service import create_audit_log
 from app.utils.helpers import clean_optional_text
 
@@ -33,7 +38,7 @@ def get_locations(
     current_user: User = Depends(get_current_user_from_token),
 ):
     require_user_permission(current_user, "View Location", db)
-    query = db.query(Location).order_by(Location.id)
+    query = apply_location_filter(db.query(Location), Location, current_user, db).order_by(Location.id)
     if search:
         query = query.filter(
             or_(
@@ -58,6 +63,9 @@ def create_location(
     db: Session = Depends(get_db),
 ):
     require_user_permission(current_user, "Manage Location", db)
+    ensure_location_in_user_scope(current_user, db, location.location_code, "Location")
+    if location.parent_location_code:
+        ensure_location_in_user_scope(current_user, db, location.parent_location_code, "Parent location")
 
     existing_location = (
         db.query(Location)
@@ -130,6 +138,10 @@ def update_location(
 
     if not existing_location:
         raise HTTPException(status_code=404, detail="Location not found")
+    ensure_location_in_user_scope(current_user, db, existing_location.location_code, "Location")
+    ensure_location_in_user_scope(current_user, db, location.location_code, "Location")
+    if location.parent_location_code:
+        ensure_location_in_user_scope(current_user, db, location.parent_location_code, "Parent location")
 
     duplicate_location = (
         db.query(Location)
@@ -214,6 +226,7 @@ def delete_location(
 
     if not existing_location:
         raise HTTPException(status_code=404, detail="Location not found")
+    ensure_location_in_user_scope(current_user, db, existing_location.location_code, "Location")
 
     child_location = (
         db.query(Location)
@@ -427,9 +440,19 @@ def get_location_accounting_day_settings(
     cleaned_location_code = clean_optional_text(location_code)
 
     if cleaned_location_code:
+        ensure_location_in_user_scope(current_user, db, cleaned_location_code, "Location")
         query = query.filter(
             LocationAccountingDaySetting.location_code.ilike(cleaned_location_code)
         )
+    else:
+        allowed_codes = get_user_location_codes(current_user, db)
+        if allowed_codes is not None:
+            if not allowed_codes:
+                query = query.filter(false())
+            else:
+                query = query.filter(
+                    func.lower(func.trim(LocationAccountingDaySetting.location_code)).in_(allowed_codes)
+                )
 
     if status:
         query = query.filter(LocationAccountingDaySetting.status == status)
@@ -461,6 +484,7 @@ def create_location_accounting_day_setting(
         "Manage Location Accounting Day Setting",
         db,
     )
+    ensure_location_in_user_scope(current_user, db, setting.location_code, "Location")
 
     validated = validate_location_accounting_day_setting(setting, db)
 
@@ -525,6 +549,8 @@ def update_location_accounting_day_setting(
 
     if not existing_setting:
         raise HTTPException(status_code=404, detail="Setting not found")
+    ensure_location_in_user_scope(current_user, db, existing_setting.location_code, "Location")
+    ensure_location_in_user_scope(current_user, db, setting.location_code, "Location")
 
     validated = validate_location_accounting_day_setting(setting, db, setting_id)
 
@@ -584,6 +610,7 @@ def delete_location_accounting_day_setting(
 
     if not existing_setting:
         raise HTTPException(status_code=404, detail="Setting not found")
+    ensure_location_in_user_scope(current_user, db, existing_setting.location_code, "Location")
 
     snapshot = build_location_accounting_day_setting_audit_snapshot(
         existing_setting, db

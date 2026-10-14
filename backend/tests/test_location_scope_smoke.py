@@ -26,8 +26,8 @@ def scoped_user_with_locations(db):
     user = create_user(db, username="scope_user", password="Pass123!")
     db.add_all(
         [
-            Location(location_code="AGGE", location_name="Agge", status="Active"),
-            Location(location_code="LEKKI", location_name="Lekki", status="Active"),
+            Location(location_code="AGGE", location_name="Agge", location_type="Terminal", status="Active"),
+            Location(location_code="LEKKI", location_name="Lekki", location_type="Terminal", status="Active"),
             UserLocation(user_id=user.id, location_code="AGGE"),
         ]
     )

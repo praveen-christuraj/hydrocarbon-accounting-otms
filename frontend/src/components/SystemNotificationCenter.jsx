@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { isAdminUser, userHasPermission } from '../hooks/usePermissions'
 import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import Icon from './common/Icon'
@@ -47,24 +48,10 @@ function SystemNotificationCenter({ loggedInUser, toplineContainer = null }) {
     }).length
   }, [inboxNotifications])
 
-  const canViewTaskManager = useMemo(() => {
-    const username = String(loggedInUser?.username || '').toLowerCase()
-    const isAdmin =
-      username === 'admin' ||
-      (loggedInUser?.roles || []).some(
-        (role) =>
-          String(role?.role_name || role?.roleName || '').toLowerCase() ===
-          'admin'
-      ) ||
-      String(loggedInUser?.role_name || loggedInUser?.roleName || '').toLowerCase() ===
-        'admin'
-
-    if (isAdmin) return true
-
-    return (loggedInUser?.permissions || []).some((permission) => {
-      return permission.permissionName === 'View My Tasks'
-    })
-  }, [loggedInUser])
+  const canViewTaskManager = useMemo(
+    () => isAdminUser(loggedInUser) || userHasPermission(loggedInUser, 'View My Tasks'),
+    [loggedInUser]
+  )
 
   const visibleBanners = activeNotifications.filter((item) => {
     return item.bannerEnabled && item.deliveryMode.includes('Banner')

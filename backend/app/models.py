@@ -218,7 +218,8 @@ class UserRole(Base):
     __table_args__ = (
         UniqueConstraint(
             "user_id",
-            name="unique_user_role",
+            "role_id",
+            name="unique_user_role_pair",
         ),
     )
 

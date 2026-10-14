@@ -1,137 +1,44 @@
-# RBAC Flow Hardening - Completion Checklist
+# RBAC Hardening Checklist
 
-**Date Completed:** 2026-08-11  
-**Status:** ✅ COMPLETE  
-**Total Issues Fixed:** 6  
-**Total Files Modified:** 11  
-**New Test Classes:** 4  
-**New Endpoints:** 1  
-**Documentation Pages:** 4
+**Reviewed:** 2026-10-14
 
----
+Use this checklist for reviewing page/API changes. A checked frontend control is not a substitute for backend enforcement.
 
-## Issues Fixed Checklist
+## Authentication and shared authorization
 
-- [x] **Issue #1: Global Asset Visibility**
-  - Root Cause: AND logic instead of OR for scope filtering
-  - Fix Applied: `scope == 'Global' OR location_code IN (...)`
-  - Files: assets.py, operation_entries.py, OperationEntry.jsx
-  - Status: ✅ VERIFIED
+- [x] Access tokens are distinguished from refresh tokens; revoked tokens are rejected.
+- [x] Active roles and active permissions are re-read from the database on requests.
+- [x] Permission checks aggregate every active role.
+- [x] Reserved Admin role/account assignment, editing, and deletion are protected.
+- [x] Role assignment and role-permission updates reject unheld capabilities and shared-role cross-location mutation.
+- [x] Location helpers distinguish unrestricted (`None`), no assigned locations (empty set), and assigned locations.
+- [x] The legacy `is_super_admin()` compatibility helper exists and aliases `is_admin_user()`.
 
-- [x] **Issue #2: Case-Insensitive Location Filtering**
-  - Root Cause: Case-sensitive string comparison in SQL
-  - Fix Applied: `func.lower(location_code)` normalization throughout
-  - Files: operation_transactions.py, tank_operations.py, vessel_operations.py
-  - Status: ✅ VERIFIED
+## Route/page review checklist
 
-- [x] **Issue #3: Multi-Role Permission Aggregation**
-  - Root Cause: Only first role's permissions evaluated
-  - Fix Applied: Iterate all UserRole entries, aggregate permissions
-  - Files: permissions.py, auth.py, authApi.js
-  - Status: ✅ VERIFIED
+For each frontend page and its API routes, verify:
 
-- [x] **Issue #4: Inactive Role Permissions Bypass**
-  - Root Cause: Role.status not checked during evaluation
-  - Fix Applied: `.filter(Role.status == "Active")` added everywhere
-  - Files: permissions.py, auth.py, all routers
-  - Status: ✅ VERIFIED
+- [ ] The React route is wrapped in `PermissionGuard` with canonical permission name(s).
+- [ ] The API read endpoints check the corresponding view permission.
+- [ ] The API mutation endpoints check the corresponding create/manage/action permission.
+- [ ] Location-scoped list queries use `apply_location_filter()` with the correct model column.
+- [ ] Caller-supplied locations are checked with `ensure_location_in_user_scope()`.
+- [ ] Detail, export, download, report, and action endpoints validate the underlying record and linked-record scopes.
+- [ ] Bulk payloads validate every row and reject out-of-scope operations before changes are committed.
+- [ ] Global asset and cross-location tracking semantics are explicit, tested, and not inferred from UI filtering.
+- [ ] UI affordances are hidden/disabled where appropriate, without being treated as an authorization boundary.
+- [ ] Negative tests cover denied permission and denied cross-scope cases.
 
-- [x] **Issue #5: Tank Operation Summary Missing Entries**
-  - Root Cause: Case-sensitive layout type matching
-  - Fix Applied: `func.lower(func.trim(entry_layout_type))`
-  - Files: tank_operation_summary.py
-  - Status: ✅ VERIFIED
+## Data compatibility
 
-- [x] **Issue #6: Operation Transaction Register (Non-Admin Visibility)**
-  - Root Cause: Location filter + multi-role not combined
-  - Fix Applied: Normalized location filter + multi-role aggregation
-  - Files: operation_transactions.py
-  - Status: ✅ VERIFIED
+- [x] Legacy one-role `user_roles` data is preserved by the multi-role startup migration; the old uniqueness constraint is replaced by unique user/role pairs.
+- [x] Admin seeding does not discard prior role assignments and does not reactivate a disabled administrator.
+- [x] Existing token signing and user records remain compatible; refresh rotation/revocation is additive.
+- [ ] Before deployment, back up the production database and run the migration against a representative database copy.
 
----
+## Current backend test locations
 
-## Hardening Mechanisms Added
+- `backend/tests/test_rbac_hardening.py`
+- `backend/tests/test_location_scope_smoke.py`
 
-- [x] **RBAC Diagnostics Endpoint**
-  - Endpoint: `GET /auth/me/rbac-diagnostics`
-  - Returns: Active roles, all permissions, assigned locations
-  - Purpose: Debug access issues
-  - Status: ✅ IMPLEMENTED
-
-- [x] **Regression Test Suite**
-  - File: `backend/tests/test_rbac_regression.py`
-  - Test Classes: 4
-  - Test Methods: 6
-  - Coverage: Global assets, multi-role, case-insensitive, inactive roles, register visibility
-  - Status: ✅ IMPLEMENTED
-
-- [x] **Centralized Helpers**
-  - `normalize_location_code()` — normalize location codes
-  - `apply_location_filter()` — apply location filter to queries
-  - Status: ✅ IMPLEMENTED
-
----
-
-## Documentation Generated
-
-- [x] **RBAC_HARDENING_GUIDE.md** — Best practices & patterns (8 sections)
-- [x] **RBAC_FIX_SUMMARY.md** — Technical summary (7 sections)
-- [x] **TESTING_VERIFICATION_GUIDE.md** — Testing & troubleshooting (8 sections)
-- [x] **RBAC_COMPLETION_CHECKLIST.md** — This audit document
-
----
-
-## Files Modified Summary
-
-**Backend Routers (6):** assets.py, auth.py, operation_entries.py, operation_transactions.py, tank_operations.py, vessel_operations.py
-
-**Backend Dependencies (1):** permissions.py
-
-**Backend Utils (1):** helpers.py
-
-**Backend Tests (1):** test_rbac_regression.py (NEW)
-
-**Frontend (2):** authApi.js, OperationEntry.jsx
-
-**Documentation (4):** RBAC guides
-
----
-
-## Code Quality Validation
-
-- [x] Python Syntax: ✅ OK
-- [x] Graph Update: ✅ 32,772 nodes
-- [x] Frontend Build: ✅ Success
-- [x] No Breaking Changes: ✅ Confirmed
-
----
-
-## Key Improvements
-
-1. **Permission Consistency** — All 101+ permissions canonicalized
-2. **Location Scoping** — Case-insensitive throughout
-3. **Multi-Role Support** — All active roles aggregated
-4. **Asset Visibility** — Global + local correctly handled
-5. **Workflow Integration** — Operation Entry → OTR → Summary complete
-6. **Debuggability** — Diagnostics endpoint + tests for all scenarios
-
----
-
-## Testing Status
-
-- [x] Global asset visibility test: PASS
-- [x] Local asset restriction test: PASS
-- [x] Multi-role aggregation test: PASS
-- [x] Inactive role exclusion test: PASS
-- [x] Case-insensitive location test: PASS
-- [x] Tank summary visibility test: PASS
-
----
-
-## Conclusion
-
-✅ **RBAC HARDENING COMPLETE AND PRODUCTION-READY**
-
-All 6 critical issues fixed, 2 hardening mechanisms added, 4 guides written, 6 test scenarios passing.
-
-Refer to RBAC_HARDENING_GUIDE.md for future development.
+The earlier `backend/tests/test_rbac_regression.py` file was stale and removed. See `RBAC_HARDENING_GUIDE.md` for current helper names, semantics, and patterns.

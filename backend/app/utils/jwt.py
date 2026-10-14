@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import secrets
 
 from fastapi import HTTPException
 import jwt
@@ -15,7 +16,9 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None):
     else:
         expire = now + expires_delta
 
-    token_data.update({"exp": expire, "token_type": "access"})
+    token_data.update(
+        {"exp": expire, "token_type": "access", "jti": secrets.token_urlsafe(16)}
+    )
 
     encoded_jwt = jwt.encode(
         token_data,
@@ -35,7 +38,9 @@ def create_refresh_token(data: dict, expires_delta: timedelta | None = None):
     else:
         expire = now + expires_delta
 
-    token_data.update({"exp": expire, "token_type": "refresh"})
+    token_data.update(
+        {"exp": expire, "token_type": "refresh", "jti": secrets.token_urlsafe(16)}
+    )
 
     encoded_jwt = jwt.encode(
         token_data,

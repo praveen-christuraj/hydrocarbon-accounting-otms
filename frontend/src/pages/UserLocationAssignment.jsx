@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import {
-  getUserLocationSummaries,
   saveUserLocations,
   updateUserAllLocationsAccess,
   deleteUserLocation,
@@ -34,7 +33,11 @@ function UserLocationAssignment({
   const activeLocations = locations.filter((loc) => loc.status === 'Active')
 
   const isAdminBootstrap =
-    String(loggedInUser?.username || '').toLowerCase() === 'admin'
+    loggedInUser?.isAdmin === true ||
+    String(loggedInUser?.username || '').trim().toLowerCase() === 'admin' ||
+    (Array.isArray(loggedInUser?.roles) && loggedInUser.roles.some((role) =>
+      String(role?.role_name || role?.roleName || '').trim().toLowerCase() === 'admin'
+    ))
 
   const hasPermission = (permissionName) => {
     if (isAdminBootstrap) return true

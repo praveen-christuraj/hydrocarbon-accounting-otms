@@ -15,7 +15,11 @@ from app.models import (
 )
 from app.schemas import VesselStockLedgerResponse
 from app.dependencies.auth import get_current_user_from_token
-from app.dependencies.permissions import require_user_permission
+from app.dependencies.permissions import (
+    apply_location_filter,
+    ensure_location_in_user_scope,
+    require_user_permission,
+)
 from app.utils.helpers import (
     clean_optional_text,
     safe_float,
@@ -186,10 +190,13 @@ def get_vessel_stock_ledger(
 ):
     require_user_permission(current_user, "View Operation Transaction", db)
 
-    query = db.query(VesselStockLedger)
+    query = apply_location_filter(
+        db.query(VesselStockLedger), VesselStockLedger, current_user, db
+    )
 
     lc = clean_optional_text(location_code)
     if lc:
+        ensure_location_in_user_scope(current_user, db, lc, "Location")
         query = query.filter(VesselStockLedger.location_code.ilike(lc))
 
     ac = clean_optional_text(vessel_asset_code)
