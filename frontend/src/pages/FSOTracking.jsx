@@ -1,3 +1,4 @@
+import { logUiAction } from '../utils/actionLogger'
 import { useMemo, useState } from 'react'
 import {
   getFSOOTRReport,
@@ -163,7 +164,7 @@ function FSOTracking({ locations = [], assets = [] }) {
     downloadCsv('fso_outturn.csv', headers, outturn.rows)
   }
 
-  const printReport = () => window.print()
+  const printReport = () => { logUiAction('FSO Reports', 'Print Report', { tab }); window.print() }
 
   const downloadOTRxlsx = async () => {
     if (!requireBaseFilters()) return

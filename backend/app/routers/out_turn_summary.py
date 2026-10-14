@@ -22,7 +22,7 @@ from app.routers.tank_operation_summary import (
 )
 from app.schemas import OutTurnSummaryConfigUpdate
 from app.services.audit_service import create_audit_log
-from app.services.transaction_helpers import parse_date_filter
+from app.services.transaction_helpers import parse_date_filter, approved_transaction_not_on_correction_hold
 from app.utils.helpers import (
     clean_optional_text,
     get_asset_by_code,
@@ -277,6 +277,7 @@ def _get_transaction_query(
         .join(OperationTemplate, OperationTransaction.operation_template_id == OperationTemplate.id)
         .filter(
             OperationTransaction.status == APPROVED_TRANSACTION_STATUS,
+            approved_transaction_not_on_correction_hold(db),
             func.lower(func.trim(OperationTemplate.entry_layout_type)) == "tank gauging",
         )
     )
@@ -554,11 +555,18 @@ def get_out_turn_summary_rows(
         db,
         location_code=location_code,
         tank_asset_code=tank_asset_code,
-        product_name=product_name,
-        date_from=date_from,
+        # Product and lower date bound select output rows, never the history
+        # used to find the preceding snapshot for this location/tank.
         date_to=date_to,
         current_user=current_user,
     )
+    visible_ids = {
+        tx.id for tx in _get_transaction_query(
+            db, location_code=location_code, tank_asset_code=tank_asset_code,
+            product_name=product_name, date_from=date_from, date_to=date_to,
+            current_user=current_user,
+        ).all()
+    }
 
     transactions = query.order_by(
         OperationTransaction.operation_date.asc(),
@@ -598,7 +606,8 @@ def get_out_turn_summary_rows(
                 previous=previous,
             )
 
-            rows.append(row)
+            if tx.id in visible_ids:
+                rows.append(row)
 
             extracted = _extract_payload_columns(payload)
 

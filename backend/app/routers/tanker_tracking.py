@@ -707,7 +707,8 @@ def build_tanker_seal_checks(sender_ticket: dict | None, receiver_ticket: dict |
 
 
 def build_tanker_quantity_comparison(sender_ticket: dict | None, receiver_ticket: dict | None):
-    if not sender_ticket or not receiver_ticket:
+    if (not sender_ticket or not receiver_ticket
+            or sender_ticket.get("payload_missing") or receiver_ticket.get("payload_missing")):
         return None
 
     sender_gov = safe_float(sender_ticket.get("gov_bbl"))

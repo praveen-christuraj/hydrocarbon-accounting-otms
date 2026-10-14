@@ -60,6 +60,8 @@ const convertGroupFromApi = (g) => ({
   totalTovBbl: Number(g.total_tov_bbl || 0),
   totalFreeWaterBbl: Number(g.total_free_water_bbl || 0),
   totalNsvBbl: Number(g.total_nsv_bbl || 0),
+  transferInBbl: Number(g.transfer_in_bbl || 0),
+  transferOutBbl: Number(g.transfer_out_bbl || 0),
   netReceiptBbl: Number(g.net_receipt_bbl || 0),
   netDischargeBbl: Number(g.net_discharge_bbl || 0),
   tickets: (g.tickets || []).map(convertTicketFromApi).filter(Boolean),

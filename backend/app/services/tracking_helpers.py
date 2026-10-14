@@ -120,6 +120,23 @@ def _is_top_up(meta):
     return ("TOP UP" in label) or ("TOP-UP" in label) or ("TOP_UP" in label)
 
 
+def shuttle_movement_totals(meta, net_stock, net_water):
+    """Shared classification for tracking, dashboard and XLSX.
+
+    Receipts include STS-in; discharge means unloading to FSO. STS-out is
+    reported separately so transfers are accounted for without inflating the
+    quantity delivered to FSO.
+    """
+    qty = _abs_qty(net_stock, net_water)
+    receipt = (_is_loading(meta) or _is_sts_in(meta) or _is_top_up(meta)) and not _is_unloading(meta)
+    return {
+        "net_receipt_bbl": qty if receipt else 0.0,
+        "net_discharge_bbl": qty if _is_unloading(meta) and not _is_sts_out(meta) else 0.0,
+        "transfer_in_bbl": qty if _is_sts_in(meta) else 0.0,
+        "transfer_out_bbl": qty if _is_sts_out(meta) else 0.0,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Trip helpers (barge)
 # ---------------------------------------------------------------------------
@@ -638,7 +655,13 @@ def build_multitank_seal_checks(left_payload: dict, right_payload: dict):
         return str(v or "").strip()
 
     left_temp = (((left_payload.get("seals") or {}).get("after") or {}).get("temporary") or {})
-    right_temp = (((right_payload.get("seals") or {}).get("before") or {}).get("temporary") or {})
+    right_seal_stages = right_payload.get("seals") or {}
+    # The current entry layout persists observed receiver seals under after;
+    # older payloads may contain an explicit before snapshot, which wins.
+    right_stage = right_seal_stages.get("before")
+    if right_stage is None:
+        right_stage = right_seal_stages.get("after") or {}
+    right_temp = right_stage.get("temporary") or {}
 
     seal_fields = [
         ("C1", "sealC1"),
@@ -690,9 +713,11 @@ def build_multitank_permanent_seal_checks(left_payload: dict, right_payload: dic
     left_seals = (
         ((left_payload.get("seals") or {}).get("after") or {}).get("tankSeals") or {}
     )
-    right_seals = (
-        ((right_payload.get("seals") or {}).get("before") or {}).get("tankSeals") or {}
-    )
+    right_seal_stages = right_payload.get("seals") or {}
+    right_stage = right_seal_stages.get("before")
+    if right_stage is None:
+        right_stage = right_seal_stages.get("after") or {}
+    right_seals = right_stage.get("tankSeals") or {}
 
     tank_ids = sorted(
         {

@@ -653,6 +653,7 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
   const openComparisonReport = (cmp, bargeEvents, assetCode, assetNameValue) => {
     const convoy = String(tracker?.convoy_number || convoyNumber || '').trim()
     if (!cmp) return
+    logUiAction('Barge Tracking', 'Print Comparison Report', { comparisonId: cmp.id, convoyNumber: convoy, assetCode })
 
     setPrintReport({
       open: true,
@@ -667,7 +668,7 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
     setTimeout(() => {
       try {
         window.print()
-      } catch (e) {
+      } catch {
         // ignore
       }
     }, 250)
@@ -727,15 +728,17 @@ return (
             const sealChecks = Array.isArray(summary.seal_checks)
               ? summary.seal_checks
               : []
-            const sealProblemCount = sealChecks.filter((s) =>
+            const permanentSealChecks = Array.isArray(summary.permanent_seal_checks)
+              ? summary.permanent_seal_checks : []
+            const sealProblemCount = [...sealChecks, ...permanentSealChecks].filter((s) =>
               isBargeSealProblem(s.status)
             ).length
             const sealMismatch = sealProblemCount > 0
             const sealSummary =
-              sealChecks.length === 0
+              sealChecks.length + permanentSealChecks.length === 0
                 ? 'Not Captured'
                 : sealMismatch
-                  ? `Mismatch (${sealProblemCount} of ${sealChecks.length})`
+                  ? `Mismatch (${sealProblemCount} of ${sealChecks.length + permanentSealChecks.length})`
                   : 'Matched'
 
             const leftTotals = left.totals || {}
@@ -747,15 +750,13 @@ return (
                 ? cmp.per_tank_json.tanks
                 : []
 
-            const maxTankRows = 8
-            const shownTanks = tanks.slice(0, maxTankRows)
-            const moreTanks = tanks.length > maxTankRows
+            const shownTanks = tanks
 
             const events = Array.isArray(printReport.events)
-              ? printReport.events.slice(0, 6)
+              ? printReport.events
               : []
 
-            const quantityKeys = ['GOV', 'GSV', 'NSV', 'TOV', 'FW', 'LT', 'MT']
+            const quantityKeys = ['GOV', 'GSV', 'BSW', 'NSV', 'TOV', 'FW', 'LT', 'MT']
 
             return (
               <>
@@ -917,6 +918,22 @@ return (
                   </table>
                 </div>
 
+                {permanentSealChecks.length > 0 && (
+                  <div className="barge-mtr-section">
+                    <h2>Permanent Tank Seals</h2>
+                    <table className="barge-mtr-table">
+                      <thead><tr><th>Tank</th><th>Position</th><th>Master</th><th>Sender</th><th>Receiver</th><th>Status</th></tr></thead>
+                      <tbody>{permanentSealChecks.map((seal) => (
+                        <tr key={`${seal.tank_id}-${seal.seal_name}`}>
+                          <td>{seal.tank_id}</td><td>{seal.seal_name}</td><td>{seal.master || '-'}</td>
+                          <td>{seal.sender || '-'}</td><td>{seal.receiver || '-'}</td>
+                          <td>{getBargeSealStatusLabel(seal.status)}</td>
+                        </tr>
+                      ))}</tbody>
+                    </table>
+                  </div>
+                )}
+
                 <div className="barge-mtr-two-column">
                   <div className="barge-mtr-section">
                     <h2>Quantity Summary</h2>
@@ -995,12 +1012,7 @@ return (
                       </tbody>
                     </table>
 
-                    {moreTanks && (
-                      <p className="barge-mtr-note">
-                        Note: Only first {maxTankRows} tanks are shown to keep the
-                        report on one A4 page.
-                      </p>
-                    )}
+
                   </div>
                 </div>
 

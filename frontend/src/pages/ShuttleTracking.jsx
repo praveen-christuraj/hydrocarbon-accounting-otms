@@ -1,3 +1,4 @@
+import { logUiAction } from '../utils/actionLogger'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -843,6 +844,7 @@ function ShuttleTracking({
         const resp = await getShuttleTracking({
           ...filters,
           group_key: nextKey,
+          tab: activeVoyageTab,
           include_tickets: true,
           page: 1,
           page_size: 1,
@@ -935,6 +937,9 @@ function ShuttleTracking({
 
                 <div><strong>Net Receipt (BBL):</strong> {Number(selectedGroup.netReceiptBbl || 0).toFixed(3)}</div>
                 <div><strong>Net Discharge (BBL):</strong> {Number(selectedGroup.netDischargeBbl || 0).toFixed(3)}</div>
+
+                <div><strong>STS In (BBL, included in receipts):</strong> {Number(selectedGroup.transferInBbl || 0).toFixed(3)}</div>
+                <div><strong>STS Out (BBL):</strong> {Number(selectedGroup.transferOutBbl || 0).toFixed(3)}</div>
 
                 <div><strong>Last Closing Stock (BBL):</strong> {Number(voyageSummary?.lastClosingStock || 0).toFixed(3)}</div>
                 <div><strong>Last Closing Water (BBL):</strong> {Number(voyageSummary?.lastClosingWater || 0).toFixed(3)}</div>
@@ -1212,7 +1217,7 @@ function ShuttleTracking({
                     <button type="button" disabled={loading} onClick={exportExcelForSelected}>
                       Export Excel
                     </button>
-                    <button type="button" className="no-print" onClick={() => window.print()}>
+                    <button type="button" className="no-print" onClick={() => { logUiAction('Shuttle Tracking', 'Print Voyage MTR', { groupKey: selectedGroupKey }); window.print() }}>
                       Print (MTR)
                     </button>
                   </div>
