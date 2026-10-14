@@ -53,3 +53,49 @@ export const updatePermission = async (permissionId, permission) => {
 export const deletePermission = async (permissionId) => {
   return apiDelete(`/permissions/${permissionId}`)
 }
+
+/**
+ * Load every permission. The API caps a page at 200 rows and the standard
+ * catalog alone is close to that, so pages are fetched until `has_more` is
+ * false.
+ */
+export const getAllPermissions = async () => {
+  const pageSize = 200
+  const items = []
+  let skip = 0
+  // Hard stop protects against a misbehaving API returning has_more forever.
+  for (let page = 0; page < 50; page += 1) {
+    const result = await getPermissions({ skip, limit: pageSize })
+    items.push(...result.items)
+    if (!result.has_more || result.items.length === 0) {
+      return { items, total: result.total || items.length }
+    }
+    skip += result.items.length
+  }
+  return { items, total: items.length }
+}
+
+/**
+ * Module-wise CRUD structure of the standard permissions:
+ * { actions: ['View','Create','Edit','Delete','Other'], categories: [{ category, modules: [{ module_name, permissions: [{ permission_name, action, description }] }] }] }
+ */
+export const getPermissionCatalog = async () => {
+  const data = await apiGet('/permissions/catalog')
+  return {
+    actions: data?.actions || ['View', 'Create', 'Edit', 'Delete', 'Other'],
+    totalStandardPermissions: data?.total_standard_permissions || 0,
+    categories: (data?.categories || []).map((category) => ({
+      category: category.category,
+      modules: (category.modules || []).map((module) => ({
+        moduleName: module.module_name,
+        permissions: (module.permissions || []).map((permission) => ({
+          permissionName: permission.permission_name,
+          action: permission.action,
+          description: permission.description || '',
+        })),
+      })),
+    })),
+  }
+}
+
+export const seedStandardPermissions = async () => apiPost('/permissions/seed-standard', {})

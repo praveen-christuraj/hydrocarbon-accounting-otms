@@ -138,7 +138,7 @@ def create_calibration_template(
 ):
     require_user_permission(
         current_user,
-        "Manage Calibration Template",
+        "Create Calibration Template",
         db,
     )
 
@@ -211,7 +211,7 @@ def update_calibration_template(
 ):
     require_user_permission(
         current_user,
-        "Manage Calibration Template",
+        "Edit Calibration Template",
         db,
     )
 
@@ -296,7 +296,7 @@ def delete_calibration_template(
 ):
     require_user_permission(
         current_user,
-        "Manage Calibration Template",
+        "Delete Calibration Template",
         db,
     )
 

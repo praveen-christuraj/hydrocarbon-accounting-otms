@@ -5,26 +5,24 @@ import {
   getVesselOperations,
   updateVesselOperation,
 } from '../api/vesselOperationApi'
+import PageHeader from '../components/common/PageHeader'
+import AlertMessage from '../components/common/AlertMessage'
+import FormDialog from '../components/common/FormDialog'
+import Icon from '../components/common/Icon'
+import { useConfirm } from '../components/common/ConfirmProvider'
+import { usePermissions } from '../hooks/usePermissions'
+import { logUiAction } from '../utils/actionLogger'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 
 function VesselOperationMaster({ locations = [], assetTypes = [], loggedInUser }) {
-  const isAdminBootstrap =
-    loggedInUser?.isAdmin === true ||
-    String(loggedInUser?.username || '').trim().toLowerCase() === 'admin' ||
-    (Array.isArray(loggedInUser?.roles) && loggedInUser.roles.some((role) =>
-      String(role?.role_name || role?.roleName || '').trim().toLowerCase() === 'admin'
-    ))
-
-  const hasPermission = (permissionName) =>
-    Boolean(
-      loggedInUser?.permissions?.some(
-        (p) => p.permissionName === permissionName
-      )
-    )
-
-  const canManageVesselOperation = useMemo(() => {
-    if (isAdminBootstrap) return true
-    return hasPermission('Manage Vessel Operation')
-  }, [loggedInUser])
+  const confirm = useConfirm()
+  const { hasPermission } = usePermissions(loggedInUser)
+  const canCreate = hasPermission('Create Vessel Operation')
+  const canEdit = hasPermission('Edit Vessel Operation')
+  const canDelete = hasPermission('Delete Vessel Operation')
   const [filters, setFilters] = useState({
     location_code: '',
     applicable_asset_type_code: '',
@@ -34,7 +32,10 @@ function VesselOperationMaster({ locations = [], assetTypes = [], loggedInUser }
   const [loading, setLoading] = useState(false)
   const [successMsg, setSuccessMsg] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
-  const [confirmDelete, setConfirmDelete] = useState(null)
+  const [formOpen, setFormOpen] = useState(false)
+  const [formError, setFormError] = useState('')
+  const [page, setPage] = useState(1)
+  const pageSize = usePageSize()
 
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState({
@@ -49,6 +50,9 @@ function VesselOperationMaster({ locations = [], assetTypes = [], loggedInUser }
     description: '',
     status: 'Active',
   })
+
+  const rowsFilters = useDataFilters(rows, useAutoColumns(rows), { module: 'Vessel Operation Master' })
+  const visibleRows = paginateRows(rowsFilters.filteredRows, page, pageSize)
 
   const vesselAssetTypes = useMemo(() => {
     return assetTypes.filter((t) => t.status === 'Active')
@@ -83,6 +87,7 @@ function VesselOperationMaster({ locations = [], assetTypes = [], loggedInUser }
 
   const resetForm = () => {
     setEditing(null)
+    setFormError('')
     setForm({
       location_code: '',
       applicable_asset_type_code: '',
@@ -97,7 +102,25 @@ function VesselOperationMaster({ locations = [], assetTypes = [], loggedInUser }
     })
   }
 
+  const openCreate = () => {
+    resetForm()
+    setSuccessMsg('')
+    setErrorMsg('')
+    setFormOpen(true)
+    logUiAction('Vessel Operation Master', 'Open Create Dialog')
+  }
+
+  const closeForm = () => {
+    resetForm()
+    setFormOpen(false)
+  }
+
   const startEdit = (row) => {
+    setSuccessMsg('')
+    setErrorMsg('')
+    setFormError('')
+    setFormOpen(true)
+    logUiAction('Vessel Operation Master', 'Open Edit Dialog', { operationCode: row.operation_code })
     setEditing(row)
     setForm({
       location_code: row.location_code || '',
@@ -114,8 +137,8 @@ function VesselOperationMaster({ locations = [], assetTypes = [], loggedInUser }
   }
 
   const save = async () => {
-    if (!canManageVesselOperation) {
-      setErrorMsg('You do not have permission to manage vessel operations')
+    if (!(editing?.id ? canEdit : canCreate)) {
+      setFormError(`You do not have permission to ${editing?.id ? 'edit' : 'create'} vessel operations.`)
       return
     }
     try {
@@ -127,37 +150,39 @@ function VesselOperationMaster({ locations = [], assetTypes = [], loggedInUser }
         await createVesselOperation(form)
       }
 
-      resetForm()
-      await load()
       setSuccessMsg(editing?.id ? 'Vessel operation updated successfully.' : 'Vessel operation created successfully.')
+      closeForm()
+      await load()
     } catch (e) {
-      setErrorMsg(e.message || 'Unable to save vessel operation')
+      setFormError(e.message || 'Unable to save vessel operation')
     } finally {
       setLoading(false)
     }
   }
 
   const remove = async (row) => {
-    setConfirmDelete(row)
-  }
-
-  const confirmRemove = async () => {
-    if (!canManageVesselOperation) {
-      setErrorMsg('You do not have permission to manage vessel operations')
-      setConfirmDelete(null)
+    setSuccessMsg('')
+    setErrorMsg('')
+    if (!canDelete) {
+      setErrorMsg('You do not have permission to delete vessel operations.')
       return
     }
-    if (!confirmDelete) return
+    const confirmed = await confirm({
+      title: 'Delete vessel operation',
+      message: `Delete vessel operation ${row.operation_label} (${row.operation_code})?`,
+      tone: 'danger',
+      confirmLabel: 'Delete',
+      module: 'Vessel Operation Master',
+    })
+    if (!confirmed) return
 
     try {
       setLoading(true)
-      await deleteVesselOperation(confirmDelete.id)
-      setConfirmDelete(null)
-      setSuccessMsg(`Vessel operation ${confirmDelete.operation_label} deleted successfully.`)
+      await deleteVesselOperation(row.id)
+      setSuccessMsg(`Vessel operation ${row.operation_label} deleted successfully.`)
       await load()
     } catch (e) {
       setErrorMsg(e.message || 'Unable to delete vessel operation')
-      setConfirmDelete(null)
     } finally {
       setLoading(false)
     }
@@ -165,32 +190,25 @@ function VesselOperationMaster({ locations = [], assetTypes = [], loggedInUser }
 
   return (
     <div>
-      {confirmDelete && (
-        <div className="confirm-overlay">
-          <div className="confirm-dialog">
-            <p>Delete vessel operation {confirmDelete.operation_label} ({confirmDelete.operation_code})?</p>
-            <div className="confirm-actions">
-              <button onClick={confirmRemove}>Yes, Delete</button>
-              <button onClick={() => setConfirmDelete(null)}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
-      <div className="page-title">
-        <div>
-          <h2>Vessel Operation Master</h2>
-          <p>
-            Configure soft-coded shuttle vessel / FSO operations (Loading,
-            Unloading, STS, Decanting, etc.) per location and asset type.
-          </p>
-        </div>
-        <span className="record-count">{rows.length} Records</span>
-      </div>
+      <PageHeader
+        title="Vessel Operation Master"
+        description="Configure soft-coded shuttle vessel / FSO operations (Loading, Unloading, STS, Decanting, etc.) per location and asset type."
+        count={`${rows.length} Records`}
+        actions={
+          canCreate && (
+            <button type="button" className="btn-primary" onClick={openCreate}>
+              <Icon name="plus" size={15} />
+              New Vessel Operation
+            </button>
+          )
+        }
+      />
 
-      {!canManageVesselOperation && (
-        <div className="info-box">
-          You have view-only access. Assign <strong>Manage Vessel Operation</strong> to create, edit, or delete vessel operations.
-        </div>
+      <AlertMessage tone="success" message={successMsg} onDismiss={() => setSuccessMsg('')} />
+      <AlertMessage tone="error" message={errorMsg} onDismiss={() => setErrorMsg('')} />
+
+      {!canCreate && !canEdit && !canDelete && (
+        <div className="info-box">You have view-only access to Vessel Operation Master.</div>
       )}
 
       <div className="report-filter-panel no-print">
@@ -242,25 +260,25 @@ function VesselOperationMaster({ locations = [], assetTypes = [], loggedInUser }
         </div>
       </div>
 
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
-
-      <form onSubmit={(e) => { e.preventDefault(); save(); }}>
+      <FormDialog
+        open={formOpen}
+        title={editing ? 'Edit Vessel Operation' : 'New Vessel Operation'}
+        size="lg"
+        columns={3}
+        submitLabel={editing ? 'Update Vessel Operation' : 'Save Vessel Operation'}
+        busy={loading}
+        error={formError}
+        onDismissError={() => setFormError('')}
+        onSubmit={save}
+        onCancel={closeForm}
+      >
         <div>
           <label>Location *</label>
           <select
             name="location_code"
             value={form.location_code}
             onChange={onFormChange}
-            disabled={!canManageVesselOperation || loading}
+            disabled={loading}
           >
             <option value="">Select Location</option>
             {locations.map((l) => (
@@ -277,7 +295,7 @@ function VesselOperationMaster({ locations = [], assetTypes = [], loggedInUser }
             name="applicable_asset_type_code"
             value={form.applicable_asset_type_code}
             onChange={onFormChange}
-            disabled={!canManageVesselOperation || loading}
+            disabled={loading}
           >
             <option value="">Select Asset Type</option>
             {vesselAssetTypes.map((t) => (
@@ -295,7 +313,7 @@ function VesselOperationMaster({ locations = [], assetTypes = [], loggedInUser }
             value={form.operation_code}
             onChange={onFormChange}
             placeholder="LOADING / UNLOADING / STS_IN / STS_OUT ..."
-            disabled={!canManageVesselOperation || loading}
+            disabled={loading}
           />
         </div>
 
@@ -306,7 +324,7 @@ function VesselOperationMaster({ locations = [], assetTypes = [], loggedInUser }
             value={form.operation_label}
             onChange={onFormChange}
             placeholder="Loading / Unloading / STS IN ..."
-            disabled={!canManageVesselOperation || loading}
+            disabled={loading}
           />
         </div>
 
@@ -317,7 +335,7 @@ function VesselOperationMaster({ locations = [], assetTypes = [], loggedInUser }
             value={form.operation_category}
             onChange={onFormChange}
             placeholder="LOADING / UNLOADING / STS / DECANTING ..."
-            disabled={!canManageVesselOperation || loading}
+            disabled={loading}
           />
         </div>
 
@@ -327,7 +345,7 @@ function VesselOperationMaster({ locations = [], assetTypes = [], loggedInUser }
             name="operation_sign"
             value={form.operation_sign}
             onChange={onFormChange}
-            disabled={!canManageVesselOperation || loading}
+            disabled={loading}
           >
             <option>IN</option>
             <option>OUT</option>
@@ -338,7 +356,7 @@ function VesselOperationMaster({ locations = [], assetTypes = [], loggedInUser }
 
         <div>
           <label>Show In</label>
-          <select name="show_in" value={form.show_in} onChange={onFormChange} disabled={!canManageVesselOperation || loading}>
+          <select name="show_in" value={form.show_in} onChange={onFormChange} disabled={loading}>
             <option value="Both">Both</option>
             <option value="Entry">Entry</option>
             <option value="Tracking">Tracking</option>
@@ -352,13 +370,13 @@ function VesselOperationMaster({ locations = [], assetTypes = [], loggedInUser }
             name="sort_order"
             value={form.sort_order}
             onChange={onFormChange}
-            disabled={!canManageVesselOperation || loading}
+            disabled={loading}
           />
         </div>
 
         <div>
           <label>Status</label>
-          <select name="status" value={form.status} onChange={onFormChange} disabled={!canManageVesselOperation || loading}>
+          <select name="status" value={form.status} onChange={onFormChange} disabled={loading}>
             <option>Active</option>
             <option>Inactive</option>
           </select>
@@ -371,23 +389,18 @@ function VesselOperationMaster({ locations = [], assetTypes = [], loggedInUser }
             rows="3"
             value={form.description}
             onChange={onFormChange}
-            disabled={!canManageVesselOperation || loading}
+            disabled={loading}
           />
         </div>
+      </FormDialog>
 
-        <div className="form-actions">
-          <button type="submit" disabled={loading || !canManageVesselOperation}>
-            {loading ? 'Saving...' : editing ? 'Update' : 'Create'}
-          </button>
-          <button type="button" onClick={resetForm} disabled={loading}>
-            Clear
-          </button>
-        </div>
-      </form>
-
-      <div className="section-title">
-        <h3>Saved Vessel Operations</h3>
-      </div>
+      <DataTableToolbar
+        filters={rowsFilters}
+        columns={rowsFilters.columns}
+        exportFileName="vessel-operation-master"
+        exportTitle="Vessel Operation Master"
+        module="Vessel Operation Master"
+      />
 
       <table>
         <thead>
@@ -400,19 +413,19 @@ function VesselOperationMaster({ locations = [], assetTypes = [], loggedInUser }
             <th>Sign</th>
             <th>Show In</th>
             <th>Status</th>
-            <th>Action</th>
+            {(canEdit || canDelete) && <th>Actions</th>}
           </tr>
         </thead>
 
         <tbody>
-          {rows.length === 0 ? (
+          {visibleRows.length === 0 ? (
             <tr>
-              <td colSpan="9" className="empty-table">
+              <td colSpan={canEdit || canDelete ? 9 : 8} className="empty-table">
                 No vessel operations found.
               </td>
             </tr>
           ) : (
-            rows.map((r) => (
+            visibleRows.map((r) => (
               <tr key={r.id}>
                 <td>
                   {r.location_name} <br />
@@ -424,20 +437,28 @@ function VesselOperationMaster({ locations = [], assetTypes = [], loggedInUser }
                 <td>{r.operation_category}</td>
                 <td>{r.operation_sign}</td>
                 <td>{r.show_in || 'Both'}</td>
-                <td>{r.status}</td>
-                <td>
-                  <button type="button" onClick={() => startEdit(r)} disabled={!canManageVesselOperation}>
-                    Edit
-                  </button>
-                  <button type="button" onClick={() => remove(r)} disabled={!canManageVesselOperation}>
-                    Delete
-                  </button>
-                </td>
+                <td><span className={`status-badge ${String(r.status || '').toLowerCase()}`}>{r.status}</span></td>
+                {(canEdit || canDelete) && (
+                  <td className="row-actions">
+                    {canEdit && (
+                      <button type="button" onClick={() => startEdit(r)}>
+                        Edit
+                      </button>
+                    )}
+                    {canDelete && (
+                      <button type="button" onClick={() => remove(r)}>
+                        Delete
+                      </button>
+                    )}
+                  </td>
+                )}
               </tr>
             ))
           )}
         </tbody>
       </table>
+
+      <PaginationControls currentPage={page} totalRows={rowsFilters.filteredRows.length} onPageChange={setPage} />
     </div>
   )
 }

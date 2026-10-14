@@ -776,7 +776,7 @@ def create_dashboard_config(
 ):
     require_user_permission(
         current_user,
-        "Manage Dashboard",
+        "Create Dashboard",
         db,
     )
 
@@ -848,7 +848,7 @@ def update_dashboard_config(
 ):
     require_user_permission(
         current_user,
-        "Manage Dashboard",
+        "Edit Dashboard",
         db,
     )
 
@@ -1006,7 +1006,7 @@ def publish_dashboard_config(
 ):
     require_user_permission(
         current_user,
-        "Manage Dashboard",
+        "Publish Dashboard",
         db,
     )
 
@@ -1083,7 +1083,7 @@ def revert_dashboard_config(
 ):
     require_user_permission(
         current_user,
-        "Manage Dashboard",
+        "Publish Dashboard",
         db,
     )
 
@@ -1229,7 +1229,7 @@ def create_dashboard_data_source(
 ):
     require_user_permission(
         current_user,
-        "Manage Dashboard",
+        "Create Dashboard",
         db,
     )
 
@@ -1298,7 +1298,7 @@ def update_dashboard_data_source(
 ):
     require_user_permission(
         current_user,
-        "Manage Dashboard",
+        "Edit Dashboard",
         db,
     )
 
@@ -1387,7 +1387,7 @@ def delete_dashboard_data_source(
 ):
     require_user_permission(
         current_user,
-        "Manage Dashboard",
+        "Delete Dashboard",
         db,
     )
 
@@ -1431,7 +1431,7 @@ def seed_dashboard_data_sources_api(
 ):
     require_user_permission(
         current_user,
-        "Manage Dashboard",
+        "Create Dashboard",
         db,
     )
 

@@ -6,8 +6,15 @@ import {
 } from '../api/locationApi'
 import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
 import DataTableToolbar from '../components/common/DataTableToolbar'
+import PageHeader from '../components/common/PageHeader'
+import AlertMessage from '../components/common/AlertMessage'
+import FormDialog from '../components/common/FormDialog'
+import Icon from '../components/common/Icon'
+import { useConfirm } from '../components/common/ConfirmProvider'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
+import { usePermissions } from '../hooks/usePermissions'
+import { logUiAction } from '../utils/actionLogger'
 
 const LOCATION_TYPES = ['Company', 'Region', 'Terminal', 'Station', 'Tank Farm', 'Jetty', 'Warehouse', 'Office', 'Other']
 const IMPORT_STATUSES = ['Active', 'Inactive', 'Blocked']
@@ -27,7 +34,8 @@ function LocationMaster({ locations, reloadLocations, loggedInUser }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
-  const [confirmDelete, setConfirmDelete] = useState(null)
+  const [formOpen, setFormOpen] = useState(false)
+  const [formError, setFormError] = useState('')
   const [fieldErrors, setFieldErrors] = useState({})
   const [page, setPage] = useState(1)
 
@@ -35,22 +43,12 @@ function LocationMaster({ locations, reloadLocations, loggedInUser }) {
   const locationsFilters = useDataFilters(locations, useAutoColumns(locations), { module: 'Location Master' })
   const visibleItems = paginateRows(locationsFilters.filteredRows, page, pageSize)
 
-  const isAdminBootstrap =
-    loggedInUser?.isAdmin === true ||
-    String(loggedInUser?.username || '').trim().toLowerCase() === 'admin' ||
-    (Array.isArray(loggedInUser?.roles) && loggedInUser.roles.some((role) =>
-      String(role?.role_name || role?.roleName || '').trim().toLowerCase() === 'admin'
-    ))
-
-  const hasPermission = (permissionName) => {
-    if (isAdminBootstrap) return true
-    if (!loggedInUser || !Array.isArray(loggedInUser.permissions)) return false
-    return loggedInUser.permissions.some(
-      (p) => p.permissionName === permissionName
-    )
-  }
-
-  const canManageLocation = hasPermission('Manage Location')
+  const confirm = useConfirm()
+  const { hasPermission } = usePermissions(loggedInUser)
+  const canCreate = hasPermission('Create Location')
+  const canEdit = hasPermission('Edit Location')
+  const canDelete = hasPermission('Delete Location')
+  const readOnly = !canCreate && !canEdit && !canDelete
 
   const activeLocations = locations.filter((item) => {
     if (item.status !== 'Active') return false
@@ -93,11 +91,15 @@ function LocationMaster({ locations, reloadLocations, loggedInUser }) {
     return Object.keys(errors).length === 0
   }
 
-  const handleSubmit = async (e) => {
-    e.preventDefault()
+  const handleSubmit = async () => {
     clearMessages()
+    setFormError('')
 
-    if (!canManageLocation) { setError('You do not have permission to manage locations.'); return }
+    const allowed = editId === null ? canCreate : canEdit
+    if (!allowed) {
+      setFormError(`You do not have permission to ${editId === null ? 'create' : 'edit'} locations.`)
+      return
+    }
     if (!validateLocation()) return
 
     try {
@@ -115,16 +117,27 @@ function LocationMaster({ locations, reloadLocations, loggedInUser }) {
       await reloadLocations()
       setLocation(emptyLocation)
       setEditId(null)
+      setFormOpen(false)
     } catch (err) {
-      setError(err.message)
+      setFormError(err.message)
     } finally {
       setLoading(false)
     }
   }
 
+  const openCreate = () => {
+    clearMessages()
+    setFormError('')
+    setFieldErrors({})
+    setLocation(emptyLocation)
+    setEditId(null)
+    setFormOpen(true)
+    logUiAction('Location Master', 'Open Create Dialog')
+  }
+
   const handleEdit = (item) => {
     clearMessages()
-    setConfirmDelete(null)
+    setFormError('')
     setFieldErrors({})
     setLocation({
       locationName: item.locationName,
@@ -135,24 +148,27 @@ function LocationMaster({ locations, reloadLocations, loggedInUser }) {
       status: item.status,
     })
     setEditId(item.id)
+    setFormOpen(true)
+    logUiAction('Location Master', 'Open Edit Dialog', { locationCode: item.locationCode })
   }
 
-  const handleDeleteRequest = (id) => {
+  const handleDelete = async (item) => {
     clearMessages()
-    setConfirmDelete(id)
-  }
-
-  const handleDeleteConfirm = async (id) => {
-    if (!canManageLocation) { setError('You do not have permission to manage locations.'); return }
+    if (!canDelete) { setError('You do not have permission to delete locations.'); return }
+    const confirmed = await confirm({
+      title: 'Delete location',
+      message: `Delete ${item.locationName} (${item.locationCode})? This cannot be undone.`,
+      tone: 'danger',
+      confirmLabel: 'Delete',
+      module: 'Location Master',
+    })
+    if (!confirmed) return
 
     try {
       setLoading(true)
-      await deleteLocation(id)
-      setConfirmDelete(null)
+      await deleteLocation(item.id)
       setSuccess('Location deleted successfully')
       await reloadLocations()
-
-      if (editId === id) { setLocation(emptyLocation); setEditId(null) }
     } catch (err) {
       setError(err.message)
     } finally {
@@ -160,12 +176,12 @@ function LocationMaster({ locations, reloadLocations, loggedInUser }) {
     }
   }
 
-  const handleCancelEdit = () => {
+  const closeForm = () => {
+    setFormOpen(false)
     setLocation(emptyLocation)
     setEditId(null)
     setFieldErrors({})
-    clearMessages()
-    setConfirmDelete(null)
+    setFormError('')
   }
 
   const getParentLocationDisplay = (parentLocationCode) => {
@@ -204,32 +220,38 @@ function LocationMaster({ locations, reloadLocations, loggedInUser }) {
 
   return (
     <div>
-      <div className="page-title">
-        <div>
-          <h2>Location Master</h2>
-          <p>Create, update, and manage operational locations.</p>
-        </div>
-        <span className="record-count">{locations.length} Locations</span>
-      </div>
+      <PageHeader
+        title="Location Master"
+        description="Create, update, and manage operational locations."
+        count={`${locations.length} Locations`}
+        actions={
+          canCreate && (
+            <button type="button" className="btn-primary" onClick={openCreate}>
+              <Icon name="plus" size={15} />
+              New Location
+            </button>
+          )
+        }
+      />
 
-      {success && (
-        <div className="success-box">
-          {success}
-          <button className="error-close" onClick={() => setSuccess('')} type="button">&times;</button>
-        </div>
-      )}
-      {error && (
-        <div className="error-box">
-          {error}
-          <button className="error-close" onClick={() => setError('')} type="button">&times;</button>
-        </div>
-      )}
+      <AlertMessage tone="success" message={success} onDismiss={() => setSuccess('')} />
+      <AlertMessage tone="error" message={error} onDismiss={() => setError('')} />
 
-      {!canManageLocation && (
-        <div className="info-box">You are in view-only mode. Admin can manage locations.</div>
+      {readOnly && (
+        <div className="info-box">You have view-only access to Location Master.</div>
       )}
 
-      <form onSubmit={handleSubmit}>
+      <FormDialog
+        open={formOpen}
+        title={editId === null ? 'New Location' : 'Edit Location'}
+        description="Location Code must be unique. Example: UTP for Utapate Terminal."
+        submitLabel={editId === null ? 'Save Location' : 'Update Location'}
+        busy={loading}
+        error={formError}
+        onDismissError={() => setFormError('')}
+        onSubmit={handleSubmit}
+        onCancel={closeForm}
+      >
         <div>
           <label>Location Name</label>
           <input name="locationName" type="text" value={location.locationName} onChange={handleChange}
@@ -276,20 +298,7 @@ function LocationMaster({ locations, reloadLocations, loggedInUser }) {
           <textarea name="description" value={location.description} onChange={handleChange}
             placeholder="Enter location description" rows="3" />
         </div>
-        <div className="form-actions">
-          <button type="submit" disabled={loading || !canManageLocation}>
-            {loading ? 'Please wait...' : editId === null ? 'Save Location' : 'Update Location'}
-          </button>
-          {editId !== null && (
-            <button type="button" onClick={handleCancelEdit} disabled={loading}>Cancel Edit</button>
-          )}
-        </div>
-      </form>
-
-      <div className="section-title">
-        <h3>Saved Locations</h3>
-        <p>Locations are now saved permanently in PostgreSQL.</p>
-      </div>
+      </FormDialog>
 
       <DataTableToolbar
         filters={locationsFilters}
@@ -298,7 +307,7 @@ function LocationMaster({ locations, reloadLocations, loggedInUser }) {
         exportTitle="Location Master"
         module="Location Master"
         importConfig={importConfig}
-        canImport={canManageLocation}
+        canImport={canCreate}
       />
 
       <table>
@@ -306,12 +315,12 @@ function LocationMaster({ locations, reloadLocations, loggedInUser }) {
           <tr>
             <th>Location Name</th><th>Code</th><th>Type</th>
             <th>Parent Location</th><th>Description</th><th>Status</th>
-            {canManageLocation && <th>Actions</th>}
+            {(canEdit || canDelete) && <th>Actions</th>}
           </tr>
         </thead>
         <tbody>
           {locations.length === 0 ? (
-            <tr><td colSpan={canManageLocation ? 7 : 6} className="empty-table">No locations added yet.</td></tr>
+            <tr><td colSpan={canEdit || canDelete ? 7 : 6} className="empty-table">No locations added yet.</td></tr>
           ) : (
             visibleItems.map((item) => (
               <tr key={item.id}>
@@ -321,18 +330,11 @@ function LocationMaster({ locations, reloadLocations, loggedInUser }) {
                 <td>{getParentLocationDisplay(item.parentLocation)}</td>
                 <td>{item.description}</td>
                 <td><span className={`status-badge ${item.status.toLowerCase()}`}>{item.status}</span></td>
-                {canManageLocation && (
-                  <td>
-                    <button type="button" onClick={() => handleEdit(item)}>Edit</button>
-                    {confirmDelete === item.id ? (
-                      <span>
-                        <button type="button" onClick={() => handleDeleteConfirm(item.id)} disabled={loading}
-                          className="btn-danger">{loading ? 'Deleting...' : 'Confirm'}</button>
-                        <button type="button" onClick={() => setConfirmDelete(null)} disabled={loading}
-                          className="btn-secondary">Cancel</button>
-                      </span>
-                    ) : (
-                      <button type="button" onClick={() => handleDeleteRequest(item.id)}>Delete</button>
+                {(canEdit || canDelete) && (
+                  <td className="row-actions">
+                    {canEdit && <button type="button" onClick={() => handleEdit(item)}>Edit</button>}
+                    {canDelete && (
+                      <button type="button" onClick={() => handleDelete(item)} disabled={loading}>Delete</button>
                     )}
                   </td>
                 )}
@@ -343,8 +345,6 @@ function LocationMaster({ locations, reloadLocations, loggedInUser }) {
       </table>
 
       <PaginationControls currentPage={page} totalRows={locationsFilters.filteredRows.length} onPageChange={setPage} />
-
-      <div className="info-box">Location Code must be unique. Example: UTP for Utapate Terminal.</div>
     </div>
   )
 }

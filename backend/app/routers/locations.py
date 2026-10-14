@@ -62,7 +62,7 @@ def create_location(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Location", db)
+    require_user_permission(current_user, "Create Location", db)
     ensure_location_in_user_scope(current_user, db, location.location_code, "Location")
     if location.parent_location_code:
         ensure_location_in_user_scope(current_user, db, location.parent_location_code, "Parent location")
@@ -132,7 +132,7 @@ def update_location(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Location", db)
+    require_user_permission(current_user, "Edit Location", db)
 
     existing_location = db.query(Location).filter(Location.id == location_id).first()
 
@@ -220,7 +220,7 @@ def delete_location(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Location", db)
+    require_user_permission(current_user, "Delete Location", db)
 
     existing_location = db.query(Location).filter(Location.id == location_id).first()
 
@@ -481,7 +481,7 @@ def create_location_accounting_day_setting(
 ):
     require_user_permission(
         current_user,
-        "Manage Location Accounting Day Setting",
+        "Create Location Accounting Day Setting",
         db,
     )
     ensure_location_in_user_scope(current_user, db, setting.location_code, "Location")
@@ -537,7 +537,7 @@ def update_location_accounting_day_setting(
 ):
     require_user_permission(
         current_user,
-        "Manage Location Accounting Day Setting",
+        "Edit Location Accounting Day Setting",
         db,
     )
 
@@ -598,7 +598,7 @@ def delete_location_accounting_day_setting(
 ):
     require_user_permission(
         current_user,
-        "Manage Location Accounting Day Setting",
+        "Delete Location Accounting Day Setting",
         db,
     )
 

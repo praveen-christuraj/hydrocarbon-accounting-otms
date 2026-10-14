@@ -39,8 +39,12 @@ from app.utils.helpers import clean_optional_text
 router = APIRouter(prefix="/operation-workflow-policies", tags=["Operation Workflow Policies"])
 
 
-def require_workflow_policy_admin(current_user: User, db: Session) -> None:
-    require_user_permission(current_user, "Manage Operation Workflow Policy", db)
+def require_workflow_policy_admin(
+    current_user: User,
+    db: Session,
+    permission_name: str = "Edit Operation Workflow Policy",
+) -> None:
+    require_user_permission(current_user, permission_name, db)
     if not is_admin_user(current_user, db):
         raise HTTPException(status_code=403, detail="Only an administrator may change workflow policies")
 
@@ -107,7 +111,7 @@ def create_operation_workflow_policy(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_workflow_policy_admin(current_user, db)
+    require_workflow_policy_admin(current_user, db, "Create Operation Workflow Policy")
     policy = OperationWorkflowPolicy(
         policy_name=str(payload.policy_name or "").strip(),
         action_code=str(payload.action_code or "").strip().upper(),
@@ -163,7 +167,7 @@ def update_operation_workflow_policy(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_workflow_policy_admin(current_user, db)
+    require_workflow_policy_admin(current_user, db, "Edit Operation Workflow Policy")
     policy = db.query(OperationWorkflowPolicy).filter(OperationWorkflowPolicy.id == policy_id).first()
     if not policy:
         raise HTTPException(status_code=404, detail="Workflow policy not found")
@@ -212,7 +216,7 @@ def save_operation_workflow_policy_roles(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_workflow_policy_admin(current_user, db)
+    require_workflow_policy_admin(current_user, db, "Edit Operation Workflow Policy")
     policy = db.query(OperationWorkflowPolicy).filter(OperationWorkflowPolicy.id == policy_id).first()
     if not policy:
         raise HTTPException(status_code=404, detail="Workflow policy not found")
@@ -233,7 +237,7 @@ def save_operation_workflow_policy_users(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_workflow_policy_admin(current_user, db)
+    require_workflow_policy_admin(current_user, db, "Edit Operation Workflow Policy")
     policy = db.query(OperationWorkflowPolicy).filter(OperationWorkflowPolicy.id == policy_id).first()
     if not policy:
         raise HTTPException(status_code=404, detail="Workflow policy not found")
@@ -259,7 +263,7 @@ def delete_operation_workflow_policy(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_workflow_policy_admin(current_user, db)
+    require_workflow_policy_admin(current_user, db, "Delete Operation Workflow Policy")
     policy = db.query(OperationWorkflowPolicy).filter(OperationWorkflowPolicy.id == policy_id).first()
     if not policy:
         raise HTTPException(status_code=404, detail="Workflow policy not found")

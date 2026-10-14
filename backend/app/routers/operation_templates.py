@@ -224,7 +224,7 @@ def create_operation_template(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Operation Template", db)
+    require_user_permission(current_user, "Create Operation Template", db)
 
     existing_template = db.query(OperationTemplate).filter(
         OperationTemplate.template_name.ilike(template.template_name)
@@ -296,7 +296,7 @@ def update_operation_template(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Operation Template", db)
+    require_user_permission(current_user, "Edit Operation Template", db)
 
     existing_template = db.query(OperationTemplate).filter(
         OperationTemplate.id == template_id
@@ -379,7 +379,7 @@ def delete_operation_template(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Operation Template", db)
+    require_user_permission(current_user, "Delete Operation Template", db)
 
     existing_template = db.query(OperationTemplate).filter(
         OperationTemplate.id == template_id
@@ -574,7 +574,7 @@ def create_operation_template_layout(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Operation Template", db)
+    require_user_permission(current_user, "Edit Operation Template", db)
 
     template = db.query(OperationTemplate).filter(OperationTemplate.id == template_id).first()
     if not template:
@@ -722,7 +722,7 @@ def update_operation_template_layout(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Operation Template", db)
+    require_user_permission(current_user, "Edit Operation Template", db)
 
     layout = db.query(OperationTemplateLayout).filter(OperationTemplateLayout.id == layout_id).first()
     if not layout:

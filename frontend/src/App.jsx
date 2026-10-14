@@ -60,18 +60,28 @@ import ProfileSecurity from './pages/ProfileSecurity'
 import SystemNotificationMaster from './pages/SystemNotificationMaster'
 import BackupRecovery from './pages/BackupRecovery'
 import DatabaseBrowser from './pages/DatabaseBrowser'
-import ExportOperations from './pages/ExportOperations'
+import {
+  ExportDashboard,
+  ExportTransactions,
+  ExportReports,
+  ExportPermits,
+  ExportLocations,
+  ExportEntities,
+  ExportBlocks,
+  ExportConsignees,
+  ExportSettings,
+} from './pages/exportOperations'
 
 import { getCurrentUser, logoutUser } from './api/authApi'
 import AppShell from './components/layout/AppShell'
 import Modal from './components/common/Modal'
 import { useToast } from './components/common/Toast'
-import { AuthProvider } from './hooks/usePermissions'
+import { AuthProvider, userHasPermission } from './hooks/usePermissions'
 import { logUiAction, setActionLogUser } from './utils/actionLogger'
 import { getLocationOperationAvailability } from './api/locationOperationAvailabilityApi'
 import { helpContent } from './data/helpContent'
 import { getRoles } from './api/roleApi'
-import { getPermissions } from './api/permissionApi'
+import { getAllPermissions } from './api/permissionApi'
 import { getAllRolePermissions } from './api/rolePermissionApi'
 import { getUsers } from './api/userApi'
 import { getUserRoleAssignments } from './api/userRoleApi'
@@ -86,6 +96,19 @@ import { getOperationTypes } from './api/operationTypeApi'
 import { getOperationTemplates } from './api/operationTemplateApi'
 import { getOperationEntries } from './api/operationEntryApi'
 import { getOperationTransactions } from './api/operationTransactionApi'
+
+// Export Operations is its own module: one route (and one View permission) per screen.
+const EXPORT_OPERATION_ROUTES = [
+  { path: '/export-operations', permission: 'View Export Dashboard', label: 'the Export Dashboard', Component: ExportDashboard },
+  { path: '/export-operations/transactions', permission: 'View Export Transaction', label: 'Export Transactions', Component: ExportTransactions },
+  { path: '/export-operations/reports', permission: 'View Export Report', label: 'Export Reports', Component: ExportReports },
+  { path: '/export-operations/permits', permission: 'View Export Permit', label: 'Export Permits', Component: ExportPermits },
+  { path: '/export-operations/locations', permission: 'View Export Location', label: 'Export Locations', Component: ExportLocations },
+  { path: '/export-operations/entities', permission: 'View Export Entity', label: 'Export Entities', Component: ExportEntities },
+  { path: '/export-operations/blocks', permission: 'View Export Block', label: 'Export Blocks', Component: ExportBlocks },
+  { path: '/export-operations/consignees', permission: 'View Export Consignee', label: 'Export Consignees', Component: ExportConsignees },
+  { path: '/export-operations/settings', permission: 'View Export Settings', label: 'Export Settings', Component: ExportSettings },
+]
 
 function PageHelp() {
   const location = useLocation()
@@ -230,19 +253,7 @@ function AppContent({
   reloadLocationOperationAvailability,
 }) {
 
-  const hasPermission = (permissionName) => {
-    if (!permissionName) {
-      return true
-    }
-
-    if (!loggedInUser || !loggedInUser.permissions) {
-      return false
-    }
-
-    return loggedInUser.permissions.some((permission) => {
-      return permission.permissionName === permissionName
-    })
-  }
+  const hasPermission = (permissionName) => userHasPermission(loggedInUser, permissionName)
   return (
     <AppShell loggedInUser={loggedInUser} onLogout={onLogout}>
       <PageHelp />
@@ -370,6 +381,8 @@ function AppContent({
               >
                 <AccessSummary
                   users={users}
+                  roles={roles}
+                  permissions={permissions}
                   userRoleAssignments={userRoleAssignments}
                   rolePermissionAssignments={rolePermissionAssignments}
                 />
@@ -479,7 +492,7 @@ function AppContent({
             element={
               <PermissionGuard
                 loggedInUser={loggedInUser}
-                requiredPermission="View Asset"
+                requiredPermission="View Prime Mover Tanker Link"
                 fallbackMessage="You do not have permission to view Prime Mover - Tanker links."
               >
                 <PrimeMoverTankerLinkMaster
@@ -533,7 +546,7 @@ function AppContent({
             element={
               <PermissionGuard
                 loggedInUser={loggedInUser}
-                requiredPermission="View Asset Calibration"
+                requiredPermission="View Table 11 Factor"
                 fallbackMessage="You do not have permission to view Table 11 factors."
               >
                 <Table11FactorMaster loggedInUser={loggedInUser} />
@@ -669,18 +682,21 @@ function AppContent({
               </PermissionGuard>
             }
           />
-          <Route
-            path="/export-operations"
-            element={
-              <PermissionGuard
-                loggedInUser={loggedInUser}
-                requiredPermission="View Export Operations"
-                fallbackMessage="You do not have permission to view Export Operations."
-              >
-                <ExportOperations loggedInUser={loggedInUser} />
-              </PermissionGuard>
-            }
-          />
+          {EXPORT_OPERATION_ROUTES.map(({ path, permission, label, Component }) => (
+            <Route
+              key={path}
+              path={path}
+              element={
+                <PermissionGuard
+                  loggedInUser={loggedInUser}
+                  requiredPermission={permission}
+                  fallbackMessage={`You do not have permission to view ${label}.`}
+                >
+                  <Component loggedInUser={loggedInUser} />
+                </PermissionGuard>
+              }
+            />
+          ))}
 
           <Route
             path="/barge-seal-master"
@@ -842,7 +858,7 @@ function AppContent({
             element={
               <PermissionGuard
                 loggedInUser={loggedInUser}
-                requiredPermission="View Operation Transaction"
+                requiredPermission="View Barge Tracking"
                 fallbackMessage="You do not have permission to view Barge Tracking."
               >
                 <BargeTracking
@@ -862,7 +878,7 @@ function AppContent({
             element={
               <PermissionGuard
                 loggedInUser={loggedInUser}
-                requiredPermission="View Operation Transaction"
+                requiredPermission="View Tanker Tracking"
                 fallbackMessage="You do not have permission to view Tanker Tracking."
               >
                 <TankerTracking
@@ -926,8 +942,8 @@ function AppContent({
             element={
               <PermissionGuard
                 loggedInUser={loggedInUser}
-                requiredPermission="Manage Dashboard"
-                fallbackMessage="You do not have permission to manage dashboard."
+                anyOfPermissions={['Create Dashboard', 'Edit Dashboard']}
+                fallbackMessage="You do not have permission to build dashboards."
               >
                 <DashboardBuilder
                   locations={locations}
@@ -1090,7 +1106,7 @@ function AppContent({
             element={
               <PermissionGuard
                 loggedInUser={loggedInUser}
-                requiredPermission="View Operation Transaction"
+                requiredPermission="View Tanker Transaction Report"
                 fallbackMessage="You do not have permission to view the Tanker Transaction Report."
               >
                 <TankerTransactionReport
@@ -1142,19 +1158,7 @@ function App() {
   const [loggedInUser, setLoggedInUser] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
 
-  const hasPermission = (permissionName) => {
-    if (!permissionName) {
-      return true
-    }
-
-    if (!loggedInUser || !loggedInUser.permissions) {
-      return false
-    }
-
-    return loggedInUser.permissions.some((permission) => {
-      return permission.permissionName === permissionName
-    })
-  }
+  const hasPermission = (permissionName) => userHasPermission(loggedInUser, permissionName)
 
   const restoreLoggedInUser = async () => {
     try {
@@ -1189,7 +1193,7 @@ function App() {
 
   const reloadPermissions = async () => {
     try {
-      const permissionsFromApi = await getPermissions()
+      const permissionsFromApi = await getAllPermissions()
       setPermissions(permissionsFromApi.items)
     } catch (error) {
       console.error(error)

@@ -239,7 +239,7 @@ def create_tank_operation(
 ):
     require_user_permission(
         current_user,
-        "Manage Tank Operation",
+        "Create Tank Operation",
         db,
     )
 
@@ -304,7 +304,7 @@ def update_tank_operation(
 ):
     require_user_permission(
         current_user,
-        "Manage Tank Operation",
+        "Edit Tank Operation",
         db,
     )
 
@@ -404,7 +404,7 @@ def delete_tank_operation(
 ):
     require_user_permission(
         current_user,
-        "Manage Tank Operation",
+        "Delete Tank Operation",
         db,
     )
 

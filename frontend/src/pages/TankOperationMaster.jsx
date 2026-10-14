@@ -9,6 +9,11 @@ import PaginationControls, { paginateRows, usePageSize } from '../components/com
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
+import AlertMessage from '../components/common/AlertMessage'
+import FormDialog from '../components/common/FormDialog'
+import Icon from '../components/common/Icon'
+import { usePermissions } from '../hooks/usePermissions'
+import { logUiAction } from '../utils/actionLogger'
 
 function TankOperationMaster({ locations, loggedInUser }) {
   const emptyTankOperation = {
@@ -53,24 +58,12 @@ function TankOperationMaster({ locations, loggedInUser }) {
     return (locations || []).filter((location) => location.status === 'Active')
   }, [locations])
 
-  const isAdminBootstrap =
-    loggedInUser?.isAdmin === true ||
-    String(loggedInUser?.username || '').trim().toLowerCase() === 'admin' ||
-    (Array.isArray(loggedInUser?.roles) && loggedInUser.roles.some((role) =>
-      String(role?.role_name || role?.roleName || '').trim().toLowerCase() === 'admin'
-    ))
-
-  const hasPermission = (permissionName) =>
-    Boolean(
-      loggedInUser?.permissions?.some(
-        (p) => p.permissionName === permissionName
-      )
-    )
-
-  const canManageTankOperation = useMemo(() => {
-    if (isAdminBootstrap) return true
-    return hasPermission('Manage Tank Operation')
-  }, [loggedInUser])
+  const { hasPermission } = usePermissions(loggedInUser)
+  const canCreate = hasPermission('Create Tank Operation')
+  const canEdit = hasPermission('Edit Tank Operation')
+  const canDelete = hasPermission('Delete Tank Operation')
+  const [formOpen, setFormOpen] = useState(false)
+  const canManageTankOperation = editId === null ? canCreate : canEdit
 
   const reloadTankOperations = async (locationCode = selectedLocationCode) => {
     try {
@@ -174,6 +167,7 @@ function TankOperationMaster({ locations, loggedInUser }) {
         locationCode: selectedLocationCode,
       })
       setEditId(null)
+      setFormOpen(false)
 
       await reloadTankOperations(locationToReload)
     } catch (error) {
@@ -184,6 +178,15 @@ function TankOperationMaster({ locations, loggedInUser }) {
   }
 
   const handleEdit = (item) => {
+    if (!canEdit) {
+      setErrorMsg('You do not have permission to edit Tank Operations.')
+      return
+    }
+    setSuccessMsg('')
+    setErrorMsg('')
+    setValidationErrors({})
+    setFormOpen(true)
+    logUiAction('Tank Operation Master', 'Open Edit Dialog', { operationCode: item.operationCode })
     setTankOperation({
       locationCode: item.locationCode,
       operationCode: item.operationCode,
@@ -202,8 +205,8 @@ function TankOperationMaster({ locations, loggedInUser }) {
     setSuccessMsg('')
     setErrorMsg('')
 
-    if (!canManageTankOperation) {
-      setErrorMsg('You do not have permission to manage Tank Operations.')
+    if (!canDelete) {
+      setErrorMsg('You do not have permission to delete Tank Operations.')
       setConfirmDeleteItem(null)
       return
     }
@@ -237,6 +240,16 @@ function TankOperationMaster({ locations, loggedInUser }) {
       locationCode: selectedLocationCode,
     })
     setEditId(null)
+    setValidationErrors({})
+    setErrorMsg('')
+    setFormOpen(false)
+  }
+
+  const openCreate = () => {
+    handleCancelEdit()
+    setSuccessMsg('')
+    setFormOpen(true)
+    logUiAction('Tank Operation Master', 'Open Create Dialog')
   }
 
   const getLocationDisplay = (locationCode) => {
@@ -282,9 +295,12 @@ function TankOperationMaster({ locations, loggedInUser }) {
           </p>
         </div>
 
-        <span className="record-count">
+        <div className="page-title-actions">
+          {canCreate && (<button type="button" className="btn-primary" onClick={openCreate}><Icon name="plus" size={15} />New Tank Operation</button>)}
+          <span className="record-count">
           {tankOperations.length} Tank Operations
         </span>
+        </div>
       </div>
 
       {activeLocations.length === 0 && (
@@ -294,11 +310,11 @@ function TankOperationMaster({ locations, loggedInUser }) {
         </div>
       )}
 
-      {!canManageTankOperation && (
-        <div className="info-box">
-          You can view Tank Operations, but you do not have permission to create,
-          update, or delete them.
-        </div>
+      {!formOpen && <AlertMessage tone="success" message={successMsg} onDismiss={() => setSuccessMsg('')} />}
+      {!formOpen && <AlertMessage tone="error" message={errorMsg} onDismiss={() => setErrorMsg('')} />}
+
+      {!canCreate && !canEdit && !canDelete && (
+        <div className="info-box">You have view-only access to Tank Operation Master.</div>
       )}
 
       {confirmDeleteItem && (
@@ -346,7 +362,19 @@ function TankOperationMaster({ locations, loggedInUser }) {
         </div>
       </div>
 
-      <form onSubmit={handleSubmit}>
+      <FormDialog
+        open={formOpen}
+        title={editId === null ? 'New Tank Operation' : 'Edit Tank Operation'}
+        description="Operations appear in Tank Gauging Entry, filtered by location. SET declares a balance, IN adds, OUT reduces, NEUTRAL has no stock effect."
+        size="lg"
+        columns={3}
+        submitLabel={editId === null ? 'Save Tank Operation' : 'Update Tank Operation'}
+        busy={loading}
+        error={errorMsg}
+        onDismissError={() => setErrorMsg('')}
+        onSubmit={handleSubmit}
+        onCancel={handleCancelEdit}
+      >
         <div>
           <label>Location</label>
           <select
@@ -482,30 +510,7 @@ function TankOperationMaster({ locations, loggedInUser }) {
             disabled={!canManageTankOperation || loading}
           />
         </div>
-
-        <div className="form-actions">
-          <button
-            type="submit"
-            disabled={!canManageTankOperation || loading}
-          >
-            {loading
-              ? 'Please wait...'
-              : editId === null
-                ? 'Save Operation'
-                : 'Update Operation'}
-          </button>
-
-          {editId !== null && (
-            <button
-              type="button"
-              onClick={handleCancelEdit}
-              disabled={loading}
-            >
-              Cancel Edit
-            </button>
-          )}
-        </div>
-      </form>
+      </FormDialog>
 
       <div className="section-title">
         <h3>Saved Tank Operations</h3>
@@ -520,6 +525,7 @@ function TankOperationMaster({ locations, loggedInUser }) {
         columns={tankOperationsFilters.columns}
         exportFileName="tank-operation-master"
         exportTitle="Tank Operation Master"
+        module="Tank Operation Master"
       />
 
       <table>
@@ -533,14 +539,14 @@ function TankOperationMaster({ locations, loggedInUser }) {
             <th>Sort</th>
             <th>Description</th>
             <th>Status</th>
-            <th>Actions</th>
+            {(canEdit || canDelete) && <th>Actions</th>}
           </tr>
         </thead>
 
         <tbody>
           {tankOperations.length === 0 ? (
             <tr>
-              <td colSpan="9" className="empty-table">
+              <td colSpan={canEdit || canDelete ? 9 : 8} className="empty-table">
                 No Tank Operations found.
               </td>
             </tr>
@@ -570,23 +576,24 @@ function TankOperationMaster({ locations, loggedInUser }) {
                     {item.status}
                   </span>
                 </td>
-                <td>
-                  <button
-                    type="button"
-                    onClick={() => handleEdit(item)}
-                    disabled={loading || !canManageTankOperation}
-                  >
-                    Edit
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteItem(item) }}
-                    disabled={loading || !canManageTankOperation}
-                  >
-                    Delete
-                  </button>
-                </td>
+                {(canEdit || canDelete) && (
+                  <td className="row-actions">
+                    {canEdit && (
+                      <button type="button" onClick={() => handleEdit(item)} disabled={loading}>
+                        Edit
+                      </button>
+                    )}
+                    {canDelete && (
+                      <button
+                        type="button"
+                        onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteItem(item) }}
+                        disabled={loading}
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </td>
+                )}
               </tr>
             ))
           )}
@@ -595,18 +602,6 @@ function TankOperationMaster({ locations, loggedInUser }) {
 
       <PaginationControls currentPage={page} totalRows={tankOperationsFilters.filteredRows.length} onPageChange={setPage} />
 
-      {successMsg && (
-        <div className="success-box">{successMsg}</div>
-      )}
-      {errorMsg && (
-        <div className="error-box">{errorMsg}</div>
-      )}
-
-      <div className="info-box">
-        Stock logic rule: SET declares a stock balance, IN increases stock, OUT
-        decreases stock, and NEUTRAL does not affect stock. These mappings will
-        be used later by the Tank Stock Ledger.
-      </div>
     </div>
   )
 }

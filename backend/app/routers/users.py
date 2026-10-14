@@ -87,7 +87,7 @@ def create_user(
 ):
     require_user_permission(
         current_user,
-        "Manage User",
+        "Create User",
         db,
     )
     if str(user.username or "").strip().casefold() == "admin" and not is_admin_user(current_user, db):
@@ -168,7 +168,7 @@ def update_user(
 ):
     require_user_permission(
         current_user,
-        "Manage User",
+        "Edit User",
         db,
     )
 
@@ -269,7 +269,7 @@ def delete_user(
 ):
     require_user_permission(
         current_user,
-        "Manage User",
+        "Delete User",
         db,
     )
 

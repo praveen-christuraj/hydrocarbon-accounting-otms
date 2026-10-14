@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
 import Icon from '../common/Icon'
-import { navigationItems } from '../../data/navigationItems'
+import { findNavigationItem, navigationItems } from '../../data/navigationItems'
 import { usePermissions } from '../../hooks/usePermissions'
 
 /**
@@ -37,6 +37,9 @@ function TopNavigation({ loggedInUser }) {
       if (isAdmin) return true
       if (item.requiredPermissions && item.requiredPermissions.length > 0) {
         return item.requiredPermissions.every((name) => hasPermission(name))
+      }
+      if (item.anyPermission && item.anyPermission.length > 0) {
+        return item.anyPermission.some((name) => hasPermission(name))
       }
       if (item.requiredPermission) return hasPermission(item.requiredPermission)
       if (item.permission) return hasPermission(item.permission)
@@ -82,9 +85,12 @@ function TopNavigation({ loggedInUser }) {
     })
     .filter(Boolean)
 
+  // The active item is the one whose path best matches the URL, so that
+  // /export-operations/permits does not also highlight /export-operations.
+  const activeMatch = findNavigationItem(location.pathname)
+  const activePath = activeMatch?.item?.path || null
   const isGroupActive = (group) =>
-    group.type !== 'link' &&
-    group.items.some((item) => item.path && location.pathname.startsWith(item.path) && item.path !== '/')
+    group.type !== 'link' && group.items.some((item) => item.path && item.path === activePath)
 
   const handleHoverOpen = (index) => {
     if (openIndex === null) return // hover only switches menus once one is open
@@ -180,8 +186,7 @@ function TopNavigation({ loggedInUser }) {
                   onKeyDown={handleMenuKeyDown}
                 >
                   {group.items.map((item) => {
-                    const itemActive =
-                      item.path && item.path !== '/' && location.pathname.startsWith(item.path)
+                    const itemActive = Boolean(item.path) && item.path === activePath
                     return (
                       <Link
                         key={item.path || item.label}

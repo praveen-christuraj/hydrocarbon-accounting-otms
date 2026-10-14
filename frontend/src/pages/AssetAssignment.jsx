@@ -8,6 +8,11 @@ import PaginationControls, { paginateRows, usePageSize } from '../components/com
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
+import AlertMessage from '../components/common/AlertMessage'
+import FormDialog from '../components/common/FormDialog'
+import Icon from '../components/common/Icon'
+import { usePermissions } from '../hooks/usePermissions'
+import { logUiAction } from '../utils/actionLogger'
 
 function AssetAssignment({
   assets,
@@ -40,20 +45,11 @@ function AssetAssignment({
   const pageSize = usePageSize()
   const [historyPage, setHistoryPage] = useState(1)
 
-  const isAdminBootstrap =
-    loggedInUser?.isAdmin === true ||
-    String(loggedInUser?.username || '').trim().toLowerCase() === 'admin' ||
-    (Array.isArray(loggedInUser?.roles) && loggedInUser.roles.some((role) =>
-      String(role?.role_name || role?.roleName || '').trim().toLowerCase() === 'admin'
-    ))
-  const hasPermission = (permissionName) => {
-    if (isAdminBootstrap) return true
-    if (!loggedInUser || !Array.isArray(loggedInUser.permissions)) return false
-    return loggedInUser.permissions.some(
-      (p) => p.permissionName === permissionName
-    )
-  }
-  const canManageAssetAssignment = hasPermission('Manage Asset Assignment')
+  const { hasPermission } = usePermissions(loggedInUser)
+  const canCreate = hasPermission('Create Asset Assignment')
+  const canEdit = hasPermission('Edit Asset Assignment')
+  const canDelete = hasPermission('Delete Asset Assignment')
+  const [formOpen, setFormOpen] = useState(false)
 
   const activeAssets = assets.filter((asset) => asset.status === 'Active')
   const activeLocations = locations.filter((location) => location.status === 'Active')
@@ -100,8 +96,8 @@ function AssetAssignment({
   const handleSubmit = async (e) => {
     e.preventDefault()
 
-    if (!canManageAssetAssignment) {
-      setErrorMsg('You do not have permission to manage asset assignments.')
+    if (!(editId === null ? canCreate : canEdit)) {
+      setErrorMsg(`You do not have permission to ${editId === null ? 'create' : 'edit'} asset assignments.`)
       return
     }
 
@@ -151,6 +147,7 @@ function AssetAssignment({
       await reloadAssetAssignments()
       setAssignment(emptyAssignment)
       setEditId(null)
+      setFormOpen(false)
     } catch (error) {
       setErrorMsg(error.message)
     } finally {
@@ -159,8 +156,8 @@ function AssetAssignment({
   }
 
   const handleEdit = (assignmentToEdit) => {
-    if (!canManageAssetAssignment) {
-      setErrorMsg('You do not have permission to manage asset assignments.')
+    if (!canEdit) {
+      setErrorMsg('You do not have permission to edit asset assignments.')
       return
     }
 
@@ -177,11 +174,13 @@ function AssetAssignment({
     })
 
     setEditId(assignmentToEdit.id)
+    setFormOpen(true)
+    logUiAction('Asset Assignment', 'Open Edit Dialog', { assetCode: assignmentToEdit.assetCode })
   }
 
   const handleDelete = async () => {
-    if (!canManageAssetAssignment) {
-      setErrorMsg('You do not have permission to manage asset assignments.')
+    if (!canDelete) {
+      setErrorMsg('You do not have permission to delete asset assignments.')
       return
     }
 
@@ -211,6 +210,16 @@ function AssetAssignment({
   const handleCancelEdit = () => {
     setAssignment(emptyAssignment)
     setEditId(null)
+    setValidationErrors({})
+    setErrorMsg('')
+    setFormOpen(false)
+  }
+
+  const openCreate = () => {
+    handleCancelEdit()
+    setSuccessMsg('')
+    setFormOpen(true)
+    logUiAction('Asset Assignment', 'Open Create Dialog')
   }
 
   const activeAssignments = assetAssignments.filter(
@@ -232,9 +241,12 @@ function AssetAssignment({
           </p>
         </div>
 
-        <span className="record-count">
+        <div className="page-title-actions">
+          {canCreate && (<button type="button" className="btn-primary" onClick={openCreate}><Icon name="plus" size={15} />New Asset Assignment</button>)}
+          <span className="record-count">
           {assetAssignments.length} Assignment Records
         </span>
+        </div>
       </div>
 
       {activeAssets.length === 0 && (
@@ -265,16 +277,26 @@ function AssetAssignment({
         </div>
       )}
 
-      {!canManageAssetAssignment && (
-        <div className="info-box">
-          You are in view-only mode. Contact an administrator to create or edit
-          asset assignments.
-        </div>
+      {!formOpen && <AlertMessage tone="success" message={successMsg} onDismiss={() => setSuccessMsg('')} />}
+      {!formOpen && <AlertMessage tone="error" message={errorMsg} onDismiss={() => setErrorMsg('')} />}
+
+      {!canCreate && !canEdit && !canDelete && (
+        <div className="info-box">You have view-only access to Asset Assignment.</div>
       )}
 
-      {canManageAssetAssignment && (
-      <>
-      <form onSubmit={handleSubmit}>
+      <FormDialog
+        open={formOpen}
+        title={editId === null ? 'New Asset Assignment' : 'Edit Asset Assignment'}
+        description="Local assets can have only one active assignment. Global assets can have several, but not two active ones at the same location."
+        size="lg"
+        columns={3}
+        submitLabel={editId === null ? 'Save Asset Assignment' : 'Update Asset Assignment'}
+        busy={loading}
+        error={errorMsg}
+        onDismissError={() => setErrorMsg('')}
+        onSubmit={handleSubmit}
+        onCancel={handleCancelEdit}
+      >
         <div>
           <label>Asset</label>
           <select
@@ -446,32 +468,7 @@ function AssetAssignment({
             rows="3"
           />
         </div>
-
-        <div className="form-actions">
-          <button type="submit" disabled={loading}>
-            {loading
-              ? 'Please wait...'
-              : editId === null
-                ? 'Save Assignment'
-                : 'Update Assignment'}
-          </button>
-
-          {editId !== null && (
-            <button type="button" onClick={handleCancelEdit} disabled={loading}>
-              Cancel Edit
-            </button>
-          )}
-        </div>
-      </form>
-
-      {successMsg && (
-        <div className="success-box">{successMsg}</div>
-      )}
-      {errorMsg && (
-        <div className="error-box">{errorMsg}</div>
-      )}
-      </>
-      )}
+      </FormDialog>
 
       <div className="section-title">
         <h3>Current Active Assignments</h3>
@@ -609,14 +606,14 @@ function AssetAssignment({
                     {item.status}
                   </span>
                 </td>
-                <td>
-                  {canManageAssetAssignment && (
+                <td className="row-actions">
+                  {canEdit && (
                     <button type="button" onClick={() => handleEdit(item)}>
                       Edit
                     </button>
                   )}
 
-                  {canManageAssetAssignment && (
+                  {canDelete && (
                     <button type="button" onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteId(item.id) }}>
                       Delete
                     </button>
@@ -630,11 +627,6 @@ function AssetAssignment({
 
       <PaginationControls currentPage={historyPage} totalRows={assetAssignmentsFilters.filteredRows.length} onPageChange={setHistoryPage} />
 
-      <div className="info-box">
-        Rule: Local assets can have only one active assignment. Global assets can
-        have multiple active assignments, but not duplicate active assignments at
-        the same location.
-      </div>
     </div>
   )
 }

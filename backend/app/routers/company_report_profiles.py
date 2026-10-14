@@ -128,7 +128,7 @@ def create_company_report_profile(
 ):
     require_user_permission(
         current_user,
-        "Manage Company Report Profile",
+        "Create Company Report Profile",
         db,
     )
 
@@ -199,7 +199,7 @@ def update_company_report_profile(
 ):
     require_user_permission(
         current_user,
-        "Manage Company Report Profile",
+        "Edit Company Report Profile",
         db,
     )
 
@@ -297,7 +297,7 @@ def delete_company_report_profile(
 ):
     require_user_permission(
         current_user,
-        "Manage Company Report Profile",
+        "Delete Company Report Profile",
         db,
     )
 

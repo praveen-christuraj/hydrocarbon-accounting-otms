@@ -13,7 +13,6 @@ from app.models import (
     UserRole,
 )
 from datetime import datetime, timezone
-from app.utils.default_permissions import STANDARD_PERMISSIONS
 
 
 def ensure_user_security_columns():
@@ -780,32 +779,55 @@ def ensure_user_location_columns():
 
 
 def seed_default_permissions():
+    """Seed the standard permission catalog and convert legacy permissions.
+
+    Catalog permissions are matched by name (case-insensitive) so module
+    renames update the existing rows instead of creating duplicates. Legacy
+    "Manage <Entity>" permissions are converted once: every role holding one
+    is granted the matching Create/Edit/Delete permissions before the legacy
+    permission is removed (see app.services.permission_catalog).
+    """
+    from app.services.audit_service import create_audit_log
+    from app.services.permission_catalog import apply_permission_catalog
+
     db = SessionLocal()
     try:
-        created_count = 0
-        existing_count = 0
-        for permission_data in STANDARD_PERMISSIONS:
-            existing = (
-                db.query(Permission)
-                .filter(
-                    Permission.permission_name.ilike(permission_data["permission_name"]),
-                    Permission.module_name.ilike(permission_data["module_name"]),
-                )
-                .first()
+        result = apply_permission_catalog(db)
+        migration = result["migration"]
+        if migration["migrated"]:
+            create_audit_log(
+                db=db,
+                module_name="Permission Master",
+                action="Migrate Permission Catalog",
+                entity_type="Permission",
+                entity_label="Module-wise CRUD permission catalog",
+                remarks=(
+                    "Converted legacy permissions to module-wise CRUD permissions "
+                    "and granted the replacements to every role that held them"
+                ),
+                request_path="startup",
+                details={
+                    "created_count": result["created_count"],
+                    "updated_count": result["updated_count"],
+                    "legacy_permissions_removed": migration["legacy_permissions_removed"],
+                    "role_permissions_granted": migration["role_permissions_granted"],
+                    "roles_affected": migration["roles_affected"],
+                    "conversions": migration["conversions"],
+                },
             )
-            if existing:
-                existing_count += 1
-                continue
-            db.add(Permission(
-                permission_name=permission_data["permission_name"],
-                module_name=permission_data["module_name"],
-                description=permission_data["description"],
-                status="Active",
-            ))
-            created_count += 1
         db.commit()
-        if created_count:
-            print(f"Seeded {created_count} default permissions ({existing_count} already existed)")
+        if result["created_count"] or result["updated_count"]:
+            print(
+                f"Permission catalog: {result['created_count']} created, "
+                f"{result['updated_count']} updated "
+                f"({result['total_standard_permissions']} standard permissions)"
+            )
+        if migration["migrated"]:
+            print(
+                f"Permission migration: removed {migration['legacy_permissions_removed']} legacy "
+                f"permissions, granted {migration['role_permissions_granted']} replacement "
+                f"assignments across {migration['roles_affected']} roles"
+            )
     except Exception:
         db.rollback()
         raise

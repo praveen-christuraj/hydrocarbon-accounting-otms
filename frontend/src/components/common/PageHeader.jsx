@@ -8,9 +8,9 @@
  *     actions={<button type="button">New Location</button>}
  *   />
  */
-function PageHeader({ title, description, count, actions, children }) {
+function PageHeader({ title, description, count, actions, children, className = '' }) {
   return (
-    <div className="page-title">
+    <div className={`page-title ${className}`.trim()}>
       <div className="page-title-text">
         <h2>{title}</h2>
         {description && <p>{description}</p>}

@@ -255,7 +255,7 @@ def create_asset_calibration_table(
 ):
     require_user_permission(
         current_user,
-        "Manage Asset Calibration",
+        "Create Asset Calibration",
         db,
     )
 
@@ -318,7 +318,7 @@ def update_asset_calibration_table(
 ):
     require_user_permission(
         current_user,
-        "Manage Asset Calibration",
+        "Edit Asset Calibration",
         db,
     )
 
@@ -405,7 +405,7 @@ def delete_asset_calibration_table(
 ):
     require_user_permission(
         current_user,
-        "Manage Asset Calibration",
+        "Delete Asset Calibration",
         db,
     )
 

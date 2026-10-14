@@ -188,7 +188,7 @@ def get_vessel_stock_ledger(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "View Operation Transaction", db)
+    require_user_permission(current_user, "View Vessel Stock Ledger", db)
 
     query = apply_location_filter(
         db.query(VesselStockLedger), VesselStockLedger, current_user, db

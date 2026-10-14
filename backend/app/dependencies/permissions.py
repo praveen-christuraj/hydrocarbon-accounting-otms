@@ -90,6 +90,58 @@ def require_user_permission(
     return user
 
 
+def user_has_any_permission(
+    user: User,
+    permission_names,
+    db: Session,
+) -> bool:
+    names = [str(name).strip() for name in permission_names if str(name or "").strip()]
+    if not names:
+        return False
+
+    user_role_ids = get_user_role_ids(db, user)
+    if not user_role_ids:
+        return False
+
+    permission = (
+        db.query(Permission.id)
+        .join(RolePermission, RolePermission.permission_id == Permission.id)
+        .join(Role, Role.id == RolePermission.role_id)
+        .filter(
+            RolePermission.role_id.in_(user_role_ids),
+            sqlalchemy.or_(*[Permission.permission_name.ilike(name) for name in names]),
+            Permission.status == "Active",
+            Role.status == "Active",
+        )
+        .first()
+    )
+
+    return permission is not None
+
+
+def require_any_user_permission(
+    user: User,
+    permission_names,
+    db: Session,
+):
+    """Allow the request when the user holds at least one of the permissions.
+
+    Used for shared reference lookups (for example Export Operations
+    dropdowns) that several modules legitimately read.
+    """
+    names = [name for name in permission_names if str(name or "").strip()]
+    if is_admin_user(user, db):
+        return user
+
+    if not user_has_any_permission(user, names, db):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Permission required: one of {', '.join(names)}",
+        )
+
+    return user
+
+
 def get_role_ids_with_permission(db: Session, permission_name: str):
     rows = (
         db.query(Role.id)

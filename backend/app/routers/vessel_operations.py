@@ -164,7 +164,7 @@ def create_vessel_operation(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Vessel Operation", db)
+    require_user_permission(current_user, "Create Vessel Operation", db)
 
     d = validate_vessel_operation(vessel_operation, db)
     allowed = get_user_location_codes(current_user, db)
@@ -225,7 +225,7 @@ def update_vessel_operation(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Vessel Operation", db)
+    require_user_permission(current_user, "Edit Vessel Operation", db)
 
     existing = db.query(VesselOperation).filter(VesselOperation.id == vessel_operation_id).first()
     if not existing:
@@ -310,7 +310,7 @@ def delete_vessel_operation(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Vessel Operation", db)
+    require_user_permission(current_user, "Delete Vessel Operation", db)
 
     existing = db.query(VesselOperation).filter(VesselOperation.id == vessel_operation_id).first()
     if not existing:

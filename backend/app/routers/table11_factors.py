@@ -151,7 +151,7 @@ def get_table11_factors(
 ):
     require_user_permission(
         current_user,
-        "View Asset Calibration",
+        "View Table 11 Factor",
         db,
     )
 
@@ -178,7 +178,7 @@ def lookup_table11_factor(
 ):
     require_user_permission(
         current_user,
-        "View Asset Calibration",
+        "View Table 11 Factor",
         db,
     )
 
@@ -196,7 +196,7 @@ def bulk_save_table11_factors(
 ):
     require_user_permission(
         current_user,
-        "Manage Asset Calibration",
+        "Edit Table 11 Factor",
         db,
     )
 
@@ -273,7 +273,7 @@ def clear_table11_factors(
 ):
     require_user_permission(
         current_user,
-        "Manage Asset Calibration",
+        "Delete Table 11 Factor",
         db,
     )
 

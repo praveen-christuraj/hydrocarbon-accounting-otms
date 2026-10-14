@@ -27,6 +27,7 @@ from app.dependencies.permissions import (
     ensure_location_in_user_scope,
     get_user_location_codes,
     require_user_permission,
+    require_any_user_permission,
 )
 from app.services.audit_service import create_audit_log
 from app.utils.helpers import (
@@ -401,7 +402,7 @@ def get_tanker_transaction_report(
 ):
     require_user_permission(
         current_user,
-        "View Operation Transaction",
+        "View Tanker Transaction Report",
         db,
     )
 
@@ -1304,7 +1305,7 @@ def get_tanker_tracking(
 ):
     require_user_permission(
         current_user,
-        "View Operation Transaction",
+        "View Tanker Tracking",
         db,
     )
 
@@ -1339,7 +1340,7 @@ def get_tanker_tracking_by_convoy(
 ):
     require_user_permission(
         current_user,
-        "View Operation Transaction",
+        "View Tanker Tracking",
         db,
     )
 
@@ -1366,9 +1367,9 @@ def get_tanker_sender_reference(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(
+    require_any_user_permission(
         current_user,
-        "Create Operation Entry",
+        ["Create Operation Entry", "Edit Operation Entry"],
         db,
     )
 
@@ -1430,7 +1431,7 @@ def get_tanker_receipt_acknowledgements(
 ):
     require_user_permission(
         current_user,
-        "View Operation Transaction",
+        "View Tanker Tracking",
         db,
     )
 
@@ -1512,7 +1513,7 @@ def acknowledge_tanker_receipt(
 ):
     require_user_permission(
         current_user,
-        "Create Operation Entry",
+        "Edit Tanker Tracking",
         db,
     )
 
@@ -1660,7 +1661,7 @@ def revoke_tanker_receipt_acknowledgement(
 ):
     require_user_permission(
         current_user,
-        "Create Operation Entry",
+        "Edit Tanker Tracking",
         db,
     )
 
@@ -1766,7 +1767,7 @@ def close_tanker_tracking_movement(
 ):
     require_user_permission(
         current_user,
-        "Create Operation Entry",
+        "Close Tanker Movement",
         db,
     )
 

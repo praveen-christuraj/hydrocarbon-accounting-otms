@@ -29,7 +29,7 @@ def create_operation_type(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Operation Type", db)
+    require_user_permission(current_user, "Create Operation Type", db)
 
     existing_operation_type = (
         db.query(OperationType)
@@ -101,7 +101,7 @@ def update_operation_type(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Operation Type", db)
+    require_user_permission(current_user, "Edit Operation Type", db)
 
     existing_operation_type = (
         db.query(OperationType)
@@ -191,7 +191,7 @@ def delete_operation_type(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Operation Type", db)
+    require_user_permission(current_user, "Delete Operation Type", db)
 
     existing_operation_type = (
         db.query(OperationType)
