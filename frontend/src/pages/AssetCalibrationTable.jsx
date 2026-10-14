@@ -8,6 +8,7 @@ import PaginationControls, { paginateRows, usePageSize } from '../components/com
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
+import { usePermissions } from '../hooks/usePermissions'
 
 function AssetCalibrationTable({
   assets,
@@ -50,20 +51,11 @@ function AssetCalibrationTable({
 
   const visibleRowLimit = 10
 
-  const isAdminBootstrap =
-    loggedInUser?.isAdmin === true ||
-    String(loggedInUser?.username || '').trim().toLowerCase() === 'admin' ||
-    (Array.isArray(loggedInUser?.roles) && loggedInUser.roles.some((role) =>
-      String(role?.role_name || role?.roleName || '').trim().toLowerCase() === 'admin'
-    ))
-  const hasPermission = (permissionName) => {
-    if (isAdminBootstrap) return true
-    if (!loggedInUser || !Array.isArray(loggedInUser.permissions)) return false
-    return loggedInUser.permissions.some(
-      (p) => p.permissionName === permissionName
-    )
-  }
-  const canManageAssetCalibration = hasPermission('Manage Asset Calibration')
+  const { hasPermission } = usePermissions(loggedInUser)
+  const canCreate = hasPermission('Create Asset Calibration')
+  const canEdit = hasPermission('Edit Asset Calibration')
+  const canDelete = hasPermission('Delete Asset Calibration')
+  const canWrite = canCreate || canEdit
 
   const activeAssets = assets.filter((asset) => asset.status === 'Active')
   const activeTemplates = calibrationTemplates.filter(
@@ -482,8 +474,10 @@ function AssetCalibrationTable({
   const handleSubmit = async (e) => {
     e.preventDefault()
 
-    if (!canManageAssetCalibration) {
-      setErrorMsg('You do not have permission to manage asset calibration tables.')
+    if (!(editId === null ? canCreate : canEdit)) {
+      setErrorMsg(
+        `You do not have permission to ${editId === null ? 'create' : 'edit'} asset calibration tables.`
+      )
       return
     }
 
@@ -539,8 +533,8 @@ function AssetCalibrationTable({
   }
 
   const handleEdit = (table) => {
-    if (!canManageAssetCalibration) {
-      setErrorMsg('You do not have permission to manage asset calibration tables.')
+    if (!canEdit) {
+      setErrorMsg('You do not have permission to edit asset calibration tables.')
       return
     }
 
@@ -560,8 +554,8 @@ function AssetCalibrationTable({
   }
 
   const handleDelete = async () => {
-    if (!canManageAssetCalibration) {
-      setErrorMsg('You do not have permission to manage asset calibration tables.')
+    if (!canDelete) {
+      setErrorMsg('You do not have permission to delete asset calibration tables.')
       return
     }
 
@@ -779,14 +773,15 @@ function AssetCalibrationTable({
         <div className="error-box">{validationErrors.rows}</div>
       )}
 
-      {!canManageAssetCalibration && (
+      {!canCreate && !canEdit && !canDelete && (
         <div className="info-box">
-          You are in view-only mode. Contact an administrator to make changes to
-          asset calibration tables.
+          You are in view-only mode. Creating, editing and deleting calibration
+          tables each need their own permission (Create Asset Calibration, Edit
+          Asset Calibration, Delete Asset Calibration).
         </div>
       )}
 
-      {canManageAssetCalibration && (
+      {canWrite && (
       <>
       <form onSubmit={handleSubmit}>
         <div>
@@ -1153,14 +1148,14 @@ function AssetCalibrationTable({
             <th>Effective Date</th>
             <th>Rows</th>
             <th>Status</th>
-            <th>Actions</th>
+            {(canEdit || canDelete) && <th>Actions</th>}
           </tr>
         </thead>
 
         <tbody>
           {calibrationTables.length === 0 ? (
             <tr>
-              <td colSpan="7" className="empty-table">
+              <td colSpan={canEdit || canDelete ? 7 : 6} className="empty-table">
                 No asset calibration tables added yet.
               </td>
             </tr>
@@ -1179,19 +1174,21 @@ function AssetCalibrationTable({
                     {table.status}
                   </span>
                 </td>
-                <td>
-                  {canManageAssetCalibration && (
-                    <button type="button" onClick={() => handleEdit(table)}>
-                      Edit
-                    </button>
-                  )}
+                {(canEdit || canDelete) && (
+                  <td>
+                    {canEdit && (
+                      <button type="button" onClick={() => handleEdit(table)}>
+                        Edit
+                      </button>
+                    )}
 
-                  {canManageAssetCalibration && (
-                    <button type="button" onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteId(table.id) }}>
-                      Delete
-                    </button>
-                  )}
-                </td>
+                    {canDelete && (
+                      <button type="button" onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteId(table.id) }}>
+                        Delete
+                      </button>
+                    )}
+                  </td>
+                )}
               </tr>
             ))
           )}

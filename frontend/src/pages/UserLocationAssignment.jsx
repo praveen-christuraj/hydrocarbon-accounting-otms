@@ -8,6 +8,7 @@ import PaginationControls, { paginateRows, usePageSize } from '../components/com
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
+import { usePermissions } from '../hooks/usePermissions'
 
 function UserLocationAssignment({
   users,
@@ -32,23 +33,10 @@ function UserLocationAssignment({
   const activeUsers = users.filter((user) => user.status === 'Active')
   const activeLocations = locations.filter((loc) => loc.status === 'Active')
 
-  const isAdminBootstrap =
-    loggedInUser?.isAdmin === true ||
-    String(loggedInUser?.username || '').trim().toLowerCase() === 'admin' ||
-    (Array.isArray(loggedInUser?.roles) && loggedInUser.roles.some((role) =>
-      String(role?.role_name || role?.roleName || '').trim().toLowerCase() === 'admin'
-    ))
-
-  const hasPermission = (permissionName) => {
-    if (isAdminBootstrap) return true
-    if (!loggedInUser || !Array.isArray(loggedInUser.permissions)) return false
-    return loggedInUser.permissions.some(
-      (p) => p.permissionName === permissionName
-    )
-  }
-
-  const canManage = hasPermission('Manage User Location Assignment')
+  const { hasPermission } = usePermissions(loggedInUser)
   const canView = hasPermission('View User Location Assignment')
+  const canEdit = hasPermission('Edit User Location Assignment')
+  const canDelete = hasPermission('Delete User Location Assignment')
   const userLocationAssignmentsFilters = useDataFilters(userLocationAssignments, useAutoColumns(userLocationAssignments), { module: 'User Location Assignment' })
   const visibleAssignments = paginateRows(userLocationAssignmentsFilters.filteredRows, page, pageSize)
 
@@ -104,8 +92,8 @@ function UserLocationAssignment({
     clearError()
     clearSuccess()
 
-    if (!canManage) {
-      setError('You do not have permission to manage user location assignments.')
+    if (!canEdit) {
+      setError('You do not have permission to save user location assignments.')
       return
     }
 
@@ -140,8 +128,8 @@ function UserLocationAssignment({
     setConfirmDeleteId(null)
     setFieldErrors({})
 
-    if (!canManage) {
-      setError('You do not have permission to manage user location assignments.')
+    if (!canEdit) {
+      setError('You do not have permission to save user location assignments.')
       return
     }
 
@@ -157,8 +145,8 @@ function UserLocationAssignment({
   }
 
   const handleDeleteConfirm = async (assignmentId) => {
-    if (!canManage) {
-      setError('You do not have permission to manage user location assignments.')
+    if (!canDelete) {
+      setError('You do not have permission to delete user location assignments.')
       return
     }
 
@@ -196,7 +184,7 @@ function UserLocationAssignment({
     setConfirmDeleteId(null)
   }
 
-  if (!canView && !canManage) {
+  if (!canView && !canEdit && !canDelete) {
     return (
       <div>
         <div className="page-title">
@@ -257,14 +245,14 @@ function UserLocationAssignment({
         </div>
       )}
 
-      {!canManage && canView && (
+      {!canEdit && !canDelete && canView && (
         <div className="info-box">
-          You have View User Location Assignment permission only. Create, edit,
-          and delete actions are disabled.
+          You have View User Location Assignment permission only. Edit and
+          delete actions are disabled.
         </div>
       )}
 
-      {canManage && (
+      {canEdit && (
         <form onSubmit={handleSubmit}>
           <div>
             <label>Select User</label>
@@ -469,14 +457,14 @@ function UserLocationAssignment({
             <th>User</th>
             <th>Assigned Location</th>
             <th>All Locations</th>
-            {canManage && <th>Actions</th>}
+            {(canEdit || canDelete) && <th>Actions</th>}
           </tr>
         </thead>
 
         <tbody>
           {userLocationAssignments.length === 0 ? (
             <tr>
-              <td colSpan={canManage ? 4 : 3} className="empty-table">
+              <td colSpan={canEdit || canDelete ? 4 : 3} className="empty-table">
                 No location assignments yet.
               </td>
             </tr>
@@ -526,9 +514,9 @@ function UserLocationAssignment({
                     )}
                   </td>
 
-                  {canManage && (
+                  {(canEdit || canDelete) && (
                     <td>
-                      {isFirstRowForUser && (
+                      {canEdit && isFirstRowForUser && (
                         <button
                           type="button"
                           onClick={() =>
@@ -548,7 +536,7 @@ function UserLocationAssignment({
                         </button>
                       )}
 
-                      {confirmDeleteId === assignment.id ? (
+                      {canDelete && confirmDeleteId === assignment.id ? (
                         <span>
                           <button
                             type="button"
@@ -576,14 +564,14 @@ function UserLocationAssignment({
                             Cancel
                           </button>
                         </span>
-                      ) : (
+                      ) : canDelete ? (
                         <button
                           type="button"
                           onClick={() => handleDeleteRequest(assignment.id)}
                         >
                           Delete
                         </button>
-                      )}
+                      ) : null}
                     </td>
                   )}
                 </tr>

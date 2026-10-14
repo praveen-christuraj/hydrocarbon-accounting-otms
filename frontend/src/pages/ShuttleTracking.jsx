@@ -9,6 +9,7 @@ import {
 import { createOperationEntry } from '../api/operationEntryApi'
 import { getVesselOperations } from '../api/vesselOperationApi'
 import { useCompanyPrintProfile } from '../hooks/useCompanyPrintProfile'
+import { usePermissions } from '../hooks/usePermissions'
 import CompanyPrintHeader from '../components/reports/CompanyPrintHeader'
 import CompanyPrintFooter from '../components/reports/CompanyPrintFooter'
 import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
@@ -41,29 +42,10 @@ function ShuttleTracking({
 
   const profile = useCompanyPrintProfile()
 
-  const isAdminBootstrap =
-    loggedInUser?.isAdmin === true ||
-    String(loggedInUser?.username || '').trim().toLowerCase() === 'admin' ||
-    (Array.isArray(loggedInUser?.roles) && loggedInUser.roles.some((role) =>
-      String(role?.role_name || role?.roleName || '').trim().toLowerCase() === 'admin'
-    ))
-
-  const hasPermission = (permissionName) =>
-    Boolean(
-      loggedInUser?.permissions?.some(
-        (p) => p.permissionName === permissionName
-      )
-    )
-
-  const canManageShuttle = useMemo(() => {
-    if (isAdminBootstrap) return true
-    return hasPermission('Manage Shuttle Tracking')
-  }, [loggedInUser])
-
-  const canCreateOperationEntry = useMemo(() => {
-    if (isAdminBootstrap) return true
-    return hasPermission('Create Operation Entry')
-  }, [loggedInUser])
+  const { hasPermission } = usePermissions(loggedInUser)
+  const canCloseVoyage = hasPermission('Close Shuttle Voyage')
+  const canReopenVoyage = hasPermission('Reopen Shuttle Voyage')
+  const canCreateOperationEntry = hasPermission('Create Operation Entry')
 
   // ----------------------------
   // Main state
@@ -548,7 +530,7 @@ function ShuttleTracking({
   // Close / Reopen voyage
   // ----------------------------
   const closeVoyage = async () => {
-    if (!canManageShuttle) {
+    if (!canCloseVoyage) {
       setErrorMsg('You do not have permission to close shuttle voyage')
       return
     }
@@ -578,7 +560,7 @@ function ShuttleTracking({
   }
 
   const reopenVoyage = async () => {
-    if (!canManageShuttle) {
+    if (!canReopenVoyage) {
       setErrorMsg('You do not have permission to reopen shuttle voyage')
       return
     }
@@ -1024,11 +1006,11 @@ function ShuttleTracking({
         Shuttle Tracking shows only <strong>Approved</strong> tickets.
       </div>
 
-      {!canManageShuttle && !canCreateOperationEntry && (
+      {!canCloseVoyage && !canReopenVoyage && !canCreateOperationEntry && (
         <div className="info-box">
-          You have view-only access. Assign <strong>Manage Shuttle Tracking</strong> to
-          close/reopen voyages, or <strong>Create Operation Entry</strong> to create
-          tracking tickets.
+          You have view-only access. Assign <strong>Close Shuttle Voyage</strong>
+          / <strong>Reopen Shuttle Voyage</strong> to close or reopen voyages, or
+          <strong> Create Operation Entry</strong> to create tracking tickets.
         </div>
       )}
 
@@ -1210,17 +1192,17 @@ function ShuttleTracking({
                     </button>
                     <button
                       type="button"
-                      disabled={loading || !canManageShuttle || isVoyageClosed}
+                      disabled={loading || !canCloseVoyage || isVoyageClosed}
                       onClick={closeVoyage}
-                      title={!canManageShuttle ? 'You do not have permission to close shuttle voyage' : ''}
+                      title={!canCloseVoyage ? 'You do not have permission to close shuttle voyage' : ''}
                     >
                       Close Voyage
                     </button>
                     <button
                       type="button"
-                      disabled={loading || !canManageShuttle || !isVoyageClosed}
+                      disabled={loading || !canReopenVoyage || !isVoyageClosed}
                       onClick={reopenVoyage}
-                      title={!canManageShuttle ? 'You do not have permission to reopen shuttle voyage' : ''}
+                      title={!canReopenVoyage ? 'You do not have permission to reopen shuttle voyage' : ''}
                     >
                       Reopen Voyage
                     </button>

@@ -25,8 +25,30 @@
 | 6 | **Import & export from Excel (xlsx & csv) and export to PDF.** | `frontend/src/utils/exportUtils.js` (CSV / XLSX via `exceljs`, PDF via `jspdf` + `jspdf-autotable`), `frontend/src/components/common/ExportMenu.jsx`, `frontend/src/components/common/ImportDialog.jsx` (`parseImportFile`, column mapping, preview, row-by-row result). List pages expose export; master-data pages that have a create API also expose import. |
 | 7 | **Professional Navy Blue & White theme**, no unnecessary animations, no emojis, enterprise-grade and well-structured modules. | Palette & type scale are documented in `frontend/DESIGN_SYSTEM.md`. Only state-feedback transitions (≤150 ms, colour/opacity) are allowed; no hover "lift" transforms, no decorative motion, `prefers-reduced-motion` is honoured. Icons are inline SVG (`frontend/src/components/common/Icon.jsx`), never emoji characters. |
 | 8 | **All user alerts (errors, cautions, success) are shown next to the respective data-entry section or as pop-ups** – never `window.alert`, never far away from the field/section they belong to. | Inline: `frontend/src/components/common/AlertMessage.jsx` placed directly above/below the form or table it concerns, field errors under the field. Pop-up: `ToastProvider`/`useToast` (`frontend/src/components/common/Toast.jsx`) for non-blocking notices and `ConfirmDialog` for confirmations. `window.alert`/`window.confirm` are banned (ESLint `no-alert`). |
-| 9 | **Every page ships with Auditing and RBAC by default**, controlled by the admin user. | Wrap every route in `PermissionGuard` (view permission) and gate every mutating control with `usePermissions().hasPermission('Manage …')`. The permission names must exist in the Permission Master so the admin can assign them per role. Audit = rule 1. |
-| 10 | **Pop-ups must not close when the user clicks outside them.** Only the Cancel / Close button closes a dialog. | Use `frontend/src/components/common/Modal.jsx` (and `ConfirmDialog`) for every dialog. The backdrop has no click handler and Escape is ignored by design. Never add `onClick` to a backdrop/overlay element. |
+| 9 | **Every page ships with Auditing and RBAC by default**, controlled by the admin user. | Wrap every route in `PermissionGuard` (module **View** permission) and gate every mutating control with the matching **action** permission from the catalog: `usePermissions(loggedInUser).hasPermission('Create Location')` / `'Edit Location'` / `'Delete Location'` / the named workflow permission (`Close Movement Mapping`, `Approve Operation Transaction`, …). Never use a single `Manage …` flag for create, edit and delete – the legacy `Manage X` names no longer exist. Permission names must exist in the Permission Master so the admin can assign them per role. Audit = rule 1. |
+| 10 | **Pop-ups must not close when the user clicks outside them.** Only the Cancel / Close button closes a dialog. | Use `frontend/src/components/common/Modal.jsx` (and `ConfirmDialog`) for every dialog. The backdrop has no click handler and Escape is ignored by design. Never add `onClick` to a backdrop/overlay element. Any dialog that is rendered inline (for example a column configuration panel) is a bug: it must go through `Modal`, which portals to `<body>`, so its CSS cannot live under a page-scoped selector. |
+
+### Permission model (read before gating any control)
+
+* **Single source of truth:** `backend/app/utils/default_permissions.py` – 194 permissions in
+  8 categories that mirror the top menu: User Management, Master Data Management, Configurations,
+  Operations, Operation Tracking, Export Operations, Reporting, Administration.
+* Per module the catalog defines **View / Create / Edit / Delete** plus named workflow actions
+  (`Submit Operation Transaction`, `Close Movement Mapping`, `Approve Backup Restore`, …).
+  `GET /permissions/catalog` serves the same structure to the UI.
+* **Frontend helpers:** `frontend/src/hooks/usePermissions.js` (`usePermissions(user)`,
+  `userHasPermission`, `isAdminUser` – admin bootstrap always passes) and
+  `frontend/src/utils/permissionCatalog.js` (groups the catalog for Permission Master, Role
+  Permission Assignment and Access Summary).
+* **Rules**
+  * Route guards use the module's **View** permission (`PermissionGuard`).
+  * A create form needs `Create X`, an edit form / row Edit button needs `Edit X`, a delete
+    needs `Delete X`. When one form does both, use `editId === null ? canCreate : canEdit`.
+  * Workflow buttons use their own permission, not a CRUD one.
+  * Hide the control (and the Actions column) when the permission is missing; also guard the
+    handler, because the API enforces the same permission server-side.
+  * Never invent a permission name – check the catalog first. `backend/tests/test_permission_catalog.py`
+    fails the build when a router checks a permission that is not in the catalog.
 
 ### UI craft references (apply the principles manually – plugins are not installed here)
 
@@ -52,10 +74,13 @@ cannot be installed in the sandbox:
 
 ### Checklist for every new or modified page
 
-1. Route wrapped in `PermissionGuard`; mutating buttons gated by `hasPermission`.
+1. Route wrapped in `PermissionGuard` (module **View** permission); every mutating control gated
+   by its own action permission (`Create …` / `Edit …` / `Delete …` / named workflow), and the
+   Actions column hidden when the user holds none of them.
 2. Page header via `PageHeader`; lists via `DataFilterBar` + `PaginationControls` (20/50/100).
 3. `ExportMenu` (CSV / XLSX / PDF) on every list; `ImportDialog` where a create API exists.
-4. Dialogs only via `Modal` / `ConfirmDialog` (no outside-click close).
+4. Dialogs only via `Modal` / `ConfirmDialog` (no outside-click close); create/edit forms use
+   `FormDialog`. Destructive actions use `useConfirm`.
 5. Alerts via `AlertMessage` next to the section, or `useToast`; never `alert()`.
 6. `logUiAction` on user-triggered actions that the backend does not already audit.
 7. Colours and fonts only via CSS variables; verify in both Light and Dark themes.

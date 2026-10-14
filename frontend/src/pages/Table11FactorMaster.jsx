@@ -9,6 +9,7 @@ import PaginationControls, { paginateRows, usePageSize } from '../components/com
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
+import { usePermissions } from '../hooks/usePermissions'
 
 function Table11FactorMaster({ loggedInUser }) {
   const [rows, setRows] = useState([])
@@ -26,22 +27,9 @@ function Table11FactorMaster({ loggedInUser }) {
   const [confirmClear, setConfirmClear] = useState(false)
   const [confirmSaveRowsAction, setConfirmSaveRowsAction] = useState(null)
 
-  const isAdminBootstrap =
-    loggedInUser?.isAdmin === true ||
-    String(loggedInUser?.username || '').trim().toLowerCase() === 'admin' ||
-    (Array.isArray(loggedInUser?.roles) && loggedInUser.roles.some((role) =>
-      String(role?.role_name || role?.roleName || '').trim().toLowerCase() === 'admin'
-    ))
-
-  const hasPermission = (permissionName) => {
-    if (isAdminBootstrap) return true
-    if (!loggedInUser || !Array.isArray(loggedInUser.permissions)) return false
-    return loggedInUser.permissions.some(
-      (p) => p.permissionName === permissionName
-    )
-  }
-
-  const canManage = hasPermission('Manage Asset Calibration')
+  const { hasPermission } = usePermissions(loggedInUser)
+  const canEditTable11 = hasPermission('Edit Table 11 Factor')
+  const canDeleteTable11 = hasPermission('Delete Table 11 Factor')
 
   const sortedRows = useMemo(() => {
     return [...rows].sort((a, b) => Number(a.api60) - Number(b.api60))
@@ -279,8 +267,8 @@ function Table11FactorMaster({ loggedInUser }) {
     setSuccessMsg('')
     setErrorMsg('')
 
-    if (!canManage) {
-      setErrorMsg('You do not have permission to manage Table 11 factors.')
+    if (!canEditTable11) {
+      setErrorMsg('You do not have permission to save Table 11 factors.')
       return
     }
 
@@ -338,7 +326,7 @@ function Table11FactorMaster({ loggedInUser }) {
     setSuccessMsg('')
     setErrorMsg('')
 
-    if (!canManage) {
+    if (!canDeleteTable11) {
       setErrorMsg('You do not have permission to clear Table 11 factors.')
       return
     }
@@ -436,7 +424,7 @@ function Table11FactorMaster({ loggedInUser }) {
             type="file"
             accept=".csv"
             onChange={handleFileUpload}
-            disabled={!canManage || loading}
+            disabled={!canEditTable11 || loading}
           />
         </div>
 
@@ -510,7 +498,7 @@ function Table11FactorMaster({ loggedInUser }) {
               <button
                 type="button"
                 onClick={handleSaveUploadedRows}
-                disabled={!canManage || loading}
+                disabled={!canEditTable11 || loading}
               >
                 Replace & Save Uploaded Rows
               </button>
@@ -545,7 +533,7 @@ API@60 LT_FACTOR
 36 0.13391
 37 0.13326`}
             rows="8"
-            disabled={!canManage || loading}
+            disabled={!canEditTable11 || loading}
           />
         </div>
 
@@ -553,7 +541,7 @@ API@60 LT_FACTOR
           <button
             type="button"
             onClick={handlePreview}
-            disabled={!canManage || loading || pasteText.trim() === ''}
+            disabled={!canEditTable11 || loading || pasteText.trim() === ''}
           >
             Preview Pasted Rows
           </button>
@@ -561,7 +549,7 @@ API@60 LT_FACTOR
           <button
             type="button"
             onClick={handleSavePastedRows}
-            disabled={!canManage || loading || pasteText.trim() === ''}
+            disabled={!canEditTable11 || loading || pasteText.trim() === ''}
           >
             Replace & Save Pasted Rows
           </button>
@@ -577,17 +565,17 @@ API@60 LT_FACTOR
           <button
             type="button"
             onClick={handleClear}
-            disabled={!canManage || loading || rows.length === 0}
+            disabled={!canDeleteTable11 || loading || rows.length === 0}
           >
             Clear All Rows
           </button>
         </div>
       </form>
 
-      {!canManage && (
+      {!canEditTable11 && !canDeleteTable11 && (
         <div className="info-box">
-          You have view-only access. Required permission for changes: Manage
-          Asset Calibration.
+          You have view-only access. Editing the factor table requires Edit
+          Table 11 Factor; clearing it requires Delete Table 11 Factor.
         </div>
       )}
 

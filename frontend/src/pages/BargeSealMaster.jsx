@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { bulkSaveBargeSealMaster, getBargeSealMaster } from '../api/bargeSealApi'
+import { usePermissions } from '../hooks/usePermissions'
 
 const TANK_POSITIONS = ['MH1', 'MH2', 'LOCK', 'DIPHATCH']
 
@@ -24,21 +25,8 @@ function BargeSealMaster({
   const [grid, setGrid] = useState({})
   const [dirty, setDirty] = useState(false)
 
-  const isAdminBootstrap =
-    loggedInUser?.isAdmin === true ||
-    String(loggedInUser?.username || '').trim().toLowerCase() === 'admin' ||
-    (Array.isArray(loggedInUser?.roles) && loggedInUser.roles.some((role) =>
-      String(role?.role_name || role?.roleName || '').trim().toLowerCase() === 'admin'
-    ))
-
-  const canManage = useMemo(() => {
-    if (isAdminBootstrap) return true
-    return Boolean(
-      loggedInUser?.permissions?.some(
-        (p) => p.permissionName === 'Manage Barge Seal Master'
-      )
-    )
-  }, [loggedInUser])
+  const { hasPermission } = usePermissions(loggedInUser)
+  const canEditBargeSeal = hasPermission('Edit Barge Seal Master')
 
   const activeAssets = useMemo(() => {
     return (assets || [])
@@ -275,9 +263,9 @@ function BargeSealMaster({
               value={manualTankInput}
               placeholder="Tank ID (e.g., C1)"
               onChange={(e) => setManualTankInput(e.target.value)}
-              disabled={!canManage}
+              disabled={!canEditBargeSeal}
             />
-            <button type="button" onClick={addManualTank} disabled={!canManage}>
+            <button type="button" onClick={addManualTank} disabled={!canEditBargeSeal}>
               Add Tank
             </button>
           </div>
@@ -320,7 +308,7 @@ function BargeSealMaster({
                         type="text"
                         value={grid?.[tid]?.[pos] ?? ''}
                         onChange={(e) => updateCell(tid, pos, e.target.value)}
-                        disabled={!canManage}
+                        disabled={!canEditBargeSeal}
                         placeholder="Seal No"
                       />
                     </td>
@@ -342,15 +330,15 @@ function BargeSealMaster({
             <button
               type="button"
               onClick={handleSave}
-              disabled={!canManage || saving || loading}
+              disabled={!canEditBargeSeal || saving || loading}
             >
               {saving ? 'Saving...' : dirty ? 'Save Changes' : 'Save'}
             </button>
           </div>
 
-          {!canManage ? (
+          {!canEditBargeSeal ? (
             <div className="info-box">
-              You have view-only access. Assign <strong>Manage Barge Seal Master</strong> to edit.
+              You have view-only access. Assign <strong>Edit Barge Seal Master</strong> to edit.
             </div>
           ) : null}
         </>

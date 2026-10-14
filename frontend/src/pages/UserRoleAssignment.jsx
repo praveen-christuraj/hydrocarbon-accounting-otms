@@ -32,7 +32,9 @@ function UserRoleAssignment({
   const activeRoles = roles.filter(
     (role) => role.status === 'Active' && String(role.roleName || '').trim().toLowerCase() !== 'admin'
   )
-  const canManageUserRoleAssignment = hasPermission('Manage User Role Assignment')
+  const canEdit = hasPermission('Edit User Role Assignment')
+  const canDelete = hasPermission('Delete User Role Assignment')
+  const canWrite = canEdit || canDelete
 
   const selectedUserAssignments = useMemo(
     () => userRoleAssignments.filter((item) => String(item.userId) === String(selectedUserId)),
@@ -66,8 +68,8 @@ function UserRoleAssignment({
   const handleSubmit = async (event) => {
     event.preventDefault()
     clearMessages()
-    if (!canManageUserRoleAssignment) {
-      setError('You do not have permission to manage user role assignments.')
+    if (!canEdit) {
+      setError('You do not have permission to edit user role assignments.')
       return
     }
     if (selectedUserId === '') {
@@ -88,8 +90,8 @@ function UserRoleAssignment({
   }
 
   const handleDeleteConfirm = async (assignment) => {
-    if (!canManageUserRoleAssignment) {
-      setError('You do not have permission to manage user role assignments.')
+    if (!canDelete) {
+      setError('You do not have permission to delete user role assignments.')
       return
     }
     try {
@@ -136,13 +138,13 @@ function UserRoleAssignment({
         </div>
       )}
 
-      {!canManageUserRoleAssignment && (
+      {!canWrite && (
         <div className="info-box">
-          You have View User Role Assignment permission only. Create, edit, and delete actions are disabled.
+          You have View User Role Assignment permission only. Edit and delete actions are disabled.
         </div>
       )}
 
-      {canManageUserRoleAssignment && (
+      {canEdit && (
         <form onSubmit={handleSubmit}>
           <div>
             <label htmlFor="user-role-user">Select User</label>
@@ -224,13 +226,13 @@ function UserRoleAssignment({
             <th>Full Name</th>
             <th>Username</th>
             <th>Assigned Role</th>
-            {canManageUserRoleAssignment && <th>Actions</th>}
+            {canWrite && <th>Actions</th>}
           </tr>
         </thead>
         <tbody>
           {userRoleAssignments.length === 0 ? (
             <tr>
-              <td colSpan={canManageUserRoleAssignment ? 4 : 3} className="empty-table">
+              <td colSpan={canWrite ? 4 : 3} className="empty-table">
                 No user roles assigned yet.
               </td>
             </tr>
@@ -240,14 +242,16 @@ function UserRoleAssignment({
                 <td>{assignment.fullName}</td>
                 <td>{assignment.username}</td>
                 <td><span className="permission-badge">{assignment.roleName}</span></td>
-                {canManageUserRoleAssignment && (
+                {canWrite && (
                   <td>
                     {String(assignment.roleName || '').toLowerCase() !== 'admin' && (
                       <>
-                        <button type="button" onClick={() => handleUserChange(String(assignment.userId))}>
-                          Manage User Roles
-                        </button>
-                        {confirmDelete === assignment.id ? (
+                        {canEdit && (
+                          <button type="button" onClick={() => handleUserChange(String(assignment.userId))}>
+                            Manage User Roles
+                          </button>
+                        )}
+                        {canDelete && confirmDelete === assignment.id ? (
                           <span>
                             <button
                               type="button"
@@ -266,11 +270,11 @@ function UserRoleAssignment({
                               Cancel
                             </button>
                           </span>
-                        ) : (
+                        ) : canDelete ? (
                           <button type="button" onClick={() => setConfirmDelete(assignment.id)}>
                             Delete
                           </button>
-                        )}
+                        ) : null}
                       </>
                     )}
                   </td>

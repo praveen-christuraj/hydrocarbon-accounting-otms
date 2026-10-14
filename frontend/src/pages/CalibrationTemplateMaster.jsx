@@ -8,6 +8,7 @@ import PaginationControls, { paginateRows, usePageSize } from '../components/com
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
+import { usePermissions } from '../hooks/usePermissions'
 
 function CalibrationTemplateMaster({
   assetTypes,
@@ -51,24 +52,11 @@ function CalibrationTemplateMaster({
 
   const activeAssetTypes = assetTypes.filter((item) => item.status === 'Active')
 
-  const isAdminBootstrap =
-    loggedInUser?.isAdmin === true ||
-    String(loggedInUser?.username || '').trim().toLowerCase() === 'admin' ||
-    (Array.isArray(loggedInUser?.roles) && loggedInUser.roles.some((role) =>
-      String(role?.role_name || role?.roleName || '').trim().toLowerCase() === 'admin'
-    ))
-
-  const hasPermission = (permissionName) => {
-    if (isAdminBootstrap) return true
-    if (!loggedInUser || !Array.isArray(loggedInUser.permissions)) return false
-    return loggedInUser.permissions.some(
-      (p) => p.permissionName === permissionName
-    )
-  }
-
-  const canManageCalibrationTemplate = hasPermission(
-    'Manage Calibration Template'
-  )
+  const { hasPermission } = usePermissions(loggedInUser)
+  const canCreate = hasPermission('Create Calibration Template')
+  const canEdit = hasPermission('Edit Calibration Template')
+  const canDelete = hasPermission('Delete Calibration Template')
+  const canWriteTemplate = canCreate || canEdit
 
   const handleTemplateChange = (e) => {
     setTemplate({
@@ -89,8 +77,10 @@ function CalibrationTemplateMaster({
     setErrorMsg('')
     setValidationErrors({})
 
-    if (!canManageCalibrationTemplate) {
-      setErrorMsg('You do not have permission to manage calibration templates.')
+    if (!canWriteTemplate) {
+      setErrorMsg(
+        `You do not have permission to ${editTemplateId === null ? 'create' : 'edit'} calibration templates.`
+      )
       return
     }
 
@@ -137,8 +127,10 @@ function CalibrationTemplateMaster({
   }
 
   const confirmRemoveColumn = () => {
-    if (!canManageCalibrationTemplate) {
-      setErrorMsg('You do not have permission to manage calibration templates.')
+    if (!canWriteTemplate) {
+      setErrorMsg(
+        `You do not have permission to ${editTemplateId === null ? 'create' : 'edit'} calibration templates.`
+      )
       return
     }
 
@@ -217,8 +209,10 @@ function CalibrationTemplateMaster({
     setErrorMsg('')
     setValidationErrors({})
 
-    if (!canManageCalibrationTemplate) {
-      setErrorMsg('You do not have permission to manage calibration templates.')
+    if (!(editTemplateId === null ? canCreate : canEdit)) {
+      setErrorMsg(
+        `You do not have permission to ${editTemplateId === null ? 'create' : 'edit'} calibration templates.`
+      )
       return
     }
 
@@ -253,8 +247,8 @@ function CalibrationTemplateMaster({
     setSuccessMsg('')
     setErrorMsg('')
 
-    if (!canManageCalibrationTemplate) {
-      setErrorMsg('You do not have permission to manage calibration templates.')
+    if (!canEdit) {
+      setErrorMsg('You do not have permission to edit calibration templates.')
       return
     }
 
@@ -274,8 +268,8 @@ function CalibrationTemplateMaster({
     setSuccessMsg('')
     setErrorMsg('')
 
-    if (!canManageCalibrationTemplate) {
-      setErrorMsg('You do not have permission to manage calibration templates.')
+    if (!canDelete) {
+      setErrorMsg('You do not have permission to delete calibration templates.')
       return
     }
 
@@ -439,7 +433,7 @@ function CalibrationTemplateMaster({
         </div>
       )}
 
-      {!canManageCalibrationTemplate && (
+      {!canCreate && !canEdit && !canDelete && (
         <div className="info-box">
           You have View Calibration Template permission only. Create, edit, and
           delete actions are disabled.
@@ -478,7 +472,7 @@ function CalibrationTemplateMaster({
         <div className="error-box">{validationErrors.interpolationRoles}</div>
       )}
 
-      {canManageCalibrationTemplate && (
+      {canWriteTemplate && (
         <>
         <form onSubmit={handleSubmit}>
           <div>
@@ -778,7 +772,7 @@ function CalibrationTemplateMaster({
             <th>Calibration Type</th>
             <th>Columns</th>
             <th>Status</th>
-            {canManageCalibrationTemplate && <th>Actions</th>}
+            {(canEdit || canDelete) && <th>Actions</th>}
           </tr>
         </thead>
 
@@ -786,7 +780,7 @@ function CalibrationTemplateMaster({
           {calibrationTemplates.length === 0 ? (
             <tr>
               <td
-                colSpan={canManageCalibrationTemplate ? 6 : 5}
+                colSpan={canEdit || canDelete ? 6 : 5}
                 className="empty-table"
               >
                 No calibration templates added yet.
@@ -819,15 +813,19 @@ function CalibrationTemplateMaster({
                   </span>
                 </td>
 
-                {canManageCalibrationTemplate && (
+                {(canEdit || canDelete) && (
                   <td>
-                    <button type="button" onClick={() => handleEdit(item)}>
-                      Edit
-                    </button>
+                    {canEdit && (
+                      <button type="button" onClick={() => handleEdit(item)}>
+                        Edit
+                      </button>
+                    )}
 
-                    <button type="button" onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteItem(item) }}>
-                      Delete
-                    </button>
+                    {canDelete && (
+                      <button type="button" onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteItem(item) }}>
+                        Delete
+                      </button>
+                    )}
                   </td>
                 )}
               </tr>
