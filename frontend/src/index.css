@@ -6035,3 +6035,59 @@ table[border] {
   .login-values { font-size: 8.5px; letter-spacing: 0.07em; }
   .login-card-new { padding-right: 20px; padding-left: 20px; }
 }
+
+/* ---------------------------------------------------------------------------
+ * List status tabs (e.g. Barge Tracking: Open / Closed voyages).
+ * Colours come from tokens only so Light and Dark themes both work.
+ * ------------------------------------------------------------------------- */
+.list-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 16px 0 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+button.list-tab {
+  margin: 0 0 -1px;
+  min-height: 0;
+  padding: 8px 14px;
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid transparent;
+  border-bottom: 2px solid transparent;
+  border-radius: var(--radius-control) var(--radius-control) 0 0;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+button.list-tab:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+button.list-tab[aria-selected='true'] {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+  background: transparent;
+}
+
+.list-tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+tr.is-selected > td {
+  background: var(--primary-soft);
+}

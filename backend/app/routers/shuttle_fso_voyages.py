@@ -1093,9 +1093,12 @@ def get_fso_tracking(
             net_stock = _sf(net.get("net_stock_bbl"))
             net_water = _sf(net.get("net_water_bbl"))
             vessel_qty = _sf(inputs.get("vessel_quantity_bbl") or meta.get("vessel_quantity_bbl"))
-            variance = _sf(net.get("variance_bbl") or meta.get("variance_bbl"))
 
             qty_bbl = _abs_qty(net_stock, net_water)
+            # FSO variance = shuttle discharge (vessel qty) - FSO movement.
+            # Recomputed from the ticket inputs so that tickets saved under the
+            # previous sign convention aggregate consistently with new ones.
+            variance = vessel_qty - qty_bbl
             if op_sign == "IN":
                 totals_map[k]["fso_receipt_bbl"] += qty_bbl
                 totals_map[k]["shuttle_discharge_meta"] += _sf(meta.get("source_shuttle_discharge_bbl"))
@@ -1113,10 +1116,7 @@ def get_fso_tracking(
                 totals_map[k]["water_out"] += abs(net_water)
 
             if op_norm != "export":
-                if abs(variance) > 0:
-                    totals_map[k]["variance"] += variance
-                else:
-                    totals_map[k]["variance"] += (abs(net_stock) - vessel_qty)
+                totals_map[k]["variance"] += variance
 
         rows = []
         shuttle_fallback = _build_shuttle_discharge_fallback(
@@ -1137,7 +1137,7 @@ def get_fso_tracking(
             fallback = float(shuttle_fallback.get(f"{r.location_code}|{r.shuttle_number}", 0.0))
             shuttle_discharge_bbl = shuttle_discharge_meta if shuttle_discharge_meta > 0 else fallback
             fso_receipt_bbl = float(t.get("fso_receipt_bbl") or 0.0)
-            variance_bbl = fso_receipt_bbl - shuttle_discharge_bbl
+            variance_bbl = shuttle_discharge_bbl - fso_receipt_bbl
 
             rows.append({
                 "group_key": k,
@@ -1257,8 +1257,12 @@ def get_fso_tracking(
         closing_water = _safe_float(meta.get("closing_water_bbl"))
         net_stock = _safe_float(net_calc.get("net_stock_bbl"))
         net_water = _safe_float(net_calc.get("net_water_bbl"))
-        vessel_qty = _safe_float(meta.get("vessel_quantity_bbl"))
-        variance = _safe_float(meta.get("variance_bbl"))
+        inputs = payload.get("inputs") or {}
+        vessel_qty = _safe_float(inputs.get("vessel_quantity_bbl") or meta.get("vessel_quantity_bbl"))
+        # FSO variance = shuttle discharge (vessel qty) - FSO movement (|net stock + net water|).
+        # Export tickets carry no variance, matching the group total below.
+        movement_qty = abs(net_stock + net_water)
+        variance = (vessel_qty - movement_qty) if op_norm != "export" else 0.0
 
         ticket = {
             "transaction_id": tx.id,
@@ -1310,10 +1314,7 @@ def get_fso_tracking(
             groups[k]["total_water_out_bbl"] += abs(net_water)
 
         if op_norm != "export":
-            if abs(variance) > 0:
-                groups[k]["total_variance_bbl"] += variance
-            else:
-                groups[k]["total_variance_bbl"] += (abs(net_stock) - vessel_qty)
+            groups[k]["total_variance_bbl"] += variance
 
     for k in groups:
         groups[k]["net_water_bbl"] = groups[k]["total_water_in_bbl"] - groups[k]["total_water_out_bbl"]
@@ -1326,7 +1327,7 @@ def get_fso_tracking(
         sh_num = str(groups[k].get("shuttle_number") or "").strip()
         if float(groups[k].get("shuttle_discharge_bbl") or 0.0) <= 0.0:
             groups[k]["shuttle_discharge_bbl"] = float(shuttle_fallback.get(f"{loc_code}|{sh_num}", 0.0))
-        groups[k]["variance_bbl"] = float(groups[k]["fso_receipt_bbl"]) - float(groups[k]["shuttle_discharge_bbl"])
+        groups[k]["variance_bbl"] = float(groups[k]["shuttle_discharge_bbl"]) - float(groups[k]["fso_receipt_bbl"])
 
     return {
         "rows": list(groups.values()),

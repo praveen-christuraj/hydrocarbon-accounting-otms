@@ -13,6 +13,7 @@ Track barge trips — manage trip events, seal checks, comparisons, and complete
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
 | Various | `/barge-trip/*` | Trip management, events, comparisons |
+| `GET` | `/barge-trip/voyages?tab=OPEN\|CLOSED` | Read-only list of barge voyages for the Open / Closed tabs (requires View Barge Tracking) |
 | `POST` | `/trip-events` | Create trip event |
 | `POST` | `/trip-comparisons` | Create/update comparisons |
 
@@ -24,6 +25,9 @@ Track barge trips — manage trip events, seal checks, comparisons, and complete
 - `ensure_trip_not_closed()` — Guard against operations on closed trips
 
 ## Key Features
+- Voyage list with **Open Voyages** and **Closed Voyages** tabs. Each voyage is one convoy number with approved barge tickets. Open or closed status comes from the trip record; a voyage with no trip record yet is listed as Open.
+- Quick search, advanced conditions, single-date and date-range filters, CSV/XLSX/PDF export, and 20/50/100 pagination, the same as other list pages
+- Clicking **View** loads the convoy's timeline, comparisons and actions in the Voyage Detail section below the list
 - Trip lifecycle: Created → Departed → Arrived → Unloaded → Closed
 - Convoy tracking for multi-barge operations
 - Seal management: port manifold, starboard manifold, pumproom, tank seals

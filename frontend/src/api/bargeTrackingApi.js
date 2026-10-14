@@ -40,6 +40,41 @@ export const getBargeTracking = async (convoyNumber) => {
   return apiGet(`/barge-trip/barge-tracking?convoy_number=${encodeURIComponent(convoy)}`)
 }
 
+const toVoyageRow = (row = {}) => ({
+  tripId: row.trip_id ?? null,
+  convoyNumber: row.convoy_number || '',
+  status: String(row.status || 'OPEN').toUpperCase(),
+  barges: (row.barges || []).map((barge) => ({
+    assetCode: barge.asset_code || '',
+    assetName: barge.asset_name || '',
+  })),
+  bargeCount: Number(row.barge_count || 0),
+  ticketCount: Number(row.ticket_count || 0),
+  firstOperationDate: row.first_operation_date || '',
+  lastOperationDate: row.last_operation_date || '',
+  originLocationCodes: row.origin_location_codes || [],
+  destinationLocationCodes: row.destination_location_codes || [],
+  tripCreatedBy: row.trip_created_by || '',
+  tripRemarks: row.trip_remarks || '',
+  tripUpdatedAt: row.trip_updated_at || '',
+})
+
+/**
+ * Barge voyages for the Open / Closed tabs. `tab` is OPEN or CLOSED; the
+ * response also carries both tab counts so the tab labels stay accurate.
+ */
+export const getBargeVoyages = async (tab = 'OPEN') => {
+  const normalizedTab = String(tab || 'OPEN').toUpperCase() === 'CLOSED' ? 'CLOSED' : 'OPEN'
+  const data = await apiGet(`/barge-trip/voyages?tab=${normalizedTab}`)
+
+  return {
+    tab: data.tab || normalizedTab,
+    openCount: Number(data.open_count || 0),
+    closedCount: Number(data.closed_count || 0),
+    rows: (data.rows || []).map(toVoyageRow),
+  }
+}
+
 export const getTripTimelineByConvoy = async (convoyNumber) => {
   const convoy = String(convoyNumber || '').trim()
   if (!convoy) throw new Error('Convoy Number is required')
