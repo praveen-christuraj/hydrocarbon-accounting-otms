@@ -157,7 +157,7 @@ function BackupRecovery({ loggedInUser }) {
 
   const saveSettings = async (event) => {
     event.preventDefault()
-    if (!hasPermission('Manage Backup Settings')) {
+    if (!hasPermission('Edit Backup Settings')) {
       setErrorMsg('You do not have permission to manage backup settings')
       return
     }
@@ -654,7 +654,7 @@ function BackupRecovery({ loggedInUser }) {
       </form>
       </>)}
 
-      {hasPermission('Manage Backup Settings') && (
+      {hasPermission('Edit Backup Settings') && (
       <>
       <div className="section-title">
         <h3>Automatic Backup Settings</h3>

@@ -96,7 +96,13 @@ Print always uses the light palette (`@media print` re-declares the light tokens
 ## 5. Shape, spacing, elevation
 
 * Radius: controls 6 px, panels/cards 8 px, modals 10 px, chips 999 px.
-* Control heights: inputs/selects 38 px, buttons 36 px (compact table buttons 30 px).
+* Control heights (compacted 2026-10-14): inputs/selects **34 px** (`--control-height`),
+  buttons **32 px** (`--button-height`), compact buttons inside tables and toolbars
+  **28 px** (`--button-height-compact`, used by `td button` and `.btn-sm`).
+* Density: page shell padding 16/24 px (main content) and 16/20 px (page surface);
+  `th` 8×10 px, `td` 7×10 px; `h2` 14 px below, `h3` 22 px above / 10 px below;
+  `.page-title` 14 px below with a 12 px rule gap; `.section-title` 20 px above / 10 px below;
+  top bar 52 px, top navigation row and nav links 40 px, footer 10 px vertical.
 * Spacing scale: 4, 8, 12, 16, 20, 24, 32 px.
 * Borders do the structural work (1 px `--border`). Shadows only on floating layers
   (dropdown menus, modals, toasts): `0 12px 32px rgba(7, 23, 46, .18)`.
@@ -114,6 +120,7 @@ Print always uses the light palette (`@media print` re-declares the light tokens
 | Component | Purpose / rules |
 |-----------|-----------------|
 | `layout/AppShell` + `layout/TopNavigation` | Navy top bar (brand, theme switch, notifications, user menu) + white top navigation with dropdown menus (click or hover to open, Escape / outside click closes **menus**, arrow keys move). Active route is underlined in navy. |
+| `FormDialog` | Create / edit form as a pop-up (owner rule 10). `open`, `title`, `submitLabel`, `busy`, `error`, `onDismissError`, `onSubmit`, `onCancel`; `size` sm/md/lg/xl, `columns` 1–3, `hideSubmit` for read-only dialogs. Built on `Modal`, so only Cancel/Close and the header X close it. New master-data pages open their form this way (header `New …` button + row Edit/Delete actions). |
 | `PageHeader` | `title`, `description`, `count`, `actions` – the only page header pattern. |
 | `AlertMessage` | Inline alert (`tone`: error / success / warning / info) placed **next to the section it concerns**. Dismissible. `role="alert"` for errors, `aria-live="polite"` otherwise. |
 | `Toast` (`ToastProvider`, `useToast`) | Non-blocking pop-up notices (top-right). Use for cross-page/app-level messages; never `window.alert`. |
@@ -137,7 +144,7 @@ const filters = useDataFilters(rows, columns, { module: 'Page Name' })
 const visible = paginateRows(filters.filteredRows, page, pageSize)
 
 <DataTableToolbar filters={filters} columns={columns} exportFileName="users" exportTitle="User Master"
-  module="User Master" importConfig={importConfig} canImport={canManage} />
+  module="User Master" importConfig={importConfig} canImport={canCreate} />
 <table>… {filters.filteredRows.length === 0 ? emptyRow : visible.map(…)} …</table>
 <PaginationControls currentPage={page} totalRows={filters.filteredRows.length} onPageChange={setPage} />
 ```
@@ -145,6 +152,32 @@ const visible = paginateRows(filters.filteredRows, page, pageSize)
 Server-paginated lists (e.g. Shuttle Tracking voyages) pass `pageSize` as the API `page_size`/`limit`
 and `totalRows` from the server total. Lists capped by the API (users: 200 per call) are loaded in
 chunks so filtering, paging and export work on the complete data set.
+
+## 7b. Permissions in the UI
+
+* The catalog (`backend/app/utils/default_permissions.py`, served by `GET /permissions/catalog`)
+  is grouped into the 8 top-menu categories: **User Management, Master Data Management,
+  Configurations, Operations, Operation Tracking, Export Operations, Reporting,
+  Administration**. Every module exposes View / Create / Edit / Delete and, where a CRUD verb
+  would be ambiguous, a named workflow action (`Close Movement Mapping`,
+  `Approve Operation Transaction`, `Publish System Notification`, …).
+* Pages read permissions with `usePermissions(loggedInUser)` (admins bypass every check):
+
+  ```jsx
+  const { hasPermission } = usePermissions(loggedInUser)
+  const canCreate = hasPermission('Create Location')
+  const canEdit = hasPermission('Edit Location')
+  const canDelete = hasPermission('Delete Location')
+  const readOnly = !canCreate && !canEdit && !canDelete
+  ```
+
+* Gate each control with **its own** action: `New …` header button → Create, row **Edit** → Edit,
+  row **Delete** → Delete, workflow buttons → their named permission. Hide the Actions column
+  when the user holds none of them, and show an `info-box` naming the permissions that are
+  missing instead of leaving dead disabled buttons everywhere.
+* Route guards (`PermissionGuard`) use the module's **View** permission.
+* `PermissionMatrix` renders the Role Permission Assignment pop-up; `Access Summary` shows the
+  effective access of all of a user's roles.
 
 ## 8. Forms & validation
 
@@ -154,6 +187,10 @@ chunks so filtering, paging and export work on the complete data set.
   action buttons.
 * Submit buttons show a progress label ("Saving…") while a request is in flight.
 * Primary action on the left of the action row; Cancel to its right (existing convention).
+* Create / edit forms open in `FormDialog` (see §7). The form is only rendered when the user
+  holds `Create X` (new record) or `Edit X` (existing record); the submit button repeats the
+  check with `editId === null ? canCreate : canEdit`, and the handler guards it again because
+  the API enforces the same permission.
 
 ## 9. Tables
 

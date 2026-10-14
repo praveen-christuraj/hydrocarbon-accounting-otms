@@ -108,8 +108,10 @@
   --radius-control: 6px;
   --radius-panel: 8px;
   --radius-modal: 10px;
-  --control-height: 38px;
-  --button-height: 36px;
+  --control-height: 34px;
+  --button-height: 32px;
+  /* Compact controls used inside tables and toolbars. */
+  --button-height-compact: 28px;
 
   /* Type */
   --font-sans: 'Inter Variable', 'Segoe UI', system-ui, -apple-system, Roboto,

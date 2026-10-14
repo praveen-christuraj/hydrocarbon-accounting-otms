@@ -9,6 +9,7 @@ import PaginationControls, { paginateRows, usePageSize } from '../components/com
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
+import Modal from '../components/common/Modal'
 
 const COLUMN_GROUPS = ['Base', 'Input', 'Calculated', 'Computed']
 
@@ -36,7 +37,7 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
     )
   }
 
-  const canManageColumns = hasPermission('Manage Out-Turn Summary')
+  const canManageColumns = hasPermission('Edit Out-Turn Summary')
 
   const [filters, setFilters] = useState(emptyFilters)
   const [rows, setRows] = useState([])
@@ -188,6 +189,11 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
     } catch (error) {
       setErrorMsg(error.message)
     }
+  }
+
+  const closeConfigModal = () => {
+    if (savingConfig) return
+    setShowConfigModal(false)
   }
 
   const toggleColumn = (key) => {
@@ -643,95 +649,82 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
         }</div>
       )}
 
-      {showConfigModal && (
-        <div className="modal-overlay" onClick={() => setShowConfigModal(false)}>
-          <div
-            className="column-config-modal"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="modal-header">
-              <h3>Configure Out-Turn Summary Columns</h3>
-              <button
-                type="button"
-                className="modal-close"
-                onClick={() => setShowConfigModal(false)}
-              >
-                &times;
-              </button>
-            </div>
+      <Modal
+        open={showConfigModal}
+        title="Configure Out-Turn Summary Columns"
+        description="These columns are applied to the Out-Turn Summary report for all users. Toggle visibility and reorder columns within each group."
+        size="lg"
+        onClose={closeConfigModal}
+        footer={
+          <>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={closeConfigModal}
+              disabled={savingConfig}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={handleSaveConfig}
+              disabled={savingConfig}
+            >
+              {savingConfig ? 'Saving...' : 'Save Configuration'}
+            </button>
+          </>
+        }
+      >
+        <div className="column-config-groups">
+          {COLUMN_GROUPS.map((group) => {
+            const groupColumns = columnsByGroup[group] || []
 
-            <p className="modal-description">
-              These columns are applied to the Out-Turn Summary report for all
-              users. Toggle visibility and reorder columns within each group.
-            </p>
+            if (groupColumns.length === 0) {
+              return null
+            }
 
-            <div className="column-config-groups">
-              {COLUMN_GROUPS.map((group) => {
-                const groupColumns = columnsByGroup[group] || []
+            return (
+              <section key={group} className="column-config-group">
+                <h4 className="column-config-group-title">{group} Columns</h4>
 
-                if (groupColumns.length === 0) {
-                  return null
-                }
+                {groupColumns.map((col, index) => (
+                  <div key={col.key} className="column-config-row">
+                    <label className="column-config-check">
+                      <input
+                        type="checkbox"
+                        checked={col.enabled}
+                        onChange={() => toggleColumn(col.key)}
+                      />
+                      <span>{col.label}</span>
+                      <code>{col.key}</code>
+                    </label>
 
-                return (
-                  <div key={group} className="column-config-group">
-                    <h4>{group} Columns</h4>
-
-                    {groupColumns.map((col, index) => (
-                      <div key={col.key} className="column-config-row">
-                        <label className="column-config-check">
-                          <input
-                            type="checkbox"
-                            checked={col.enabled}
-                            onChange={() => toggleColumn(col.key)}
-                          />
-                          <span>{col.label}</span>
-                          <code>{col.key}</code>
-                        </label>
-
-                        <div className="column-config-move">
-                          <button
-                            type="button"
-                            onClick={() => moveColumn(group, index, -1)}
-                            disabled={index === 0}
-                          >
-                            &uarr;
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => moveColumn(group, index, 1)}
-                            disabled={index === groupColumns.length - 1}
-                          >
-                            &darr;
-                          </button>
-                        </div>
-                      </div>
-                    ))}
+                    <div className="column-config-move">
+                      <button
+                        type="button"
+                        onClick={() => moveColumn(group, index, -1)}
+                        disabled={index === 0}
+                        aria-label={`Move ${col.label} up`}
+                      >
+                        &uarr;
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => moveColumn(group, index, 1)}
+                        disabled={index === groupColumns.length - 1}
+                        aria-label={`Move ${col.label} down`}
+                      >
+                        &darr;
+                      </button>
+                    </div>
                   </div>
-                )
-              })}
-            </div>
-
-            <div className="modal-actions">
-              <button
-                type="button"
-                onClick={() => setShowConfigModal(false)}
-                disabled={savingConfig}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="primary-action"
-                onClick={handleSaveConfig}
-                disabled={savingConfig}
-              >
-                {savingConfig ? 'Saving...' : 'Save Configuration'}
-              </button>
-            </div>
-          </div>
+                ))}
+              </section>
+            )
+          })}
         </div>
-      )}
+      </Modal>
     </div>
   )
 }

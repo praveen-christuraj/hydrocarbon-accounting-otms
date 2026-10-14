@@ -35,13 +35,13 @@ body {
 
 .main-content {
   flex: 1;
-  padding: 24px 32px 40px;
+  padding: 16px 24px 24px;
 }
 
 /* Page surface */
 .main-content > div {
   background: var(--surface);
-  padding: 24px 28px 28px;
+  padding: 16px 20px 20px;
   border-radius: var(--radius-panel);
   border: 1px solid var(--border);
 }
@@ -56,7 +56,7 @@ h4 {
 
 h2 {
   margin-top: 0;
-  margin-bottom: 18px;
+  margin-bottom: 14px;
   font-size: 20px;
   line-height: 1.3;
   font-weight: 600;
@@ -64,8 +64,8 @@ h2 {
 }
 
 h3 {
-  margin-top: 30px;
-  margin-bottom: 12px;
+  margin-top: 22px;
+  margin-bottom: 10px;
   font-size: 16px;
   line-height: 1.35;
   font-weight: 600;
@@ -95,8 +95,8 @@ kbd {
 form {
   display: grid;
   grid-template-columns: repeat(2, minmax(220px, 1fr));
-  gap: 16px 22px;
-  margin-bottom: 20px;
+  gap: 12px 18px;
+  margin-bottom: 16px;
 }
 
 form div {
@@ -130,7 +130,7 @@ textarea {
 input,
 select {
   height: var(--control-height);
-  padding: 7px 11px;
+  padding: 5px 10px;
 }
 
 input[type='checkbox'],
@@ -180,9 +180,9 @@ textarea[aria-invalid='true']:focus {
 }
 
 textarea {
-  padding: 9px 11px;
+  padding: 7px 10px;
   resize: vertical;
-  min-height: 80px;
+  min-height: 72px;
 }
 
 .field-error {
@@ -205,7 +205,7 @@ button {
   border: 1px solid transparent;
   border-radius: var(--radius-control);
   min-height: var(--button-height);
-  padding: 7px 14px;
+  padding: 6px 12px;
   font-size: 13.5px;
   font-weight: 500;
   line-height: 1.2;
@@ -234,7 +234,7 @@ form button[type='submit'] {
   background: var(--primary);
   color: var(--text-inverse);
   min-width: 140px;
-  margin-top: 22px;
+  margin-top: 16px;
 }
 
 form button[type='submit']:hover:not(:disabled) {
@@ -246,7 +246,7 @@ form button[type='button'] {
   color: var(--text-secondary);
   border-color: var(--border-strong);
   min-width: 120px;
-  margin-top: 22px;
+  margin-top: 16px;
 }
 
 form button[type='button']:hover:not(:disabled) {
@@ -256,8 +256,8 @@ form button[type='button']:hover:not(:disabled) {
 
 /* Table row action buttons */
 td button {
-  min-height: 30px;
-  padding: 4px 10px;
+  min-height: var(--button-height-compact);
+  padding: 3px 9px;
   font-size: 12.5px;
   margin-right: 6px;
   background: var(--surface);
@@ -332,8 +332,8 @@ button.btn-ghost:hover:not(:disabled) {
 
 .btn-sm,
 button.btn-sm {
-  min-height: 30px;
-  padding: 4px 10px;
+  min-height: var(--button-height-compact);
+  padding: 3px 9px;
   font-size: 12.5px;
 }
 
@@ -356,14 +356,14 @@ thead {
 
 th {
   text-align: left;
-  padding: 10px 12px;
+  padding: 8px 10px;
   font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
 }
 
 td {
-  padding: 10px 12px;
+  padding: 7px 10px;
   font-size: 13.5px;
   border-bottom: 1px solid var(--divider);
   vertical-align: middle;
@@ -393,8 +393,8 @@ table[border] {
   justify-content: space-between;
   align-items: flex-start;
   gap: 16px;
-  margin-bottom: 20px;
-  padding-bottom: 16px;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
   border-bottom: 1px solid var(--divider);
 }
 
@@ -424,7 +424,7 @@ table[border] {
 .record-count {
   display: inline-flex;
   align-items: center;
-  height: 28px;
+  height: 26px;
   background: var(--primary-soft);
   color: var(--primary);
   padding: 0 12px;
@@ -446,8 +446,8 @@ table[border] {
 }
 
 .section-title {
-  margin-top: 28px;
-  margin-bottom: 12px;
+  margin-top: 20px;
+  margin-bottom: 10px;
 }
 
 .section-title h3 {
@@ -519,8 +519,8 @@ table[border] {
 .success-box,
 .warning-box,
 .info-box {
-  margin: 0 0 16px;
-  padding: 11px 14px;
+  margin: 0 0 12px;
+  padding: 9px 12px;
   border-radius: var(--radius-panel);
   border: 1px solid;
   font-size: 13.5px;
@@ -1269,13 +1269,13 @@ table[border] {
 .filter-panel {
   display: grid;
   grid-template-columns: 2fr 1fr 1fr auto;
-  gap: 14px;
+  gap: 12px;
   align-items: end;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-panel);
-  padding: 16px;
-  margin-bottom: 18px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
 }
 
 .filter-panel > div {
@@ -1290,7 +1290,7 @@ table[border] {
 .filter-actions button {
   background: var(--btn-secondary);
   color: var(--text-inverse);
-  height: 40px;
+  height: var(--control-height);
   margin: 0;
 }
 
@@ -3036,134 +3036,6 @@ table[border] {
   position: sticky;
   top: 0;
   z-index: 1;
-}
-
-.out-turn-summary-page .column-config-modal {
-  width: min(760px, 100%);
-  background: var(--surface);
-  border-radius: var(--radius-modal);
-  box-shadow: var(--shadow-modal);
-  overflow: hidden;
-}
-
-.out-turn-summary-page .column-config-modal .modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
-  background: var(--navy-900);
-  color: var(--text-inverse);
-}
-
-.out-turn-summary-page .column-config-modal .modal-header h3 {
-  margin: 0;
-  font-size: 16px;
-  color: var(--text-inverse);
-}
-
-.out-turn-summary-page .column-config-modal .modal-close {
-  background: transparent;
-  color: var(--text-inverse);
-  font-size: 22px;
-  line-height: 1;
-  padding: 0 6px;
-  margin: 0;
-}
-
-.out-turn-summary-page .column-config-modal .modal-description {
-  margin: 0;
-  padding: 12px 20px;
-  font-size: 13px;
-  color: var(--text-muted);
-  border-bottom: 1px solid var(--border);
-}
-
-.out-turn-summary-page .column-config-groups {
-  padding: 8px 20px 16px;
-  max-height: 55vh;
-  overflow-y: auto;
-}
-
-.out-turn-summary-page .column-config-group h4 {
-  margin: 14px 0 8px;
-  font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-  color: var(--link);
-}
-
-.out-turn-summary-page .column-config-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 6px 8px;
-  border-radius: 8px;
-}
-
-.out-turn-summary-page .column-config-row:hover {
-  background: var(--surface-2);
-}
-
-.out-turn-summary-page .column-config-check {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 0;
-  cursor: pointer;
-}
-
-.out-turn-summary-page .column-config-check input {
-  width: auto;
-  height: auto;
-}
-
-.out-turn-summary-page .column-config-check span {
-  font-weight: 600;
-  color: var(--text);
-}
-
-.out-turn-summary-page .column-config-check code {
-  font-size: 11px;
-  color: var(--text-muted);
-  background: var(--surface-2);
-  padding: 2px 6px;
-  border-radius: 5px;
-}
-
-.out-turn-summary-page .column-config-move {
-  display: flex;
-  gap: 4px;
-}
-
-.out-turn-summary-page .column-config-move button {
-  margin: 0;
-  padding: 4px 9px;
-  font-size: 13px;
-  background: var(--surface-3);
-  color: var(--text-secondary);
-}
-
-.out-turn-summary-page .column-config-move button:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-
-.out-turn-summary-page .modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  padding: 14px 20px;
-  border-top: 1px solid var(--border);
-}
-
-.out-turn-summary-page .modal-actions .primary-action {
-  background: var(--primary);
-  color: var(--text-inverse);
-}
-
-.out-turn-summary-page .modal-actions .primary-action:hover {
-  background: var(--primary-hover);
 }
 
 @media print {

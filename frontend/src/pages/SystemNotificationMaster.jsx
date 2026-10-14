@@ -81,7 +81,10 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
       (p) => p.permissionName === permissionName
     )
   }
-  const canManageSystemNotification = hasPermission('Manage System Notification')
+  const canCreateSystemNotification = hasPermission('Create System Notification')
+  const canEditSystemNotification = hasPermission('Edit System Notification')
+  const canWriteSystemNotification =
+    canCreateSystemNotification || canEditSystemNotification
   const canPublishSystemNotification = hasPermission('Publish System Notification')
   const canDeactivateSystemNotification = hasPermission('Deactivate System Notification')
   const canViewDeliveryReport = hasPermission('View System Notification Delivery Report')
@@ -139,8 +142,10 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
   const handleSave = async (event) => {
     event.preventDefault()
 
-    if (!canManageSystemNotification) {
-      setErrorMsg('You do not have permission to manage system notifications.')
+    if (!(editId ? canEditSystemNotification : canCreateSystemNotification)) {
+      setErrorMsg(
+        `You do not have permission to ${editId ? 'edit' : 'create'} system notifications.`
+      )
       return
     }
 
@@ -183,8 +188,8 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
   const handleEdit = (notification) => {
     setSuccessMsg('')
     setErrorMsg('')
-    if (!canManageSystemNotification) {
-      setErrorMsg('You do not have permission to manage system notifications.')
+    if (!canEditSystemNotification) {
+      setErrorMsg('You do not have permission to edit system notifications.')
       return
     }
     if (notification.status === 'Published') {
@@ -317,14 +322,14 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
         </div>
       )}
 
-      {!canManageSystemNotification && (
+      {!canWriteSystemNotification && (
         <div className="info-box">
-          You have view-only access. Contact an administrator to create, edit, or
-          manage system notifications.
+          You have view-only access. Creating a notification needs Create System
+          Notification and editing one needs Edit System Notification.
         </div>
       )}
 
-      {canManageSystemNotification && (
+      {canWriteSystemNotification && (
       <>
       <form onSubmit={handleSave} className="notification-admin-form">
         <div>
@@ -503,7 +508,13 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
         )}
 
         <div className="form-actions">
-          <button type="submit" disabled={loading}>
+          <button
+            type="submit"
+            disabled={
+              loading ||
+              !(editId ? canEditSystemNotification : canCreateSystemNotification)
+            }
+          >
             {editId ? 'Update Notification' : 'Create Draft'}
           </button>
           <button type="button" onClick={resetForm} disabled={loading}>
@@ -595,7 +606,7 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
                 </td>
                 <td>
                   <div className="table-actions">
-                    {canManageSystemNotification && (
+                    {canEditSystemNotification && (
                       <button type="button" onClick={() => handleEdit(notification)} disabled={loading || notification.status === 'Published'}>
                         Edit
                       </button>

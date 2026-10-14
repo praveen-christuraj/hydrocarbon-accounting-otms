@@ -12,6 +12,7 @@ import PaginationControls, { paginateRows, usePageSize } from '../components/com
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
+import { usePermissions } from '../hooks/usePermissions'
 
 function OperationTemplateMaster({
   operationTypes,
@@ -19,24 +20,10 @@ function OperationTemplateMaster({
   reloadOperationTemplates,
   loggedInUser,
 }) {
-  const isAdminBootstrap =
-    loggedInUser?.isAdmin === true ||
-    String(loggedInUser?.username || '').trim().toLowerCase() === 'admin' ||
-    (Array.isArray(loggedInUser?.roles) && loggedInUser.roles.some((role) =>
-      String(role?.role_name || role?.roleName || '').trim().toLowerCase() === 'admin'
-    ))
-
-  const hasPermission = (permissionName) =>
-    Boolean(
-      loggedInUser?.permissions?.some(
-        (p) => p.permissionName === permissionName
-      )
-    )
-
-  const canManageOperationTemplate = useMemo(() => {
-    if (isAdminBootstrap) return true
-    return hasPermission('Manage Operation Template')
-  }, [loggedInUser])
+  const { hasPermission } = usePermissions(loggedInUser)
+  const canCreate = hasPermission('Create Operation Template')
+  const canEdit = hasPermission('Edit Operation Template')
+  const canDelete = hasPermission('Delete Operation Template')
   const emptyTemplate = {
     templateName: '',
     operationTypeCode: '',
@@ -63,6 +50,9 @@ function OperationTemplateMaster({
   const [template, setTemplate] = useState(emptyTemplate)
   const [field, setField] = useState(emptyField)
   const [editId, setEditId] = useState(null)
+  // Creating a new template needs Create Operation Template; changing a saved
+  // one (including its entry layout) needs Edit Operation Template.
+  const canWriteTemplate = editId === null ? canCreate : canEdit
   const [loading, setLoading] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
   const [layoutLoading, setLayoutLoading] = useState(false)
@@ -176,8 +166,10 @@ function OperationTemplateMaster({
   }
 
   const handleAddField = () => {
-    if (!canManageOperationTemplate) {
-      setErrorMsg('You do not have permission to manage operation templates')
+    if (!canWriteTemplate) {
+      setErrorMsg(
+        `You do not have permission to ${editId === null ? 'create' : 'edit'} operation templates`
+      )
       return
     }
     if (field.fieldName.trim() === '') {
@@ -234,8 +226,10 @@ function OperationTemplateMaster({
   }
 
   const confirmRemoveFieldAction = () => {
-    if (!canManageOperationTemplate) {
-      setErrorMsg('You do not have permission to manage operation templates')
+    if (!canWriteTemplate) {
+      setErrorMsg(
+        `You do not have permission to ${editId === null ? 'create' : 'edit'} operation templates`
+      )
       setConfirmRemoveField(null)
       return
     }
@@ -250,8 +244,10 @@ function OperationTemplateMaster({
   const handleSubmit = async (e) => {
     e.preventDefault()
 
-    if (!canManageOperationTemplate) {
-      setErrorMsg('You do not have permission to manage operation templates')
+    if (!canWriteTemplate) {
+      setErrorMsg(
+        `You do not have permission to ${editId === null ? 'create' : 'edit'} operation templates`
+      )
       return
     }
 
@@ -305,6 +301,11 @@ function OperationTemplateMaster({
   }
 
   const handleEdit = (templateToEdit) => {
+    if (!canEdit) {
+      setErrorMsg('You do not have permission to edit operation templates')
+      return
+    }
+
     setTemplate({
       templateName: templateToEdit.templateName,
       operationTypeCode: templateToEdit.operationTypeCode,
@@ -320,14 +321,18 @@ function OperationTemplateMaster({
   }
 
   const handleDelete = async (templateId) => {
+    if (!canDelete) {
+      setErrorMsg('You do not have permission to delete operation templates')
+      return
+    }
     setConfirmDeleteTemplate(templateId)
   }
 
   const confirmDeleteTemplateAction = async () => {
     const templateId = confirmDeleteTemplate
     setConfirmDeleteTemplate(null)
-    if (!canManageOperationTemplate) {
-      setErrorMsg('You do not have permission to manage operation templates')
+    if (!canDelete) {
+      setErrorMsg('You do not have permission to delete operation templates')
       return
     }
     if (!templateId) return
@@ -584,8 +589,8 @@ function OperationTemplateMaster({
   }
 
   const handleLayoutSave = async () => {
-    if (!canManageOperationTemplate) {
-      setErrorMsg('You do not have permission to manage operation templates')
+    if (!canEdit) {
+      setErrorMsg('You do not have permission to edit operation templates')
       return
     }
     if (!editId) {
@@ -868,9 +873,9 @@ function OperationTemplateMaster({
         </div>
       )}
 
-      {!canManageOperationTemplate && (
+      {!canCreate && !canEdit && !canDelete && (
         <div className="info-box">
-          You have view-only access. Assign <strong>Manage Operation Template</strong> to create, edit, or delete operation templates and layouts.
+          You have view-only access. Assign <strong>Create Operation Template</strong>, <strong>Edit Operation Template</strong> (also needed for entry layouts) or <strong>Delete Operation Template</strong> to make changes.
         </div>
       )}
 
@@ -883,7 +888,7 @@ function OperationTemplateMaster({
             value={template.templateName}
             onChange={handleTemplateChange}
             placeholder="Example: Tank Operation Template"
-            disabled={!canManageOperationTemplate}
+            disabled={!canWriteTemplate}
           />
         </div>
 
@@ -893,7 +898,7 @@ function OperationTemplateMaster({
             name="operationTypeCode"
             value={template.operationTypeCode}
             onChange={handleTemplateChange}
-            disabled={!canManageOperationTemplate}
+            disabled={!canWriteTemplate}
           >
             <option value="">Select Operation Type</option>
 
@@ -915,7 +920,7 @@ function OperationTemplateMaster({
             name="entryLayoutType"
             value={template.entryLayoutType}
             onChange={handleTemplateChange}
-            disabled={!canManageOperationTemplate}
+            disabled={!canWriteTemplate}
           >
             <option>Standard Form</option>
             <option>Tank Gauging</option>
@@ -935,7 +940,7 @@ function OperationTemplateMaster({
             name="calculationEngine"
             value={template.calculationEngine}
             onChange={handleTemplateChange}
-            disabled={!canManageOperationTemplate}
+            disabled={!canWriteTemplate}
           >
             <option>None</option>
             <option>Tank Quantity</option>
@@ -953,7 +958,7 @@ function OperationTemplateMaster({
             name="status"
             value={template.status}
             onChange={handleTemplateChange}
-            disabled={!canManageOperationTemplate}
+            disabled={!canWriteTemplate}
           >
             <option>Active</option>
             <option>Inactive</option>
@@ -969,7 +974,7 @@ function OperationTemplateMaster({
             onChange={handleTemplateChange}
             placeholder="Enter template description"
             rows="3"
-            disabled={!canManageOperationTemplate}
+            disabled={!canWriteTemplate}
           />
         </div>
 
@@ -991,7 +996,7 @@ function OperationTemplateMaster({
             value={field.fieldName}
             onChange={handleFieldChange}
             placeholder="Example: Opening Ullage"
-            disabled={!canManageOperationTemplate}
+            disabled={!canWriteTemplate}
           />
         </div>
 
@@ -1003,7 +1008,7 @@ function OperationTemplateMaster({
             value={field.fieldCode}
             onChange={handleFieldChange}
             placeholder="Example: opening_ullage"
-            disabled={!canManageOperationTemplate}
+            disabled={!canWriteTemplate}
           />
         </div>
 
@@ -1013,7 +1018,7 @@ function OperationTemplateMaster({
             name="fieldGroup"
             value={field.fieldGroup}
             onChange={handleFieldChange}
-            disabled={!canManageOperationTemplate}
+            disabled={!canWriteTemplate}
           >
             <option>General</option>
             <option>Sender</option>
@@ -1030,7 +1035,7 @@ function OperationTemplateMaster({
             name="dataType"
             value={field.dataType}
             onChange={handleFieldChange}
-            disabled={!canManageOperationTemplate}
+            disabled={!canWriteTemplate}
           >
             <option value="">Select Data Type</option>
             <option>Text</option>
@@ -1050,7 +1055,7 @@ function OperationTemplateMaster({
             value={field.unit}
             onChange={handleFieldChange}
             placeholder="Example: m, bbl, m3, °C"
-            disabled={!canManageOperationTemplate}
+            disabled={!canWriteTemplate}
           />
         </div>
 
@@ -1060,7 +1065,7 @@ function OperationTemplateMaster({
             name="isRequired"
             value={field.isRequired}
             onChange={handleFieldChange}
-            disabled={!canManageOperationTemplate}
+            disabled={!canWriteTemplate}
           >
             <option>Yes</option>
             <option>No</option>
@@ -1073,7 +1078,7 @@ function OperationTemplateMaster({
             name="inputMode"
             value={field.inputMode}
             onChange={handleFieldChange}
-            disabled={!canManageOperationTemplate}
+            disabled={!canWriteTemplate}
           >
             <option>Manual</option>
             <option>Calculated</option>
@@ -1088,7 +1093,7 @@ function OperationTemplateMaster({
             name="calculationRole"
             value={field.calculationRole}
             onChange={handleFieldChange}
-            disabled={!canManageOperationTemplate}
+            disabled={!canWriteTemplate}
           >
             <option>Input</option>
             <option>Output</option>
@@ -1107,7 +1112,7 @@ function OperationTemplateMaster({
             value={field.sortOrder}
             onChange={handleFieldChange}
             placeholder="Example: 1"
-            disabled={!canManageOperationTemplate}
+            disabled={!canWriteTemplate}
           />
         </div>
 
@@ -1117,7 +1122,7 @@ function OperationTemplateMaster({
             name="status"
             value={field.status}
             onChange={handleFieldChange}
-            disabled={!canManageOperationTemplate}
+            disabled={!canWriteTemplate}
           >
             <option>Active</option>
             <option>Inactive</option>
@@ -1126,7 +1131,7 @@ function OperationTemplateMaster({
         </div>
 
         <div className="form-actions">
-          <button type="button" onClick={handleAddField} disabled={loading || !canManageOperationTemplate}>
+          <button type="button" onClick={handleAddField} disabled={loading || !canWriteTemplate}>
             Add Field
           </button>
         </div>
@@ -1175,7 +1180,7 @@ function OperationTemplateMaster({
                       <button
                         type="button"
                         onClick={() => handleRemoveField(index)}
-                        disabled={loading || !canManageOperationTemplate}
+                        disabled={loading || !canWriteTemplate}
                       >
                         Remove
                       </button>
@@ -1188,7 +1193,7 @@ function OperationTemplateMaster({
         </div>
 
         <div className="form-actions">
-          <button type="submit" disabled={loading || !canManageOperationTemplate}>
+          <button type="submit" disabled={loading || !canWriteTemplate}>
             {loading
               ? 'Please wait...'
               : editId === null
@@ -1227,14 +1232,14 @@ function OperationTemplateMaster({
             <th>Engine</th>
             <th>Fields</th>
             <th>Status</th>
-            <th>Actions</th>
+            {(canEdit || canDelete) && <th>Actions</th>}
           </tr>
         </thead>
 
         <tbody>
           {operationTemplates.length === 0 ? (
             <tr>
-              <td colSpan="7" className="empty-table">
+              <td colSpan={canEdit || canDelete ? 7 : 6} className="empty-table">
                 No operation templates added yet.
               </td>
             </tr>
@@ -1267,15 +1272,21 @@ function OperationTemplateMaster({
                     {item.status}
                   </span>
                 </td>
-                <td>
-                  <button type="button" onClick={() => handleEdit(item)} disabled={!canManageOperationTemplate}>
-                    Edit
-                  </button>
+                {(canEdit || canDelete) && (
+                  <td>
+                    {canEdit && (
+                      <button type="button" onClick={() => handleEdit(item)}>
+                        Edit
+                      </button>
+                    )}
 
-                  <button type="button" onClick={() => handleDelete(item.id)} disabled={!canManageOperationTemplate}>
-                    Delete
-                  </button>
-                </td>
+                    {canDelete && (
+                      <button type="button" onClick={() => handleDelete(item.id)}>
+                        Delete
+                      </button>
+                    )}
+                  </td>
+                )}
               </tr>
             ))
           )}
@@ -1312,7 +1323,7 @@ function OperationTemplateMaster({
             <button
               type="button"
               onClick={handleInitializeLayoutDraft}
-              disabled={layoutLoading || !canManageOperationTemplate}
+              disabled={layoutLoading || !canEdit}
             >
               New Layout Draft
             </button>
@@ -1377,7 +1388,7 @@ function OperationTemplateMaster({
                     type="text"
                     value={layoutDraft.layoutName}
                     onChange={handleLayoutHeaderChange}
-                    disabled={!canManageOperationTemplate}
+                    disabled={!canWriteTemplate}
                   />
                 </div>
                 <div>
@@ -1387,7 +1398,7 @@ function OperationTemplateMaster({
                     type="number"
                     value={layoutDraft.versionNo}
                     onChange={handleLayoutHeaderChange}
-                    disabled={Boolean(selectedLayoutId) || !canManageOperationTemplate}
+                    disabled={Boolean(selectedLayoutId) || !canWriteTemplate}
                   />
                 </div>
                 <div>
@@ -1396,7 +1407,7 @@ function OperationTemplateMaster({
                     name="status"
                     value={layoutDraft.status}
                     onChange={handleLayoutHeaderChange}
-                    disabled={!canManageOperationTemplate}
+                    disabled={!canWriteTemplate}
                   >
                     <option>Draft</option>
                     <option>Active</option>
@@ -1409,7 +1420,7 @@ function OperationTemplateMaster({
                     name="isDefault"
                     value={layoutDraft.isDefault}
                     onChange={handleLayoutHeaderChange}
-                    disabled={!canManageOperationTemplate}
+                    disabled={!canWriteTemplate}
                   >
                     <option>No</option>
                     <option>Yes</option>
@@ -1418,7 +1429,7 @@ function OperationTemplateMaster({
               </form>
 
               <div className="form-actions">
-                <button type="button" onClick={handleAddSection} disabled={!canManageOperationTemplate}>
+                <button type="button" onClick={handleAddSection} disabled={!canWriteTemplate}>
                   Add Section
                 </button>
               </div>
@@ -1461,7 +1472,7 @@ function OperationTemplateMaster({
                               e.target.value
                             )
                           }
-                          disabled={!canManageOperationTemplate}
+                          disabled={!canWriteTemplate}
                         />
                       </td>
                       <td>
@@ -1475,7 +1486,7 @@ function OperationTemplateMaster({
                               e.target.value
                             )
                           }
-                          disabled={!canManageOperationTemplate}
+                          disabled={!canWriteTemplate}
                         />
                       </td>
                       <td>
@@ -1489,7 +1500,7 @@ function OperationTemplateMaster({
                               e.target.value
                             )
                           }
-                          disabled={!canManageOperationTemplate}
+                          disabled={!canWriteTemplate}
                         />
                       </td>
                       <td>
@@ -1502,7 +1513,7 @@ function OperationTemplateMaster({
                               e.target.value
                             )
                           }
-                          disabled={!canManageOperationTemplate}
+                          disabled={!canWriteTemplate}
                         >
                           <option>No</option>
                           <option>Yes</option>
@@ -1518,7 +1529,7 @@ function OperationTemplateMaster({
                               e.target.value
                             )
                           }
-                          disabled={!canManageOperationTemplate}
+                          disabled={!canWriteTemplate}
                         >
                           <option>Yes</option>
                           <option>No</option>
@@ -1528,7 +1539,7 @@ function OperationTemplateMaster({
                         <button
                           type="button"
                           onClick={() => handleRemoveSection(section.localId)}
-                          disabled={!canManageOperationTemplate}
+                          disabled={!canWriteTemplate}
                         >
                           Remove
                         </button>
@@ -1587,7 +1598,7 @@ function OperationTemplateMaster({
                               e.target.value
                             )
                           }
-                          disabled={!canManageOperationTemplate}
+                          disabled={!canWriteTemplate}
                         >
                           <option value="">Select Field</option>
                           {fieldOptions.map((f) => (
@@ -1607,7 +1618,7 @@ function OperationTemplateMaster({
                               e.target.value
                             )
                           }
-                          disabled={!canManageOperationTemplate}
+                          disabled={!canWriteTemplate}
                         >
                           <option value="">Select Section</option>
                           {layoutDraft.sections.map((section) => (
@@ -1625,7 +1636,7 @@ function OperationTemplateMaster({
                           onChange={(e) =>
                             handleItemChange(item.localId, 'rowNo', e.target.value)
                           }
-                          disabled={!canManageOperationTemplate}
+                          disabled={!canWriteTemplate}
                         />
                       </td>
                       <td>
@@ -1641,7 +1652,7 @@ function OperationTemplateMaster({
                               e.target.value
                             )
                           }
-                          disabled={!canManageOperationTemplate}
+                          disabled={!canWriteTemplate}
                         />
                       </td>
                       <td>
@@ -1653,7 +1664,7 @@ function OperationTemplateMaster({
                           onChange={(e) =>
                             handleItemChange(item.localId, 'colSpan', e.target.value)
                           }
-                          disabled={!canManageOperationTemplate}
+                          disabled={!canWriteTemplate}
                         />
                       </td>
                       <td>
@@ -1668,7 +1679,7 @@ function OperationTemplateMaster({
                               e.target.value
                             )
                           }
-                          disabled={!canManageOperationTemplate}
+                          disabled={!canWriteTemplate}
                         />
                       </td>
                       <td>
@@ -1682,7 +1693,7 @@ function OperationTemplateMaster({
                               e.target.value
                             )
                           }
-                          disabled={!canManageOperationTemplate}
+                          disabled={!canWriteTemplate}
                         />
                       </td>
                       <td>
@@ -1696,7 +1707,7 @@ function OperationTemplateMaster({
                               e.target.value
                             )
                           }
-                          disabled={!canManageOperationTemplate}
+                          disabled={!canWriteTemplate}
                         />
                       </td>
                     </tr>
@@ -1770,7 +1781,7 @@ function OperationTemplateMaster({
                 <button
                   type="button"
                   onClick={handleLayoutSave}
-                  disabled={layoutLoading || !canManageOperationTemplate}
+                  disabled={layoutLoading || !canWriteTemplate}
                 >
                   {layoutLoading
                     ? 'Please wait...'

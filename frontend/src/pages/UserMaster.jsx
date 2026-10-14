@@ -4,6 +4,7 @@ import PaginationControls, { paginateRows, usePageSize } from '../components/com
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import AlertMessage from '../components/common/AlertMessage'
 import { useConfirm } from '../components/common/ConfirmProvider'
+import { usePermissions } from '../hooks/usePermissions'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
 import { logUiAction } from '../utils/actionLogger'
@@ -60,22 +61,11 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
   const visibleUsers = paginateRows(filters.filteredRows, page, pageSize)
   const total = users.length
 
-  const isAdminBootstrap =
-    loggedInUser?.isAdmin === true ||
-    String(loggedInUser?.username || '').trim().toLowerCase() === 'admin' ||
-    (Array.isArray(loggedInUser?.roles) && loggedInUser.roles.some((role) =>
-      String(role?.role_name || role?.roleName || '').trim().toLowerCase() === 'admin'
-    ))
-
-  const hasPermission = (permissionName) => {
-    if (isAdminBootstrap) return true
-    if (!loggedInUser || !Array.isArray(loggedInUser.permissions)) return false
-    return loggedInUser.permissions.some(
-      (p) => p.permissionName === permissionName
-    )
-  }
-
-  const canManageUser = hasPermission('Manage User')
+  const { hasPermission } = usePermissions(loggedInUser)
+  const canCreate = hasPermission('Create User')
+  const canEdit = hasPermission('Edit User')
+  const canDelete = hasPermission('Delete User')
+  const canWriteUser = canCreate || canEdit
   const isSelfEdit = editId !== null && editId === loggedInUser?.id
 
   const pwStrength = useMemo(() => calcPasswordStrength(user.password), [user.password])
@@ -171,8 +161,10 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
     clearError()
     clearSuccess()
 
-    if (!canManageUser) {
-      setError('You do not have permission to manage users.')
+    if (!(editId === null ? canCreate : canEdit)) {
+      setError(
+        `You do not have permission to ${editId === null ? 'create' : 'edit'} users.`
+      )
       return
     }
 
@@ -225,8 +217,8 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
     clearError()
     clearSuccess()
 
-    if (!canManageUser) {
-      setError('You do not have permission to manage users.')
+    if (!canDelete) {
+      setError('You do not have permission to delete users.')
       return
     }
 
@@ -317,25 +309,27 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
       <AlertMessage tone="success" message={success} onDismiss={clearSuccess} />
       <AlertMessage tone="error" message={error} onDismiss={clearError} />
 
-      {!canManageUser && (
+      {!canCreate && !canEdit && !canDelete && (
         <div className="info-box">
-          You are in view-only mode. Admin can manage users.
+          You are in view-only mode. Creating, editing and deleting users each
+          need their own permission (Create User, Edit User, Delete User).
         </div>
       )}
 
-      <form onSubmit={handleSubmit}>
-        <div>
-          <label>Full Name</label>
-          <input
-            name="fullName"
-            type="text"
-            value={user.fullName}
-            onChange={handleChange}
-            placeholder="Enter full name"
-            aria-invalid={fieldErrors.fullName ? 'true' : undefined}
-          />
-          {fieldErrors.fullName && (
-            <small className="field-error">{fieldErrors.fullName}</small>
+      {canWriteUser && (
+        <form onSubmit={handleSubmit}>
+          <div>
+            <label>Full Name</label>
+            <input
+              name="fullName"
+              type="text"
+              value={user.fullName}
+              onChange={handleChange}
+              placeholder="Enter full name"
+              aria-invalid={fieldErrors.fullName ? 'true' : undefined}
+            />
+            {fieldErrors.fullName && (
+              <small className="field-error">{fieldErrors.fullName}</small>
           )}
         </div>
 
@@ -469,7 +463,10 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
         </div>
 
         <div className="form-actions">
-          <button type="submit" disabled={loading || !canManageUser}>
+          <button
+            type="submit"
+            disabled={loading || !(editId === null ? canCreate : canEdit)}
+          >
             {loading
               ? 'Please wait…'
               : editId === null
@@ -484,6 +481,7 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
           )}
         </div>
       </form>
+      )}
 
       <div className="section-title">
         <h3>Saved Users</h3>
@@ -497,7 +495,7 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
         exportTitle="User Master"
         module="User Master"
         importConfig={importConfig}
-        canImport={canManageUser}
+        canImport={canCreate}
         searchPlaceholder="Search by name, username, email, department…"
       />
 
@@ -510,20 +508,20 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
             <th>Department</th>
             <th>Designation</th>
             <th>Status</th>
-            <th>Actions</th>
+            {(canEdit || canDelete) && <th>Actions</th>}
           </tr>
         </thead>
 
         <tbody>
           {listLoading && users.length === 0 ? (
             <tr>
-              <td colSpan="7" className="empty-table">
+              <td colSpan={canEdit || canDelete ? 7 : 6} className="empty-table">
                 Loading users…
               </td>
             </tr>
           ) : filters.filteredRows.length === 0 ? (
             <tr>
-              <td colSpan="7" className="empty-table">
+              <td colSpan={canEdit || canDelete ? 7 : 6} className="empty-table">
                 {users.length > 0 ? 'No users match the current filters.' : 'No users found.'}
               </td>
             </tr>
@@ -540,23 +538,29 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
                     {item.status}
                   </span>
                 </td>
-                <td>
-                  <button
-                    type="button"
-                    onClick={() => handleEdit(item)}
-                    disabled={!canManageUser || loading}
-                  >
-                    Edit
-                  </button>
+                {(canEdit || canDelete) && (
+                  <td>
+                    {canEdit && (
+                      <button
+                        type="button"
+                        onClick={() => handleEdit(item)}
+                        disabled={loading}
+                      >
+                        Edit
+                      </button>
+                    )}
 
-                  <button
-                    type="button"
-                    onClick={() => handleDelete(item)}
-                    disabled={!canManageUser || loading}
-                  >
-                    Delete
-                  </button>
-                </td>
+                    {canDelete && (
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(item)}
+                        disabled={loading}
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </td>
+                )}
               </tr>
             ))
           )}

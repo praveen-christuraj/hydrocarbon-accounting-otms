@@ -117,13 +117,13 @@ td button.btn-secondary.btn-secondary:hover:not(:disabled) {
 }
 
 .app-topbar-inner {
-  min-height: 60px;
+  min-height: 52px;
 }
 
 .app-brand {
   display: inline-flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
   color: inherit;
   text-decoration: none;
@@ -137,8 +137,8 @@ td button.btn-secondary.btn-secondary:hover:not(:disabled) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   border-radius: var(--radius-panel);
   background: var(--text-inverse);
   color: var(--navy-900);
@@ -189,14 +189,14 @@ td button.btn-secondary.btn-secondary:hover:not(:disabled) {
 }
 
 .app-navbar-inner {
-  min-height: 44px;
+  min-height: 40px;
 }
 
 .app-footer {
   display: flex;
   justify-content: space-between;
   gap: 16px;
-  padding: 14px 32px;
+  padding: 10px 32px;
   border-top: 1px solid var(--border);
   color: var(--text-muted);
   font-size: 12px;
@@ -238,9 +238,9 @@ td button.btn-secondary.btn-secondary:hover:not(:disabled) {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  min-height: 44px;
+  min-height: 40px;
   margin: 0;
-  padding: 0 12px;
+  padding: 0 11px;
   border: 0;
   border-bottom: 2px solid transparent;
   border-radius: 0;
@@ -347,8 +347,8 @@ td button.btn-secondary.btn-secondary:hover:not(:disabled) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
   min-height: 0;
   margin: 0;
   padding: 0;
@@ -377,7 +377,7 @@ td button.btn-secondary.btn-secondary:hover:not(:disabled) {
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  min-height: 40px;
+  min-height: 36px;
   margin: 0;
   padding: 3px 8px 3px 3px;
   border: 1px solid transparent;
@@ -397,8 +397,8 @@ td button.btn-secondary.btn-secondary:hover:not(:disabled) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
   background: var(--navy-600);
   color: var(--text-inverse);
@@ -1606,7 +1606,7 @@ tbody tr.matrix-category-row:hover {
 }
 
 .pagination-page-size select {
-  height: 30px;
+  height: var(--button-height-compact);
   padding: 2px 28px 2px 8px;
   font-size: 12.5px;
 }
@@ -1646,7 +1646,7 @@ tbody tr.matrix-category-row:hover {
 
 .pagination-jump-form input {
   width: 60px;
-  height: 30px;
+  height: var(--button-height-compact);
   padding: 2px 6px;
   text-align: center;
   font-size: 12.5px;
@@ -2388,6 +2388,99 @@ tbody tr.matrix-category-row:hover {
     margin-left: 0;
     width: 100%;
   }
+}
+
+/* ------------------------------------------- column configuration dialog */
+/* Out-Turn Summary / report columns are configured in the standard Modal, so
+   the rules are global (the dialog is portalled to <body>). */
+.column-config-groups {
+  display: grid;
+  gap: 16px;
+}
+
+.column-config-group {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface-2);
+  padding: 10px 12px 12px;
+}
+
+.column-config-group-title {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-muted);
+}
+
+.column-config-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 8px;
+  border-radius: var(--radius-control);
+}
+
+.column-config-row:hover {
+  background: var(--surface-3);
+}
+
+.column-config-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+.column-config-check input {
+  width: auto;
+  height: auto;
+  margin: 0;
+}
+
+.column-config-check span {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.column-config-check code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--surface-3);
+  padding: 2px 6px;
+  border-radius: 5px;
+  overflow-wrap: anywhere;
+}
+
+.column-config-move {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+}
+
+.column-config-move button {
+  width: 30px;
+  margin: 0;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1;
+  background: var(--surface-3);
+  color: var(--text-secondary);
+}
+
+.column-config-move button:hover:not(:disabled) {
+  background: var(--border-strong);
+  color: var(--text);
+}
+
+.column-config-move button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 /* --------------------------------------------------------------- print */
