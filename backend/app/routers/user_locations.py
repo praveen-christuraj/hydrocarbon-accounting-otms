@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import false, func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -10,7 +11,14 @@ from app.schemas import (
     UserLocationSaveRequest,
 )
 from app.dependencies.auth import get_current_user_from_token
-from app.dependencies.permissions import require_user_permission
+from app.dependencies.permissions import (
+    ensure_user_in_actor_location_scope,
+    get_user_location_codes,
+    is_admin_user,
+    normalize_location_code,
+    require_user_permission,
+    user_is_within_actor_location_scope,
+)
 from app.services.audit_service import create_audit_log
 
 router = APIRouter(prefix="/user-locations", tags=["User Locations"])
@@ -32,12 +40,23 @@ def get_user_locations(
 ):
     require_user_permission(current_user, "View User Location Assignment", db)
 
-    assignments = (
-        db.query(UserLocation, User)
-        .join(User, User.id == UserLocation.user_id)
-        .order_by(User.full_name, UserLocation.location_code)
-        .all()
-    )
+    assignments_query = db.query(UserLocation, User).join(User, User.id == UserLocation.user_id)
+    allowed_codes = get_user_location_codes(current_user, db)
+    if allowed_codes is not None:
+        if not allowed_codes:
+            assignments_query = assignments_query.filter(false())
+        else:
+            assignments_query = assignments_query.filter(
+                func.lower(func.trim(UserLocation.location_code)).in_(allowed_codes)
+            )
+    assignments = assignments_query.order_by(User.full_name, UserLocation.location_code).all()
+    if allowed_codes is not None:
+        assignments = [
+            (assignment, user)
+            for assignment, user in assignments
+            if (target_codes := get_user_location_codes(user, db)) is not None
+            and target_codes.issubset(allowed_codes)
+        ]
 
     return [
         {
@@ -61,14 +80,31 @@ def get_all_user_location_summaries(
     """Returns a summary per user: user info + all assigned location codes + all_locations_access flag."""
     require_user_permission(current_user, "View User Location Assignment", db)
 
+    allowed_codes = get_user_location_codes(current_user, db)
+    assignments_query = db.query(UserLocation)
+    if allowed_codes is not None:
+        if not allowed_codes:
+            assignments_query = assignments_query.filter(false())
+        else:
+            assignments_query = assignments_query.filter(
+                func.lower(func.trim(UserLocation.location_code)).in_(allowed_codes)
+            )
+    assignments = assignments_query.order_by(UserLocation.user_id, UserLocation.location_code).all()
+    visible_user_ids = {assignment.user_id for assignment in assignments}
     users = db.query(User).order_by(User.full_name).all()
+    if allowed_codes is not None:
+        users = [
+            user
+            for user in users
+            if user_is_within_actor_location_scope(current_user, user, db)
+            and (
+                user.id in visible_user_ids
+                or get_user_location_codes(user, db) == set()
+            )
+            and (user.id in visible_user_ids or user.status == "Active")
+        ]
 
-    # Build a map: user_id -> list of location_codes
-    assignments = (
-        db.query(UserLocation)
-        .order_by(UserLocation.user_id, UserLocation.location_code)
-        .all()
-    )
+    # Build a map: user_id -> list of location_codes visible to this actor.
     user_location_map: dict[int, list[str]] = {}
     for a in assignments:
         user_location_map.setdefault(a.user_id, []).append(a.location_code)
@@ -96,13 +132,17 @@ def get_user_location_detail(
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    ensure_user_in_actor_location_scope(current_user, user, db)
+    allowed_codes = get_user_location_codes(current_user, db)
 
+    location_query = db.query(UserLocation).filter(UserLocation.user_id == user_id)
+    if allowed_codes is not None:
+        location_query = location_query.filter(
+            func.lower(func.trim(UserLocation.location_code)).in_(allowed_codes)
+        )
     location_codes = [
         row.location_code
-        for row in db.query(UserLocation)
-        .filter(UserLocation.user_id == user_id)
-        .order_by(UserLocation.location_code)
-        .all()
+        for row in location_query.order_by(UserLocation.location_code).all()
     ]
 
     return {
@@ -132,19 +172,44 @@ def save_user_locations(
             status_code=400,
             detail="Only Active users can be assigned locations",
         )
+    if is_admin_user(user, db):
+        raise HTTPException(status_code=403, detail="The reserved administrator's location assignments cannot be changed")
 
-    # Validate all location codes exist
-    for code in request.location_codes:
-        loc = (
+    allowed_codes = get_user_location_codes(current_user, db)
+    if allowed_codes is not None and str(user.all_locations_access or "").strip().casefold() in {"yes", "true", "1", "y"}:
+        raise HTTPException(status_code=403, detail="You cannot modify a user with unrestricted location access")
+
+    normalized_requested = [normalize_location_code(code) for code in request.location_codes]
+    if any(code is None for code in normalized_requested):
+        raise HTTPException(status_code=422, detail="Location codes cannot be empty")
+    if len(normalized_requested) != len(set(normalized_requested)):
+        raise HTTPException(status_code=422, detail="Duplicate location codes are not allowed")
+
+    # Resolve and store canonical DB values; avoid creating case variants of
+    # the same assignment while preserving the database's existing code style.
+    locations_by_code = {}
+    for normalized_code in normalized_requested:
+        location = (
             db.query(Location)
-            .filter(Location.location_code == code)
+            .filter(func.lower(func.trim(Location.location_code)) == normalized_code)
             .first()
         )
-        if not loc:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Location code '{code}' not found",
-            )
+        if not location:
+            raise HTTPException(status_code=400, detail=f"Location code '{normalized_code}' not found")
+        if location.status != "Active":
+            raise HTTPException(status_code=400, detail=f"Location code '{location.location_code}' is not Active")
+        locations_by_code[normalized_code] = location
+
+    if allowed_codes is not None:
+        if any(code not in allowed_codes for code in normalized_requested):
+            raise HTTPException(status_code=403, detail="You cannot assign a location outside your own scope")
+        existing_codes = {
+            code
+            for row in db.query(UserLocation.location_code).filter(UserLocation.user_id == user_id).all()
+            if (code := normalize_location_code(row[0])) is not None
+        }
+        if any(code not in allowed_codes for code in existing_codes):
+            raise HTTPException(status_code=403, detail="You cannot modify a user with locations outside your own scope")
 
     # Get before state for audit
     before_codes = sorted(
@@ -154,13 +219,11 @@ def save_user_locations(
         .all()
     )
 
-    # Replace all assignments
+    # Replace all assignments using canonical location codes.
     db.query(UserLocation).filter(UserLocation.user_id == user_id).delete()
-
-    for code in request.location_codes:
+    after_codes = sorted(location.location_code for location in locations_by_code.values())
+    for code in after_codes:
         db.add(UserLocation(user_id=user_id, location_code=code))
-
-    after_codes = sorted(request.location_codes)
 
     changed = set(before_codes) != set(after_codes)
 
@@ -215,6 +278,15 @@ def update_user_all_locations_access(
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    if is_admin_user(user, db):
+        raise HTTPException(status_code=403, detail="The reserved administrator's location access cannot be changed")
+    allowed_codes = get_user_location_codes(current_user, db)
+    if allowed_codes is not None:
+        ensure_user_in_actor_location_scope(current_user, user, db)
+    if request.all_locations_access == "Yes" and allowed_codes is not None:
+        raise HTTPException(status_code=403, detail="Only an unrestricted location administrator can grant all-location access")
+    if str(user.all_locations_access or "").strip().casefold() in {"yes", "true", "1", "y"} and allowed_codes is not None:
+        raise HTTPException(status_code=403, detail="You cannot modify a user who already has unrestricted location access")
 
     before_value = user.all_locations_access or "No"
     user.all_locations_access = request.all_locations_access
@@ -282,6 +354,17 @@ def delete_user_location(
         )
 
     user = db.query(User).filter(User.id == assignment.user_id).first()
+    if user:
+        ensure_user_in_actor_location_scope(current_user, user, db)
+    if user and is_admin_user(user, db):
+        raise HTTPException(status_code=403, detail="The reserved administrator's location assignments cannot be changed")
+    allowed_codes = get_user_location_codes(current_user, db)
+    if allowed_codes is not None:
+        assignment_code = normalize_location_code(assignment.location_code)
+        if assignment_code not in allowed_codes:
+            raise HTTPException(status_code=403, detail="Location is outside your assigned scope")
+        if user and str(user.all_locations_access or "").strip().casefold() in {"yes", "true", "1", "y"}:
+            raise HTTPException(status_code=403, detail="You cannot change a user with unrestricted location access")
 
     create_audit_log(
         db=db,

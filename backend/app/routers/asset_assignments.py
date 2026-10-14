@@ -5,7 +5,14 @@ from app.database import get_db
 from app.models import AssetAssignment, Asset, Location, User
 from app.schemas import AssetAssignmentCreate, AssetAssignmentResponse
 from app.dependencies.auth import get_current_user_from_token
-from app.dependencies.permissions import require_user_permission
+from app.dependencies.permissions import (
+    apply_location_filter,
+    ensure_location_in_user_scope,
+    ensure_user_in_actor_location_scope,
+    get_user_location_codes,
+    user_is_within_actor_location_scope,
+    require_user_permission,
+)
 from app.services.audit_service import create_audit_log
 from app.utils.helpers import clean_optional_text
 
@@ -206,6 +213,18 @@ def validate_asset_assignment(
         )
 
 
+def ensure_assigned_user_scope(assigned_to_type: str, assigned_to: str, current_user: User, db: Session):
+    if assigned_to_type != "User":
+        return
+    assigned_user = (
+        db.query(User)
+        .filter(User.username.ilike(str(assigned_to or "").strip()))
+        .first()
+    )
+    if assigned_user:
+        ensure_user_in_actor_location_scope(current_user, assigned_user, db)
+
+
 @router.get("", response_model=list[AssetAssignmentResponse])
 def get_asset_assignments(
     current_user: User = Depends(get_current_user_from_token),
@@ -218,10 +237,31 @@ def get_asset_assignments(
     )
 
     assignments = (
-        db.query(AssetAssignment)
+        apply_location_filter(
+            db.query(AssetAssignment),
+            AssetAssignment,
+            current_user,
+            db,
+            column_name="assignment_location_code",
+        )
         .order_by(AssetAssignment.id)
         .all()
     )
+    if get_user_location_codes(current_user, db) is not None:
+        visible_assignments = []
+        for assignment in assignments:
+            if assignment.assigned_to_type == "User":
+                assigned_user = (
+                    db.query(User)
+                    .filter(User.username.ilike(assignment.assigned_to))
+                    .first()
+                )
+                if not assigned_user or not user_is_within_actor_location_scope(
+                    current_user, assigned_user, db
+                ):
+                    continue
+            visible_assignments.append(assignment)
+        assignments = visible_assignments
 
     assets, locations, users = _batch_load_references(db, assignments)
 
@@ -241,6 +281,15 @@ def create_asset_assignment(
         current_user,
         "Manage Asset Assignment",
         db,
+    )
+    ensure_location_in_user_scope(current_user, db, assignment.assignment_location_code, "Assignment location")
+    asset_scope_row = db.query(Asset).filter(Asset.asset_code.ilike(assignment.asset_code)).first()
+    if asset_scope_row and asset_scope_row.location_code:
+        ensure_location_in_user_scope(current_user, db, asset_scope_row.location_code, "Asset location")
+    if assignment.assigned_to_type == "Location":
+        ensure_location_in_user_scope(current_user, db, assignment.assigned_to, "Assigned location")
+    ensure_assigned_user_scope(
+        assignment.assigned_to_type, assignment.assigned_to, current_user, db
     )
 
     validate_asset_assignment(assignment, db)
@@ -307,6 +356,22 @@ def update_asset_assignment(
             status_code=404,
             detail="Asset assignment not found",
         )
+    ensure_location_in_user_scope(current_user, db, existing_assignment.assignment_location_code, "Existing assignment location")
+    ensure_assigned_user_scope(
+        existing_assignment.assigned_to_type,
+        existing_assignment.assigned_to,
+        current_user,
+        db,
+    )
+    ensure_location_in_user_scope(current_user, db, assignment.assignment_location_code, "Assignment location")
+    asset_scope_row = db.query(Asset).filter(Asset.asset_code.ilike(assignment.asset_code)).first()
+    if asset_scope_row and asset_scope_row.location_code:
+        ensure_location_in_user_scope(current_user, db, asset_scope_row.location_code, "Asset location")
+    if assignment.assigned_to_type == "Location":
+        ensure_location_in_user_scope(current_user, db, assignment.assigned_to, "Assigned location")
+    ensure_assigned_user_scope(
+        assignment.assigned_to_type, assignment.assigned_to, current_user, db
+    )
 
     assets, locations, users = _batch_load_references(db, [existing_assignment])
     before_data = build_asset_assignment_audit_snapshot(existing_assignment, assets, locations, users)
@@ -373,6 +438,16 @@ def delete_asset_assignment(
             status_code=404,
             detail="Asset assignment not found",
         )
+    ensure_location_in_user_scope(current_user, db, existing_assignment.assignment_location_code, "Assignment location")
+    ensure_assigned_user_scope(
+        existing_assignment.assigned_to_type,
+        existing_assignment.assigned_to,
+        current_user,
+        db,
+    )
+    existing_asset = db.query(Asset).filter(Asset.asset_code.ilike(existing_assignment.asset_code)).first()
+    if existing_asset and existing_asset.location_code:
+        ensure_location_in_user_scope(current_user, db, existing_asset.location_code, "Asset location")
 
     assets, locations, users = _batch_load_references(db, [existing_assignment])
     deleted_data = build_asset_assignment_audit_snapshot(existing_assignment, assets, locations, users)

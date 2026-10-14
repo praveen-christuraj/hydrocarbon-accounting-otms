@@ -21,6 +21,7 @@ from app.models import (
     ShuttleVoyage,
     TankStockLedger,
     VesselStockLedger,
+    OperationWorkflowPolicy,
     User,
 )
 from app.schemas import (
@@ -33,6 +34,7 @@ from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
     apply_location_filter,
     get_user_location_codes,
+    is_admin_user,
     normalize_location_code,
     require_user_permission,
     get_required_permission_for_status_change,
@@ -1019,7 +1021,7 @@ def get_operation_transactions_paged(
     allowed = get_user_location_codes(current_user, db)
     if allowed is not None:
         base_query = base_query.filter(
-            func.lower(OperationTransaction.origin_location_code).in_(allowed)
+            func.lower(func.trim(OperationTransaction.origin_location_code)).in_(allowed)
         )
 
     if date_from:
@@ -1073,7 +1075,7 @@ def get_operation_transactions_paged(
 
     if allowed is not None:
         count_query = count_query.filter(
-            func.lower(OperationTransaction.origin_location_code).in_(allowed)
+            func.lower(func.trim(OperationTransaction.origin_location_code)).in_(allowed)
         )
 
     if date_from:
@@ -1275,8 +1277,43 @@ def create_operation_transaction(
         "Create Operation Entry",
         db,
     )
+    if str(transaction.status or "Draft").strip().casefold() != "draft":
+        raise HTTPException(status_code=400, detail="New operation transactions must start in Draft status")
 
     operation_type, asset = validate_operation_transaction(transaction, db)
+
+    if not is_admin_user(current_user, db):
+        matching_template_policies = db.query(OperationWorkflowPolicy).filter(
+            OperationWorkflowPolicy.status == "Active",
+            OperationWorkflowPolicy.action_code == "CREATE_ENTRY",
+            OperationWorkflowPolicy.operation_template_id.isnot(None),
+        ).all()
+        normalized_operation_type = str(operation_type.operation_type_code or "").strip().casefold()
+        normalized_asset_type = str(asset.asset_type_code or "").strip().casefold()
+        normalized_origin = normalize_location_code(transaction.origin_location_code)
+        for policy in matching_template_policies:
+            if policy.operation_type_code and str(policy.operation_type_code).strip().casefold() != normalized_operation_type:
+                continue
+            if policy.asset_type_code and str(policy.asset_type_code).strip().casefold() != normalized_asset_type:
+                continue
+            if policy.location_code and normalize_location_code(policy.location_code) != normalized_origin:
+                continue
+            raise HTTPException(
+                status_code=403,
+                detail="A template-specific creation policy applies; create this operation through the matching operation-entry page",
+            )
+
+    policy_allowed, policy_reason, _ = evaluate_operation_workflow_policy(
+        db=db,
+        current_user=current_user,
+        action_code="CREATE_ENTRY",
+        operation_type_code=operation_type.operation_type_code,
+        operation_template_id=None,
+        asset_type_code=asset.asset_type_code,
+        location_code=transaction.origin_location_code,
+    )
+    if policy_allowed is False:
+        raise HTTPException(status_code=403, detail=f"Workflow policy denied action: {policy_reason}")
 
     allowed = get_user_location_codes(current_user, db)
     if allowed is not None:
@@ -1286,6 +1323,12 @@ def create_operation_transaction(
         dest = clean_optional_text(transaction.destination_location_code)
         if dest and normalize_location_code(dest) not in allowed:
             raise HTTPException(status_code=403, detail="Destination location is not in your assigned scope")
+        sender = clean_optional_text(transaction.sender_location_code)
+        if sender and normalize_location_code(sender) not in allowed:
+            raise HTTPException(status_code=403, detail="Sender location is not in your assigned scope")
+        receiver = clean_optional_text(transaction.receiver_location_code)
+        if receiver and normalize_location_code(receiver) not in allowed:
+            raise HTTPException(status_code=403, detail="Receiver location is not in your assigned scope")
 
     created_by_display = get_current_user_display_name(current_user)
 
@@ -1403,6 +1446,12 @@ def update_operation_transaction(
         dest = clean_optional_text(transaction.destination_location_code)
         if dest and normalize_location_code(dest) not in allowed:
             raise HTTPException(status_code=403, detail="Destination location is not in your assigned scope")
+        sender = clean_optional_text(transaction.sender_location_code)
+        if sender and normalize_location_code(sender) not in allowed:
+            raise HTTPException(status_code=403, detail="Sender location is not in your assigned scope")
+        receiver = clean_optional_text(transaction.receiver_location_code)
+        if receiver and normalize_location_code(receiver) not in allowed:
+            raise HTTPException(status_code=403, detail="Receiver location is not in your assigned scope")
 
     existing_transaction.operation_type_code = operation_type.operation_type_code
     existing_transaction.primary_asset_code = asset.asset_code

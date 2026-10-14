@@ -40,6 +40,7 @@ const convertLoggedInUserFromApi = (data) => {
     department: user.department || '',
     designation: user.designation || '',
     status: user.status,
+    isAdmin: user.is_admin === true,
     security: user.security || {},
     role: primaryRole,
     roles: mappedRoles,
@@ -142,7 +143,7 @@ export const refreshAccessToken = async () => {
 
 export const logoutUser = async () => {
   try {
-    await apiPost('/auth/logout', {})
+    await apiPost('/auth/logout', { refresh_token: getStoredRefreshToken() || null })
   } catch {
     // Best-effort: clear locally even if server call fails
   }

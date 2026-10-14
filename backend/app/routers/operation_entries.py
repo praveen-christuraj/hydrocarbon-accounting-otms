@@ -349,6 +349,8 @@ def create_operation_entry(
         "Create Operation Entry",
         db,
     )
+    if str(entry.transaction.status or "Draft").strip().casefold() != "draft":
+        raise HTTPException(status_code=400, detail="New operation transactions must start in Draft status")
 
     ensure_operation_entry_locations_in_scope(entry.transaction, current_user, db)
 

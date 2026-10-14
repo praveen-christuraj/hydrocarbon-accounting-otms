@@ -4,6 +4,7 @@ import PaginationControls, { paginateRows, usePageSize } from '../components/com
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
+import { usePermissions } from '../hooks/usePermissions'
 
 const IMPORT_STATUSES = ['Active', 'Inactive', 'Blocked']
 
@@ -27,17 +28,7 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
   const rolesFilters = useDataFilters(roles, useAutoColumns(roles), { module: 'Role Master' })
   const visibleItems = paginateRows(rolesFilters.filteredRows, page, pageSize)
 
-  const isAdminBootstrap =
-    String(loggedInUser?.username || '').toLowerCase() === 'admin'
-
-  const hasPermission = (permissionName) => {
-    if (isAdminBootstrap) return true
-    if (!loggedInUser || !Array.isArray(loggedInUser.permissions)) return false
-    return loggedInUser.permissions.some(
-      (p) => p.permissionName === permissionName
-    )
-  }
-
+  const { hasPermission } = usePermissions(loggedInUser)
   const canManageRole = hasPermission('Manage Role')
 
   const clearError = () => setError('')
@@ -95,6 +86,10 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
     setConfirmDelete(null)
     setFieldErrors({})
 
+    if (String(roleToEdit.roleName || '').trim().toLowerCase() === 'admin') {
+      setError('The reserved Admin role is managed by system provisioning.')
+      return
+    }
     if (!canManageRole) {
       setError('You do not have permission to manage roles.')
       return
@@ -307,6 +302,10 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
 
                 {canManageRole && (
                   <td>
+                    {String(item.roleName || '').trim().toLowerCase() === 'admin' ? (
+                      <span>System managed</span>
+                    ) : (
+                    <>
                     <button type="button" onClick={() => handleEdit(item)}>
                       Edit
                     </button>
@@ -334,6 +333,8 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
                       <button type="button" onClick={() => handleDeleteRequest(item.id)}>
                         Delete
                       </button>
+                    )}
+                    </>
                     )}
                   </td>
                 )}

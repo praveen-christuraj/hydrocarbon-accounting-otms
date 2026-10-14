@@ -42,23 +42,35 @@ def user_has_permission(
 
 
 def is_admin_user(user: User, db: Session) -> bool:
-    """Check if user is an admin — by role name or by username."""
-    admin_role_names = {"admin"}
+    """Return whether the authenticated user has the reserved Admin role.
+
+    The legacy bootstrap account name remains a fallback so existing installs
+    whose Admin role assignment predates the role seed retain access. New or
+    changed role assignments are protected by the RBAC administration routes.
+    """
     user_role_names = {
-        str(r.role_name or "").lower()
-        for r in (
+        str(role.role_name or "").strip().casefold()
+        for role in (
             db.query(Role)
             .join(UserRole, UserRole.role_id == Role.id)
             .filter(UserRole.user_id == user.id, Role.status == "Active")
             .all()
         )
-        if str(r.role_name or "").strip() != ""
     }
-    if user_role_names.intersection(admin_role_names):
+    if "admin" in user_role_names:
         return True
-    if user.username.lower() == "admin":
-        return True
-    return False
+    return str(user.username or "").strip().casefold() == "admin"
+
+
+def is_super_admin(user: User, db: Session) -> bool:
+    """Compatibility name for the application's reserved Admin capability."""
+    return is_admin_user(user, db)
+
+
+def is_admin_role(role_or_name) -> bool:
+    """Identify the reserved bootstrap role without relying on role IDs."""
+    role_name = getattr(role_or_name, "role_name", role_or_name)
+    return str(role_name or "").strip().casefold() == "admin"
 
 
 def require_user_permission(
@@ -103,6 +115,115 @@ def get_user_role_ids(db: Session, user: User):
             .all()
         )
     }
+
+
+def get_user_permissions(user: User, db: Session) -> set[str]:
+    """Return the union of active permissions from every active role.
+
+    The permission catalog and role assignments are read from the database on
+    every request, so role or permission deactivation takes effect immediately
+    and no stale permission claim is trusted from a JWT or browser.
+    """
+    if is_admin_user(user, db):
+        return {
+            str(name).strip()
+            for (name,) in db.query(Permission.permission_name)
+            .filter(Permission.status == "Active")
+            .all()
+            if str(name or "").strip()
+        }
+
+    role_ids = get_user_role_ids(db, user)
+    if not role_ids:
+        return set()
+
+    rows = (
+        db.query(Permission.permission_name)
+        .join(RolePermission, RolePermission.permission_id == Permission.id)
+        .join(Role, Role.id == RolePermission.role_id)
+        .filter(
+            Role.id.in_(role_ids),
+            Role.status == "Active",
+            Permission.status == "Active",
+        )
+        .distinct()
+        .all()
+    )
+    return {
+        str(name).strip()
+        for (name,) in rows
+        if str(name or "").strip()
+    }
+
+
+def get_role_permission_names(role_id: int, db: Session) -> set[str]:
+    rows = (
+        db.query(Permission.permission_name)
+        .join(RolePermission, RolePermission.permission_id == Permission.id)
+        .filter(
+            RolePermission.role_id == role_id,
+            Permission.status == "Active",
+        )
+        .all()
+    )
+    return {str(name).strip() for (name,) in rows if str(name or "").strip()}
+
+
+def ensure_role_assignable_to_user(actor: User, role: Role, db: Session) -> None:
+    """Prevent permission escalation and cross-location mutation via shared roles."""
+    if is_admin_user(actor, db):
+        return
+    if is_admin_role(role):
+        raise HTTPException(status_code=403, detail="The reserved Admin role cannot be assigned by this user")
+
+    actor_permissions = {name.strip().casefold() for name in get_user_permissions(actor, db)}
+    elevated = {
+        name
+        for name in get_role_permission_names(role.id, db)
+        if name.strip().casefold() not in actor_permissions
+    }
+    if elevated:
+        raise HTTPException(
+            status_code=403,
+            detail="Cannot assign a role with permissions you do not hold",
+        )
+
+    actor_locations = get_user_location_codes(actor, db)
+    if actor_locations is not None:
+        assigned_users = (
+            db.query(User)
+            .join(UserRole, UserRole.user_id == User.id)
+            .filter(UserRole.role_id == role.id)
+            .all()
+        )
+        if any(
+            not user_is_within_actor_location_scope(actor, assigned_user, db)
+            for assigned_user in assigned_users
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="This role is assigned to users outside your location scope",
+            )
+
+
+def ensure_role_permissions_within_actor_scope(
+    actor: User,
+    permission_names: set[str],
+    db: Session,
+) -> None:
+    """Disallow privilege escalation through role-permission assignment."""
+    if is_admin_user(actor, db):
+        return
+    actor_permissions = {name.strip().casefold() for name in get_user_permissions(actor, db)}
+    elevated = {
+        name for name in permission_names
+        if str(name or "").strip().casefold() not in actor_permissions
+    }
+    if elevated:
+        raise HTTPException(
+            status_code=403,
+            detail="Cannot grant permissions you do not hold",
+        )
 
 
 def get_required_permission_for_status_change(next_status: str):
@@ -343,15 +464,18 @@ def build_logged_in_user_response(user: User, db: Session):
             for permission in permissions
         ]
 
-    # Gather location context
-    assigned_location_codes = [
-        row.location_code
-        for row in db.query(UserLocation)
-        .filter(UserLocation.user_id == user.id)
-        .order_by(UserLocation.location_code)
-        .all()
-    ]
-    all_locations_access = user.all_locations_access or "No"
+    # Gather location context (normalized so clients cannot misinterpret case variants).
+    assigned_location_codes = sorted(
+        {
+            code
+            for row in db.query(UserLocation.location_code)
+            .filter(UserLocation.user_id == user.id)
+            .all()
+            if (code := normalize_location_code(row[0])) is not None
+        }
+    )
+    admin_user = is_admin_user(user, db)
+    all_locations_access = "Yes" if admin_user or str(user.all_locations_access or "").strip().casefold() in {"yes", "true", "1", "y"} else "No"
 
     return {
         "id": user.id,
@@ -362,6 +486,7 @@ def build_logged_in_user_response(user: User, db: Session):
         "department": user.department,
         "designation": user.designation,
         "status": user.status,
+        "is_admin": admin_user,
         "security": build_security_flags(user),
         "role": role_data,
         "roles": roles_data,
@@ -387,11 +512,14 @@ def normalize_operation_type_code(value: str | None) -> str | None:
 
 def get_user_location_codes(user: User, db: Session) -> set[str] | None:
     """
-    Returns the set of location codes the user is allowed to access.
-    Returns None if the user has unrestricted access (all_locations_access == "Yes").
-    Returns an empty set if the user has no assigned locations and no all-access.
+    Return assigned location codes, or None for unrestricted location access.
+
+    The reserved Admin account is unrestricted by definition. Existing users
+    with the all_locations_access flag set to a legacy truthy value are also
+    treated as unrestricted. An empty set means no location data is visible.
     """
-    if user.all_locations_access == "Yes":
+    all_access = str(user.all_locations_access or "").strip().casefold()
+    if is_admin_user(user, db) or all_access in {"yes", "true", "1", "y"}:
         return None
     codes = (
         db.query(UserLocation.location_code)
@@ -403,6 +531,28 @@ def get_user_location_codes(user: User, db: Session) -> set[str] | None:
         for row in codes
         if (normalized_code := normalize_location_code(row[0])) is not None
     }
+
+
+def user_is_within_actor_location_scope(actor: User, target: User, db: Session) -> bool:
+    """Whether an actor may inspect/manage a target user by location scope.
+
+    Unrestricted actors may manage any account. A restricted actor may manage
+    users whose assigned locations are all within the actor's scope; users with
+    no assignments remain manageable so they can be provisioned. Accounts with
+    all-location access or the reserved Admin identity are not in a restricted
+    actor's scope.
+    """
+    actor_codes = get_user_location_codes(actor, db)
+    if actor_codes is None:
+        return True
+    target_codes = get_user_location_codes(target, db)
+    return target_codes is not None and target_codes.issubset(actor_codes)
+
+
+def ensure_user_in_actor_location_scope(actor: User, target: User, db: Session) -> None:
+    if user_is_within_actor_location_scope(actor, target, db):
+        return
+    raise HTTPException(status_code=404, detail="User not found")
 
 
 def user_has_location_access(user: User, db: Session, location_code: str | None) -> bool:
@@ -488,4 +638,4 @@ def apply_location_filter(query, model, user: User, db: Session, column_name: st
     if not allowed_codes:
         return query.filter(sqlalchemy.literal(False))  # no access to any location
     col = getattr(model, column_name)
-    return query.filter(sqlalchemy.func.lower(col).in_(allowed_codes))
+    return query.filter(sqlalchemy.func.lower(sqlalchemy.func.trim(col)).in_(allowed_codes))

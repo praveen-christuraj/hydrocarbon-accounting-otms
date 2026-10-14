@@ -25,6 +25,9 @@ from app.schemas import (
 )
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
+    apply_location_filter,
+    get_user_location_codes,
+    normalize_location_code,
     user_has_permission,
     require_user_permission,
     get_role_ids_with_permission,
@@ -306,6 +309,40 @@ def get_pending_correction_request_for_task(db: Session, task_id: int):
     return row
 
 
+def operation_task_is_within_location_scope(
+    task: OperationTask, db: Session, allowed_codes: set[str] | None
+) -> bool:
+    if allowed_codes is None:
+        return True
+    task_location = normalize_location_code(task.location_code)
+    if task_location is None or task_location not in allowed_codes:
+        return False
+    if not task.transaction_id:
+        return True
+    transaction = db.query(OperationTransaction).filter(
+        OperationTransaction.id == task.transaction_id
+    ).first()
+    if not transaction:
+        return True
+    for field_name in (
+        "origin_location_code",
+        "destination_location_code",
+        "sender_location_code",
+        "receiver_location_code",
+    ):
+        location_code = normalize_location_code(getattr(transaction, field_name, None))
+        if location_code is not None and location_code not in allowed_codes:
+            return False
+    return True
+
+
+def ensure_operation_task_location_scope(task: OperationTask, current_user: User, db: Session):
+    allowed_codes = get_user_location_codes(current_user, db)
+    if operation_task_is_within_location_scope(task, db, allowed_codes):
+        return
+    raise HTTPException(status_code=404, detail="Operation task not found")
+
+
 @router.get("/my", response_model=list[OperationTaskResponse])
 def get_my_operation_tasks(
     status: str | None = None,
@@ -317,7 +354,8 @@ def get_my_operation_tasks(
     db: Session = Depends(get_db),
 ):
     require_user_permission(current_user, "View My Tasks", db)
-    query = db.query(OperationTask).order_by(OperationTask.created_at.desc(), OperationTask.id.desc())
+    query = apply_location_filter(db.query(OperationTask), OperationTask, current_user, db)
+    query = query.order_by(OperationTask.created_at.desc(), OperationTask.id.desc())
     query = apply_operation_task_filters(
         query,
         status,
@@ -327,7 +365,13 @@ def get_my_operation_tasks(
         created_to,
     )
     tasks = query.all()
-    visible = [task for task in tasks if user_can_act_on_operation_task(db, current_user, task)]
+    allowed_codes = get_user_location_codes(current_user, db)
+    visible = [
+        task
+        for task in tasks
+        if operation_task_is_within_location_scope(task, db, allowed_codes)
+        and user_can_act_on_operation_task(db, current_user, task)
+    ]
     return [build_operation_task_response(task, db) for task in visible]
 
 
@@ -342,7 +386,8 @@ def get_operation_tasks(
     db: Session = Depends(get_db),
 ):
     require_user_permission(current_user, "Manage Operation Tasks", db)
-    query = db.query(OperationTask).order_by(OperationTask.created_at.desc(), OperationTask.id.desc())
+    query = apply_location_filter(db.query(OperationTask), OperationTask, current_user, db)
+    query = query.order_by(OperationTask.created_at.desc(), OperationTask.id.desc())
     query = apply_operation_task_filters(
         query,
         status,
@@ -351,7 +396,14 @@ def get_operation_tasks(
         created_from,
         created_to,
     )
-    return [build_operation_task_response(task, db) for task in query.all()]
+    tasks = query.all()
+    allowed_codes = get_user_location_codes(current_user, db)
+    visible = [
+        task
+        for task in tasks
+        if operation_task_is_within_location_scope(task, db, allowed_codes)
+    ]
+    return [build_operation_task_response(task, db) for task in visible]
 
 
 @router.get("/{task_id}", response_model=OperationTaskResponse)
@@ -364,6 +416,7 @@ def get_operation_task(
     task = db.query(OperationTask).filter(OperationTask.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Operation task not found")
+    ensure_operation_task_location_scope(task, current_user, db)
     if not user_can_act_on_operation_task(db, current_user, task) and not user_has_permission(current_user, "Manage Operation Tasks", db):
         raise HTTPException(status_code=403, detail="You are not assigned to this task")
     return build_operation_task_response(task, db)
@@ -396,6 +449,7 @@ def take_operation_task_ownership(
     task = db.query(OperationTask).filter(OperationTask.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Operation task not found")
+    ensure_operation_task_location_scope(task, current_user, db)
     if task.status not in ["Pending", "In Progress"]:
         raise HTTPException(status_code=400, detail="Only open tasks can be taken")
     if not user_can_act_on_operation_task(db, current_user, task):
@@ -456,6 +510,7 @@ def release_operation_task(
     task = db.query(OperationTask).filter(OperationTask.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Operation task not found")
+    ensure_operation_task_location_scope(task, current_user, db)
     if task.status != "In Progress":
         raise HTTPException(status_code=400, detail="Only In Progress tasks can be released")
     if task.taken_by_user_id != current_user.id and not user_has_permission(current_user, "Manage Operation Tasks", db):
@@ -518,6 +573,7 @@ def approve_operation_task(
     task = db.query(OperationTask).filter(OperationTask.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Operation task not found")
+    ensure_operation_task_location_scope(task, current_user, db)
     if task.status not in ["Pending", "In Progress"]:
         raise HTTPException(status_code=400, detail="Only open tasks can be approved")
     if not user_can_act_on_operation_task(db, current_user, task):
@@ -548,6 +604,7 @@ def reject_operation_task(
     task = db.query(OperationTask).filter(OperationTask.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Operation task not found")
+    ensure_operation_task_location_scope(task, current_user, db)
     if task.status not in ["Pending", "In Progress"]:
         raise HTTPException(status_code=400, detail="Only open tasks can be rejected")
     if not user_can_act_on_operation_task(db, current_user, task):

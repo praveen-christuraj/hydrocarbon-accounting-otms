@@ -27,7 +27,11 @@ from app.schemas import (
     FSOTrackingResponse,
 )
 from app.dependencies.auth import get_current_user_from_token
-from app.dependencies.permissions import require_user_permission
+from app.dependencies.permissions import (
+    apply_location_filter,
+    ensure_location_in_user_scope,
+    require_user_permission,
+)
 from app.services.audit_service import create_audit_log
 from app.utils.helpers import (
     clean_optional_text,
@@ -123,6 +127,7 @@ def close_shuttle_voyage(
     db: Session = Depends(get_db),
 ):
     require_user_permission(current_user, "Manage Shuttle Tracking", db)
+    ensure_location_in_user_scope(current_user, db, request.location_code, "Location")
 
     voyage = get_or_create_shuttle_voyage(
         db=db,
@@ -169,6 +174,7 @@ def reopen_shuttle_voyage(
     db: Session = Depends(get_db),
 ):
     require_user_permission(current_user, "Manage Shuttle Tracking", db)
+    ensure_location_in_user_scope(current_user, db, request.location_code, "Location")
 
     voyage = get_shuttle_voyage_by_key(
         db,
@@ -221,6 +227,7 @@ def close_fso_voyage(
     db: Session = Depends(get_db),
 ):
     require_user_permission(current_user, "Manage FSO Tracking", db)
+    ensure_location_in_user_scope(current_user, db, request.location_code, "Location")
 
     voyage = get_or_create_fso_voyage(
         db=db,
@@ -267,6 +274,7 @@ def reopen_fso_voyage(
     db: Session = Depends(get_db),
 ):
     require_user_permission(current_user, "Manage FSO Tracking", db)
+    ensure_location_in_user_scope(current_user, db, request.location_code, "Location")
 
     voyage = get_fso_voyage_by_key(
         db,
@@ -356,12 +364,20 @@ def get_shuttle_tracking(
             approved_transaction_not_on_correction_hold(db),
         )
     )
+    base_q = apply_location_filter(
+        base_q,
+        OperationTransaction,
+        current_user,
+        db,
+        column_name="origin_location_code",
+    )
 
     if df:
         base_q = base_q.filter(OperationTransaction.operation_date >= df)
     if dt:
         base_q = base_q.filter(OperationTransaction.operation_date <= dt)
     if lc:
+        ensure_location_in_user_scope(current_user, db, lc, "Location")
         base_q = base_q.filter(OperationTransaction.origin_location_code.ilike(lc))
     if sn:
         base_q = base_q.filter(OperationTransaction.convoy_number.ilike(sn))
@@ -385,6 +401,7 @@ def get_shuttle_tracking(
         parts = [p.strip() for p in str(group_key).split("|")]
         if len(parts) == 3:
             g_loc, g_shuttle, g_asset = parts
+            ensure_location_in_user_scope(current_user, db, g_loc, "Location")
             base_q = base_q.filter(
                 OperationTransaction.origin_location_code == g_loc,
                 OperationTransaction.convoy_number == g_shuttle,
@@ -734,6 +751,7 @@ def export_shuttle_voyage_xlsx(
         )
 
     loc_code, shuttle_no, asset_code = parts
+    ensure_location_in_user_scope(current_user, db, loc_code, "Location")
 
     txs = (
         db.query(OperationTransaction)
@@ -942,12 +960,20 @@ def get_fso_tracking(
         )
     )
     base_q = base_q.filter(OperationTransaction.primary_asset_type_code.ilike("FSO"))
+    base_q = apply_location_filter(
+        base_q,
+        OperationTransaction,
+        current_user,
+        db,
+        column_name="origin_location_code",
+    )
 
     if group_key:
         parts = [p.strip() for p in str(group_key).split("|")]
         if len(parts) != 3:
             raise HTTPException(status_code=400, detail="Invalid group_key format for FSO tracking")
         g_loc, g_shuttle, g_fso = parts
+        ensure_location_in_user_scope(current_user, db, g_loc, "Location")
         base_q = base_q.filter(
             OperationTransaction.origin_location_code == g_loc,
             OperationTransaction.convoy_number == g_shuttle,

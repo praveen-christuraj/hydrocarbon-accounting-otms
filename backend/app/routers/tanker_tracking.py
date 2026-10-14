@@ -22,7 +22,12 @@ from app.schemas import (
     TankerTrackingClosureCreate,
 )
 from app.dependencies.auth import get_current_user_from_token
-from app.dependencies.permissions import require_user_permission
+from app.dependencies.permissions import (
+    apply_location_filter,
+    ensure_location_in_user_scope,
+    get_user_location_codes,
+    require_user_permission,
+)
 from app.services.audit_service import create_audit_log
 from app.utils.helpers import (
     safe_float,
@@ -55,6 +60,37 @@ def parse_json_field_value(value):
         return json.loads(str(value))
     except Exception:
         return None
+
+
+def ensure_tanker_transaction_location_scope(transaction: OperationTransaction, current_user: User, db: Session):
+    for field_name in (
+        "origin_location_code",
+        "destination_location_code",
+        "sender_location_code",
+        "receiver_location_code",
+    ):
+        ensure_location_in_user_scope(
+            current_user,
+            db,
+            getattr(transaction, field_name, None),
+            field_name.replace("_", " ").title(),
+        )
+
+
+def ensure_tanker_acknowledgement_scope(acknowledgement: TankerReceiptAcknowledgement, current_user: User, db: Session):
+    transaction = db.query(OperationTransaction).filter(
+        OperationTransaction.id == acknowledgement.sender_transaction_id
+    ).first()
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Sender tanker transaction not found")
+    ensure_tanker_transaction_location_scope(transaction, current_user, db)
+    ensure_location_in_user_scope(
+        current_user,
+        db,
+        acknowledgement.receiver_location_code,
+        "Receiver location",
+    )
+    return transaction
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +275,7 @@ def get_filtered_tanker_transaction_report_rows(
     convoy_number: str | None = None,
     status: str | None = None,
     search: str | None = None,
+    current_user: User | None = None,
 ):
     query = db.query(OperationTransaction).join(
         OperationTransactionValue,
@@ -247,6 +284,12 @@ def get_filtered_tanker_transaction_report_rows(
         OperationTransactionValue.field_code == "tanker_payload",
         OperationTransactionValue.field_value != None,
     )
+
+    if current_user is not None:
+        query = apply_location_filter(
+            query, OperationTransaction, current_user, db,
+            column_name="origin_location_code",
+        )
 
     date_from_value = parse_date_filter(date_from, "Date From")
     date_to_value = parse_date_filter(date_to, "Date To")
@@ -263,6 +306,10 @@ def get_filtered_tanker_transaction_report_rows(
     cleaned_status = clean_optional_text(status)
 
     if cleaned_location_code:
+        if current_user is not None:
+            ensure_location_in_user_scope(
+                current_user, db, cleaned_location_code, "Origin location"
+            )
         query = query.filter(
             OperationTransaction.origin_location_code.ilike(cleaned_location_code)
         )
@@ -291,6 +338,8 @@ def get_filtered_tanker_transaction_report_rows(
     rows = []
 
     for transaction in transactions:
+        if current_user is not None:
+            ensure_tanker_transaction_location_scope(transaction, current_user, db)
         tanker_payload = get_tanker_payload_for_transaction(db, transaction.id)
 
         if not tanker_payload:
@@ -365,6 +414,7 @@ def get_tanker_transaction_report(
         convoy_number=convoy_number,
         status=status,
         search=search,
+        current_user=current_user,
     )
 
     return {
@@ -1060,6 +1110,7 @@ def get_tanker_tracking_rows(
     tanker_asset_code: str | None = None,
     status: str | None = None,
     search: str | None = None,
+    current_user: User | None = None,
 ):
     # Approved tanker tickets must always reach Tanker Tracking - including
     # tickets that were approved before the tanker payload was stored, or that
@@ -1090,6 +1141,12 @@ def get_tanker_tracking_rows(
         )
     )
 
+    if current_user is not None:
+        query = apply_location_filter(
+            query, OperationTransaction, current_user, db,
+            column_name="origin_location_code",
+        )
+
     date_from_value = parse_date_filter(date_from, "Date From")
     date_to_value = parse_date_filter(date_to, "Date To")
 
@@ -1106,6 +1163,10 @@ def get_tanker_tracking_rows(
         query = query.filter(OperationTransaction.convoy_number.ilike(cleaned_convoy_number))
 
     if cleaned_location_code:
+        if current_user is not None:
+            ensure_location_in_user_scope(
+                current_user, db, cleaned_location_code, "Location"
+            )
         query = query.filter(
             (
                 OperationTransaction.origin_location_code.ilike(cleaned_location_code)
@@ -1136,6 +1197,8 @@ def get_tanker_tracking_rows(
     cleaned_search = clean_optional_text(search)
 
     for transaction in transactions:
+        if current_user is not None:
+            ensure_tanker_transaction_location_scope(transaction, current_user, db)
         tanker_payload = get_tanker_payload_for_transaction(db, transaction.id)
         payload_missing = not tanker_payload
 
@@ -1254,6 +1317,7 @@ def get_tanker_tracking(
         tanker_asset_code=tanker_asset_code,
         status=status,
         search=search,
+        current_user=current_user,
     )
 
     summary = build_tanker_tracking_summary(rows)
@@ -1282,6 +1346,7 @@ def get_tanker_tracking_by_convoy(
     rows = get_tanker_tracking_rows(
         db=db,
         convoy_number=convoy_number,
+        current_user=current_user,
     )
 
     summary = build_tanker_tracking_summary(rows)
@@ -1318,6 +1383,7 @@ def get_tanker_sender_reference(
             status_code=404,
             detail="Sender tanker transaction not found",
         )
+    ensure_tanker_transaction_location_scope(sender_transaction, current_user, db)
 
     require_approved_transaction_for_tracking(
         sender_transaction,
@@ -1368,7 +1434,25 @@ def get_tanker_receipt_acknowledgements(
         db,
     )
 
-    query = db.query(TankerReceiptAcknowledgement)
+    query = db.query(TankerReceiptAcknowledgement).join(
+        OperationTransaction,
+        OperationTransaction.id == TankerReceiptAcknowledgement.sender_transaction_id,
+    )
+    query = apply_location_filter(
+        query,
+        OperationTransaction,
+        current_user,
+        db,
+        column_name="origin_location_code",
+    )
+    allowed_codes = get_user_location_codes(current_user, db)
+    if allowed_codes is not None:
+        query = query.filter(
+            or_(
+                TankerReceiptAcknowledgement.receiver_location_code.is_(None),
+                func.lower(func.trim(TankerReceiptAcknowledgement.receiver_location_code)).in_(allowed_codes),
+            )
+        )
 
     cleaned_convoy_number = clean_optional_text(convoy_number)
 
@@ -1391,6 +1475,9 @@ def get_tanker_receipt_acknowledgements(
     cleaned_receiver_location_code = clean_optional_text(receiver_location_code)
 
     if cleaned_receiver_location_code:
+        ensure_location_in_user_scope(
+            current_user, db, cleaned_receiver_location_code, "Receiver location"
+        )
         query = query.filter(
             TankerReceiptAcknowledgement.receiver_location_code.ilike(
                 cleaned_receiver_location_code
@@ -1404,6 +1491,9 @@ def get_tanker_receipt_acknowledgements(
         )
         .all()
     )
+
+    for acknowledgement in acknowledgements:
+        ensure_tanker_acknowledgement_scope(acknowledgement, current_user, db)
 
     return [
         build_tanker_acknowledgement_response(acknowledgement, db)
@@ -1437,6 +1527,7 @@ def acknowledge_tanker_receipt(
             status_code=404,
             detail="Sender tanker transaction not found",
         )
+    ensure_tanker_transaction_location_scope(sender_transaction, current_user, db)
 
     require_approved_transaction_for_tracking(
         sender_transaction,
@@ -1480,6 +1571,9 @@ def acknowledge_tanker_receipt(
 
     receiver_location_code = clean_optional_text(
         request.receiver_location_code
+    )
+    ensure_location_in_user_scope(
+        current_user, db, receiver_location_code, "Receiver location"
     )
 
     if receiver_location_code:
@@ -1581,6 +1675,9 @@ def revoke_tanker_receipt_acknowledgement(
             status_code=404,
             detail="Tanker receipt acknowledgement not found",
         )
+    sender_transaction = ensure_tanker_acknowledgement_scope(
+        acknowledgement, current_user, db
+    )
 
     if acknowledgement.status == "Revoked":
         raise HTTPException(
@@ -1684,6 +1781,9 @@ def close_tanker_tracking_movement(
             status_code=404,
             detail="Tanker acknowledgement not found",
         )
+    sender_transaction = ensure_tanker_acknowledgement_scope(
+        acknowledgement, current_user, db
+    )
 
     if acknowledgement.status == "Revoked":
         raise HTTPException(
@@ -1719,6 +1819,7 @@ def close_tanker_tracking_movement(
         db=db,
         convoy_number=acknowledgement.convoy_number,
         tanker_asset_code=acknowledgement.tanker_asset_code,
+        current_user=current_user,
     )
 
     target_row = None

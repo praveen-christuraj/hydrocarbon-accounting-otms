@@ -8,7 +8,11 @@ from app.database import get_db
 from app.models import TankStockLedger, LocationAccountingDaySetting, MaterialBalanceTemplate, MaterialBalanceTemplateColumn, User
 from app.schemas import TankStockLedgerResponse, TankStockLedgerSummaryResponse, TankStockLedgerDailySummaryResponse, MaterialBalanceDynamicReportResponse
 from app.dependencies.auth import get_current_user_from_token
-from app.dependencies.permissions import require_user_permission
+from app.dependencies.permissions import (
+    apply_location_filter,
+    ensure_location_in_user_scope,
+    require_user_permission,
+)
 from app.services.audit_service import create_audit_log
 from app.utils.helpers import safe_float, clean_optional_text, get_transaction_ticket_number, get_location_by_code
 from app.services.material_balance_helpers import (
@@ -94,6 +98,8 @@ def get_filtered_tank_stock_ledger_rows(
         query = apply_location_filter(query, TankStockLedger, current_user, db)
 
     cleaned_location_code = clean_optional_text(location_code)
+    if cleaned_location_code and current_user is not None:
+        ensure_location_in_user_scope(current_user, db, cleaned_location_code, "Location")
     cleaned_tank_asset_code = clean_optional_text(tank_asset_code)
     cleaned_product_name = clean_optional_text(product_name)
     cleaned_status = clean_optional_text(status)
@@ -223,6 +229,8 @@ def get_tank_stock_rows_for_daily_summary(
     )
 
     cleaned_location_code = clean_optional_text(location_code)
+    if cleaned_location_code and current_user is not None:
+        ensure_location_in_user_scope(current_user, db, cleaned_location_code, "Location")
     cleaned_tank_asset_code = clean_optional_text(tank_asset_code)
     cleaned_product_name = clean_optional_text(product_name)
 
@@ -352,6 +360,8 @@ def get_out_turn_report_rows(
         query = apply_location_filter(query, TankStockLedger, current_user, db)
 
     cleaned_location_code = clean_optional_text(location_code)
+    if cleaned_location_code and current_user is not None:
+        ensure_location_in_user_scope(current_user, db, cleaned_location_code, "Location")
     cleaned_tank_asset_code = clean_optional_text(tank_asset_code)
     cleaned_product_name = clean_optional_text(product_name)
     cleaned_status = clean_optional_text(status)
@@ -1319,6 +1329,7 @@ def get_material_balance_report(
             status_code=400,
             detail="Location is required for configurable Material Balance Report",
         )
+    ensure_location_in_user_scope(current_user, db, cleaned_location_code, "Location")
 
     date_from_value = parse_date_filter(date_from, "Date From")
     date_to_value = parse_date_filter(date_to, "Date To")

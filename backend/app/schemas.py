@@ -54,6 +54,10 @@ class RefreshTokenRequest(BaseModel):
     refresh_token: str
 
 
+class LogoutRequest(BaseModel):
+    refresh_token: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # User schemas
 # ---------------------------------------------------------------------------
@@ -144,6 +148,10 @@ class RolePermissionResponse(BaseModel):
 class UserRoleSaveRequest(BaseModel):
     user_id: int
     role_id: int
+
+
+class UserRolesReplaceRequest(BaseModel):
+    role_ids: list[int] = Field(default_factory=list)
 
 
 class UserRoleResponse(BaseModel):

@@ -7,7 +7,13 @@ from app.database import get_db
 from app.models import User, UserRole, Role
 from app.schemas import UserCreate, UserUpdate, UserResponse
 from app.dependencies.auth import get_current_user_from_token
-from app.dependencies.permissions import require_user_permission
+from app.dependencies.permissions import (
+    ensure_user_in_actor_location_scope,
+    get_user_location_codes,
+    is_admin_user,
+    require_user_permission,
+    user_is_within_actor_location_scope,
+)
 from app.services.audit_service import create_audit_log
 from app.utils.security import hash_password
 from app.utils.helpers import clean_optional_text
@@ -34,14 +40,43 @@ def get_users(
                 User.email.ilike(f"%{search}%"),
             )
         )
-    result = paginate_query(query, skip, limit)
+    allowed_codes = get_user_location_codes(current_user, db)
+    if allowed_codes is None:
+        result = paginate_query(query, skip, limit)
+        items = result["items"]
+        total = result["total"]
+        has_more = result["has_more"]
+    else:
+        visible_users = [
+            target
+            for target in query.all()
+            if user_is_within_actor_location_scope(current_user, target, db)
+        ]
+        total = len(visible_users)
+        items = visible_users[skip : skip + limit]
+        has_more = skip + limit < total
+
     return {
-        "items": [UserResponse.model_validate(u) for u in result["items"]],
-        "total": result["total"],
-        "skip": result["skip"],
-        "limit": result["limit"],
-        "has_more": result["has_more"],
+        "items": [UserResponse.model_validate(target) for target in items],
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+        "has_more": has_more,
     }
+
+
+@router.get("/{user_id}", response_model=UserResponse)
+def get_user_by_id(
+    user_id: int,
+    current_user: User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db),
+):
+    require_user_permission(current_user, "View User", db)
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    ensure_user_in_actor_location_scope(current_user, target, db)
+    return target
 
 
 @router.post("", response_model=UserResponse)
@@ -55,6 +90,8 @@ def create_user(
         "Manage User",
         db,
     )
+    if str(user.username or "").strip().casefold() == "admin" and not is_admin_user(current_user, db):
+        raise HTTPException(status_code=403, detail="The reserved administrator username cannot be created by this user")
 
     existing_user = (
         db.query(User)
@@ -142,6 +179,13 @@ def update_user(
             status_code=404,
             detail="User not found",
         )
+    ensure_user_in_actor_location_scope(current_user, existing_user, db)
+    if is_admin_user(existing_user, db) and not is_admin_user(current_user, db):
+        raise HTTPException(status_code=403, detail="Only an administrator can edit an administrator account")
+    if str(user.username or "").strip().casefold() == "admin" and not is_admin_user(current_user, db):
+        raise HTTPException(status_code=403, detail="The reserved administrator username cannot be assigned")
+    if existing_user.id == current_user.id and existing_user.status == "Active" and user.status != "Active":
+        raise HTTPException(status_code=403, detail="You cannot deactivate your own account")
 
     duplicate_user = (
         db.query(User)
@@ -236,6 +280,9 @@ def delete_user(
             status_code=404,
             detail="User not found",
         )
+    ensure_user_in_actor_location_scope(current_user, existing_user, db)
+    if is_admin_user(existing_user, db):
+        raise HTTPException(status_code=403, detail="The reserved administrator account cannot be deleted")
 
     if existing_user.id == current_user.id:
         raise HTTPException(

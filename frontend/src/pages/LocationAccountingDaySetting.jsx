@@ -9,6 +9,7 @@ import PaginationControls, { paginateRows, usePageSize } from '../components/com
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
+import { usePermissions } from '../hooks/usePermissions'
 
 function LocationAccountingDaySetting({ locations, loggedInUser }) {
   const emptySetting = {
@@ -38,28 +39,8 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
     return (locations || []).filter((location) => location.status === 'Active')
   }, [locations])
 
-  const canManage = useMemo(() => {
-    if (
-      loggedInUser &&
-      loggedInUser.userCode === 'admin' &&
-      loggedInUser.permissions &&
-      loggedInUser.permissions.length > 0 &&
-      loggedInUser.permissions[0].permissionName === 'isAdminBootstrap'
-    ) {
-      return true
-    }
-
-    if (!loggedInUser || !loggedInUser.permissions) {
-      return false
-    }
-
-    return loggedInUser.permissions.some((permission) => {
-      return (
-        permission.permissionName ===
-        'Manage Location Accounting Day Setting'
-      )
-    })
-  }, [loggedInUser])
+  const { hasPermission } = usePermissions(loggedInUser)
+  const canManage = hasPermission('Manage Location Accounting Day Setting')
 
   const settingsFilters = useDataFilters(settings, useAutoColumns(settings), { module: 'Location Accounting Day Settings' })
   const visibleSettings = paginateRows(settingsFilters.filteredRows, page, pageSize)

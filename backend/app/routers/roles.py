@@ -5,7 +5,11 @@ from app.database import get_db
 from app.models import Role, User, UserRole, RolePermission
 from app.schemas import RoleCreate, RoleResponse
 from app.dependencies.auth import get_current_user_from_token
-from app.dependencies.permissions import require_user_permission
+from app.dependencies.permissions import (
+    ensure_role_assignable_to_user,
+    is_admin_role,
+    require_user_permission,
+)
 from app.services.audit_service import create_audit_log
 from app.utils.helpers import clean_optional_text
 from app.utils.pagination import paginate_query
@@ -47,9 +51,13 @@ def create_role(
         db,
     )
 
+    if is_admin_role(role.role_name):
+        raise HTTPException(status_code=403, detail="The reserved Admin role cannot be created through this endpoint")
+
+    normalized_role_name = role.role_name.strip()
     existing_role = (
         db.query(Role)
-        .filter(Role.role_name.ilike(role.role_name))
+        .filter(Role.role_name.ilike(normalized_role_name))
         .first()
     )
 
@@ -115,6 +123,9 @@ def update_role(
             status_code=404,
             detail="Role not found",
         )
+    if is_admin_role(existing_role) or is_admin_role(role.role_name):
+        raise HTTPException(status_code=403, detail="The reserved Admin role cannot be edited or renamed")
+    ensure_role_assignable_to_user(current_user, existing_role, db)
 
     duplicate_role = (
         db.query(Role)
@@ -188,6 +199,9 @@ def delete_role(
             status_code=404,
             detail="Role not found",
         )
+    if is_admin_role(existing_role):
+        raise HTTPException(status_code=403, detail="The reserved Admin role cannot be deleted")
+    ensure_role_assignable_to_user(current_user, existing_role, db)
 
     user_role = db.query(UserRole).filter(UserRole.role_id == role_id).first()
 

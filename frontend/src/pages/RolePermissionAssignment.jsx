@@ -4,6 +4,7 @@ import PaginationControls, { paginateRows, usePageSize } from '../components/com
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
+import { usePermissions } from '../hooks/usePermissions'
 
 function RolePermissionAssignment({
   roles,
@@ -23,25 +24,24 @@ function RolePermissionAssignment({
   const rolePermissionAssignmentsFilters = useDataFilters(rolePermissionAssignments, useAutoColumns(rolePermissionAssignments), { module: 'Role Permission Assignment' })
   const visibleItems = paginateRows(rolePermissionAssignmentsFilters.filteredRows, page, pageSize)
 
-  const isAdminBootstrap =
-    String(loggedInUser?.username || '').toLowerCase() === 'admin'
-
-  const activeRoles = roles.filter((role) => role.status === 'Active')
-  const activePermissions = permissions.filter(
-    (permission) => permission.status === 'Active'
+  const { hasPermission, isAdmin } = usePermissions(loggedInUser)
+  const actorPermissionNames = new Set(
+    (loggedInUser?.permissions || [])
+      .map((permission) => String(permission.permissionName || permission.permission_name || '').trim().toLowerCase())
   )
-
-  const hasPermission = (permissionName) => {
-    if (isAdminBootstrap) return true
-    if (!loggedInUser || !Array.isArray(loggedInUser.permissions)) return false
-    return loggedInUser.permissions.some(
-      (p) => p.permissionName === permissionName
+  const allActivePermissions = permissions.filter((permission) => permission.status === 'Active')
+  const activePermissions = isAdmin
+    ? allActivePermissions
+    : allActivePermissions.filter((permission) => actorPermissionNames.has(String(permission.permissionName || '').trim().toLowerCase()))
+  const activeRoles = roles.filter((role) => {
+    if (role.status !== 'Active' || String(role.roleName || '').trim().toLowerCase() === 'admin') return false
+    if (isAdmin) return true
+    const existing = rolePermissionAssignments.find((item) => String(item.roleId) === String(role.id))
+    return (existing?.permissions || []).every((permission) =>
+      actorPermissionNames.has(String(permission.permissionName || '').trim().toLowerCase())
     )
-  }
-
-  const canManageRolePermission = hasPermission(
-    'Manage Role Permission Assignment'
-  )
+  })
+  const canManageRolePermission = hasPermission('Manage Role Permission Assignment')
 
   const clearError = () => setError('')
   const clearSuccess = () => setSuccess('')

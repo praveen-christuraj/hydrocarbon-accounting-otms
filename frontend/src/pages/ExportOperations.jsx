@@ -69,7 +69,12 @@ const sortOptions = (arr, labelKey, valKey) =>
   ))
 
 function ExportOperations({ loggedInUser }) {
-  const isAdmin = String(loggedInUser?.username || '').toLowerCase() === 'admin'
+  const isAdmin =
+    loggedInUser?.isAdmin === true ||
+    String(loggedInUser?.username || '').trim().toLowerCase() === 'admin' ||
+    (Array.isArray(loggedInUser?.roles) && loggedInUser.roles.some((role) =>
+      String(role?.role_name || role?.roleName || '').trim().toLowerCase() === 'admin'
+    ))
   const hasPerm = (name) => isAdmin || (loggedInUser?.permissions || []).some((p) => p.permissionName === name)
   const canManage = hasPerm('Manage Export Operations')
   const [activeTab, setActiveTab] = useState('dashboard')

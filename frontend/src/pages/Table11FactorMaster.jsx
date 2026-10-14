@@ -27,7 +27,11 @@ function Table11FactorMaster({ loggedInUser }) {
   const [confirmSaveRowsAction, setConfirmSaveRowsAction] = useState(null)
 
   const isAdminBootstrap =
-    String(loggedInUser?.username || '').toLowerCase() === 'admin'
+    loggedInUser?.isAdmin === true ||
+    String(loggedInUser?.username || '').trim().toLowerCase() === 'admin' ||
+    (Array.isArray(loggedInUser?.roles) && loggedInUser.roles.some((role) =>
+      String(role?.role_name || role?.roleName || '').trim().toLowerCase() === 'admin'
+    ))
 
   const hasPermission = (permissionName) => {
     if (isAdminBootstrap) return true

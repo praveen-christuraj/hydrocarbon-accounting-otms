@@ -23,7 +23,11 @@ from app.schemas import (
     ConvoyTrackerResponse,
 )
 from app.dependencies.auth import get_current_user_from_token
-from app.dependencies.permissions import require_user_permission
+from app.dependencies.permissions import (
+    ensure_location_in_user_scope,
+    get_user_location_codes,
+    require_user_permission,
+)
 from app.services.audit_service import create_audit_log
 from app.utils.helpers import (
     clean_optional_text,
@@ -65,6 +69,65 @@ class TripStatusUpdateRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def ensure_barge_transaction_location_scope(transaction: OperationTransaction, current_user: User, db: Session):
+    for field_name in (
+        "origin_location_code",
+        "destination_location_code",
+        "sender_location_code",
+        "receiver_location_code",
+    ):
+        ensure_location_in_user_scope(
+            current_user,
+            db,
+            getattr(transaction, field_name, None),
+            field_name.replace("_", " ").title(),
+        )
+
+
+def ensure_trip_location_scope(trip: Trip, current_user: User, db: Session):
+    if get_user_location_codes(current_user, db) is None:
+        return
+
+    events = db.query(TripEvent).filter(TripEvent.trip_id == trip.id).all()
+    transaction_ids = {event.operation_transaction_id for event in events if event.operation_transaction_id}
+    comparisons = db.query(TripComparison).filter(TripComparison.trip_id == trip.id).all()
+    for comparison in comparisons:
+        transaction_ids.update((comparison.left_transaction_id, comparison.right_transaction_id))
+
+    transactions = {
+        transaction.id: transaction
+        for transaction in db.query(OperationTransaction).filter(
+            OperationTransaction.convoy_number.ilike(trip.convoy_number)
+        ).all()
+    }
+    if transaction_ids:
+        transactions.update({
+            transaction.id: transaction
+            for transaction in db.query(OperationTransaction).filter(
+                OperationTransaction.id.in_(transaction_ids)
+            ).all()
+        })
+
+    has_location_context = False
+    for event in events:
+        if clean_optional_text(event.location_code):
+            has_location_context = True
+            ensure_location_in_user_scope(
+                current_user, db, event.location_code, "Trip event location"
+            )
+
+    for transaction in transactions.values():
+        if clean_optional_text(transaction.origin_location_code):
+            has_location_context = True
+        ensure_barge_transaction_location_scope(transaction, current_user, db)
+
+    if not has_location_context:
+        raise HTTPException(
+            status_code=403,
+            detail="This trip has no location context in your assigned scope",
+        )
+
+
 @router.get("/convoy-tracker", response_model=ConvoyTrackerResponse)
 def get_convoy_tracker(
     convoy_number: str,
@@ -86,6 +149,9 @@ def get_convoy_tracker(
         .order_by(OperationTransaction.operation_date.asc(), OperationTransaction.id.asc())
         .all()
     )
+
+    for transaction in transactions:
+        ensure_barge_transaction_location_scope(transaction, current_user, db)
 
     asset_map = {}
     for tx in transactions:
@@ -157,6 +223,7 @@ def create_trip_event(
         )
         if not tx:
             raise HTTPException(status_code=404, detail="Operation transaction not found")
+        ensure_barge_transaction_location_scope(tx, current_user, db)
 
         if str(tx.primary_asset_code or "").strip().lower() != asset_code.lower():
             raise HTTPException(
@@ -181,14 +248,18 @@ def create_trip_event(
             .first()
         )
         if existing_event_for_ticket:
+            updated_location_code = (
+                clean_optional_text(request.location_code)
+                or existing_event_for_ticket.location_code
+            )
+            ensure_location_in_user_scope(
+                current_user, db, updated_location_code, "Trip event location"
+            )
             existing_event_for_ticket.event_type = (
                 clean_optional_text(request.event_type)
                 or existing_event_for_ticket.event_type
             )
-            existing_event_for_ticket.location_code = (
-                clean_optional_text(request.location_code)
-                or existing_event_for_ticket.location_code
-            )
+            existing_event_for_ticket.location_code = updated_location_code
             existing_event_for_ticket.asset_code = asset_code
             existing_event_for_ticket.event_datetime = (
                 request.event_datetime
@@ -232,6 +303,8 @@ def create_trip_event(
             }
 
     trip = db.query(Trip).filter(Trip.convoy_number.ilike(convoy)).first()
+    if trip:
+        ensure_trip_location_scope(trip, current_user, db)
     created_by_display = get_current_user_display_name(current_user)
 
     if not trip:
@@ -269,6 +342,7 @@ def create_trip_event(
             status_code=400,
             detail="location_code is required when operation_transaction_id is not provided",
         )
+    ensure_location_in_user_scope(current_user, db, location_code, "Trip event location")
 
     event_datetime = (
         request.event_datetime
@@ -397,6 +471,12 @@ def get_trip_timeline_by_convoy(
     if convoy is None:
         raise HTTPException(status_code=400, detail="convoy_number is required")
 
+    convoy_transactions = db.query(OperationTransaction).filter(
+        OperationTransaction.convoy_number.ilike(convoy)
+    ).all()
+    for transaction in convoy_transactions:
+        ensure_barge_transaction_location_scope(transaction, current_user, db)
+
     trip, timeline_changed = _ensure_barge_trip_timeline(
         db=db,
         convoy_number=convoy,
@@ -405,6 +485,7 @@ def get_trip_timeline_by_convoy(
 
     if not trip:
         raise HTTPException(status_code=404, detail="Trip not found for this convoy number")
+    ensure_trip_location_scope(trip, current_user, db)
 
     if timeline_changed:
         # Approved tickets existed without a trip row / events (e.g. tickets
@@ -556,6 +637,8 @@ def create_trip_comparison(
         raise HTTPException(status_code=400, detail="convoy_number is required")
 
     trip = db.query(Trip).filter(Trip.convoy_number.ilike(convoy)).first()
+    if trip:
+        ensure_trip_location_scope(trip, current_user, db)
     created_by_display = get_current_user_display_name(current_user)
 
     if not trip:
@@ -576,6 +659,8 @@ def create_trip_comparison(
 
     if not left_tx or not right_tx:
         raise HTTPException(status_code=404, detail="Left or Right transaction not found")
+    ensure_barge_transaction_location_scope(left_tx, current_user, db)
+    ensure_barge_transaction_location_scope(right_tx, current_user, db)
 
     require_approved_transaction_for_tracking(left_tx, "barge sender/receiver comparison", db=db)
     require_approved_transaction_for_tracking(right_tx, "barge sender/receiver comparison", db=db)
@@ -692,6 +777,7 @@ def close_trip(
     trip = db.query(Trip).filter(Trip.id == trip_id).first()
     if not trip:
         raise HTTPException(status_code=404, detail="Trip not found")
+    ensure_trip_location_scope(trip, current_user, db)
 
     if str(trip.status or "").upper() == "CLOSED":
         return {"message": "Barge movement already CLOSED", "trip_id": trip.id, "status": trip.status}
@@ -742,6 +828,7 @@ def reopen_trip(
     trip = db.query(Trip).filter(Trip.id == trip_id).first()
     if not trip:
         raise HTTPException(status_code=404, detail="Trip not found")
+    ensure_trip_location_scope(trip, current_user, db)
 
     if str(trip.status or "").upper() == "OPEN":
         return {"message": "Barge movement already OPEN", "trip_id": trip.id, "status": trip.status}

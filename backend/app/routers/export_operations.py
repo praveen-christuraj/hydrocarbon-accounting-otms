@@ -1,7 +1,7 @@
 from datetime import datetime, date
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import false, func
 
 from app.database import get_db
 from app.models import (
@@ -20,10 +20,75 @@ from app.schemas import (
     PermitBulkUploadRequest, PermitBulkUploadItem,
 )
 from app.dependencies.auth import get_current_user_from_token
-from app.dependencies.permissions import require_user_permission
+from app.dependencies.permissions import (
+    get_user_location_codes,
+    is_admin_user,
+    normalize_location_code,
+    require_user_permission,
+)
 from app.services.audit_service import create_audit_log
 
 router = APIRouter(prefix="/export-operations", tags=["Export Operations"])
+
+
+def ensure_export_location_scope(user: User, db: Session, location_code: str | None) -> None:
+    allowed_codes = get_user_location_codes(user, db)
+    normalized = normalize_location_code(location_code)
+    if allowed_codes is not None and (normalized is None or normalized not in allowed_codes):
+        raise HTTPException(status_code=403, detail="Export location is outside your assigned scope")
+
+
+def apply_export_location_scope(query, column, user: User, db: Session):
+    allowed_codes = get_user_location_codes(user, db)
+    if allowed_codes is None:
+        return query
+    if not allowed_codes:
+        return query.filter(false())
+    return query.filter(func.lower(func.trim(column)).in_(allowed_codes))
+
+
+def ensure_export_entity_scope(
+    user: User, db: Session, entity_code: str, *, allow_unassigned: bool = False
+) -> None:
+    allowed_codes = get_user_location_codes(user, db)
+    if allowed_codes is None:
+        return
+    associated_codes = {
+        code
+        for (raw_code,) in db.query(ExportLocationEntity.location_code)
+        .filter(
+            ExportLocationEntity.entity_code == entity_code,
+            ExportLocationEntity.status == "Active",
+        )
+        .all()
+        if (code := normalize_location_code(raw_code)) is not None
+    }
+    if (not associated_codes and not allow_unassigned) or not associated_codes.issubset(allowed_codes):
+        raise HTTPException(status_code=403, detail="Export entity is outside your assigned location scope")
+
+
+def ensure_export_block_scope(
+    user: User, db: Session, block_code: str, *, allow_unassigned: bool = False
+) -> None:
+    allowed_codes = get_user_location_codes(user, db)
+    if allowed_codes is None:
+        return
+    entity_codes = db.query(ExportEntityBlock.entity_code).filter(
+        ExportEntityBlock.block_code == block_code,
+        ExportEntityBlock.status == "Active",
+    ).subquery()
+    associated_codes = {
+        code
+        for (raw_code,) in db.query(ExportLocationEntity.location_code)
+        .filter(
+            ExportLocationEntity.entity_code.in_(entity_codes),
+            ExportLocationEntity.status == "Active",
+        )
+        .all()
+        if (code := normalize_location_code(raw_code)) is not None
+    }
+    if (not associated_codes and not allow_unassigned) or not associated_codes.issubset(allowed_codes):
+        raise HTTPException(status_code=403, detail="Export block is outside your assigned location scope")
 
 
 def build_permit_quarter_code(quarter: str | None, year: str | int | None) -> str:
@@ -283,14 +348,26 @@ def build_entity_response(entity):
     }
 
 
-def build_block_response(block, db=None):
+def build_block_response(block, db=None, current_user: User | None = None):
     entity_names = []
     if db:
-        # Get entities linked to this block via entity-block mapping
-        entity_blocks = db.query(ExportEntityBlock).filter(
+        # Get only entity names visible in the caller's assigned locations.
+        entity_query = db.query(ExportEntityBlock).filter(
             ExportEntityBlock.block_code == block.block_code,
             ExportEntityBlock.status == "Active",
-        ).all()
+        )
+        if current_user is not None:
+            allowed_codes = get_user_location_codes(current_user, db)
+            if allowed_codes is not None:
+                if not allowed_codes:
+                    entity_query = entity_query.filter(false())
+                else:
+                    visible_entities = db.query(ExportLocationEntity.entity_code).filter(
+                        func.lower(func.trim(ExportLocationEntity.location_code)).in_(allowed_codes),
+                        ExportLocationEntity.status == "Active",
+                    ).subquery()
+                    entity_query = entity_query.filter(ExportEntityBlock.entity_code.in_(visible_entities))
+        entity_blocks = entity_query.all()
         for eb in entity_blocks:
             ent = db.query(ExportEntity).filter(ExportEntity.entity_code == eb.entity_code).first()
             if ent:
@@ -372,12 +449,16 @@ def build_transaction_response(tx, db):
 
 @router.get("/locations", response_model=list[ExportLocationResponse])
 def list_export_locations(db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    return [build_location_response(l) for l in db.query(ExportLocation).filter(ExportLocation.status == "Active").all()]
+    require_user_permission(current_user, "View Export Operations", db)
+    query = db.query(ExportLocation).filter(ExportLocation.status == "Active")
+    query = apply_export_location_scope(query, ExportLocation.location_code, current_user, db)
+    return [build_location_response(location) for location in query.all()]
 
 
 @router.post("/locations", response_model=ExportLocationResponse)
 def create_export_location(data: ExportLocationCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
     require_user_permission(current_user, "Manage Export Operations", db)
+    ensure_export_location_scope(current_user, db, data.location_code)
     existing = db.query(ExportLocation).filter(ExportLocation.location_code.ilike(data.location_code)).first()
     if existing:
         raise HTTPException(status_code=400, detail="Export location code already exists")
@@ -395,6 +476,8 @@ def update_export_location(location_id: int, data: ExportLocationCreate, db: Ses
     loc = db.query(ExportLocation).filter(ExportLocation.id == location_id).first()
     if not loc:
         raise HTTPException(status_code=404, detail="Export location not found")
+    ensure_export_location_scope(current_user, db, loc.location_code)
+    ensure_export_location_scope(current_user, db, data.location_code)
     for k, v in data.model_dump().items():
         setattr(loc, k, v)
     db.commit()
@@ -409,6 +492,7 @@ def delete_export_location(location_id: int, db: Session = Depends(get_db), curr
     loc = db.query(ExportLocation).filter(ExportLocation.id == location_id).first()
     if not loc:
         raise HTTPException(status_code=404, detail="Export location not found")
+    ensure_export_location_scope(current_user, db, loc.location_code)
 
     has_active_entities = db.query(ExportLocationEntity).filter(
         ExportLocationEntity.location_code == loc.location_code,
@@ -436,13 +520,23 @@ def delete_export_location(location_id: int, db: Session = Depends(get_db), curr
 
 @router.get("/entities", response_model=list[ExportEntityResponse])
 def list_export_entities(location_code: str = Query(None), db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
+    require_user_permission(current_user, "View Export Operations", db)
     q = db.query(ExportEntity).filter(ExportEntity.status == "Active")
+    allowed_codes = get_user_location_codes(current_user, db)
     if location_code:
-        subq = db.query(ExportLocationEntity.entity_code).filter(
-            ExportLocationEntity.location_code == location_code,
-            ExportLocationEntity.status == "Active",
-        ).subquery()
-        q = q.filter(ExportEntity.entity_code.in_(subq))
+        ensure_export_location_scope(current_user, db, location_code)
+        scoped_location_codes = {normalize_location_code(location_code)}
+    else:
+        scoped_location_codes = allowed_codes
+    if scoped_location_codes is not None:
+        if not scoped_location_codes:
+            q = q.filter(false())
+        else:
+            subq = db.query(ExportLocationEntity.entity_code).filter(
+                func.lower(func.trim(ExportLocationEntity.location_code)).in_(scoped_location_codes),
+                ExportLocationEntity.status == "Active",
+            ).subquery()
+            q = q.filter(ExportEntity.entity_code.in_(subq))
     return [build_entity_response(e) for e in q.all()]
 
 
@@ -466,6 +560,7 @@ def update_export_entity(entity_id: int, data: ExportEntityCreate, db: Session =
     ent = db.query(ExportEntity).filter(ExportEntity.id == entity_id).first()
     if not ent:
         raise HTTPException(status_code=404, detail="Export entity not found")
+    ensure_export_entity_scope(current_user, db, ent.entity_code)
     for k, v in data.model_dump().items():
         setattr(ent, k, v)
     db.commit()
@@ -480,6 +575,7 @@ def delete_export_entity(entity_id: int, db: Session = Depends(get_db), current_
     ent = db.query(ExportEntity).filter(ExportEntity.id == entity_id).first()
     if not ent:
         raise HTTPException(status_code=404, detail="Export entity not found")
+    ensure_export_entity_scope(current_user, db, ent.entity_code)
     has_active_blocks = db.query(ExportEntityBlock).filter(
         ExportEntityBlock.entity_code == ent.entity_code,
         ExportEntityBlock.status == "Active",
@@ -497,9 +593,13 @@ def delete_export_entity(entity_id: int, db: Session = Depends(get_db), current_
 
 @router.get("/location-entities")
 def list_location_entities(location_code: str = Query(None), db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
+    require_user_permission(current_user, "View Export Operations", db)
     q = db.query(ExportLocationEntity).filter(ExportLocationEntity.status == "Active")
     if location_code:
+        ensure_export_location_scope(current_user, db, location_code)
         q = q.filter(ExportLocationEntity.location_code == location_code)
+    else:
+        q = apply_export_location_scope(q, ExportLocationEntity.location_code, current_user, db)
     results = []
     for le in q.all():
         loc = db.query(ExportLocation).filter(ExportLocation.location_code == le.location_code).first()
@@ -517,6 +617,8 @@ def list_location_entities(location_code: str = Query(None), db: Session = Depen
 @router.post("/location-entities")
 def create_location_entity(location_code: str, entity_code: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
     require_user_permission(current_user, "Manage Export Operations", db)
+    ensure_export_location_scope(current_user, db, location_code)
+    ensure_export_entity_scope(current_user, db, entity_code, allow_unassigned=True)
     existing_active = db.query(ExportLocationEntity).filter(
         ExportLocationEntity.location_code == location_code,
         ExportLocationEntity.entity_code == entity_code,
@@ -547,6 +649,7 @@ def delete_location_entity(mapping_id: int, db: Session = Depends(get_db), curre
     le = db.query(ExportLocationEntity).filter(ExportLocationEntity.id == mapping_id).first()
     if not le:
         raise HTTPException(status_code=404, detail="Mapping not found")
+    ensure_export_location_scope(current_user, db, le.location_code)
     le.status = "Inactive"
     db.commit()
     create_audit_log(db, "Export Operations", "Delete Location-Entity", current_user, entity_type="ExportLocationEntity", entity_label=f"{le.location_code}-{le.entity_code}")
@@ -559,15 +662,32 @@ def delete_location_entity(mapping_id: int, db: Session = Depends(get_db), curre
 
 @router.get("/blocks", response_model=list[ExportBlockResponse])
 def list_export_blocks(entity_code: str = Query(None), db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
+    require_user_permission(current_user, "View Export Operations", db)
     q = db.query(ExportBlock).filter(ExportBlock.status == "Active")
     if entity_code:
-        # Filter blocks that are linked to this entity via entity-block mapping
-        subq = db.query(ExportEntityBlock.block_code).filter(
-            ExportEntityBlock.entity_code == entity_code,
-            ExportEntityBlock.status == "Active",
-        ).subquery()
-        q = q.filter(ExportBlock.block_code.in_(subq))
-    return [build_block_response(b, db) for b in q.all()]
+        ensure_export_entity_scope(current_user, db, entity_code)
+        visible_entity_codes = [entity_code]
+    else:
+        allowed_codes = get_user_location_codes(current_user, db)
+        if allowed_codes is None:
+            visible_entity_codes = None
+        elif not allowed_codes:
+            visible_entity_codes = []
+        else:
+            visible_entity_codes = db.query(ExportLocationEntity.entity_code).filter(
+                func.lower(func.trim(ExportLocationEntity.location_code)).in_(allowed_codes),
+                ExportLocationEntity.status == "Active",
+            ).subquery()
+    if visible_entity_codes is not None:
+        if isinstance(visible_entity_codes, list) and not visible_entity_codes:
+            q = q.filter(false())
+        else:
+            subq = db.query(ExportEntityBlock.block_code).filter(
+                ExportEntityBlock.entity_code.in_(visible_entity_codes),
+                ExportEntityBlock.status == "Active",
+            ).subquery()
+            q = q.filter(ExportBlock.block_code.in_(subq))
+    return [build_block_response(b, db, current_user) for b in q.all()]
 
 
 @router.post("/blocks", response_model=ExportBlockResponse)
@@ -584,7 +704,7 @@ def create_export_block(data: ExportBlockCreate, db: Session = Depends(get_db), 
     db.commit()
     db.refresh(blk)
     create_audit_log(db, "Export Operations", "Create Export Block", current_user, entity_type="ExportBlock", entity_id=blk.id, entity_label=blk.block_name)
-    return build_block_response(blk, db)
+    return build_block_response(blk, db, current_user)
 
 
 @router.put("/blocks/{block_id}", response_model=ExportBlockResponse)
@@ -593,6 +713,7 @@ def update_export_block(block_id: int, data: ExportBlockCreate, db: Session = De
     blk = db.query(ExportBlock).filter(ExportBlock.id == block_id).first()
     if not blk:
         raise HTTPException(status_code=404, detail="Export block not found")
+    ensure_export_block_scope(current_user, db, blk.block_code)
     update_data = data.model_dump()
     update_data.pop("entity_code", None)
     for k, v in update_data.items():
@@ -600,7 +721,7 @@ def update_export_block(block_id: int, data: ExportBlockCreate, db: Session = De
     db.commit()
     db.refresh(blk)
     create_audit_log(db, "Export Operations", "Update Export Block", current_user, entity_type="ExportBlock", entity_id=blk.id, entity_label=blk.block_name)
-    return build_block_response(blk, db)
+    return build_block_response(blk, db, current_user)
 
 
 @router.delete("/blocks/{block_id}")
@@ -609,6 +730,7 @@ def delete_export_block(block_id: int, db: Session = Depends(get_db), current_us
     blk = db.query(ExportBlock).filter(ExportBlock.id == block_id).first()
     if not blk:
         raise HTTPException(status_code=404, detail="Export block not found")
+    ensure_export_block_scope(current_user, db, blk.block_code)
     blk.status = "Inactive"
     db.commit()
     create_audit_log(db, "Export Operations", "Delete Export Block", current_user, entity_type="ExportBlock", entity_id=blk.id, entity_label=blk.block_name)
@@ -621,11 +743,25 @@ def delete_export_block(block_id: int, db: Session = Depends(get_db), current_us
 
 @router.get("/entity-blocks")
 def list_entity_blocks(entity_code: str = Query(None), block_code: str = Query(None), db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
+    require_user_permission(current_user, "View Export Operations", db)
     q = db.query(ExportEntityBlock).filter(ExportEntityBlock.status == "Active")
     if entity_code:
+        ensure_export_entity_scope(current_user, db, entity_code)
         q = q.filter(ExportEntityBlock.entity_code == entity_code)
     if block_code:
+        ensure_export_block_scope(current_user, db, block_code)
         q = q.filter(ExportEntityBlock.block_code == block_code)
+    if not entity_code and not block_code:
+        allowed_codes = get_user_location_codes(current_user, db)
+        if allowed_codes is not None:
+            if not allowed_codes:
+                q = q.filter(false())
+            else:
+                visible_entities = db.query(ExportLocationEntity.entity_code).filter(
+                    func.lower(func.trim(ExportLocationEntity.location_code)).in_(allowed_codes),
+                    ExportLocationEntity.status == "Active",
+                ).subquery()
+                q = q.filter(ExportEntityBlock.entity_code.in_(visible_entities))
     results = []
     for eb in q.all():
         ent = db.query(ExportEntity).filter(ExportEntity.entity_code == eb.entity_code).first()
@@ -643,6 +779,8 @@ def list_entity_blocks(entity_code: str = Query(None), block_code: str = Query(N
 @router.post("/entity-blocks")
 def create_entity_block(entity_code: str, block_code: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
     require_user_permission(current_user, "Manage Export Operations", db)
+    ensure_export_entity_scope(current_user, db, entity_code)
+    ensure_export_block_scope(current_user, db, block_code, allow_unassigned=True)
     existing_active = db.query(ExportEntityBlock).filter(
         ExportEntityBlock.entity_code == entity_code,
         ExportEntityBlock.block_code == block_code,
@@ -673,6 +811,8 @@ def delete_entity_block(mapping_id: int, db: Session = Depends(get_db), current_
     eb = db.query(ExportEntityBlock).filter(ExportEntityBlock.id == mapping_id).first()
     if not eb:
         raise HTTPException(status_code=404, detail="Mapping not found")
+    ensure_export_entity_scope(current_user, db, eb.entity_code)
+    ensure_export_block_scope(current_user, db, eb.block_code)
     eb.status = "Inactive"
     db.commit()
     create_audit_log(db, "Export Operations", "Delete Entity-Block", current_user, entity_type="ExportEntityBlock", entity_label=f"{eb.entity_code}-{eb.block_code}")
@@ -692,10 +832,14 @@ def list_export_permits(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_from_token),
 ):
+    require_user_permission(current_user, "View Export Operations", db)
     expire_permits_if_needed(db)
     q = db.query(ExportPermit)
     if location_code:
+        ensure_export_location_scope(current_user, db, location_code)
         q = q.filter(ExportPermit.location_code == location_code)
+    else:
+        q = apply_export_location_scope(q, ExportPermit.location_code, current_user, db)
     if entity_code:
         q = q.filter(ExportPermit.entity_code == entity_code)
     if quarter:
@@ -708,6 +852,7 @@ def list_export_permits(
 @router.post("/permits", response_model=ExportPermitResponse)
 def create_export_permit(data: ExportPermitCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
     require_user_permission(current_user, "Manage Export Operations", db)
+    ensure_export_location_scope(current_user, db, data.location_code)
     existing = db.query(ExportPermit).filter(ExportPermit.permit_number == data.permit_number).first()
     if existing:
         raise HTTPException(status_code=400, detail="Permit number already exists")
@@ -735,7 +880,10 @@ def update_export_permit(permit_id: int, data: ExportPermitUpdate, db: Session =
     permit = db.query(ExportPermit).filter(ExportPermit.id == permit_id).first()
     if not permit:
         raise HTTPException(status_code=404, detail="Export permit not found")
+    ensure_export_location_scope(current_user, db, permit.location_code)
     update_data = {k: v for k, v in data.model_dump().items() if v is not None}
+    if update_data.get("location_code"):
+        ensure_export_location_scope(current_user, db, update_data["location_code"])
     block_codes = update_data.pop("block_codes", None)
     for k, v in update_data.items():
         setattr(permit, k, v)
@@ -757,6 +905,7 @@ def delete_export_permit(permit_id: int, db: Session = Depends(get_db), current_
     permit = db.query(ExportPermit).filter(ExportPermit.id == permit_id).first()
     if not permit:
         raise HTTPException(status_code=404, detail="Export permit not found")
+    ensure_export_location_scope(current_user, db, permit.location_code)
     permit.status = "Inactive"
     db.query(ExportPermitBlockAssignment).filter(ExportPermitBlockAssignment.permit_id == permit_id).delete()
     db.commit()
@@ -776,9 +925,13 @@ def list_export_transactions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_from_token),
 ):
+    require_user_permission(current_user, "View Export Operations", db)
     q = db.query(ExportTransaction).filter(ExportTransaction.status == "Active")
     if location_code:
+        ensure_export_location_scope(current_user, db, location_code)
         q = q.filter(ExportTransaction.location_code == location_code)
+    else:
+        q = apply_export_location_scope(q, ExportTransaction.location_code, current_user, db)
     if entity_code:
         q = q.filter(ExportTransaction.entity_code == entity_code)
     if quarter:
@@ -794,6 +947,7 @@ def create_export_transaction(data: ExportTransactionCreate, db: Session = Depen
     payload_rows = expand_export_transaction_payloads({k: v for k, v in payload_data.items() if k != "override"})
     created_transactions = []
     for entry in payload_rows:
+        ensure_export_location_scope(current_user, db, entry.get("location_code"))
         permit_number = entry.get("permit_number")
         if permit_number:
             allocation = resolve_permit_allocation(
@@ -836,9 +990,11 @@ def create_export_transaction(data: ExportTransactionCreate, db: Session = Depen
 
 @router.put("/transactions/{transaction_id}", response_model=ExportTransactionResponse)
 def update_export_transaction(transaction_id: int, data: ExportTransactionUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
+    require_user_permission(current_user, "Manage Export Operations", db)
     tx = db.query(ExportTransaction).filter(ExportTransaction.id == transaction_id).first()
     if not tx:
         raise HTTPException(status_code=404, detail="Export transaction not found")
+    ensure_export_location_scope(current_user, db, tx.location_code)
     update_data = {k: v for k, v in data.model_dump().items() if v is not None}
     override = bool(update_data.pop("override", False))
     block_entries = update_data.pop("block_entries", None)
@@ -858,6 +1014,7 @@ def update_export_transaction(transaction_id: int, data: ExportTransactionUpdate
         update_data["quarter"] = get_quarter_from_date(update_data["bl_date"])
     payload_rows = expand_export_transaction_payloads(payload_for_validation)
     for entry in payload_rows:
+        ensure_export_location_scope(current_user, db, entry.get("location_code"))
         permit_number = entry.get("permit_number")
         if permit_number:
             allocation = resolve_permit_allocation(
@@ -890,9 +1047,11 @@ def update_export_transaction(transaction_id: int, data: ExportTransactionUpdate
 
 @router.delete("/transactions/{transaction_id}")
 def delete_export_transaction(transaction_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
+    require_user_permission(current_user, "Manage Export Operations", db)
     tx = db.query(ExportTransaction).filter(ExportTransaction.id == transaction_id).first()
     if not tx:
         raise HTTPException(status_code=404, detail="Export transaction not found")
+    ensure_export_location_scope(current_user, db, tx.location_code)
     tx.status = "Inactive"
     db.commit()
     create_audit_log(db, "Export Operations", "Delete Export Transaction", current_user, entity_type="ExportTransaction", entity_id=tx.id)
@@ -910,6 +1069,7 @@ def bulk_upload_export_transactions(data: BulkUploadRequest, db: Session = Depen
     errors = []
     for item in data.items:
         try:
+            ensure_export_location_scope(current_user, db, item.location_code)
             quarter = get_quarter_from_date(item.bl_date)
             tx = ExportTransaction(
                 bl_date=item.bl_date,
@@ -943,6 +1103,7 @@ def bulk_upload_export_permits(data: PermitBulkUploadRequest, db: Session = Depe
     created_permits = []
     for item in data.items:
         try:
+            ensure_export_location_scope(current_user, db, item.location_code)
             quarter_code = build_permit_quarter_code(item.quarter, item.year)
             existing = db.query(ExportPermit).filter(ExportPermit.permit_number == item.permit_number).first()
             if existing:
@@ -984,6 +1145,7 @@ def bulk_upload_export_permits(data: PermitBulkUploadRequest, db: Session = Depe
 
 @router.get("/configs", response_model=list[ExportConfigResponse])
 def list_export_configs(db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
+    require_user_permission(current_user, "View Export Operations", db)
     return [
         {
             "id": c.id,
@@ -1037,6 +1199,7 @@ def create_export_config(data: ExportConfigCreate, db: Session = Depends(get_db)
 
 @router.get("/consignees", response_model=list[ExportConsigneeResponse])
 def list_export_consignees(db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
+    require_user_permission(current_user, "View Export Operations", db)
     return [
         {
             "id": c.id,
@@ -1130,9 +1293,14 @@ def get_export_dashboard(
     current_user: User = Depends(get_current_user_from_token),
 ):
     # --- Transaction query base ---
+    require_user_permission(current_user, "View Export Operations", db)
+    if location_code:
+        ensure_export_location_scope(current_user, db, location_code)
     tx_q = db.query(ExportTransaction).filter(ExportTransaction.status == "Active")
     if location_code:
         tx_q = tx_q.filter(ExportTransaction.location_code == location_code)
+    else:
+        tx_q = apply_export_location_scope(tx_q, ExportTransaction.location_code, current_user, db)
     if entity_code:
         tx_q = tx_q.filter(ExportTransaction.entity_code == entity_code)
     if block_code:
@@ -1153,6 +1321,8 @@ def get_export_dashboard(
     permit_q = db.query(ExportPermit).filter(ExportPermit.status == "Active")
     if location_code:
         permit_q = permit_q.filter(ExportPermit.location_code == location_code)
+    else:
+        permit_q = apply_export_location_scope(permit_q, ExportPermit.location_code, current_user, db)
     if entity_code:
         permit_q = permit_q.filter(ExportPermit.entity_code == entity_code)
     if block_code:
@@ -1183,6 +1353,9 @@ def get_export_dashboard(
         ExportTransaction.location_code,
         func.coalesce(func.sum(ExportTransaction.volume), 0).label("total"),
     ).filter(ExportTransaction.status == "Active")
+    tx_loc_q = apply_export_location_scope(tx_loc_q, ExportTransaction.location_code, current_user, db)
+    if location_code:
+        tx_loc_q = tx_loc_q.filter(ExportTransaction.location_code == location_code)
     if entity_code:
         tx_loc_q = tx_loc_q.filter(ExportTransaction.entity_code == entity_code)
     if block_code:
@@ -1216,6 +1389,9 @@ def get_export_dashboard(
         ExportTransaction.block_code,
         func.coalesce(func.sum(ExportTransaction.volume), 0).label("export_vol"),
     ).filter(ExportTransaction.status == "Active")
+    tx_block_q = apply_export_location_scope(tx_block_q, ExportTransaction.location_code, current_user, db)
+    if location_code:
+        tx_block_q = tx_block_q.filter(ExportTransaction.location_code == location_code)
     if entity_code:
         tx_block_q = tx_block_q.filter(ExportTransaction.entity_code == entity_code)
     if quarter:
@@ -1237,6 +1413,8 @@ def get_export_dashboard(
     ).join(ExportPermitBlockAssignment, ExportPermitBlockAssignment.permit_id == ExportPermit.id).filter(ExportPermit.status == "Active")
     if location_code:
         permit_block_q = permit_block_q.filter(ExportPermit.location_code == location_code)
+    else:
+        permit_block_q = apply_export_location_scope(permit_block_q, ExportPermit.location_code, current_user, db)
     if entity_code:
         permit_block_q = permit_block_q.filter(ExportPermit.entity_code == entity_code)
     if block_code:
@@ -1331,9 +1509,14 @@ def get_export_report(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_from_token),
 ):
+    require_user_permission(current_user, "View Export Operations", db)
+    if location_code:
+        ensure_export_location_scope(current_user, db, location_code)
     q = db.query(ExportTransaction).filter(ExportTransaction.status == "Active")
     if location_code:
         q = q.filter(ExportTransaction.location_code == location_code)
+    else:
+        q = apply_export_location_scope(q, ExportTransaction.location_code, current_user, db)
     if quarter:
         q = q.filter(ExportTransaction.quarter == quarter)
     if from_date:

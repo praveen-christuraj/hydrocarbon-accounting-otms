@@ -13,7 +13,11 @@ from app.schemas import (
     LocationOperationAvailabilityResponse,
 )
 from app.dependencies.auth import get_current_user_from_token
-from app.dependencies.permissions import require_user_permission
+from app.dependencies.permissions import (
+    apply_location_filter,
+    ensure_location_in_user_scope,
+    require_user_permission,
+)
 from app.services.audit_service import create_audit_log
 from app.utils.helpers import clean_optional_text
 
@@ -161,7 +165,7 @@ def get_location_operation_availability(
     )
 
     availability_records = (
-        db.query(LocationOperationAvailability)
+        apply_location_filter(db.query(LocationOperationAvailability), LocationOperationAvailability, current_user, db)
         .order_by(LocationOperationAvailability.id)
         .all()
     )
@@ -186,6 +190,7 @@ def create_location_operation_availability(
         "Manage Location Operation Availability",
         db,
     )
+    ensure_location_in_user_scope(current_user, db, availability.location_code, "Location")
 
     validate_location_operation_availability(availability, db)
 
@@ -247,6 +252,8 @@ def update_location_operation_availability(
             status_code=404,
             detail="Location operation availability not found",
         )
+    ensure_location_in_user_scope(current_user, db, existing_record.location_code, "Location")
+    ensure_location_in_user_scope(current_user, db, availability.location_code, "Location")
 
     before_data = build_location_operation_availability_audit_snapshot(
         existing_record, db
@@ -311,6 +318,7 @@ def delete_location_operation_availability(
             status_code=404,
             detail="Location operation availability not found",
         )
+    ensure_location_in_user_scope(current_user, db, existing_record.location_code, "Location")
 
     deleted_data = build_location_operation_availability_audit_snapshot(
         existing_record, db

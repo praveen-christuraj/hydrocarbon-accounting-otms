@@ -27,13 +27,22 @@ from app.schemas import (
 )
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
-    require_user_permission,
+    apply_location_filter,
+    ensure_location_in_user_scope,
     evaluate_operation_workflow_policy,
+    is_admin_user,
+    require_user_permission,
 )
 from app.services.audit_service import create_audit_log
 from app.utils.helpers import clean_optional_text
 
 router = APIRouter(prefix="/operation-workflow-policies", tags=["Operation Workflow Policies"])
+
+
+def require_workflow_policy_admin(current_user: User, db: Session) -> None:
+    require_user_permission(current_user, "Manage Operation Workflow Policy", db)
+    if not is_admin_user(current_user, db):
+        raise HTTPException(status_code=403, detail="Only an administrator may change workflow policies")
 
 
 def build_operation_workflow_policy_response(policy: OperationWorkflowPolicy, db: Session):
@@ -83,7 +92,9 @@ def get_operation_workflow_policies(
     db: Session = Depends(get_db),
 ):
     require_user_permission(current_user, "View Operation Workflow Policy", db)
-    rows = db.query(OperationWorkflowPolicy).order_by(
+    rows = apply_location_filter(
+        db.query(OperationWorkflowPolicy), OperationWorkflowPolicy, current_user, db
+    ).order_by(
         OperationWorkflowPolicy.priority.asc(),
         OperationWorkflowPolicy.id.asc(),
     ).all()
@@ -96,7 +107,7 @@ def create_operation_workflow_policy(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Operation Workflow Policy", db)
+    require_workflow_policy_admin(current_user, db)
     policy = OperationWorkflowPolicy(
         policy_name=str(payload.policy_name or "").strip(),
         action_code=str(payload.action_code or "").strip().upper(),
@@ -152,7 +163,7 @@ def update_operation_workflow_policy(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Operation Workflow Policy", db)
+    require_workflow_policy_admin(current_user, db)
     policy = db.query(OperationWorkflowPolicy).filter(OperationWorkflowPolicy.id == policy_id).first()
     if not policy:
         raise HTTPException(status_code=404, detail="Workflow policy not found")
@@ -201,7 +212,7 @@ def save_operation_workflow_policy_roles(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Operation Workflow Policy", db)
+    require_workflow_policy_admin(current_user, db)
     policy = db.query(OperationWorkflowPolicy).filter(OperationWorkflowPolicy.id == policy_id).first()
     if not policy:
         raise HTTPException(status_code=404, detail="Workflow policy not found")
@@ -222,7 +233,7 @@ def save_operation_workflow_policy_users(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Operation Workflow Policy", db)
+    require_workflow_policy_admin(current_user, db)
     policy = db.query(OperationWorkflowPolicy).filter(OperationWorkflowPolicy.id == policy_id).first()
     if not policy:
         raise HTTPException(status_code=404, detail="Workflow policy not found")
@@ -248,7 +259,7 @@ def delete_operation_workflow_policy(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Operation Workflow Policy", db)
+    require_workflow_policy_admin(current_user, db)
     policy = db.query(OperationWorkflowPolicy).filter(OperationWorkflowPolicy.id == policy_id).first()
     if not policy:
         raise HTTPException(status_code=404, detail="Workflow policy not found")
@@ -277,7 +288,11 @@ def check_operation_workflow_policy(
 ):
     # Self-scoped check: any authenticated user may ask whether THEY can perform
     # an action, so no view permission is required here. The enforcement itself
-    # happens in the status-change endpoints.
+    # happens in the status-change endpoints. Do not let callers probe another
+    # location's workflow policy by varying this parameter.
+    location_code = clean_optional_text(payload.location_code)
+    if location_code:
+        ensure_location_in_user_scope(current_user, db, location_code)
     allowed, reason, matched = evaluate_operation_workflow_policy(
         db=db,
         current_user=current_user,

@@ -52,6 +52,7 @@ from app.utils.db_migrations import (
     ensure_operation_task_tables,
     ensure_user_location_columns,
     ensure_export_operations_tables,
+    ensure_user_role_multi_role_constraint,
     migrate_boolean_columns,
     seed_default_permissions,
     seed_admin_role,
@@ -61,6 +62,7 @@ from app.utils.db_migrations import (
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    ensure_user_role_multi_role_constraint()
     ensure_user_security_columns()
     ensure_operation_ticket_number_column()
     ensure_operation_template_layout_columns()

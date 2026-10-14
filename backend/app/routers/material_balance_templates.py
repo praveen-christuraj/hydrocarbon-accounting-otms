@@ -14,7 +14,11 @@ from app.schemas import (
     MaterialBalanceTemplateDetailResponse,
 )
 from app.dependencies.auth import get_current_user_from_token
-from app.dependencies.permissions import require_user_permission
+from app.dependencies.permissions import (
+    apply_location_filter,
+    ensure_location_in_user_scope,
+    require_user_permission,
+)
 from app.services.audit_service import create_audit_log
 from app.utils.helpers import safe_float, clean_optional_text, get_location_by_code
 from app.services.material_balance_helpers import (
@@ -248,11 +252,13 @@ def get_material_balance_templates(
     )
 
     query = db.query(MaterialBalanceTemplate)
+    query = apply_location_filter(query, MaterialBalanceTemplate, current_user, db)
 
     cleaned_location_code = clean_optional_text(location_code)
     cleaned_status = clean_optional_text(status)
 
     if cleaned_location_code:
+        ensure_location_in_user_scope(current_user, db, cleaned_location_code, "Location")
         query = query.filter(
             MaterialBalanceTemplate.location_code.ilike(cleaned_location_code)
         )
@@ -300,6 +306,7 @@ def get_material_balance_template_detail(
             status_code=404,
             detail="Material Balance Template not found",
         )
+    ensure_location_in_user_scope(current_user, db, template.location_code, "Location")
 
     return build_material_balance_template_detail_response(template, db)
 
@@ -334,6 +341,7 @@ def create_material_balance_template(
             status_code=404,
             detail=f"Location {location_code} not found",
         )
+    ensure_location_in_user_scope(current_user, db, location.location_code, "Location")
 
     template_name = clean_optional_text(template_data.template_name)
 
@@ -414,6 +422,7 @@ def update_material_balance_template(
             status_code=404,
             detail="Material Balance Template not found",
         )
+    ensure_location_in_user_scope(current_user, db, template.location_code, "Existing location")
 
     location_code = clean_optional_text(template_data.location_code)
     template_name = clean_optional_text(template_data.template_name)
@@ -423,6 +432,11 @@ def update_material_balance_template(
 
     if not template_name:
         raise HTTPException(status_code=400, detail="Template Name is required")
+
+    new_location = get_location_by_code(location_code, db)
+    if not new_location:
+        raise HTTPException(status_code=404, detail=f"Location {location_code} not found")
+    ensure_location_in_user_scope(current_user, db, new_location.location_code, "Location")
 
     duplicate_template = (
         db.query(MaterialBalanceTemplate)
@@ -495,6 +509,7 @@ def delete_material_balance_template(
             status_code=404,
             detail="Material Balance Template not found",
         )
+    ensure_location_in_user_scope(current_user, db, template.location_code, "Location")
 
     old_details = build_material_balance_template_detail_response(template, db)
 
@@ -545,6 +560,7 @@ def create_material_balance_template_column(
             status_code=404,
             detail="Material Balance Template not found",
         )
+    ensure_location_in_user_scope(current_user, db, template.location_code, "Location")
 
     validated = validate_material_balance_template_column_payload(column_data)
 
@@ -629,6 +645,12 @@ def update_material_balance_template_column(
             status_code=404,
             detail="Material Balance Template Column not found",
         )
+    template = db.query(MaterialBalanceTemplate).filter(
+        MaterialBalanceTemplate.id == column.template_id
+    ).first()
+    if not template:
+        raise HTTPException(status_code=404, detail="Material Balance Template not found")
+    ensure_location_in_user_scope(current_user, db, template.location_code, "Location")
 
     validated = validate_material_balance_template_column_payload(column_data)
 
@@ -712,6 +734,12 @@ def delete_material_balance_template_column(
             status_code=404,
             detail="Material Balance Template Column not found",
         )
+    template = db.query(MaterialBalanceTemplate).filter(
+        MaterialBalanceTemplate.id == column.template_id
+    ).first()
+    if not template:
+        raise HTTPException(status_code=404, detail="Material Balance Template not found")
+    ensure_location_in_user_scope(current_user, db, template.location_code, "Location")
 
     old_details = build_material_balance_template_column_response(column)
 

@@ -5,7 +5,7 @@ from app.database import get_db
 from app.models import Permission, RolePermission, Role, User
 from app.schemas import PermissionCreate, PermissionResponse
 from app.dependencies.auth import get_current_user_from_token
-from app.dependencies.permissions import require_user_permission
+from app.dependencies.permissions import is_admin_user, require_user_permission
 from app.services.audit_service import create_audit_log
 from app.utils.default_permissions import STANDARD_PERMISSIONS
 from app.utils.helpers import clean_optional_text
@@ -127,6 +127,17 @@ def update_permission(
         raise HTTPException(
             status_code=404,
             detail="Permission not found",
+        )
+
+    access_key_changed = (
+        existing_permission.permission_name.strip().casefold() != permission.permission_name.strip().casefold()
+        or existing_permission.module_name.strip().casefold() != permission.module_name.strip().casefold()
+        or existing_permission.status != permission.status
+    )
+    if access_key_changed and not is_admin_user(current_user, db):
+        raise HTTPException(
+            status_code=403,
+            detail="Only an administrator may rename, move, or deactivate a permission",
         )
 
     duplicate_permission = (

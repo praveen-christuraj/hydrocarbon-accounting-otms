@@ -8,6 +8,7 @@ from app.schemas import AssetCreate, AssetResponse
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
     get_user_location_codes,
+    is_admin_user,
     normalize_location_code,
     require_user_permission,
 )
@@ -40,7 +41,7 @@ def get_assets(
         query = query.filter(
             or_(
                 Asset.asset_scope.ilike("Global"),
-                func.lower(Asset.location_code).in_(allowed_codes),
+                func.lower(func.trim(Asset.location_code)).in_(allowed_codes),
             )
         )
 
@@ -97,23 +98,27 @@ def create_asset(
             detail="Asset type not found",
         )
 
-    if asset.asset_scope not in ["Local", "Global"]:
+    asset_scope = str(asset.asset_scope or "").strip().casefold()
+    if asset_scope not in {"local", "global"}:
         raise HTTPException(
             status_code=400,
             detail="Asset scope must be Local or Global",
         )
+    asset_scope = "Local" if asset_scope == "local" else "Global"
+    if asset_scope == "Global" and not is_admin_user(current_user, db):
+        raise HTTPException(status_code=403, detail="Only an administrator may create Global assets")
 
     location_code = clean_optional_text(asset.location_code)
 
-    if asset.asset_scope == "Local" and location_code is None:
+    if asset_scope == "Local" and location_code is None:
         raise HTTPException(
             status_code=400,
             detail="Location is required for Local assets",
         )
 
-    if asset.asset_scope == "Local":
+    if asset_scope == "Local":
         location = db.query(Location).filter(
-            Location.location_code.ilike(location_code)
+            func.lower(func.trim(Location.location_code)) == normalize_location_code(location_code)
         ).first()
 
         if not location:
@@ -139,9 +144,9 @@ def create_asset(
     new_asset = Asset(
         asset_name=asset.asset_name.strip(),
         asset_code=asset.asset_code.strip(),
-        asset_scope=asset.asset_scope,
+        asset_scope=asset_scope,
         asset_type_code=asset.asset_type_code.strip(),
-        location_code=location_code if asset.asset_scope == "Local" else None,
+        location_code=location_code if asset_scope == "Local" else None,
         serial_number=clean_optional_text(asset.serial_number),
         manufacturer=clean_optional_text(asset.manufacturer),
         model=clean_optional_text(asset.model),
@@ -211,6 +216,11 @@ def update_asset(
 
     allowed = get_user_location_codes(current_user, db)
     if (
+        str(existing_asset.asset_scope or "").strip().casefold() == "global"
+        and not is_admin_user(current_user, db)
+    ):
+        raise HTTPException(status_code=403, detail="Only an administrator may modify Global assets")
+    if (
         allowed is not None
         and existing_asset.location_code
         and normalize_location_code(existing_asset.location_code) not in allowed
@@ -238,23 +248,27 @@ def update_asset(
             detail="Asset type not found",
         )
 
-    if asset.asset_scope not in ["Local", "Global"]:
+    asset_scope = str(asset.asset_scope or "").strip().casefold()
+    if asset_scope not in {"local", "global"}:
         raise HTTPException(
             status_code=400,
             detail="Asset scope must be Local or Global",
         )
+    asset_scope = "Local" if asset_scope == "local" else "Global"
+    if asset_scope == "Global" and not is_admin_user(current_user, db):
+        raise HTTPException(status_code=403, detail="Only an administrator may create or modify Global assets")
 
     location_code = clean_optional_text(asset.location_code)
 
-    if asset.asset_scope == "Local" and location_code is None:
+    if asset_scope == "Local" and location_code is None:
         raise HTTPException(
             status_code=400,
             detail="Location is required for Local assets",
         )
 
-    if asset.asset_scope == "Local":
+    if asset_scope == "Local":
         location = db.query(Location).filter(
-            Location.location_code.ilike(location_code)
+            func.lower(func.trim(Location.location_code)) == normalize_location_code(location_code)
         ).first()
 
         if not location:
@@ -268,6 +282,12 @@ def update_asset(
                 status_code=400,
                 detail="Only Active location can be used for Local assets",
             )
+        allowed_codes = get_user_location_codes(current_user, db)
+        if (
+            allowed_codes is not None
+            and normalize_location_code(location_code) not in allowed_codes
+        ):
+            raise HTTPException(status_code=403, detail="Location is not in your assigned scope")
 
     before_data = {
         "asset_name": existing_asset.asset_name,
@@ -285,10 +305,10 @@ def update_asset(
 
     existing_asset.asset_name = asset.asset_name.strip()
     existing_asset.asset_code = asset.asset_code.strip()
-    existing_asset.asset_scope = asset.asset_scope
+    existing_asset.asset_scope = asset_scope
     existing_asset.asset_type_code = asset.asset_type_code.strip()
     existing_asset.location_code = (
-        location_code if asset.asset_scope == "Local" else None
+        location_code if asset_scope == "Local" else None
     )
     existing_asset.serial_number = clean_optional_text(asset.serial_number)
     existing_asset.manufacturer = clean_optional_text(asset.manufacturer)
@@ -351,6 +371,15 @@ def delete_asset(
             status_code=404,
             detail="Asset not found",
         )
+    allowed_codes = get_user_location_codes(current_user, db)
+    if str(existing_asset.asset_scope or "").strip().casefold() == "global" and not is_admin_user(current_user, db):
+        raise HTTPException(status_code=403, detail="Only an administrator may delete Global assets")
+    if (
+        allowed_codes is not None
+        and existing_asset.location_code
+        and normalize_location_code(existing_asset.location_code) not in allowed_codes
+    ):
+        raise HTTPException(status_code=403, detail="This asset's location is not in your assigned scope")
 
     calibration_table = db.query(AssetCalibrationTable).filter(
         AssetCalibrationTable.asset_code.ilike(existing_asset.asset_code)

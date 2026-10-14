@@ -1,4 +1,4 @@
-from sqlalchemy import inspect, text
+from sqlalchemy import func, inspect, text
 from sqlalchemy.orm import Session
 
 from app.database import engine, SessionLocal
@@ -686,6 +686,79 @@ def ensure_operation_template_layout_columns():
         )
 
 
+def ensure_user_role_multi_role_constraint():
+    """Upgrade user_roles from one-role-per-user to unique user/role pairs.
+
+    This additive migration preserves every existing assignment row and ID.
+    It is safe to run at every startup. The old single-role constraint is
+    removed only after the replacement table/constraint is ready.
+    """
+    inspector = inspect(engine)
+    if "user_roles" not in inspector.get_table_names():
+        return
+
+    unique_constraints = inspector.get_unique_constraints("user_roles")
+    has_pair_constraint = any(
+        set(constraint.get("column_names") or []) == {"user_id", "role_id"}
+        for constraint in unique_constraints
+    )
+    single_user_constraints = [
+        constraint
+        for constraint in unique_constraints
+        if set(constraint.get("column_names") or []) == {"user_id"}
+    ]
+    if has_pair_constraint and not single_user_constraints:
+        return
+
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as connection:
+            # Create the replacement constraint first; if it fails, the legacy
+            # one-role-per-user constraint remains intact.
+            if not has_pair_constraint:
+                connection.execute(
+                    text(
+                        "ALTER TABLE user_roles ADD CONSTRAINT unique_user_role_pair "
+                        "UNIQUE (user_id, role_id)"
+                    )
+                )
+            for constraint in single_user_constraints:
+                name = constraint.get("name")
+                if name:
+                    quoted_name = engine.dialect.identifier_preparer.quote(name)
+                    connection.execute(
+                        text(f"ALTER TABLE user_roles DROP CONSTRAINT IF EXISTS {quoted_name}")
+                    )
+        return
+
+    if engine.dialect.name == "sqlite":
+        # SQLite cannot drop a UNIQUE constraint in-place. Rebuild only this
+        # small association table, copying all original values before swapping.
+        with engine.begin() as connection:
+            connection.execute(text("""
+                CREATE TABLE user_roles__rbac_upgrade (
+                    id INTEGER NOT NULL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    CONSTRAINT unique_user_role_pair UNIQUE (user_id, role_id)
+                )
+            """))
+            connection.execute(text("""
+                INSERT INTO user_roles__rbac_upgrade (id, user_id, role_id, created_at)
+                SELECT id, user_id, role_id, created_at FROM user_roles
+            """))
+            connection.execute(text("DROP TABLE user_roles"))
+            connection.execute(text("ALTER TABLE user_roles__rbac_upgrade RENAME TO user_roles"))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_user_roles_id ON user_roles(id)"
+            ))
+        return
+
+    raise RuntimeError(
+        f"RBAC user-role migration is not implemented for {engine.dialect.name}"
+    )
+
+
 def ensure_user_location_columns():
     """Add all_locations_access column to users table if missing."""
     inspector = inspect(engine)
@@ -750,7 +823,7 @@ def seed_admin_role():
     db = SessionLocal()
     try:
         # 1. Ensure Admin role exists
-        role = db.query(Role).filter(Role.role_name.ilike("Admin")).first()
+        role = db.query(Role).filter(func.lower(func.trim(Role.role_name)) == "admin").first()
         if not role:
             now = datetime.now(timezone.utc)
             role = Role(
@@ -790,7 +863,7 @@ def seed_admin_role():
             assigned += 1
 
         # 3. Ensure default 'admin' user exists and has Admin role
-        admin_user = db.query(User).filter(User.username.ilike("admin")).first()
+        admin_user = db.query(User).filter(func.lower(func.trim(User.username)) == "admin").first()
         if not admin_user:
             now = datetime.now(timezone.utc)
             admin_password = secrets.token_urlsafe(16)
@@ -820,26 +893,27 @@ def seed_admin_role():
             print(f"[SEED] Default admin password: {admin_password}")
         else:
             print(f"[SEED] 'admin' user already exists (id={admin_user.id})")
-            # Ensure admin user is active
-            if admin_user.status != "Active":
-                admin_user.status = "Active"
-                print(f"[SEED] Activated 'admin' user")
+            # Do not reactivate an administrator account that an operator has
+            # intentionally disabled. Authentication checks this status live.
 
-        # 4. Assign Admin role to admin user (force assign - bypass unique constraint issues)
-        user_role = db.query(UserRole).filter(UserRole.user_id == admin_user.id).first()
+        # 4. Add the reserved Admin role without replacing any legacy role
+        # assignments. The association table supports multiple roles after the
+        # additive migration above; preserving previous assignments avoids data loss.
+        user_role = (
+            db.query(UserRole)
+            .filter(UserRole.user_id == admin_user.id, UserRole.role_id == role.id)
+            .first()
+        )
         if not user_role:
             user_role = UserRole(user_id=admin_user.id, role_id=role.id)
             db.add(user_role)
+            db.flush()
             print(f"[SEED] Assigned 'Admin' role to 'admin' user")
-        elif user_role.role_id != role.id:
-            user_role.role_id = role.id
-            print(f"[SEED] Updated 'admin' user role to 'Admin'")
         else:
             print(f"[SEED] 'admin' user already has 'Admin' role")
 
         # 5. Verify the setup
-        verify_role = db.query(Role).filter(Role.id == user_role.role_id).first()
-        print(f"[SEED] VERIFICATION: admin user (id={admin_user.id}) -> role (id={user_role.role_id}, name={verify_role.role_name if verify_role else 'NOT FOUND'})")
+        print(f"[SEED] VERIFICATION: admin user (id={admin_user.id}) -> role (id={role.id}, name={role.role_name})")
 
         db.commit()
         if assigned:
@@ -858,23 +932,30 @@ def verify_admin_setup():
     """Verify admin user has Admin role with all permissions. Returns dict with status."""
     db = SessionLocal()
     try:
-        admin_user = db.query(User).filter(User.username.ilike("admin")).first()
+        admin_user = db.query(User).filter(func.lower(func.trim(User.username)) == "admin").first()
         if not admin_user:
             return {"ok": False, "error": "admin user not found"}
 
-        user_role = db.query(UserRole).filter(UserRole.user_id == admin_user.id).first()
-        if not user_role:
-            return {"ok": False, "error": "admin user has no role assigned"}
-
-        role = db.query(Role).filter(Role.id == user_role.role_id).first()
+        admin_roles = (
+            db.query(Role)
+            .join(UserRole, UserRole.role_id == Role.id)
+            .filter(UserRole.user_id == admin_user.id)
+            .all()
+        )
+        role = next(
+            (candidate for candidate in admin_roles if str(candidate.role_name or "").strip().casefold() == "admin"),
+            None,
+        )
         if not role:
-            return {"ok": False, "error": f"role id {user_role.role_id} not found"}
+            return {"ok": False, "error": "admin user has no Admin role assignment"}
 
-        if role.role_name.lower() != "admin":
-            return {"ok": False, "error": f"admin user has role '{role.role_name}', not 'Admin'"}
-
-        # Count permissions assigned to Admin role
-        perm_count = db.query(RolePermission).filter(RolePermission.role_id == role.id).count()
+        # Count only active permissions assigned to the active Admin role.
+        perm_count = (
+            db.query(RolePermission)
+            .join(Permission, Permission.id == RolePermission.permission_id)
+            .filter(RolePermission.role_id == role.id, Permission.status == "Active")
+            .count()
+        )
         total_active_perms = db.query(Permission).filter(Permission.status == "Active").count()
 
         return {
