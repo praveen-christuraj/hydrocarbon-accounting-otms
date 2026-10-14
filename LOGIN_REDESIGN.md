@@ -1,39 +1,21 @@
-# Hydrocarbon Accounting System — Login Page Redesign
+# Hydrocarbon Accounting System — Login Page
 
-## Design Inspiration
-Based on [WellCostingPro](https://github.com/praveen-christuraj/WellCostingPro) split-screen login layout:
-- **Left**: Dark branded panel with system identity, value headline, key statistics, and benefit cards
-- **Right**: Light premium form card with username / password, trust badges, and actions
+The login page presents the system identity and supplied operational-access copy in a clean split-screen layout. KPI-style cards, benefit lists, and the previous promotional headline have been removed.
 
-## What's Changed
-- `frontend/src/pages/LoginPage.jsx` — fully rewritten split-screen layout
-- `frontend/src/index.css` — added `.login-page-new` layout, left/right panels, cards, animations
+## Brand copy
 
-## All 9 Benefits Shown on Left Panel
-1. **Automated Calculations & Workflows** — accurate traceability
-2. **Centralized Data Management** — cross-site platform
-3. **45–70% Effort Reduction** — recurring admin work
-4. **Month-End Speed** — 1–2 days → 2–3 hours
-5. **Time Savings** — ~80–180 man-hours/month
-6. **Digital Approval Workflow** — no more email & wait
-7. **Real-Time Reporting** — live instead of reconstruction
-8. **Accountability** — faster loss/gain investigation
-9. **Reduced Key-Person Dependency / Continuity** — leave/transfer continuity
+- **HYDROCARBON ACCOUNTING SYSTEM**
+- *Integrated Hydrocarbon Operations & Inventory Management*
+- **Precision. Integrity. Operational Excellence.**
+- Secure access to your operational data, inventory records, measurement workflows, and reporting systems.
+- **ACCURACY · TRACEABILITY · SECURITY · INTELLIGENCE**
 
-## Stats Strip (prominent)
-- 45–70% reduction  |  2–3 hrs month-end  |  80–180 hrs saved/month  |  Real-time reporting
+## Implementation
 
-## Preserved Functionality
-- Username / password sign-in (`loginUser`)
-- 2FA verification flow (`verifyLogin2FA`)
-- Password reset request (`requestPasswordReset`)
-- Password strength indicator
-- Show/hide password toggle
-- Unseeded deployment warning (`/api/health` check)
-- Responsive (stack on mobile < 860 px)
+- `frontend/src/pages/LoginPage.jsx` — branded panel and preserved sign-in, 2FA, password reset, password strength, and deployment-status behavior
+- `frontend/src/index.css` — responsive split layout, typography, surfaces, and centered password visibility control
+- `login-preview.html` — static visual reference for the current layout
 
-## Build Status
-✓ `npm run build` completed successfully (1.37 s, zero errors)
+## Verification
 
-## Preview
-`login-preview.html` in repo root shows the split-screen concept.
+Run `npm run build` and `npm run lint` from `frontend/`.

@@ -1,84 +1,315 @@
-<!-- Design preview of the new login layout -->
-<div style="display:flex;min-height:100vh;font-family:'DM Sans',system-ui,sans-serif;">
-  <!-- LEFT DARK PANEL -->
-  <div style="flex:1;background:linear-gradient(160deg,#0b2447 0%,#12315f 60%,#16407a 100%);color:#e6edf5;padding:64px 56px;display:flex;flex-direction:column;justify-content:space-between;max-width:680px;">
-    <div>
-      <div style="display:flex;align-items:center;gap:14px;margin-bottom:48px;">
-        <div style="width:44px;height:44px;border-radius:10px;background:#1b3f7a;display:grid;place-items:center;border:2px solid rgba(255,255,255,0.15);">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#8fb8e4" stroke-width="2.2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hydrocarbon Accounting System</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        min-height: 100svh;
+        color: #0f1f3d;
+        background: #f4f6fa;
+        font-family: Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      .login-page {
+        min-height: 100vh;
+        min-height: 100svh;
+        display: grid;
+        grid-template-columns: minmax(0, 1.08fr) minmax(420px, .92fr);
+      }
+      .brand-panel {
+        position: relative;
+        isolation: isolate;
+        display: flex;
+        min-height: 100vh;
+        min-height: 100svh;
+        overflow: hidden;
+        padding: clamp(42px, 6.2vw, 88px);
+        color: #eaf2fb;
+        background:
+          radial-gradient(ellipse at 16% 14%, rgba(91, 134, 201, .2), transparent 36%),
+          linear-gradient(145deg, #07172e 0%, #0b2447 52%, #12315f 100%);
+      }
+      .brand-panel::before {
+        content: "";
+        position: absolute;
+        z-index: -1;
+        right: -18%;
+        bottom: -38%;
+        width: min(720px, 72vw);
+        aspect-ratio: 1;
+        border: 1px solid rgba(198, 214, 238, .14);
+        border-radius: 50%;
+        box-shadow: 0 0 0 42px rgba(198, 214, 238, .035), 0 0 0 92px rgba(198, 214, 238, .025), 0 0 0 146px rgba(198, 214, 238, .018);
+      }
+      .brand-content {
+        display: flex;
+        flex: 1;
+        flex-direction: column;
+        justify-content: space-between;
+        gap: clamp(42px, 7vh, 76px);
+        width: min(680px, 100%);
+        margin: auto;
+      }
+      .brand-heading { display: flex; align-items: flex-start; gap: 18px; }
+      .brand-mark {
+        display: grid;
+        flex: 0 0 48px;
+        width: 48px;
+        height: 48px;
+        place-items: center;
+        margin-top: 2px;
+        color: #b8d4f4;
+        border: 1px solid rgba(184, 212, 244, .26);
+        border-radius: 14px;
+        background: linear-gradient(145deg, rgba(91, 134, 201, .28), rgba(18, 49, 95, .7));
+        box-shadow: 0 10px 28px rgba(0, 0, 0, .16);
+      }
+      .brand-mark svg { width: 27px; height: 27px; }
+      h1 {
+        margin: 0;
+        color: #fff;
+        font-size: clamp(21px, 2.15vw, 31px);
+        font-weight: 750;
+        letter-spacing: .075em;
+        line-height: 1.18;
+      }
+      h1 span { display: block; }
+      .descriptor {
+        max-width: 430px;
+        margin: 12px 0 0;
+        color: #b5c6dc;
+        font-size: 14px;
+        line-height: 1.6;
+      }
+      .story { max-width: 660px; margin: auto 0; }
+      .accent {
+        width: 46px;
+        height: 3px;
+        margin-bottom: 24px;
+        border-radius: 99px;
+        background: linear-gradient(90deg, #b8d4f4, rgba(184, 212, 244, .2));
+      }
+      .story h2 {
+        margin: 0;
+        color: #f6f9ff;
+        font-size: clamp(36px, 4vw, 54px);
+        font-weight: 680;
+        letter-spacing: -.055em;
+        line-height: 1.08;
+        text-wrap: balance;
+      }
+      .story h2 span { display: block; }
+      .story h2 span + span { margin-top: 2px; color: #b8d4f4; }
+      .story p {
+        max-width: 510px;
+        margin: 24px 0 0;
+        color: #c3d1e2;
+        font-size: 15px;
+        line-height: 1.75;
+      }
+      .values {
+        width: 100%;
+        max-width: 620px;
+        padding-top: 19px;
+        border-top: 1px solid rgba(220, 232, 247, .16);
+        color: #b5c9e3;
+        font-size: 10.5px;
+        font-weight: 650;
+        letter-spacing: .15em;
+        line-height: 1.8;
+        overflow-wrap: anywhere;
+      }
+      .form-panel {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        padding: clamp(32px, 5vw, 72px);
+        background: radial-gradient(ellipse at 92% 8%, rgba(198, 214, 238, .35), transparent 36%), #f4f6fa;
+      }
+      .form-card {
+        width: min(100%, 430px);
+        padding: 42px 38px 38px;
+        border: 1px solid #e1e7ef;
+        border-radius: 18px;
+        background: #fff;
+        box-shadow: 0 24px 64px rgba(16, 35, 58, .08), 0 2px 8px rgba(16, 35, 58, .035);
+      }
+      .lock-mark {
+        display: grid;
+        width: 48px;
+        height: 48px;
+        place-items: center;
+        margin: 0 auto 16px;
+        border-radius: 14px;
+        background: linear-gradient(135deg, #12315f, #255091);
+        box-shadow: 0 8px 22px rgba(18, 49, 95, .2);
+      }
+      .lock-mark svg { width: 25px; height: 25px; }
+      .form-card h2 {
+        margin: 0 0 26px;
+        color: #0b2447;
+        font-size: 26px;
+        font-weight: 720;
+        letter-spacing: -.045em;
+        line-height: 1.2;
+        text-align: center;
+      }
+      form { display: grid; grid-template-columns: 1fr; gap: 17px; margin: 0; }
+      label {
+        display: block;
+        margin-bottom: 7px;
+        color: #23446f;
+        font-size: 10.5px;
+        font-weight: 700;
+        letter-spacing: .1em;
+      }
+      input {
+        width: 100%;
+        height: 42px;
+        padding: 11px 13px;
+        border: 1px solid #d6dfeb;
+        border-radius: 9px;
+        outline: none;
+        color: #0b2447;
+        background: #fff;
+        font: inherit;
+        font-size: 14px;
+      }
+      input:focus { border-color: #6f99d0; box-shadow: 0 0 0 3px rgba(91, 134, 201, .17); }
+      input::placeholder { color: #9aa8ba; }
+      .password-wrap { position: relative; }
+      .password-wrap input { padding-right: 48px; }
+      .password-toggle {
+        position: absolute;
+        inset: 0 0 0 auto;
+        display: grid;
+        width: 42px;
+        place-items: center;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        border-radius: 8px;
+        color: #718096;
+        background: transparent;
+        cursor: pointer;
+      }
+      .password-toggle svg { display: block; width: 18px; height: 18px; }
+      .submit {
+        min-height: 46px;
+        margin-top: 2px;
+        border: 0;
+        border-radius: 9px;
+        color: #fff;
+        background: #12315f;
+        font: inherit;
+        font-size: 14px;
+        font-weight: 680;
+        cursor: pointer;
+      }
+      .reset {
+        display: inline-block;
+        margin-top: 20px;
+        padding-top: 17px;
+        border-top: 1px solid #e7ebf1;
+        color: #2f63b3;
+        font-size: 13px;
+        font-weight: 650;
+        text-decoration: underline;
+        text-underline-offset: 3px;
+      }
+      @media (max-width: 980px) {
+        .login-page { grid-template-columns: 1fr; }
+        .brand-panel { min-height: 540px; padding: 52px clamp(30px, 8vw, 88px); }
+        .brand-content { width: min(680px, 100%); gap: 48px; }
+        .story h2 { font-size: clamp(38px, 6vw, 54px); }
+        .form-panel { padding: 48px 24px; }
+      }
+      @media (max-width: 560px) {
+        .brand-panel { min-height: 0; padding: 34px 24px 28px; }
+        .brand-content { gap: 52px; }
+        .brand-heading { gap: 13px; }
+        h1 { font-size: clamp(18px, 5.1vw, 24px); letter-spacing: .045em; }
+        .descriptor { margin-top: 9px; font-size: 12.5px; }
+        .accent { margin-bottom: 19px; }
+        .story h2 { font-size: clamp(36px, 9vw, 48px); letter-spacing: -.05em; }
+        .story p { margin-top: 18px; font-size: 14px; }
+        .values { padding-top: 15px; font-size: 9px; letter-spacing: .1em; }
+        .form-panel { padding: 28px 16px 36px; }
+        .form-card { padding: 32px 24px 28px; border-radius: 15px; }
+      }
+      @media (max-width: 360px) {
+        .brand-heading { gap: 10px; }
+        .brand-mark { flex-basis: 40px; width: 40px; height: 40px; border-radius: 12px; }
+        h1 { font-size: 17px; }
+        .values { font-size: 8.5px; letter-spacing: .07em; }
+        .form-card { padding-right: 20px; padding-left: 20px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="login-page">
+      <main class="brand-panel" aria-label="Hydrocarbon Accounting System">
+        <div class="brand-content">
+          <header class="brand-heading">
+            <div class="brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                <path d="M2 17l10 5 10-5" />
+                <path d="M2 12l10 5 10-5" />
+              </svg>
+            </div>
+            <div>
+              <h1><span>HYDROCARBON</span> <span>ACCOUNTING SYSTEM</span></h1>
+              <p class="descriptor">Integrated Hydrocarbon Operations &amp; Inventory Management</p>
+            </div>
+          </header>
+          <section class="story">
+            <div class="accent" aria-hidden="true"></div>
+            <h2><span>Precision. Integrity.</span> <span>Operational Excellence.</span></h2>
+            <p>Secure access to your operational data, inventory records, measurement workflows, and reporting systems.</p>
+          </section>
+          <div class="values">ACCURACY · TRACEABILITY · SECURITY · INTELLIGENCE</div>
         </div>
-        <div>
-          <div style="font-family:'Manrope',sans-serif;font-weight:800;font-size:20px;letter-spacing:-0.6px;color:#fff;line-height:1.1;">Hydrocarbon Accounting</div>
-          <div style="font-size:11px;color:#93b0dd;letter-spacing:1.2px;text-transform:uppercase;font-weight:600;">System</div>
+      </main>
+      <section class="form-panel" aria-label="Sign in form">
+        <div class="form-card">
+          <div class="lock-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="11" width="18" height="10" rx="2" />
+              <circle cx="12" cy="5" r="2" />
+              <path d="M12 7v4" />
+            </svg>
+          </div>
+          <h2>Sign in</h2>
+          <form>
+            <div>
+              <label for="username">USERNAME</label>
+              <input id="username" name="username" type="text" placeholder="Enter your username" autocomplete="username" />
+            </div>
+            <div>
+              <label for="password">PASSWORD</label>
+              <div class="password-wrap">
+                <input id="password" name="password" type="password" placeholder="Enter your password" autocomplete="current-password" />
+                <button class="password-toggle" type="button" aria-label="Show password">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <button class="submit" type="submit">Sign in to workspace</button>
+          </form>
+          <a class="reset" href="#">Reset password</a>
         </div>
-      </div>
-      <div style="font-family:'Manrope',sans-serif;font-size:42px;font-weight:800;line-height:1.1;letter-spacing:-2px;margin-bottom:16px;">Clarity at<br/>every <em style="color:#8fb8e4;font-style:normal;">depth.</em></div>
-      <div style="color:#a7b8cb;font-size:15px;line-height:1.6;max-width:420px;">A more intelligent way to manage hydrocarbon accounting, your people, and the decisions that move operations forward.</div>
+      </section>
     </div>
-    
-    <div style="margin-top:48px;">
-      <div style="font-size:11px;color:#93b0dd;letter-spacing:1.8px;font-weight:700;text-transform:uppercase;margin-bottom:20px;">Key Benefits</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-        <div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px 16px;backdrop-filter:blur(4px);">
-          <div style="font-size:20px;font-weight:800;color:#fff;margin-bottom:2px;">45–70%</div>
-          <div style="font-size:11px;color:#a7b8cb;line-height:1.35;">Administrative & reporting effort reduced</div>
-        </div>
-        <div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px 16px;backdrop-filter:blur(4px);">
-          <div style="font-size:20px;font-weight:800;color:#fff;margin-bottom:2px;">2–3 hrs</div>
-          <div style="font-size:11px;color:#a7b8cb;line-height:1.35;">Month-end closing vs 1–2 working days</div>
-        </div>
-        <div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px 16px;backdrop-filter:blur(4px);">
-          <div style="font-size:20px;font-weight:800;color:#fff;margin-bottom:2px;">80–180</div>
-          <div style="font-size:11px;color:#a7b8cb;line-height:1.35;">Man-hours saved per month</div>
-        </div>
-        <div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px 16px;backdrop-filter:blur(4px);">
-          <div style="font-size:20px;font-weight:800;color:#fff;margin-bottom:2px;">Real-time</div>
-          <div style="font-size:11px;color:#a7b8cb;line-height:1.35;">Reporting instead of reconstruction</div>
-        </div>
-      </div>
-      <div style="margin-top:20px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.1);display:flex;gap:20px;font-size:12px;color:#93b0dd;">
-        <span>✓ Automated Calculations &amp; Workflows</span>
-        <span>✓ Centralized Data Management</span>
-        <span>✓ Digital Approval Workflow</span>
-      </div>
-    </div>
-    
-    <div style="margin-top:40px;font-size:11px;color:#93b0dd;display:flex;align-items:center;gap:8px;">
-      <span style="width:6px;height:6px;border-radius:50%;background:#6ecf8f;display:inline-block;"></span>
-      Built for connected teams • Secure access controls
-    </div>
-  </div>
-  
-  <!-- RIGHT LIGHT FORM -->
-  <div style="flex:1.2;background:#f3f5f9;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:48px;">
-    <div style="width:100%;max-width:420px;background:#fff;border-radius:14px;padding:48px 40px;box-shadow:0 2px 20px rgba(16,35,58,0.06),0 1px 3px rgba(16,35,58,0.04);border:1px solid #e3e9f0;">
-      <div style="display:flex;align-items:center;justify-content:center;width:48px;height:48px;border-radius:12px;background:#12315f;margin:0 auto 20px;box-shadow:0 4px 14px rgba(18,49,95,0.22);">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/></svg>
-      </div>
-      <h2 style="font-family:'Manrope',sans-serif;font-size:28px;font-weight:800;letter-spacing:-1.2px;color:#0b2447;text-align:center;margin:0 0 6px;">Welcome back</h2>
-      <p style="text-align:center;color:#6b7a8d;font-size:14px;margin:0 0 28px;">Sign in to your workspace to continue.</p>
-      
-      <form onsubmit="event.preventDefault();" style="display:grid;gap:16px;">
-        <div>
-          <label style="font-size:11px;font-weight:700;color:#12315f;letter-spacing:0.8px;text-transform:uppercase;display:block;margin-bottom:6px;">Username</label>
-          <input type="text" placeholder="Enter username" style="width:100%;padding:12px 14px;border:1px solid #d8e0ea;border-radius:8px;font-size:15px;outline:none;transition:border-color .15s;" />
-        </div>
-        <div>
-          <label style="font-size:11px;font-weight:700;color:#12315f;letter-spacing:0.8px;text-transform:uppercase;display:block;margin-bottom:6px;">Password</label>
-          <input type="password" placeholder="Enter password" style="width:100%;padding:12px 14px;border:1px solid #d8e0ea;border-radius:8px;font-size:15px;outline:none;transition:border-color .15s;" />
-        </div>
-        <button type="submit" style="width:100%;padding:14px;background:#12315f;color:#fff;border:0;border-radius:8px;font-weight:700;font-size:15px;cursor:pointer;box-shadow:0 4px 14px rgba(18,49,95,0.25);display:flex;align-items:center;justify-content:center;gap:8px;">Sign in <span style="font-size:18px;">→</span></button>
-      </form>
-      
-      <div style="margin-top:20px;padding-top:16px;border-top:1px solid #e3e9f0;display:flex;justify-content:space-between;font-size:12px;color:#6b7a8d;align-items:center;">
-        <a href="#" style="color:#2f63b3;text-decoration:none;font-weight:600;">Forgot password?</a>
-        <span>Secure workspace sign-in</span>
-      </div>
-      
-      <div style="margin-top:24px;background:#f7f9fc;border:1px solid #e3e9f0;border-radius:10px;padding:14px;font-size:12px;color:#5b6b7f;display:flex;align-items:center;gap:10px;">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#12315f" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        Your workspace is protected with secure access controls.
-      </div>
-    </div>
-  </div>
-</div>
+  </body>
+</html>
