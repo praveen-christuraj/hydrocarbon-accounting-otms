@@ -1,148 +1,204 @@
-import { useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import {
   createPermission,
   deletePermission,
+  getPermissionCatalog,
+  seedStandardPermissions,
   updatePermission,
 } from '../api/permissionApi'
 import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
 import DataTableToolbar from '../components/common/DataTableToolbar'
+import PageHeader from '../components/common/PageHeader'
+import AlertMessage from '../components/common/AlertMessage'
+import FormDialog from '../components/common/FormDialog'
+import Icon from '../components/common/Icon'
+import { useConfirm } from '../components/common/ConfirmProvider'
+import { useToast } from '../components/common/Toast'
 import { useDataFilters } from '../hooks/useDataFilters'
-import { useAutoColumns } from '../hooks/useAutoColumns'
+import { usePermissions } from '../hooks/usePermissions'
+import { logUiAction } from '../utils/actionLogger'
+import { buildPermissionGroups, isStandardPermission, permissionRows } from '../utils/permissionCatalog'
 
-const IMPORT_STATUSES = ['Active', 'Inactive', 'Blocked']
+const STATUSES = ['Active', 'Inactive', 'Blocked']
+const MODULE = 'Permission Master'
+
+const COLUMNS = [
+  { key: 'category', label: 'Category', type: 'select' },
+  { key: 'moduleName', label: 'Module', type: 'select' },
+  { key: 'permissionName', label: 'Permission' },
+  { key: 'action', label: 'Action', type: 'select' },
+  { key: 'type', label: 'Type', type: 'select' },
+  { key: 'status', label: 'Status', type: 'select' },
+  { key: 'description', label: 'Description' },
+]
+
+const emptyPermission = {
+  permissionName: '',
+  moduleName: '',
+  description: '',
+  status: 'Active',
+}
 
 function PermissionMaster({ permissions, reloadPermissions, loggedInUser }) {
-  const emptyPermission = {
-    permissionName: '',
-    moduleName: '',
-    description: '',
-    status: 'Active',
-  }
+  const confirm = useConfirm()
+  const toast = useToast()
+  const { hasPermission, isAdmin } = usePermissions(loggedInUser)
+  const canCreate = hasPermission('Create Permission')
+  const canEdit = hasPermission('Edit Permission')
+  const canDelete = hasPermission('Delete Permission')
 
+  const [catalog, setCatalog] = useState(null)
+  const [catalogError, setCatalogError] = useState('')
   const [permission, setPermission] = useState(emptyPermission)
-  const [editId, setEditId] = useState(null)
+  const [editTarget, setEditTarget] = useState(null)
+  const [formOpen, setFormOpen] = useState(false)
+  const [formError, setFormError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState({})
   const [loading, setLoading] = useState(false)
+  const [syncing, setSyncing] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
-  const [confirmDelete, setConfirmDelete] = useState(null)
-  const [fieldErrors, setFieldErrors] = useState({})
   const [page, setPage] = useState(1)
-
   const pageSize = usePageSize()
-  const permissionsFilters = useDataFilters(permissions, useAutoColumns(permissions), { module: 'Permission Master' })
-  const visibleItems = paginateRows(permissionsFilters.filteredRows, page, pageSize)
 
-  const isAdminBootstrap =
-    loggedInUser?.isAdmin === true ||
-    String(loggedInUser?.username || '').trim().toLowerCase() === 'admin' ||
-    (Array.isArray(loggedInUser?.roles) && loggedInUser.roles.some((role) =>
-      String(role?.role_name || role?.roleName || '').trim().toLowerCase() === 'admin'
-    ))
+  useEffect(() => {
+    let cancelled = false
+    getPermissionCatalog()
+      .then((data) => {
+        if (!cancelled) setCatalog(data)
+      })
+      .catch((err) => {
+        if (!cancelled) setCatalogError(err.message || 'Unable to load the permission catalog.')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
-  const hasPermission = (permissionName) => {
-    if (isAdminBootstrap) return true
-    if (!loggedInUser || !Array.isArray(loggedInUser.permissions)) return false
-    return loggedInUser.permissions.some(
-      (p) => p.permissionName === permissionName
-    )
+  const groups = useMemo(() => buildPermissionGroups(catalog, permissions), [catalog, permissions])
+  const rows = useMemo(() => permissionRows(groups), [groups])
+  const filters = useDataFilters(rows, COLUMNS, { module: MODULE })
+  const visibleRows = paginateRows(filters.filteredRows, page, pageSize)
+
+  const standardCount = rows.filter((row) => row.isStandard).length
+  const missingStandard = groups.entries.filter((entry) => entry.isStandard && !entry.permission).length
+  const moduleOptions = useMemo(() => {
+    const names = new Set()
+    for (const category of groups.categories) {
+      for (const module of category.modules) names.add(module.moduleName)
+    }
+    for (const row of permissions) if (row.moduleName) names.add(row.moduleName)
+    return [...names].sort((a, b) => a.localeCompare(b))
+  }, [groups, permissions])
+
+  const editingStandard = Boolean(editTarget && isStandardPermission(groups, editTarget.permissionName))
+  // Renaming, moving or (de)activating a permission is administrator-only in the API.
+  const statusLocked = Boolean(editTarget) && !isAdmin
+
+  const clearMessages = () => {
+    setError('')
+    setSuccess('')
   }
 
-  const canManagePermission = hasPermission('Manage Permission')
-
-  const clearError = () => setError('')
-  const clearSuccess = () => setSuccess('')
-
-  const handleChange = (e) => {
-    setPermission({ ...permission, [e.target.name]: e.target.value })
-    setFieldErrors({ ...fieldErrors, [e.target.name]: '' })
+  const openCreate = () => {
+    clearMessages()
+    setPermission(emptyPermission)
+    setEditTarget(null)
+    setFieldErrors({})
+    setFormError('')
+    setFormOpen(true)
+    logUiAction(MODULE, 'Open Create Dialog')
   }
 
-  const validatePermission = () => {
+  const openEdit = (row) => {
+    clearMessages()
+    setPermission({
+      permissionName: row.permissionName,
+      moduleName: row.moduleName,
+      description: row.description || '',
+      status: row.status,
+    })
+    setEditTarget(row)
+    setFieldErrors({})
+    setFormError('')
+    setFormOpen(true)
+    logUiAction(MODULE, 'Open Edit Dialog', { permissionName: row.permissionName })
+  }
+
+  const closeForm = () => {
+    setFormOpen(false)
+    setEditTarget(null)
+    setPermission(emptyPermission)
+    setFieldErrors({})
+    setFormError('')
+  }
+
+  const handleChange = (event) => {
+    const { name, value } = event.target
+    setPermission((current) => ({ ...current, [name]: value }))
+    setFieldErrors((current) => ({ ...current, [name]: '' }))
+  }
+
+  const validate = () => {
     const errors = {}
-    if (permission.permissionName.trim() === '') errors.permissionName = 'Permission Name is required'
-    if (permission.moduleName.trim() === '') errors.moduleName = 'Module Name is required'
+    const name = permission.permissionName.trim()
+    if (!name) errors.permissionName = 'Permission Name is required'
+    if (!permission.moduleName.trim()) errors.moduleName = 'Module is required'
+    if (name && !editingStandard) {
+      const duplicate = permissions.find(
+        (item) =>
+          item.permissionName.trim().toLowerCase() === name.toLowerCase() &&
+          item.id !== editTarget?.id
+      )
+      if (duplicate) errors.permissionName = `Already used in module ${duplicate.moduleName}`
+    }
     setFieldErrors(errors)
     return Object.keys(errors).length === 0
   }
 
-  const handleSubmit = async (e) => {
-    e.preventDefault()
-    clearError()
-    clearSuccess()
-
-    if (!canManagePermission) {
-      setError('You do not have permission to manage permissions.')
+  const handleSubmit = async () => {
+    setFormError('')
+    if (!(editTarget ? canEdit : canCreate)) {
+      setFormError(`You do not have permission to ${editTarget ? 'edit' : 'create'} permissions.`)
       return
     }
-
-    if (!validatePermission()) return
+    if (!validate()) return
 
     try {
       setLoading(true)
-
-      if (editId === null) {
-        await createPermission(permission)
-        setSuccess('Permission saved successfully')
+      if (editTarget) {
+        await updatePermission(editTarget.id, permission)
+        setSuccess(`Permission "${permission.permissionName}" updated.`)
       } else {
-        await updatePermission(editId, permission)
-        setSuccess('Permission updated successfully')
+        await createPermission(permission)
+        setSuccess(`Permission "${permission.permissionName}" created.`)
       }
-
-      setFieldErrors({})
       await reloadPermissions()
-      setPermission(emptyPermission)
-      setEditId(null)
+      closeForm()
     } catch (err) {
-      setError(err.message)
+      setFormError(err.message)
     } finally {
       setLoading(false)
     }
   }
 
-  const handleEdit = (permissionToEdit) => {
-    clearError()
-    clearSuccess()
-    setConfirmDelete(null)
-    setFieldErrors({})
-
-    if (!canManagePermission) {
-      setError('You do not have permission to manage permissions.')
-      return
-    }
-
-    setPermission({
-      permissionName: permissionToEdit.permissionName,
-      moduleName: permissionToEdit.moduleName,
-      description: permissionToEdit.description,
-      status: permissionToEdit.status,
+  const handleDelete = async (row) => {
+    clearMessages()
+    if (!canDelete || row.isStandard) return
+    const confirmed = await confirm({
+      title: 'Delete permission',
+      message: `Delete the custom permission "${row.permissionName}" (${row.moduleName})?`,
+      details: 'A permission that is still assigned to a role cannot be deleted.',
+      tone: 'danger',
+      confirmLabel: 'Delete',
+      module: MODULE,
     })
-
-    setEditId(permissionToEdit.id)
-  }
-
-  const handleDeleteRequest = (id) => {
-    clearError()
-    clearSuccess()
-    setConfirmDelete(id)
-  }
-
-  const handleDeleteConfirm = async (permissionId) => {
-    if (!canManagePermission) {
-      setError('You do not have permission to manage permissions.')
-      return
-    }
-
+    if (!confirmed) return
     try {
       setLoading(true)
-      await deletePermission(permissionId)
-      setConfirmDelete(null)
-      setSuccess('Permission deleted successfully')
+      await deletePermission(row.id)
       await reloadPermissions()
-
-      if (editId === permissionId) {
-        setPermission(emptyPermission)
-        setEditId(null)
-      }
+      setSuccess(`Permission "${row.permissionName}" deleted.`)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -150,31 +206,50 @@ function PermissionMaster({ permissions, reloadPermissions, loggedInUser }) {
     }
   }
 
-  const handleCancelEdit = () => {
-    setPermission(emptyPermission)
-    setEditId(null)
-    setFieldErrors({})
-    clearError()
-    clearSuccess()
-    setConfirmDelete(null)
+  const handleSync = async () => {
+    clearMessages()
+    const confirmed = await confirm({
+      title: 'Sync standard permissions',
+      message:
+        'Create any missing standard permissions and restore their module and description from the system catalog?',
+      details: 'Status values and custom permissions are left unchanged.',
+      tone: 'primary',
+      confirmLabel: 'Sync',
+      module: MODULE,
+    })
+    if (!confirmed) return
+    try {
+      setSyncing(true)
+      const result = await seedStandardPermissions()
+      await reloadPermissions()
+      toast.success(
+        `${result.created_count} created, ${result.updated_count} updated, ${result.existing_count} already up to date.`,
+        { title: 'Standard permissions synced' }
+      )
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSyncing(false)
+    }
   }
-
 
   const importConfig = {
-    title: 'Import permission master rows',
-    description: 'Create records from an Excel or CSV file. Existing codes are skipped.',
+    title: 'Import custom permissions',
+    description:
+      'Create custom permissions from an Excel or CSV file. Names that already exist (including standard permissions) are skipped.',
     fields: [
-    { key: 'permissionName', label: 'Permission Name', required: true, example: 'View Location' },
-    { key: 'moduleName', label: 'Module Name', required: true, example: 'Location Master' },
-    { key: 'description', label: 'Description', example: '' },
-    { key: 'status', label: 'Status', options: IMPORT_STATUSES, defaultValue: 'Active', example: 'Active' },
-  ],
+      { key: 'permissionName', label: 'Permission Name', required: true, example: 'Approve Fuel Voucher' },
+      { key: 'moduleName', label: 'Module Name', required: true, example: 'Fuel Management' },
+      { key: 'description', label: 'Description', example: '' },
+      { key: 'status', label: 'Status', options: STATUSES, defaultValue: 'Active', example: 'Active' },
+    ],
     validateRow: (record) => {
-    const name = String(record.permissionName || '').trim().toLowerCase()
-    if (permissions.some((item) => item.permissionName.toLowerCase() === name)) return 'Permission name already exists'
-    if (record.status && !IMPORT_STATUSES.includes(record.status)) return `Status must be one of ${IMPORT_STATUSES.join(', ')}`
-    return null
-  },
+      const name = String(record.permissionName || '').trim().toLowerCase()
+      if (permissions.some((item) => item.permissionName.toLowerCase() === name)) return 'Permission name already exists'
+      if (isStandardPermission(groups, name)) return 'This is a standard permission'
+      if (record.status && !STATUSES.includes(record.status)) return `Status must be one of ${STATUSES.join(', ')}`
+      return null
+    },
     onImportRow: async (record) => {
       await createPermission({ ...emptyPermission, ...record, status: record.status || 'Active' })
     },
@@ -183,221 +258,213 @@ function PermissionMaster({ permissions, reloadPermissions, loggedInUser }) {
     },
   }
 
+  const showActions = canEdit || canDelete
+  const columnCount = showActions ? 7 : 6
+
   return (
     <div>
-      <div className="page-title">
-        <div>
-          <h2>Permission Master</h2>
-          <p>Create and manage system permissions for RBAC.</p>
-        </div>
-
-        <span className="record-count">{permissions.length} Permissions</span>
-      </div>
-
-      {success && (
-        <div className="success-box">
-          {success}
-          <button className="error-close" onClick={clearSuccess} type="button">&times;</button>
-        </div>
-      )}
-
-      {error && (
-        <div className="error-box">
-          {error}
-          <button className="error-close" onClick={clearError} type="button">&times;</button>
-        </div>
-      )}
-
-      {!canManagePermission && (
-        <div className="info-box">
-          You have View Permission permission only. Create, edit, and delete
-          actions are disabled.
-        </div>
-      )}
-
-      {canManagePermission && (
-        <form onSubmit={handleSubmit}>
-          <div>
-            <label>Permission Name</label>
-            <input
-              name="permissionName"
-              type="text"
-              value={permission.permissionName}
-              onChange={handleChange}
-              placeholder="Example: View Asset"
-              aria-invalid={fieldErrors.permissionName ? 'true' : undefined}
-            />
-            {fieldErrors.permissionName && (
-              <small className="field-error">{fieldErrors.permissionName}</small>
-            )}
-          </div>
-
-          <div>
-            <label>Module Name</label>
-            <select
-              name="moduleName"
-              value={permission.moduleName}
-              onChange={handleChange}
-              aria-invalid={fieldErrors.moduleName ? 'true' : undefined}
-            >
-              <option value="">Select Module</option>
-              <option>User Master</option>
-              <option>Role Master</option>
-              <option>Permission Master</option>
-              <option>Role Permission Assignment</option>
-              <option>User Role Assignment</option>
-              <option>Access Summary</option>
-              <option>Location Master</option>
-              <option>Asset Type Master</option>
-              <option>Asset Master</option>
-              <option>Calibration Template Master</option>
-              <option>Asset Calibration Table</option>
-              <option>Asset Assignment</option>
-              <option>Asset Assignment Summary</option>
-              <option>Operations</option>
-              <option>Barge Seal Master</option>
-              <option>Company Report Profile</option>
-              <option>Reports</option>
-              <option>Admin</option>
-            </select>
-            {fieldErrors.moduleName && (
-              <small className="field-error">{fieldErrors.moduleName}</small>
-            )}
-          </div>
-
-          <div>
-            <label>Status</label>
-            <select
-              name="status"
-              value={permission.status}
-              onChange={handleChange}
-            >
-              <option>Active</option>
-              <option>Inactive</option>
-              <option>Blocked</option>
-            </select>
-          </div>
-
-          <div className="full-width-field">
-            <label>Description</label>
-            <textarea
-              name="description"
-              value={permission.description}
-              onChange={handleChange}
-              placeholder="Enter permission description"
-              rows="3"
-            />
-          </div>
-
-          <div className="form-actions">
-            <button type="submit" disabled={loading}>
-              {loading
-                ? 'Please wait...'
-                : editId === null
-                  ? 'Save Permission'
-                  : 'Update Permission'}
-            </button>
-
-            {editId !== null && (
-              <button
-                type="button"
-                onClick={handleCancelEdit}
-                disabled={loading}
-              >
-                Cancel Edit
+      <PageHeader
+        title="Permission Master"
+        description="Module-wise View / Create / Edit / Delete permissions, grouped like the navigation menu."
+        count={`${permissions.length} Permissions`}
+        actions={
+          <>
+            {canCreate && (
+              <button type="button" className="btn-secondary" onClick={handleSync} disabled={syncing}>
+                <Icon name="refresh" size={15} />
+                {syncing ? 'Syncing…' : 'Sync Standard Permissions'}
               </button>
             )}
-          </div>
-        </form>
-      )}
-
-      <div className="section-title">
-        <h3>Saved Permissions</h3>
-        <p>Permissions are now saved permanently in PostgreSQL.</p>
-      </div>
-
-      <DataTableToolbar
-        filters={permissionsFilters}
-        columns={permissionsFilters.columns}
-        exportFileName="permission-master"
-        exportTitle="Permission Master"
-        module="Permission Master"
-        importConfig={importConfig}
-        canImport={canManagePermission}
+            {canCreate && (
+              <button type="button" className="btn-primary" onClick={openCreate}>
+                <Icon name="plus" size={15} />
+                New Permission
+              </button>
+            )}
+          </>
+        }
       />
 
-      <table>
-        <thead>
-          <tr>
-            <th>Permission Name</th>
-            <th>Module</th>
-            <th>Description</th>
-            <th>Status</th>
-            {canManagePermission && <th>Actions</th>}
-          </tr>
-        </thead>
+      <AlertMessage tone="success" message={success} onDismiss={() => setSuccess('')} />
+      <AlertMessage tone="error" message={error} onDismiss={() => setError('')} />
+      <AlertMessage tone="warning" message={catalogError} onDismiss={() => setCatalogError('')} />
+      {catalog && missingStandard > 0 && (
+        <AlertMessage
+          tone="warning"
+          message={`${missingStandard} standard permission(s) are missing from the database. Use Sync Standard Permissions to restore them.`}
+        />
+      )}
 
-        <tbody>
-          {permissions.length === 0 ? (
+      <div className="permission-summary-strip">
+        <span><strong>{standardCount}</strong> standard</span>
+        <span><strong>{rows.length - standardCount}</strong> custom</span>
+        <span><strong>{groups.categories.length}</strong> categories</span>
+        <span className="permission-summary-hint">
+          Standard permissions come from the system catalog: they cannot be renamed or deleted, only deactivated.
+        </span>
+      </div>
+
+      <FormDialog
+        open={formOpen}
+        title={editTarget ? 'Edit Permission' : 'New Custom Permission'}
+        description={
+          editTarget
+            ? `${editTarget.category} · ${editTarget.moduleName}`
+            : 'Use a verb + entity name, for example "Approve Fuel Voucher".'
+        }
+        submitLabel={editTarget ? 'Update Permission' : 'Save Permission'}
+        busy={loading}
+        submitDisabled={editingStandard && statusLocked}
+        error={formError}
+        onDismissError={() => setFormError('')}
+        onSubmit={handleSubmit}
+        onCancel={closeForm}
+      >
+        {editingStandard && (
+          <div className="info-box">
+            This is a standard permission from the system catalog. Only its status can be changed
+            {statusLocked ? ', and only by an administrator.' : '.'}
+          </div>
+        )}
+        <div>
+          <label htmlFor="permission-name">Permission Name</label>
+          <input
+            id="permission-name"
+            name="permissionName"
+            type="text"
+            value={permission.permissionName}
+            onChange={handleChange}
+            placeholder="Example: Approve Fuel Voucher"
+            disabled={editingStandard}
+            aria-invalid={fieldErrors.permissionName ? 'true' : undefined}
+          />
+          {fieldErrors.permissionName && <small className="field-error">{fieldErrors.permissionName}</small>}
+        </div>
+        <div>
+          <label htmlFor="permission-module">Module</label>
+          <input
+            id="permission-module"
+            name="moduleName"
+            type="text"
+            list="permission-module-options"
+            value={permission.moduleName}
+            onChange={handleChange}
+            placeholder="Select or type a module"
+            disabled={editingStandard}
+            aria-invalid={fieldErrors.moduleName ? 'true' : undefined}
+          />
+          <datalist id="permission-module-options">
+            {moduleOptions.map((name) => (
+              <option key={name} value={name} />
+            ))}
+          </datalist>
+          {fieldErrors.moduleName && <small className="field-error">{fieldErrors.moduleName}</small>}
+        </div>
+        <div>
+          <label htmlFor="permission-status">Status</label>
+          <select
+            id="permission-status"
+            name="status"
+            value={permission.status}
+            onChange={handleChange}
+            disabled={statusLocked}
+          >
+            {STATUSES.map((status) => (
+              <option key={status}>{status}</option>
+            ))}
+          </select>
+          {statusLocked && <small className="field-hint">Only an administrator can change the status.</small>}
+        </div>
+        <div className="full-width-field">
+          <label htmlFor="permission-description">Description</label>
+          <textarea
+            id="permission-description"
+            name="description"
+            value={permission.description}
+            onChange={handleChange}
+            placeholder="What this permission allows"
+            rows="2"
+            disabled={editingStandard}
+          />
+        </div>
+      </FormDialog>
+
+      <DataTableToolbar
+        filters={filters}
+        columns={COLUMNS}
+        exportFileName="permission-master"
+        exportTitle="Permission Master"
+        module={MODULE}
+        importConfig={importConfig}
+        canImport={canCreate}
+        searchPlaceholder="Search permissions, modules…"
+      />
+
+      <div className="table-scroll">
+        <table className="grouped-table">
+          <thead>
             <tr>
-              <td
-                colSpan={canManagePermission ? 5 : 4}
-                className="empty-table"
-              >
-                No permissions added yet.
-              </td>
+              <th>Module</th>
+              <th>Permission</th>
+              <th>Action</th>
+              <th>Type</th>
+              <th>Status</th>
+              <th>Description</th>
+              {showActions && <th>Actions</th>}
             </tr>
-          ) : (
-            visibleItems.map((item) => (
-              <tr key={item.id}>
-                <td>{item.permissionName}</td>
-                <td>{item.moduleName}</td>
-                <td>{item.description}</td>
-                <td>
-                  <span className={`status-badge ${item.status.toLowerCase()}`}>
-                    {item.status}
-                  </span>
+          </thead>
+          <tbody>
+            {visibleRows.length === 0 ? (
+              <tr>
+                <td colSpan={columnCount} className="empty-table">
+                  {permissions.length === 0 ? 'No permissions loaded.' : 'No permissions match the filters.'}
                 </td>
-
-                {canManagePermission && (
-                  <td>
-                    <button type="button" onClick={() => handleEdit(item)}>
-                      Edit
-                    </button>
-
-                    {confirmDelete === item.id ? (
-                      <span>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteConfirm(item.id)}
-                          disabled={loading}
-                          className="btn-danger"
-                        >
-                          {loading ? 'Deleting...' : 'Confirm'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setConfirmDelete(null)}
-                          disabled={loading}
-                          className="btn-secondary"
-                        >
-                          Cancel
-                        </button>
-                      </span>
-                    ) : (
-                      <button type="button" onClick={() => handleDeleteRequest(item.id)}>
-                        Delete
-                      </button>
-                    )}
-                  </td>
-                )}
               </tr>
-            ))
-          )}
-        </tbody>
-      </table>
+            ) : (
+              visibleRows.map((row, index) => {
+                const previous = visibleRows[index - 1]
+                const newCategory = !previous || previous.category !== row.category
+                const newModule = newCategory || previous.moduleName !== row.moduleName
+                return (
+                  <Fragment key={row.id}>
+                    {newCategory && (
+                      <tr className="table-group-row">
+                        <td colSpan={columnCount}>{row.category}</td>
+                      </tr>
+                    )}
+                    <tr className={newModule ? 'module-first-row' : undefined}>
+                      <td className="cell-muted">{newModule ? row.moduleName : ''}</td>
+                      <td><strong className="cell-strong">{row.permissionName}</strong></td>
+                      <td><span className={`action-chip action-${row.action.toLowerCase()}`}>{row.action}</span></td>
+                      <td>{row.type}</td>
+                      <td>
+                        <span className={`status-badge ${String(row.status || '').toLowerCase()}`}>{row.status}</span>
+                      </td>
+                      <td className="cell-wrap">{row.description}</td>
+                      {showActions && (
+                        <td className="row-actions">
+                          {canEdit && (
+                            <button type="button" onClick={() => openEdit(row)}>
+                              Edit
+                            </button>
+                          )}
+                          {canDelete && !row.isStandard && (
+                            <button type="button" onClick={() => handleDelete(row)} disabled={loading}>
+                              Delete
+                            </button>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  </Fragment>
+                )
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
 
-      <PaginationControls currentPage={page} totalRows={permissionsFilters.filteredRows.length} onPageChange={setPage} />
+      <PaginationControls currentPage={page} totalRows={filters.filteredRows.length} onPageChange={setPage} />
     </div>
   )
 }

@@ -1,238 +1,228 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { getPermissionCatalog } from '../api/permissionApi'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import PageHeader from '../components/common/PageHeader'
+import AlertMessage from '../components/common/AlertMessage'
+import Modal from '../components/common/Modal'
+import PermissionMatrix from '../components/rbac/PermissionMatrix'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { logUiAction } from '../utils/actionLogger'
+import { buildPermissionGroups } from '../utils/permissionCatalog'
+
+const MODULE = 'Access Summary'
+const nameKey = (name) => String(name || '').trim().toLowerCase()
+
+const USER_COLUMNS = [
+  { key: 'fullName', label: 'Full Name' },
+  { key: 'username', label: 'Username' },
+  { key: 'status', label: 'Status', type: 'select' },
+  { key: 'roleList', label: 'Roles' },
+  { key: 'moduleCount', label: 'Modules', type: 'number' },
+  { key: 'permissionCount', label: 'Permissions', type: 'number' },
+  { key: 'health', label: 'Access Health', type: 'select' },
+]
+
+const ROLE_COLUMNS = [
+  { key: 'roleName', label: 'Role' },
+  { key: 'status', label: 'Status', type: 'select' },
+  { key: 'userCount', label: 'Users', type: 'number' },
+  { key: 'moduleCount', label: 'Modules', type: 'number' },
+  { key: 'permissionCount', label: 'Permissions', type: 'number' },
+  { key: 'health', label: 'Health', type: 'select' },
+]
+
+const healthTone = (health) => {
+  if (health === 'Access ready' || health === 'Configured') return 'active'
+  if (health === 'User inactive' || health === 'Not active') return 'inactive'
+  return 'blocked'
+}
 
 function AccessSummary({
-  users,
+  users = [],
   roles = [],
   permissions = [],
-  userRoleAssignments,
-  rolePermissionAssignments,
+  userRoleAssignments = [],
+  rolePermissionAssignments = [],
 }) {
-  const [searchText, setSearchText] = useState('')
-  const [selectedRole, setSelectedRole] = useState('')
-  const [selectedStatus, setSelectedStatus] = useState('')
+  const [catalog, setCatalog] = useState(null)
+  const [catalogError, setCatalogError] = useState('')
+  const [detailUser, setDetailUser] = useState(null)
+  const [userPage, setUserPage] = useState(1)
+  const [rolePage, setRolePage] = useState(1)
+  const pageSize = usePageSize()
 
-  const getUserRole = (user) => {
-    const assignment = userRoleAssignments.find((item) => {
-      return (
-        item.username === user.username ||
-        String(item.userId) === String(user.id)
-      )
-    })
-
-    if (!assignment) {
-      return null
-    }
-
-    return assignment
-  }
-
-  const getRolePermissions = (roleName) => {
-    const assignment = rolePermissionAssignments.find((item) => {
-      return item.roleName === roleName
-    })
-
-    if (!assignment) {
-      return []
-    }
-
-    return assignment.permissions || []
-  }
-
-  const normalizePermissionName = (permission) => {
-    if (typeof permission === 'string') {
-      return permission
-    }
-
-    return permission.permissionName || permission.permission_name || ''
-  }
-
-  const normalizePermissionModule = (permission) => {
-    if (typeof permission === 'string') {
-      const matchedPermission = permissions.find((item) => {
-        return item.permissionName === permission
+  useEffect(() => {
+    let cancelled = false
+    getPermissionCatalog()
+      .then((data) => {
+        if (!cancelled) setCatalog(data)
       })
-
-      return matchedPermission ? matchedPermission.moduleName : 'Other'
+      .catch((err) => {
+        if (!cancelled) setCatalogError(err.message || 'Unable to load the permission catalog.')
+      })
+    return () => {
+      cancelled = true
     }
+  }, [])
 
-    return permission.moduleName || permission.module_name || 'Other'
-  }
-
-  const groupPermissionsByModule = (rolePermissions) => {
-    return rolePermissions.reduce((groups, permission) => {
-      const moduleName = normalizePermissionModule(permission)
-      const permissionName = normalizePermissionName(permission)
-
-      if (!groups[moduleName]) {
-        groups[moduleName] = []
+  const knownPermissions = useMemo(() => {
+    const byId = new Map()
+    for (const permission of permissions) byId.set(permission.id, permission)
+    for (const assignment of rolePermissionAssignments) {
+      for (const permission of assignment.permissions || []) {
+        if (!byId.has(permission.id)) byId.set(permission.id, permission)
       }
+    }
+    return [...byId.values()]
+  }, [permissions, rolePermissionAssignments])
 
-      if (permissionName) {
-        groups[moduleName].push(permissionName)
-      }
+  const groups = useMemo(() => buildPermissionGroups(catalog, knownPermissions), [catalog, knownPermissions])
 
-      return groups
-    }, {})
-  }
+  const moduleOf = useCallback(
+    (permission) =>
+      groups.infoByName.get(nameKey(permission.permissionName))?.moduleName || permission.moduleName || 'Other',
+    [groups]
+  )
 
-  const usersWithAccess = useMemo(() => {
-    return users.map((user) => {
-      const roleAssignment = getUserRole(user)
-      const roleName = roleAssignment ? roleAssignment.roleName : ''
-      const rolePermissions = roleName ? getRolePermissions(roleName) : []
-      const groupedPermissions = groupPermissionsByModule(rolePermissions)
+  const permissionsByRole = useMemo(() => {
+    const map = new Map()
+    for (const assignment of rolePermissionAssignments) {
+      map.set(String(assignment.roleId), assignment.permissions || [])
+    }
+    return map
+  }, [rolePermissionAssignments])
 
-      return {
-        ...user,
-        assignedRole: roleName,
-        rolePermissionCount: rolePermissions.length,
-        groupedPermissions,
-        hasRole: roleName !== '',
-        hasPermissions: rolePermissions.length > 0,
-      }
-    })
-  }, [users, userRoleAssignments, rolePermissionAssignments, permissions])
+  const roleNameById = useMemo(() => {
+    const map = new Map()
+    for (const role of roles) map.set(String(role.id), role)
+    return map
+  }, [roles])
 
-  const filteredUsers = usersWithAccess.filter((user) => {
-    const combinedText = `${user.fullName} ${user.username} ${user.email || ''} ${user.department || ''} ${user.designation || ''}`.toLowerCase()
-    const searchMatches = combinedText.includes(searchText.toLowerCase())
+  const userRows = useMemo(
+    () =>
+      users.map((user) => {
+        const assignments = userRoleAssignments.filter(
+          (item) => String(item.userId) === String(user.id) || item.username === user.username
+        )
+        const roleNames = [...new Set(assignments.map((item) => item.roleName).filter(Boolean))]
+        const activeRoleIds = assignments
+          .filter((item) => (roleNameById.get(String(item.roleId))?.status || 'Active') === 'Active')
+          .map((item) => String(item.roleId))
+        const effective = new Map()
+        for (const roleId of activeRoleIds) {
+          for (const permission of permissionsByRole.get(roleId) || []) {
+            if (String(permission.status || 'Active') !== 'Active') continue
+            effective.set(nameKey(permission.permissionName), permission)
+          }
+        }
+        const modules = new Set([...effective.values()].map(moduleOf))
+        let health = 'Access ready'
+        if (user.status !== 'Active') health = 'User inactive'
+        else if (roleNames.length === 0) health = 'Missing role'
+        else if (effective.size === 0) health = 'Missing permissions'
+        return {
+          ...user,
+          roleNames,
+          roleList: roleNames.join(', '),
+          effectiveNames: new Set(effective.keys()),
+          permissionCount: effective.size,
+          moduleCount: modules.size,
+          health,
+        }
+      }),
+    [users, userRoleAssignments, permissionsByRole, roleNameById, moduleOf]
+  )
 
-    const roleMatches =
-      selectedRole === '' || user.assignedRole === selectedRole
+  const roleRows = useMemo(
+    () =>
+      roles.map((role) => {
+        const rolePermissions = permissionsByRole.get(String(role.id)) || []
+        const userCount = new Set(
+          userRoleAssignments.filter((item) => String(item.roleId) === String(role.id)).map((item) => item.userId)
+        ).size
+        let health = 'Configured'
+        if (role.status !== 'Active') health = 'Not active'
+        else if (rolePermissions.length === 0) health = 'No permissions'
+        return {
+          id: role.id,
+          roleName: role.roleName,
+          status: role.status,
+          userCount,
+          moduleCount: new Set(rolePermissions.map(moduleOf)).size,
+          permissionCount: rolePermissions.length,
+          health,
+        }
+      }),
+    [roles, permissionsByRole, userRoleAssignments, moduleOf]
+  )
 
-    const statusMatches =
-      selectedStatus === '' || user.status === selectedStatus
+  const userFilters = useDataFilters(userRows, USER_COLUMNS, { module: MODULE })
+  const roleFilters = useDataFilters(roleRows, ROLE_COLUMNS, { module: `${MODULE} - Roles` })
+  const visibleUsers = paginateRows(userFilters.filteredRows, userPage, pageSize)
+  const visibleRoles = paginateRows(roleFilters.filteredRows, rolePage, pageSize)
 
-    return searchMatches && roleMatches && statusMatches
-  })
+  const activeUsers = userRows.filter((user) => user.status === 'Active')
+  const activeWithoutRole = activeUsers.filter((user) => user.roleNames.length === 0)
+  const rolesWithoutPermissions = roleRows.filter((role) => role.health === 'No permissions')
 
-  const activeUsers = users.filter((user) => user.status === 'Active')
-  const usersWithoutRole = usersWithAccess.filter((user) => !user.hasRole)
-  const activeUsersWithoutRole = usersWithAccess.filter((user) => {
-    return user.status === 'Active' && !user.hasRole
-  })
-
-  const rolesWithoutPermissions = roles.filter((role) => {
-    const rolePermissions = getRolePermissions(role.roleName)
-    return role.status === 'Active' && rolePermissions.length === 0
-  })
-
-  const totalAssignedPermissions = usersWithAccess.reduce((total, user) => {
-    return total + user.rolePermissionCount
-  }, 0)
-
-  const clearFilters = () => {
-    setSearchText('')
-    setSelectedRole('')
-    setSelectedStatus('')
+  const openDetail = (user) => {
+    setDetailUser(user)
+    logUiAction(MODULE, 'View User Access', { username: user.username })
   }
 
   return (
     <div>
-      <div className="page-title">
-        <div>
-          <h2>Access Summary</h2>
-          <p>Verify final user access based on User → Role → Permissions.</p>
-        </div>
+      <PageHeader
+        title="Access Summary"
+        description="Effective access per user: User → Roles → module-wise permissions."
+        count={`${userFilters.filteredRows.length} Users`}
+      />
 
-        <span className="record-count">{filteredUsers.length} Visible Users</span>
-      </div>
+      <AlertMessage tone="warning" message={catalogError} onDismiss={() => setCatalogError('')} />
 
-      <div className="summary-card-grid">
+      <div className="summary-card-grid compact-summary-grid">
         <div className="summary-card">
           <span>Total Users</span>
           <strong>{users.length}</strong>
         </div>
-
         <div className="summary-card">
           <span>Active Users</span>
           <strong>{activeUsers.length}</strong>
         </div>
-
         <div className="summary-card warning-summary-card">
           <span>Active Users Without Role</span>
-          <strong>{activeUsersWithoutRole.length}</strong>
+          <strong>{activeWithoutRole.length}</strong>
         </div>
-
+        <div className="summary-card">
+          <span>Roles</span>
+          <strong>{roles.length}</strong>
+        </div>
         <div className="summary-card warning-summary-card">
           <span>Active Roles Without Permissions</span>
           <strong>{rolesWithoutPermissions.length}</strong>
         </div>
-
-        <div className="summary-card">
-          <span>Total Assigned Permission Links</span>
-          <strong>{totalAssignedPermissions}</strong>
-        </div>
       </div>
 
-      <div className="filter-panel">
-        <div>
-          <label>Search User</label>
-          <input
-            type="text"
-            value={searchText}
-            onChange={(e) => setSearchText(e.target.value)}
-            placeholder="Search by name, username, email, department..."
-          />
-        </div>
-
-        <div>
-          <label>Role Filter</label>
-          <select
-            value={selectedRole}
-            onChange={(e) => setSelectedRole(e.target.value)}
-          >
-            <option value="">All Roles</option>
-
-            {roles.map((role) => (
-              <option key={role.id} value={role.roleName}>
-                {role.roleName}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label>Status Filter</label>
-          <select
-            value={selectedStatus}
-            onChange={(e) => setSelectedStatus(e.target.value)}
-          >
-            <option value="">All Status</option>
-            <option>Active</option>
-            <option>Inactive</option>
-            <option>Blocked</option>
-          </select>
-        </div>
-
-        <div className="filter-actions">
-          <button type="button" onClick={clearFilters}>
-            Clear Filters
-          </button>
-        </div>
-      </div>
-
-      {usersWithoutRole.length > 0 && (
-        <div className="info-box">
-          {usersWithoutRole.length} user(s) do not have a role assigned. Active
-          users without roles cannot access protected modules properly.
-        </div>
-      )}
-
-      {rolesWithoutPermissions.length > 0 && (
-        <div className="info-box">
-          {rolesWithoutPermissions.length} active role(s) do not have permissions
-          assigned. Assign permissions in Role Permission Assignment.
-        </div>
+      {activeWithoutRole.length > 0 && (
+        <AlertMessage
+          tone="warning"
+          message={`${activeWithoutRole.length} active user(s) have no role and cannot open protected modules. Assign a role in User Role Assignment.`}
+        />
       )}
 
       <div className="section-title">
-        <h3>User Access Overview</h3>
-        <p>
-          This screen confirms what each user can access after backend RBAC
-          enforcement.
-        </p>
+        <h3>User Access</h3>
       </div>
+
+      <DataTableToolbar
+        filters={userFilters}
+        columns={USER_COLUMNS}
+        exportFileName="access-summary-users"
+        exportTitle="Access Summary - Users"
+        module={MODULE}
+        searchPlaceholder="Search users, roles…"
+      />
 
       <table>
         <thead>
@@ -240,167 +230,134 @@ function AccessSummary({
             <th>Full Name</th>
             <th>Username</th>
             <th>Status</th>
-            <th>Assigned Role</th>
-            <th>Permission Summary</th>
+            <th>Roles</th>
+            <th>Access</th>
             <th>Access Health</th>
+            <th>Actions</th>
           </tr>
         </thead>
-
         <tbody>
-          {filteredUsers.length === 0 ? (
+          {visibleUsers.length === 0 ? (
             <tr>
-              <td colSpan="6" className="empty-table">
+              <td colSpan={7} className="empty-table">
                 No users match the selected filters.
               </td>
             </tr>
           ) : (
-            filteredUsers.map((user) => {
-              const moduleEntries = Object.entries(user.groupedPermissions)
-
-              return (
-                <tr key={user.id || user.username}>
-                  <td>
-                    <strong>{user.fullName}</strong>
-                    <div className="muted-table-text">
-                      {user.department || 'No department'} /{' '}
-                      {user.designation || 'No designation'}
+            visibleUsers.map((user) => (
+              <tr key={user.id || user.username}>
+                <td>
+                  <strong className="cell-strong">{user.fullName}</strong>
+                  <div className="muted-table-text">
+                    {[user.department, user.designation].filter(Boolean).join(' / ') || '—'}
+                  </div>
+                </td>
+                <td>{user.username}</td>
+                <td>
+                  <span className={`status-badge ${String(user.status || '').toLowerCase()}`}>{user.status}</span>
+                </td>
+                <td>
+                  {user.roleNames.length === 0 ? (
+                    <span className="warning-text">No role</span>
+                  ) : (
+                    <div className="permission-list">
+                      {user.roleNames.map((roleName) => (
+                        <span key={roleName} className="permission-badge">
+                          {roleName}
+                        </span>
+                      ))}
                     </div>
-                  </td>
-
-                  <td>{user.username}</td>
-
-                  <td>
-                    <span className={`status-badge ${user.status.toLowerCase()}`}>
-                      {user.status}
-                    </span>
-                  </td>
-
-                  <td>
-                    {!user.hasRole ? (
-                      <span className="warning-text">No role assigned</span>
-                    ) : (
-                      <span className="permission-badge">
-                        {user.assignedRole}
-                      </span>
-                    )}
-                  </td>
-
-                  <td>
-                    {!user.hasRole ? (
-                      <span className="warning-text">
-                        Assign a role in User Role Assignment
-                      </span>
-                    ) : !user.hasPermissions ? (
-                      <span className="warning-text">
-                        Assigned role has no permissions
-                      </span>
-                    ) : (
-                      <div className="module-permission-list">
-                        {moduleEntries.map(([moduleName, modulePermissions]) => (
-                          <div key={moduleName} className="module-permission-group">
-                            <strong>{moduleName}</strong>
-
-                            <div className="permission-list">
-                              {modulePermissions.map((permissionName) => (
-                                <span
-                                  key={permissionName}
-                                  className="permission-badge"
-                                >
-                                  {permissionName}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </td>
-
-                  <td>
-                    {user.status !== 'Active' ? (
-                      <span className="status-badge inactive">
-                        User inactive/blocked
-                      </span>
-                    ) : !user.hasRole ? (
-                      <span className="status-badge blocked">
-                        Missing role
-                      </span>
-                    ) : !user.hasPermissions ? (
-                      <span className="status-badge blocked">
-                        Missing permissions
-                      </span>
-                    ) : (
-                      <span className="status-badge active">
-                        Access ready
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              )
-            })
+                  )}
+                </td>
+                <td>
+                  {user.permissionCount} permissions · {user.moduleCount} modules
+                </td>
+                <td>
+                  <span className={`status-badge ${healthTone(user.health)}`}>{user.health}</span>
+                </td>
+                <td className="row-actions">
+                  <button type="button" onClick={() => openDetail(user)} disabled={user.permissionCount === 0}>
+                    View Access
+                  </button>
+                </td>
+              </tr>
+            ))
           )}
         </tbody>
       </table>
 
+      <PaginationControls currentPage={userPage} totalRows={userFilters.filteredRows.length} onPageChange={setUserPage} />
+
       <div className="section-title">
         <h3>Role Permission Health</h3>
-        <p>
-          Review active roles and confirm that each role has at least one
-          permission assigned.
-        </p>
       </div>
+
+      <DataTableToolbar
+        filters={roleFilters}
+        columns={ROLE_COLUMNS}
+        exportFileName="access-summary-roles"
+        exportTitle="Access Summary - Roles"
+        module={`${MODULE} - Roles`}
+        searchPlaceholder="Search roles…"
+      />
 
       <table>
         <thead>
           <tr>
             <th>Role</th>
             <th>Status</th>
-            <th>Permission Count</th>
+            <th>Users</th>
+            <th>Modules</th>
+            <th>Permissions</th>
             <th>Health</th>
           </tr>
         </thead>
-
         <tbody>
-          {roles.length === 0 ? (
+          {visibleRoles.length === 0 ? (
             <tr>
-              <td colSpan="4" className="empty-table">
+              <td colSpan={6} className="empty-table">
                 No roles found.
               </td>
             </tr>
           ) : (
-            roles.map((role) => {
-              const rolePermissions = getRolePermissions(role.roleName)
-
-              return (
-                <tr key={role.id || role.roleName}>
-                  <td>{role.roleName}</td>
-                  <td>
-                    <span className={`status-badge ${role.status.toLowerCase()}`}>
-                      {role.status}
-                    </span>
-                  </td>
-                  <td>{rolePermissions.length}</td>
-                  <td>
-                    {role.status !== 'Active' ? (
-                      <span className="status-badge inactive">
-                        Not active
-                      </span>
-                    ) : rolePermissions.length === 0 ? (
-                      <span className="status-badge blocked">
-                        No permissions
-                      </span>
-                    ) : (
-                      <span className="status-badge active">
-                        Configured
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              )
-            })
+            visibleRoles.map((role) => (
+              <tr key={role.id}>
+                <td><strong className="cell-strong">{role.roleName}</strong></td>
+                <td>
+                  <span className={`status-badge ${String(role.status || '').toLowerCase()}`}>{role.status}</span>
+                </td>
+                <td>{role.userCount}</td>
+                <td>{role.moduleCount}</td>
+                <td>{role.permissionCount}</td>
+                <td>
+                  <span className={`status-badge ${healthTone(role.health)}`}>{role.health}</span>
+                </td>
+              </tr>
+            ))
           )}
         </tbody>
       </table>
+
+      <PaginationControls currentPage={rolePage} totalRows={roleFilters.filteredRows.length} onPageChange={setRolePage} />
+
+      <Modal
+        open={Boolean(detailUser)}
+        onClose={() => setDetailUser(null)}
+        size="xl"
+        title={detailUser ? `Access – ${detailUser.fullName}` : ''}
+        description={
+          detailUser
+            ? `Roles: ${detailUser.roleList || 'none'} · ${detailUser.permissionCount} permission(s) across ${detailUser.moduleCount} module(s)`
+            : undefined
+        }
+        footer={
+          <button type="button" className="btn-secondary" onClick={() => setDetailUser(null)}>
+            Close
+          </button>
+        }
+      >
+        {detailUser && <PermissionMatrix groups={groups} selected={detailUser.effectiveNames} />}
+      </Modal>
     </div>
   )
 }

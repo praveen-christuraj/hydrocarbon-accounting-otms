@@ -4,17 +4,12 @@ import TopNavigation from './TopNavigation'
 import UserMenu from './UserMenu'
 import SystemNotificationCenter from '../SystemNotificationCenter'
 import { logUiAction } from '../../utils/actionLogger'
-import { navigationItems } from '../../data/navigationItems'
+import { findNavigationItem, hiddenRouteLabels } from '../../data/navigationItems'
 
 const routeLabel = (pathname) => {
-  for (const group of navigationItems) {
-    if (group.type === 'link' && group.path === pathname) return group.label
-    if (group.items) {
-      const match = group.items.find((item) => item.path === pathname)
-      if (match) return match.label
-    }
-  }
-  return pathname
+  if (hiddenRouteLabels[pathname]) return hiddenRouteLabels[pathname]
+  const match = findNavigationItem(pathname)
+  return match ? match.item.label : pathname
 }
 
 /**

@@ -924,6 +924,407 @@ td button.btn-secondary.btn-secondary:hover:not(:disabled) {
   margin: 0;
 }
 
+/* ----------------------------------------------------------- form dialog */
+/* Create / edit forms open in FormDialog (owner rule 10). */
+.app-modal-body form.dialog-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+  margin: 0;
+}
+
+.app-modal-body form.dialog-form-cols-1 {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app-modal-body form.dialog-form-cols-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.dialog-form > .full-width-field,
+.dialog-form > .span-all,
+.dialog-form > .info-box,
+.dialog-form > .warning-box,
+.dialog-form > .alert-message,
+.dialog-form > table,
+.dialog-form > .table-scroll {
+  grid-column: 1 / -1;
+}
+
+/* Buttons live in the dialog footer; legacy inline action rows are hidden. */
+.dialog-form > .form-actions {
+  display: none;
+}
+
+.form-dialog-alert {
+  margin-bottom: 12px;
+}
+
+.form-dialog-footer-start {
+  margin-right: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+.dialog-section-title {
+  grid-column: 1 / -1;
+  margin: 6px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--divider);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.dialog-section-title:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.dialog-readonly-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 16px;
+  margin: 0;
+}
+
+.dialog-readonly-grid dt {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.dialog-readonly-grid dd {
+  margin: 2px 0 0;
+  font-size: 13.5px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* Row action cell: keep buttons on one line where possible */
+.row-actions {
+  white-space: nowrap;
+}
+
+.row-actions button:last-child {
+  margin-right: 0;
+}
+
+.modal-footer-note {
+  margin-right: auto;
+  font-size: 12.5px;
+  color: var(--warning-text);
+}
+
+/* ------------------------------------------------------- table helpers */
+.table-scroll {
+  width: 100%;
+  overflow-x: auto;
+  border-radius: var(--radius-panel);
+}
+
+.table-scroll > table {
+  margin-bottom: 0;
+}
+
+.cell-strong {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.cell-muted {
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+
+.cell-wrap {
+  white-space: normal;
+  min-width: 180px;
+  max-width: 420px;
+  color: var(--text-secondary);
+}
+
+.table-group-row td,
+tbody tr.table-group-row:hover {
+  background: var(--surface-2);
+}
+
+.table-group-row td {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.module-first-row td {
+  border-top: 1px solid var(--divider);
+}
+
+.action-chip {
+  display: inline-block;
+  min-width: 52px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.action-chip.action-view {
+  background: var(--info-soft);
+  border-color: var(--info-border);
+  color: var(--info-text);
+}
+
+.action-chip.action-create {
+  background: var(--success-soft);
+  border-color: var(--success-border);
+  color: var(--success-text);
+}
+
+.action-chip.action-edit {
+  background: var(--warning-soft);
+  border-color: var(--warning-border);
+  color: var(--warning-text);
+}
+
+.action-chip.action-delete {
+  background: var(--danger-soft);
+  border-color: var(--danger-border);
+  color: var(--danger-text);
+}
+
+/* ------------------------------------------------------ permission master */
+.permission-summary-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 18px;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.permission-summary-strip strong {
+  color: var(--text);
+}
+
+.permission-summary-hint {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ------------------------------------------------------ permission matrix */
+.permission-matrix-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.matrix-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.matrix-toolbar input[type='search'] {
+  flex: 1 1 240px;
+  max-width: 340px;
+}
+
+.matrix-toolbar select {
+  flex: 0 1 220px;
+  width: auto;
+}
+
+.matrix-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.matrix-toggle input {
+  width: auto;
+  min-height: 0;
+  margin: 0;
+}
+
+.matrix-hint {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+table.permission-matrix {
+  overflow: visible;
+  table-layout: fixed;
+}
+
+.permission-matrix th,
+.permission-matrix td {
+  padding: 6px 10px;
+  vertical-align: middle;
+}
+
+.permission-matrix thead th {
+  position: sticky;
+  top: -18px; /* keeps the header visible while the modal body scrolls */
+  z-index: 2;
+  background: var(--table-head-bg);
+}
+
+.permission-matrix .matrix-module-col {
+  width: 26%;
+  font-weight: 500;
+}
+
+.permission-matrix .matrix-action-col {
+  width: 9%;
+  text-align: center;
+}
+
+.permission-matrix .matrix-all-col {
+  width: 6%;
+  text-align: center;
+}
+
+.matrix-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.permission-matrix input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+  margin: 0;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
+.permission-matrix input[type='checkbox']:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.matrix-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  min-width: 28px;
+  min-height: 24px;
+}
+
+.matrix-check.is-unavailable {
+  opacity: 0.5;
+}
+
+.matrix-category-row td,
+tbody tr.matrix-category-row:hover {
+  background: var(--surface-2);
+}
+
+.matrix-category {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.matrix-count {
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-muted);
+}
+
+.matrix-granted {
+  display: inline-flex;
+  color: var(--success);
+}
+
+.matrix-denied {
+  color: var(--text-faint);
+}
+
+.matrix-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+}
+
+.matrix-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.matrix-chip input[type='checkbox'] {
+  width: 13px;
+  height: 13px;
+}
+
+.matrix-chip.is-granted {
+  border-color: var(--success-border);
+  background: var(--success-soft);
+  color: var(--success-text);
+}
+
+.matrix-chip.is-denied {
+  color: var(--text-faint);
+}
+
+.matrix-chip.is-unavailable {
+  opacity: 0.5;
+}
+
+.compact-summary-grid {
+  margin-bottom: 14px;
+}
+
+@media (max-width: 720px) {
+  .app-modal-body form.dialog-form,
+  .app-modal-body form.dialog-form-cols-3,
+  .dialog-readonly-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 /* ------------------------------------------------------- confirm dialog */
 .confirm-dialog-content {
   display: flex;

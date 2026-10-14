@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -11,6 +12,25 @@ from app.services.permission_catalog import apply_permission_catalog
 from app.utils.default_permissions import ACTION_ORDER, STANDARD_PERMISSIONS, get_permission_catalog
 from app.utils.helpers import clean_optional_text
 from app.utils.pagination import paginate_query
+
+STANDARD_PERMISSION_NAMES = {
+    row["permission_name"].strip().casefold() for row in STANDARD_PERMISSIONS
+}
+
+
+def is_standard_permission_name(permission_name: str | None) -> bool:
+    return str(permission_name or "").strip().casefold() in STANDARD_PERMISSION_NAMES
+
+
+def find_permission_by_name(db: Session, permission_name: str, exclude_id: int | None = None):
+    """Permission checks match by name, so names must be unique across modules."""
+    query = db.query(Permission).filter(
+        func.lower(func.trim(Permission.permission_name)) == permission_name.strip().lower()
+    )
+    if exclude_id is not None:
+        query = query.filter(Permission.id != exclude_id)
+    return query.first()
+
 
 router = APIRouter(prefix="/permissions", tags=["Permissions"])
 
@@ -83,6 +103,18 @@ def create_permission(
             detail="Permission already exists for this module",
         )
 
+    same_name = find_permission_by_name(db, permission.permission_name)
+    if same_name:
+        raise HTTPException(
+            status_code=400,
+            detail=f"A permission named '{same_name.permission_name}' already exists in module '{same_name.module_name}'",
+        )
+    if is_standard_permission_name(permission.permission_name):
+        raise HTTPException(
+            status_code=400,
+            detail="This is a standard permission. Use Sync Standard Permissions to restore it.",
+        )
+
     new_permission = Permission(
         permission_name=permission.permission_name.strip(),
         module_name=permission.module_name.strip(),
@@ -145,6 +177,33 @@ def update_permission(
             status_code=404,
             detail="Permission not found",
         )
+
+    if is_standard_permission_name(existing_permission.permission_name):
+        identity_changed = (
+            existing_permission.permission_name.strip() != permission.permission_name.strip()
+            or existing_permission.module_name.strip() != permission.module_name.strip()
+            or (existing_permission.description or None) != clean_optional_text(permission.description)
+        )
+        if identity_changed:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Standard permissions are maintained by the system catalog. "
+                    "Only their status can be changed."
+                ),
+            )
+    else:
+        same_name = find_permission_by_name(db, permission.permission_name, exclude_id=permission_id)
+        if same_name:
+            raise HTTPException(
+                status_code=400,
+                detail=f"A permission named '{same_name.permission_name}' already exists in module '{same_name.module_name}'",
+            )
+        if is_standard_permission_name(permission.permission_name):
+            raise HTTPException(
+                status_code=400,
+                detail="A custom permission cannot use the name of a standard permission.",
+            )
 
     access_key_changed = (
         existing_permission.permission_name.strip().casefold() != permission.permission_name.strip().casefold()
@@ -236,6 +295,12 @@ def delete_permission(
         raise HTTPException(
             status_code=404,
             detail="Permission not found",
+        )
+
+    if is_standard_permission_name(existing_permission.permission_name):
+        raise HTTPException(
+            status_code=400,
+            detail="Standard permissions cannot be deleted. Set the status to Inactive instead.",
         )
 
     role_permission = (

@@ -5,6 +5,10 @@ import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
 import { usePermissions } from '../hooks/usePermissions'
+import FormDialog from '../components/common/FormDialog'
+import Icon from '../components/common/Icon'
+import { useConfirm } from '../components/common/ConfirmProvider'
+import { logUiAction } from '../utils/actionLogger'
 
 const IMPORT_STATUSES = ['Active', 'Inactive', 'Blocked']
 
@@ -20,7 +24,7 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
-  const [confirmDelete, setConfirmDelete] = useState(null)
+  const [formOpen, setFormOpen] = useState(false)
   const [fieldErrors, setFieldErrors] = useState({})
   const [page, setPage] = useState(1)
 
@@ -29,7 +33,10 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
   const visibleItems = paginateRows(rolesFilters.filteredRows, page, pageSize)
 
   const { hasPermission } = usePermissions(loggedInUser)
-  const canManageRole = hasPermission('Manage Role')
+  const confirm = useConfirm()
+  const canCreate = hasPermission('Create Role')
+  const canEdit = hasPermission('Edit Role')
+  const canDelete = hasPermission('Delete Role')
 
   const clearError = () => setError('')
   const clearSuccess = () => setSuccess('')
@@ -51,8 +58,8 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
     clearError()
     clearSuccess()
 
-    if (!canManageRole) {
-      setError('You do not have permission to manage roles.')
+    if (!(editId === null ? canCreate : canEdit)) {
+      setError(`You do not have permission to ${editId === null ? 'create' : 'edit'} roles.`)
       return
     }
 
@@ -73,6 +80,7 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
       await reloadRoles()
       setRole(emptyRole)
       setEditId(null)
+      setFormOpen(false)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -83,15 +91,14 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
   const handleEdit = (roleToEdit) => {
     clearError()
     clearSuccess()
-    setConfirmDelete(null)
     setFieldErrors({})
 
     if (String(roleToEdit.roleName || '').trim().toLowerCase() === 'admin') {
       setError('The reserved Admin role is managed by system provisioning.')
       return
     }
-    if (!canManageRole) {
-      setError('You do not have permission to manage roles.')
+    if (!canEdit) {
+      setError('You do not have permission to edit roles.')
       return
     }
 
@@ -102,24 +109,32 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
     })
 
     setEditId(roleToEdit.id)
+    setFormOpen(true)
+    logUiAction('Role Master', 'Open Edit Dialog', { roleName: roleToEdit.roleName })
   }
 
-  const handleDeleteRequest = (id) => {
-    clearError()
-    clearSuccess()
-    setConfirmDelete(id)
+  const handleDeleteRequest = async (target) => {
+    setError('')
+    setSuccess('')
+    const confirmed = await confirm({
+      title: 'Delete role',
+      message: `Delete role ${target.roleName}? This cannot be undone.`,
+      tone: 'danger',
+      confirmLabel: 'Delete',
+      module: 'Role Master',
+    })
+    if (confirmed) await handleDeleteConfirm(target.id)
   }
 
   const handleDeleteConfirm = async (roleId) => {
-    if (!canManageRole) {
-      setError('You do not have permission to manage roles.')
+    if (!canDelete) {
+      setError('You do not have permission to delete roles.')
       return
     }
 
     try {
       setLoading(true)
       await deleteRole(roleId)
-      setConfirmDelete(null)
       setSuccess('Role deleted successfully')
       await reloadRoles()
 
@@ -140,7 +155,13 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
     setFieldErrors({})
     clearError()
     clearSuccess()
-    setConfirmDelete(null)
+    setFormOpen(false)
+  }
+
+  const openCreate = () => {
+    handleCancelEdit()
+    setFormOpen(true)
+    logUiAction('Role Master', 'Open Create Dialog')
   }
 
 
@@ -174,7 +195,10 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
           <p>Create, update, and manage application roles.</p>
         </div>
 
-        <span className="record-count">{roles.length} Roles</span>
+        <div className="page-title-actions">
+          {canCreate && (<button type="button" className="btn-primary" onClick={openCreate}><Icon name="plus" size={15} />New Role</button>)}
+          <span className="record-count">{roles.length} Roles</span>
+        </div>
       </div>
 
       {success && (
@@ -191,72 +215,57 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
         </div>
       )}
 
-      {!canManageRole && (
+      {!canCreate && !canEdit && !canDelete && (
         <div className="info-box">
-          You have View Role permission only. Create, edit, and delete actions
-          are disabled.
+          You have view-only access to Role Master.
         </div>
       )}
 
-      {canManageRole && (
-        <form onSubmit={handleSubmit}>
-          <div>
-            <label>Role Name</label>
-            <input
-              name="roleName"
-              type="text"
-              value={role.roleName}
-              onChange={handleChange}
-              placeholder="Enter role name"
-              aria-invalid={fieldErrors.roleName ? 'true' : undefined}
-            />
-            {fieldErrors.roleName && (
-              <small className="field-error">{fieldErrors.roleName}</small>
-            )}
-          </div>
+      <FormDialog
+        open={formOpen}
+        title={editId === null ? 'New Role' : 'Edit Role'}
+        submitLabel={editId === null ? 'Save Role' : 'Update Role'}
+        busy={loading}
+        error={error}
+        onDismissError={clearError}
+        onSubmit={handleSubmit}
+        onCancel={handleCancelEdit}
+      >
+        <div>
+          <label>Role Name</label>
+          <input
+            name="roleName"
+            type="text"
+            value={role.roleName}
+            onChange={handleChange}
+            placeholder="Enter role name"
+            aria-invalid={fieldErrors.roleName ? 'true' : undefined}
+          />
+          {fieldErrors.roleName && (
+            <small className="field-error">{fieldErrors.roleName}</small>
+          )}
+        </div>
 
-          <div>
-            <label>Status</label>
-            <select name="status" value={role.status} onChange={handleChange}>
-              <option>Active</option>
-              <option>Inactive</option>
-              <option>Blocked</option>
-            </select>
-          </div>
+        <div>
+          <label>Status</label>
+          <select name="status" value={role.status} onChange={handleChange}>
+            <option>Active</option>
+            <option>Inactive</option>
+            <option>Blocked</option>
+          </select>
+        </div>
 
-          <div className="full-width-field">
-            <label>Description</label>
-            <textarea
-              name="description"
-              value={role.description}
-              onChange={handleChange}
-              placeholder="Enter role description"
-              rows="3"
-            />
-          </div>
-
-          <div className="form-actions">
-            <button type="submit" disabled={loading}>
-              {loading
-                ? 'Please wait...'
-                : editId === null
-                  ? 'Save Role'
-                  : 'Update Role'}
-            </button>
-
-            {editId !== null && (
-              <button
-                type="button"
-                onClick={handleCancelEdit}
-                disabled={loading}
-              >
-                Cancel Edit
-              </button>
-            )}
-          </div>
-        </form>
-      )}
-
+        <div className="full-width-field">
+          <label>Description</label>
+          <textarea
+            name="description"
+            value={role.description}
+            onChange={handleChange}
+            placeholder="Enter role description"
+            rows="3"
+          />
+        </div>
+      </FormDialog>
       <div className="section-title">
         <h3>Saved Roles</h3>
         <p>Roles are now saved permanently in PostgreSQL.</p>
@@ -269,7 +278,7 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
         exportTitle="Role Master"
         module="Role Master"
         importConfig={importConfig}
-        canImport={canManageRole}
+        canImport={canCreate}
       />
 
       <table>
@@ -278,14 +287,14 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
             <th>Role Name</th>
             <th>Description</th>
             <th>Status</th>
-            {canManageRole && <th>Actions</th>}
+            {(canEdit || canDelete) && <th>Actions</th>}
           </tr>
         </thead>
 
         <tbody>
           {roles.length === 0 ? (
             <tr>
-              <td colSpan={canManageRole ? 4 : 3} className="empty-table">
+              <td colSpan={canEdit || canDelete ? 4 : 3} className="empty-table">
                 No roles added yet.
               </td>
             </tr>
@@ -300,37 +309,20 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
                   </span>
                 </td>
 
-                {canManageRole && (
-                  <td>
+                {(canEdit || canDelete) && (
+                  <td className="row-actions">
                     {String(item.roleName || '').trim().toLowerCase() === 'admin' ? (
                       <span>System managed</span>
                     ) : (
                     <>
-                    <button type="button" onClick={() => handleEdit(item)}>
-                      Edit
-                    </button>
+                    {canEdit && (
+                      <button type="button" onClick={() => handleEdit(item)}>
+                        Edit
+                      </button>
+                    )}
 
-                    {confirmDelete === item.id ? (
-                      <span>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteConfirm(item.id)}
-                          disabled={loading}
-                          className="btn-danger"
-                        >
-                          {loading ? 'Deleting...' : 'Confirm'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setConfirmDelete(null)}
-                          disabled={loading}
-                          className="btn-secondary"
-                        >
-                          Cancel
-                        </button>
-                      </span>
-                    ) : (
-                      <button type="button" onClick={() => handleDeleteRequest(item.id)}>
+                    {canDelete && (
+                      <button type="button" onClick={() => handleDeleteRequest(item)} disabled={loading}>
                         Delete
                       </button>
                     )}

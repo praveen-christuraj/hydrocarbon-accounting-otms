@@ -378,3 +378,97 @@ def test_legacy_role_keeps_access_end_to_end(db):
         db=db,
     )
     assert created.location_code == "AFTER"
+
+
+# ---------------------------------------------------------------------------
+# Permission Master guards
+# ---------------------------------------------------------------------------
+
+def _admin(db):
+    admin_role = _new_role(db, "Admin")
+    user = create_user(db, "perm_admin", roles=[admin_role])
+    db.commit()
+    return user
+
+
+def test_standard_permissions_cannot_be_renamed_moved_or_deleted(db):
+    from app.routers.permissions import delete_permission, update_permission
+    from app.schemas import PermissionCreate
+
+    sync_standard_permissions(db)
+    db.commit()
+    admin = _admin(db)
+    view_location = db.query(Permission).filter(Permission.permission_name == "View Location").one()
+
+    for change in (
+        {"permission_name": "View Sites"},
+        {"module_name": "Somewhere Else"},
+        {"description": "my own words"},
+    ):
+        payload = PermissionCreate(**{
+            "permission_name": view_location.permission_name,
+            "module_name": view_location.module_name,
+            "description": view_location.description,
+            "status": view_location.status,
+            **change,
+        })
+        with pytest.raises(HTTPException) as exc:
+            update_permission(view_location.id, payload, current_user=admin, db=db)
+        assert exc.value.status_code == 400
+
+    # Status can still be changed by an administrator.
+    deactivated = update_permission(
+        view_location.id,
+        PermissionCreate(
+            permission_name=view_location.permission_name,
+            module_name=view_location.module_name,
+            description=view_location.description,
+            status="Inactive",
+        ),
+        current_user=admin,
+        db=db,
+    )
+    assert deactivated.status == "Inactive"
+
+    with pytest.raises(HTTPException) as exc:
+        delete_permission(view_location.id, current_user=admin, db=db)
+    assert exc.value.status_code == 400
+
+
+def test_permission_names_are_unique_across_modules(db):
+    from app.routers.permissions import create_permission, update_permission
+    from app.schemas import PermissionCreate
+
+    sync_standard_permissions(db)
+    db.commit()
+    admin = _admin(db)
+
+    with pytest.raises(HTTPException) as exc:
+        create_permission(
+            PermissionCreate(permission_name="view location", module_name="Custom", status="Active"),
+            current_user=admin,
+            db=db,
+        )
+    assert exc.value.status_code == 400
+
+    custom = create_permission(
+        PermissionCreate(permission_name="Approve Fuel Voucher", module_name="Fuel", status="Active"),
+        current_user=admin,
+        db=db,
+    )
+    with pytest.raises(HTTPException) as exc:
+        update_permission(
+            custom.id,
+            PermissionCreate(permission_name="Create Location", module_name="Fuel", status="Active"),
+            current_user=admin,
+            db=db,
+        )
+    assert exc.value.status_code == 400
+
+    renamed = update_permission(
+        custom.id,
+        PermissionCreate(permission_name="Approve Fuel Voucher Batch", module_name="Fuel", status="Active"),
+        current_user=admin,
+        db=db,
+    )
+    assert renamed.permission_name == "Approve Fuel Voucher Batch"

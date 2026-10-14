@@ -1,3 +1,12 @@
+/**
+ * Top navigation (owner rule 3). Each item is shown only when the user holds
+ * its `permission` (the module's View permission from the backend catalog in
+ * backend/app/utils/default_permissions.py). `anyPermission` shows the item when
+ * the user holds at least one of the listed permissions.
+ *
+ * Group order and labels mirror the permission categories so that
+ * Role Permission Assignment reads exactly like this menu.
+ */
 export const navigationItems = [
   {
     label: 'Home',
@@ -5,358 +14,245 @@ export const navigationItems = [
     type: 'link',
     permission: null,
   },
-  // {
-  //   label: 'Dashboard',
-  //   path: '/dashboard',
-  //   type: 'link',
-  //   permission: 'View Dashboard',
-  // },
   {
     label: 'User Management',
     type: 'dropdown',
     items: [
-      {
-        label: 'User Master',
-        path: '/users',
-        disabled: false,
-        permission: 'View User',
-      },
-      {
-        label: 'Role Master',
-        path: '/roles',
-        disabled: false,
-        permission: 'View Role',
-      },
-      {
-        label: 'Permission Master',
-        path: '/permissions',
-        disabled: false,
-        permission: 'View Permission',
-      },
+      { label: 'User Master', path: '/users', permission: 'View User' },
+      { label: 'Role Master', path: '/roles', permission: 'View Role' },
+      { label: 'Permission Master', path: '/permissions', permission: 'View Permission' },
       {
         label: 'Role Permission Assignment',
         path: '/role-permissions',
-        disabled: false,
         permission: 'View Role Permission Assignment',
       },
       {
         label: 'User Role Assignment',
         path: '/user-roles',
-        disabled: false,
         permission: 'View User Role Assignment',
       },
       {
         label: 'User Location Assignment',
         path: '/user-locations',
-        disabled: false,
         permission: 'View User Location Assignment',
       },
       {
         label: 'Profile & Security',
         path: '/profile-security',
-        disabled: false,
         permission: 'View Own Security Settings',
       },
-      {
-        label: 'Access Summary',
-        path: '/access-summary',
-        disabled: false,
-        permission: 'View Access Summary',
-      },
+      { label: 'Access Summary', path: '/access-summary', permission: 'View Access Summary' },
     ],
   },
   {
-    label: 'Master Data',
+    label: 'Master Data Management',
     type: 'dropdown',
     items: [
-      {
-        label: 'Location Master',
-        path: '/locations',
-        disabled: false,
-        permission: 'View Location',
-      },
-      {
-        label: 'Asset Type Master',
-        path: '/asset-types',
-        disabled: false,
-        permission: 'View Asset Type',
-      },
-      {
-        label: 'Asset Master',
-        path: '/assets',
-        disabled: false,
-        permission: 'View Asset',
-      },
+      { label: 'Location Master', path: '/locations', permission: 'View Location' },
+      { label: 'Asset Type Master', path: '/asset-types', permission: 'View Asset Type' },
+      { label: 'Asset Master', path: '/assets', permission: 'View Asset' },
       {
         label: 'Prime Mover - Tanker Link',
         path: '/prime-mover-tanker-links',
-        disabled: false,
-        permission: 'View Asset',
+        permission: 'View Prime Mover Tanker Link',
       },
       {
         label: 'Calibration Template Master',
         path: '/calibration-templates',
-        disabled: false,
         permission: 'View Calibration Template',
       },
       {
         label: 'Asset Calibration Table',
         path: '/asset-calibrations',
-        disabled: false,
         permission: 'View Asset Calibration',
       },
-      {
-        label: 'Table 11 Factor Master',
-        path: '/table11-factors',
-        requiredPermission: 'View Asset Calibration',
-        disabled: false,
-      },
-      {
-        label: 'Asset Assignment',
-        path: '/asset-assignments',
-        disabled: false,
-        permission: 'View Asset Assignment',
-      },
+      { label: 'Asset Assignment', path: '/asset-assignments', permission: 'View Asset Assignment' },
       {
         label: 'Asset Assignment Summary',
         path: '/asset-assignment-summary',
-        disabled: false,
         permission: 'View Asset Assignment Summary',
       },
+    ],
+  },
+  {
+    label: 'Configurations',
+    type: 'dropdown',
+    items: [
+      { label: 'Operation Type Master', path: '/operation-types', permission: 'View Operation Type' },
+      { label: 'Tank Operation Master', path: '/tank-operations', permission: 'View Tank Operation' },
       {
-        label: 'Flowmeter Config',
-        path: '/flowmeter-configs',
-        disabled: false,
-        permission: 'View Flowmeter Config',
+        label: 'Vessel Operation Master',
+        path: '/vessel-operations',
+        permission: 'View Vessel Operation',
       },
+      {
+        label: 'Operation Template Master',
+        path: '/operation-templates',
+        permission: 'View Operation Template',
+      },
+      {
+        label: 'Operation Workflow Policy',
+        path: '/operation-workflow-policies',
+        permission: 'View Operation Workflow Policy',
+      },
+      {
+        label: 'Location Operation Availability',
+        path: '/location-operation-availability',
+        permission: 'View Location Operation Availability',
+      },
+      { label: 'Table 11 Factor Master', path: '/table11-factors', permission: 'View Table 11 Factor' },
+      {
+        label: 'Company Report Profile Master',
+        path: '/company-report-profiles',
+        permission: 'View Company Report Profile',
+      },
+      { label: 'Barge Seal Master', path: '/barge-seal-master', permission: 'View Barge Seal Master' },
+      {
+        label: 'Location Accounting Day Settings',
+        path: '/location-accounting-day-settings',
+        permission: 'View Location Accounting Day Setting',
+      },
+      {
+        label: 'Material Balance Template',
+        path: '/material-balance-template-master',
+        permission: 'View Material Balance Template',
+      },
+      { label: 'Flowmeter Config', path: '/flowmeter-configs', permission: 'View Flowmeter Config' },
     ],
   },
   {
     label: 'Operations',
     type: 'dropdown',
     items: [
-      {
-        label: 'Operation Type Master',
-        path: '/operation-types',
-        disabled: false,
-        permission: 'View Operation Type',
-      },
-      {
-        label: 'Tank Operation Master',
-        path: '/tank-operations',
-        disabled: false,
-        permission: 'View Tank Operation',
-      },
-      {
-        label: 'Vessel Operation Master',
-        path: '/vessel-operations',
-        disabled: false,
-        permission: 'View Vessel Operation',
-      },
-      {
-        label: 'Movement Mapping',
-        path: '/movement-mappings',
-        disabled: false,
-        permission: 'View Movement Mapping',
-      },
-      {
-        label: 'Location Operation Availability',
-        path: '/location-operation-availability',
-        disabled: false,
-        permission: 'View Location Operation Availability',
-      },
-      {
-        label: 'Operation Template Master',
-        path: '/operation-templates',
-        disabled: false,
-        permission: 'View Operation Template',
-      },
-      {
-        label: 'Operation Workflow Policy',
-        path: '/operation-workflow-policies',
-        disabled: false,
-        permission: 'View Operation Workflow Policy',
-      },
-      {
-        label: 'Operation Entry',
-        path: '/operation-entry',
-        disabled: false,
-        permission: 'Create Operation Entry',
-      },
-      {
-        label: 'Task Manager',
-        path: '/operation-tasks',
-        disabled: false,
-        permission: 'View My Tasks',
-      },
-      {
-        label: 'Barge Tracking',
-        path: '/barge-tracking',
-        disabled: false,
-        permission: 'View Operation Transaction',
-      },
-      {
-        label: 'Tanker Tracking',
-        path: '/tanker-tracking',
-        disabled: false,
-        permission: 'View Operation Transaction',
-      },
-      {
-        label: 'Shuttle Tracking',
-        path: '/shuttle-tracking',
-        disabled: false,
-      },
-      {
-        label: 'FSO Tracking',
-        path: '/fso-tracking',
-        disabled: false,
-      },
-      {
-        label: 'Export Operations',
-        path: '/export-operations',
-        disabled: false,
-        permission: 'View Export Operations',
-      },
+      { label: 'Operation Entry', path: '/operation-entry', permission: 'Create Operation Entry' },
       {
         label: 'Operation Transaction Register',
         path: '/operation-transactions',
-        disabled: false,
         permission: 'View Operation Transaction',
       },
+      { label: 'Movement Mapping', path: '/movement-mappings', permission: 'View Movement Mapping' },
+      { label: 'Flowmeter Records', path: '/flowmeter-records', permission: 'View Flowmeter Record' },
+    ],
+  },
+  {
+    label: 'Operation Tracking',
+    type: 'dropdown',
+    items: [
+      { label: 'Barge Tracking', path: '/barge-tracking', permission: 'View Barge Tracking' },
+      { label: 'Tanker Tracking', path: '/tanker-tracking', permission: 'View Tanker Tracking' },
+      { label: 'Shuttle Tracking', path: '/shuttle-tracking', permission: 'View Shuttle Tracking' },
+      { label: 'FSO Tracking', path: '/fso-tracking', permission: 'View FSO Tracking' },
+    ],
+  },
+  {
+    label: 'Export Operations',
+    type: 'dropdown',
+    items: [
+      { label: 'Export Dashboard', path: '/export-operations', permission: 'View Export Dashboard' },
       {
-        label: 'Flowmeter Records',
-        path: '/flowmeter-records',
-        disabled: false,
-        permission: 'View Flowmeter Record',
+        label: 'Export Transactions',
+        path: '/export-operations/transactions',
+        permission: 'View Export Transaction',
+      },
+      {
+        label: 'Export Reports',
+        path: '/export-operations/reports',
+        permission: 'View Export Report',
+      },
+      {
+        label: 'Export Permits',
+        path: '/export-operations/permits',
+        permission: 'View Export Permit',
+      },
+      {
+        label: 'Export Locations',
+        path: '/export-operations/locations',
+        permission: 'View Export Location',
+      },
+      {
+        label: 'Export Entities',
+        path: '/export-operations/entities',
+        permission: 'View Export Entity',
+      },
+      {
+        label: 'Export Blocks',
+        path: '/export-operations/blocks',
+        permission: 'View Export Block',
+      },
+      {
+        label: 'Export Consignees',
+        path: '/export-operations/consignees',
+        permission: 'View Export Consignee',
+      },
+      {
+        label: 'Export Settings',
+        path: '/export-operations/settings',
+        permission: 'View Export Settings',
       },
     ],
   },
   {
-    label: 'Reports',
+    label: 'Reporting',
     type: 'dropdown',
     items: [
       {
-        label: 'Tank Stock Ledger (Legacy - Disabled)',
-        path: '/tank-stock-ledger',
-        disabled: true,
-        permission: 'View Tank Stock Ledger',
-      },
-      {
         label: 'Tank Operation Summary',
         path: '/tank-operation-summary',
-        disabled: false,
         permission: 'View Tank Operation Summary',
       },
-      {
-        label: 'Out-Turn Summary',
-        path: '/out-turn-summary',
-        disabled: false,
-        permission: 'View Out-Turn Summary',
-      },
-      {
-        label: 'Out-Turn Report (Legacy - Disabled)',
-        path: '/out-turn-report',
-        disabled: true,
-        permission: 'View Out-Turn Report',
-      },
+      { label: 'Out-Turn Summary', path: '/out-turn-summary', permission: 'View Out-Turn Summary' },
       {
         label: 'Material Balance Report',
         path: '/material-balance-report',
-        disabled: false,
         permission: 'View Material Balance Report',
       },
       {
         label: 'Tanker Transaction Report',
         path: '/tanker-transaction-report',
-        disabled: false,
-      },
-      {
-        label: 'User Access Report - Coming Soon',
-        path: '',
-        disabled: true,
-        permission: 'View Reports',
-      },
-      {
-        label: 'Asset Report - Coming Soon',
-        path: '',
-        disabled: true,
-        permission: 'View Reports',
-      },
-      {
-        label: 'Calibration Report - Coming Soon',
-        path: '',
-        disabled: true,
-        permission: 'View Reports',
-      },
-      {
-        label: 'Operation Report - Coming Soon',
-        path: '',
-        disabled: true,
-        permission: 'View Reports',
+        permission: 'View Tanker Transaction Report',
       },
     ],
   },
   {
-    label: 'Admin',
+    label: 'Administration',
     type: 'dropdown',
     items: [
       {
-        label: 'Company Report Profile Master',
-        path: '/company-report-profiles',
-        disabled: false,
-      },
-      // {
-      //   label: 'Dashboard Builder',
-      //   path: '/dashboard-builder',
-      //   type: 'link',
-      //   permission: 'Manage Dashboard',
-      // },
-      {
-        label: 'Barge Seal Master',
-        path: '/barge-seal-master',
-        requiredPermission: 'View Barge Seal Master',
-      },
-      {
-        label: 'System Settings - Coming Soon',
-        path: '',
-        disabled: true,
-        permission: 'View Admin Settings',
-      },
-      {
         label: 'System Notifications',
         path: '/system-notifications',
-        disabled: false,
         permission: 'View System Notification',
       },
-      {
-        label: 'Backup Recovery',
-        path: '/backup-recovery',
-        disabled: false,
-        permission: 'View Backup',
-      },
-      {
-        label: 'Location Accounting Day Settings',
-        path: '/location-accounting-day-settings',
-        disabled: false,
-        permission: 'View Location Accounting Day Setting',
-      },
-      {
-        label: 'Material Balance Template',
-        path: '/material-balance-template-master',
-        disabled: false,
-        permission: 'View Material Balance Template',
-      },
-      {
-        label: 'Database Browser',
-        path: '/database-browser',
-        disabled: false,
-        requiredPermission: 'View Database Browser',
-      },
-      {
-        label: 'Audit Logs',
-        path: '/audit-logs',
-        requiredPermission: 'View Audit Log',
-      },
+      { label: 'Backup Recovery', path: '/backup-recovery', permission: 'View Backup' },
+      { label: 'Database Browser', path: '/database-browser', permission: 'View Database Browser' },
+      { label: 'Audit Logs', path: '/audit-logs', permission: 'View Audit Log' },
     ],
   },
 ]
+
+/**
+ * Routes that exist but are intentionally not in the menu (reached from the
+ * top bar or from other pages). Used for page labels in the audit trail.
+ */
+export const hiddenRouteLabels = {
+  '/operation-tasks': 'Task Manager',
+  '/location-operation-summary': 'Location Operation Summary',
+  '/tank-stock-ledger': 'Tank Stock Ledger (Legacy)',
+  '/out-turn-report': 'Out-Turn Report (Legacy)',
+}
+
+/** Find the menu item that best matches a pathname (longest path wins). */
+export const findNavigationItem = (pathname) => {
+  let best = null
+  for (const group of navigationItems) {
+    const candidates = group.type === 'link' ? [group] : group.items || []
+    for (const item of candidates) {
+      if (!item.path) continue
+      const exact = item.path === pathname
+      const nested = item.path !== '/' && pathname.startsWith(`${item.path}/`)
+      if ((exact || nested) && (!best || item.path.length > best.item.path.length)) {
+        best = { item, group }
+      }
+    }
+  }
+  return best
+}
