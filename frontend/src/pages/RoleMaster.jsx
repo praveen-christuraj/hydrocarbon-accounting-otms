@@ -5,6 +5,8 @@ import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
 
+const IMPORT_STATUSES = ['Active', 'Inactive', 'Blocked']
+
 function RoleMaster({ roles, reloadRoles, loggedInUser }) {
   const emptyRole = {
     roleName: '',
@@ -146,6 +148,29 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
     setConfirmDelete(null)
   }
 
+
+  const importConfig = {
+    title: 'Import role master rows',
+    description: 'Create records from an Excel or CSV file. Existing codes are skipped.',
+    fields: [
+    { key: 'roleName', label: 'Role Name', required: true, example: 'Terminal Supervisor' },
+    { key: 'description', label: 'Description', example: '' },
+    { key: 'status', label: 'Status', options: IMPORT_STATUSES, defaultValue: 'Active', example: 'Active' },
+  ],
+    validateRow: (record) => {
+    const name = String(record.roleName || '').trim().toLowerCase()
+    if (roles.some((item) => item.roleName.toLowerCase() === name)) return 'Role name already exists'
+    if (record.status && !IMPORT_STATUSES.includes(record.status)) return `Status must be one of ${IMPORT_STATUSES.join(', ')}`
+    return null
+  },
+    onImportRow: async (record) => {
+      await createRole({ ...emptyRole, ...record, status: record.status || 'Active' })
+    },
+    onComplete: async () => {
+      await reloadRoles()
+    },
+  }
+
   return (
     <div>
       <div className="page-title">
@@ -247,6 +272,9 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
         columns={rolesFilters.columns}
         exportFileName="role-master"
         exportTitle="Role Master"
+        module="Role Master"
+        importConfig={importConfig}
+        canImport={canManageRole}
       />
 
       <table>

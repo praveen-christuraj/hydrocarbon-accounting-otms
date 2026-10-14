@@ -118,13 +118,33 @@ Print always uses the light palette (`@media print` re-declares the light tokens
 | `AlertMessage` | Inline alert (`tone`: error / success / warning / info) placed **next to the section it concerns**. Dismissible. `role="alert"` for errors, `aria-live="polite"` otherwise. |
 | `Toast` (`ToastProvider`, `useToast`) | Non-blocking pop-up notices (top-right). Use for cross-page/app-level messages; never `window.alert`. |
 | `Modal` | Dialog with header, body, footer. **Backdrop click and Escape never close it** – only the Close/Cancel buttons (owner rule 10). Focus is trapped inside. |
-| `ConfirmDialog` | Built on `Modal`; required for every destructive action. |
+| `ConfirmDialog` / `ConfirmProvider` (`useConfirm`) | Built on `Modal`; required for every destructive action. `const confirm = useConfirm()` then `if (!(await confirm({ title, message, details, tone: 'danger', confirmLabel: 'Delete', module: 'Page Name' }))) return`. Passing `module` logs Confirm/Cancel to the activity log. |
 | `PaginationControls` | Page size 20 / 50 / 100 (global persisted preference via `usePageSize`), first/prev/next/last, jump-to-page. `paginateRows(rows, page, pageSize)`. |
 | `DataFilterBar` + `hooks/useDataFilters` | Quick search over all columns, advanced condition builder (field / operator / value, match all or any), **separate** single-date filter and date-range filter. |
 | `ExportMenu` | Export the current (filtered) rows to CSV, XLSX or PDF. Logs the action. |
 | `ImportDialog` | Import rows from `.xlsx` / `.csv` with column mapping, preview, per-row results. Only for master data with a create API. |
-| `DataTableToolbar` | Composes filter bar + export/import + record count for list pages. |
+| `DataTableToolbar` | Composes filter bar + export/import + record count for list pages. Props: `filters` (from `useDataFilters`), `columns`, `exportFileName`, `exportTitle`, `module`, optional `importConfig` (`{ title, description, fields:[{ key, label, required, options, defaultValue, hint, example }], validateRow(record) → string|null, onImportRow(record), onComplete(summary) }`), `canImport`, `extraActions`, `searchPlaceholder`. |
 | `Icon` | Inline SVG icon set (stroke 1.75, 16/18/20 px). Decorative icons get `aria-hidden`. Icon-only buttons need `aria-label`. |
+
+
+### List page recipe
+
+```jsx
+const pageSize = usePageSize()                       // 20 / 50 / 100, persisted
+const [page, setPage] = useState(1)
+const columns = useAutoColumns(rows, { exclude: ['password'], labels: {…}, types: { createdAt: 'date' } })
+const filters = useDataFilters(rows, columns, { module: 'Page Name' })
+const visible = paginateRows(filters.filteredRows, page, pageSize)
+
+<DataTableToolbar filters={filters} columns={columns} exportFileName="users" exportTitle="User Master"
+  module="User Master" importConfig={importConfig} canImport={canManage} />
+<table>… {filters.filteredRows.length === 0 ? emptyRow : visible.map(…)} …</table>
+<PaginationControls currentPage={page} totalRows={filters.filteredRows.length} onPageChange={setPage} />
+```
+
+Server-paginated lists (e.g. Shuttle Tracking voyages) pass `pageSize` as the API `page_size`/`limit`
+and `totalRows` from the server total. Lists capped by the API (users: 200 per call) are loaded in
+chunks so filtering, paging and export work on the complete data set.
 
 ## 8. Forms & validation
 

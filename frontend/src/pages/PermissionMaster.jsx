@@ -9,6 +9,8 @@ import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
 
+const IMPORT_STATUSES = ['Active', 'Inactive', 'Blocked']
+
 function PermissionMaster({ permissions, reloadPermissions, loggedInUser }) {
   const emptyPermission = {
     permissionName: '',
@@ -153,6 +155,30 @@ function PermissionMaster({ permissions, reloadPermissions, loggedInUser }) {
     setConfirmDelete(null)
   }
 
+
+  const importConfig = {
+    title: 'Import permission master rows',
+    description: 'Create records from an Excel or CSV file. Existing codes are skipped.',
+    fields: [
+    { key: 'permissionName', label: 'Permission Name', required: true, example: 'View Location' },
+    { key: 'moduleName', label: 'Module Name', required: true, example: 'Location Master' },
+    { key: 'description', label: 'Description', example: '' },
+    { key: 'status', label: 'Status', options: IMPORT_STATUSES, defaultValue: 'Active', example: 'Active' },
+  ],
+    validateRow: (record) => {
+    const name = String(record.permissionName || '').trim().toLowerCase()
+    if (permissions.some((item) => item.permissionName.toLowerCase() === name)) return 'Permission name already exists'
+    if (record.status && !IMPORT_STATUSES.includes(record.status)) return `Status must be one of ${IMPORT_STATUSES.join(', ')}`
+    return null
+  },
+    onImportRow: async (record) => {
+      await createPermission({ ...emptyPermission, ...record, status: record.status || 'Active' })
+    },
+    onComplete: async () => {
+      await reloadPermissions()
+    },
+  }
+
   return (
     <div>
       <div className="page-title">
@@ -291,6 +317,9 @@ function PermissionMaster({ permissions, reloadPermissions, loggedInUser }) {
         columns={permissionsFilters.columns}
         exportFileName="permission-master"
         exportTitle="Permission Master"
+        module="Permission Master"
+        importConfig={importConfig}
+        canImport={canManagePermission}
       />
 
       <table>

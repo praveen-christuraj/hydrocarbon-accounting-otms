@@ -9,6 +9,9 @@ import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
 
+const LOCATION_TYPES = ['Company', 'Region', 'Terminal', 'Station', 'Tank Farm', 'Jetty', 'Warehouse', 'Office', 'Other']
+const IMPORT_STATUSES = ['Active', 'Inactive', 'Blocked']
+
 function LocationMaster({ locations, reloadLocations, loggedInUser }) {
   const emptyLocation = {
     locationName: '',
@@ -167,6 +170,34 @@ function LocationMaster({ locations, reloadLocations, loggedInUser }) {
     return parent ? `${parent.locationName} (${parent.locationCode})` : parentLocationCode
   }
 
+
+  const importConfig = {
+    title: 'Import location master rows',
+    description: 'Create records from an Excel or CSV file. Existing codes are skipped.',
+    fields: [
+    { key: 'locationName', label: 'Location Name', required: true, example: 'Utapate Terminal' },
+    { key: 'locationCode', label: 'Location Code', required: true, example: 'UTP' },
+    { key: 'locationType', label: 'Location Type', required: true, options: LOCATION_TYPES, example: 'Terminal' },
+    { key: 'parentLocation', label: 'Parent Location (code)', example: '' },
+    { key: 'description', label: 'Description', example: '' },
+    { key: 'status', label: 'Status', options: IMPORT_STATUSES, defaultValue: 'Active', example: 'Active' },
+  ],
+    validateRow: (record) => {
+    const code = String(record.locationCode || '').trim().toLowerCase()
+    if (locations.some((item) => item.locationCode.toLowerCase() === code)) return 'Location code already exists'
+    if (!LOCATION_TYPES.includes(record.locationType)) return `Location type must be one of ${LOCATION_TYPES.join(', ')}`
+    if (record.parentLocation && String(record.parentLocation).toLowerCase() === code) return 'Location cannot be its own parent'
+    if (record.status && !IMPORT_STATUSES.includes(record.status)) return `Status must be one of ${IMPORT_STATUSES.join(', ')}`
+    return null
+  },
+    onImportRow: async (record) => {
+      await createLocation({ ...emptyLocation, ...record, status: record.status || 'Active' })
+    },
+    onComplete: async () => {
+      await reloadLocations()
+    },
+  }
+
   return (
     <div>
       <div className="page-title">
@@ -261,6 +292,9 @@ function LocationMaster({ locations, reloadLocations, loggedInUser }) {
         columns={locationsFilters.columns}
         exportFileName="location-master"
         exportTitle="Location Master"
+        module="Location Master"
+        importConfig={importConfig}
+        canImport={canManageLocation}
       />
 
       <table>

@@ -17,6 +17,7 @@ import VesselCycleLayout from '../components/operationLayouts/VesselCycleLayout'
 import ShuttleTrackingLayout from '../components/operationLayouts/ShuttleTrackingLayout'
 import FSOTrackingLayout from '../components/operationLayouts/FSOTrackingLayout.jsx'
 import FlowmeterReadingLayout from '../components/operationLayouts/FlowmeterReadingLayout'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
 
 function LayoutSummaryPanel({ selectedTemplate }) {
   if (!selectedTemplate) {
@@ -681,8 +682,8 @@ function OperationEntry({
   const [editableSearch, setEditableSearch] = useState('')
   const [editableStatusFilter, setEditableStatusFilter] = useState('ALL') // ALL | Draft | Rejected
   const [editablePage, setEditablePage] = useState(1)
+  const editablePageSize = usePageSize()
   const [selectedTemplateLayout, setSelectedTemplateLayout] = useState(null)
-  const EDITABLE_PAGE_SIZE = 20
 
   const location = useLocation()
   const navigate = useNavigate()
@@ -1034,14 +1035,9 @@ function OperationEntry({
     return filtered
   }, [editableOperationEntries, editableSearch, editableStatusFilter])
 
-  const editableTotalPages = useMemo(() => {
-    return Math.max(1, Math.ceil(filteredEditableEntries.length / EDITABLE_PAGE_SIZE))
-  }, [filteredEditableEntries.length])
-
   const pagedEditableEntries = useMemo(() => {
-    const start = (editablePage - 1) * EDITABLE_PAGE_SIZE
-    return filteredEditableEntries.slice(start, start + EDITABLE_PAGE_SIZE)
-  }, [filteredEditableEntries, editablePage])
+    return paginateRows(filteredEditableEntries, editablePage, editablePageSize)
+  }, [filteredEditableEntries, editablePage, editablePageSize])
 
   useEffect(() => {
     setEditablePage(1)
@@ -2078,38 +2074,14 @@ function OperationEntry({
             <input
               value={editableSearch}
               onChange={(e) => setEditableSearch(e.target.value)}
-              placeholder="Search ticket / asset / origin / template / product..."
+              placeholder="Search ticket / asset / origin / template / product…"
             />
-          </div>
-
-          <div style={{ display: 'flex', gap: 8, alignItems: 'end' }}>
-            <button
-              type="button"
-              disabled={editablePage <= 1}
-              onClick={() => setEditablePage((p) => Math.max(1, p - 1))}
-            >
-              Prev
-            </button>
-
-            <span style={{ alignSelf: 'center' }}>
-              Page {editablePage} / {editableTotalPages}
-            </span>
-
-            <button
-              type="button"
-              disabled={editablePage >= editableTotalPages}
-              onClick={() =>
-                setEditablePage((p) => Math.min(editableTotalPages, p + 1))
-              }
-            >
-              Next
-            </button>
           </div>
         </div>
 
-        <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
-          Showing {pagedEditableEntries.length} of {filteredEditableEntries.length}{' '}
-          editable entries
+        <div className="field-hint">
+          {filteredEditableEntries.length} editable entr{filteredEditableEntries.length === 1 ? 'y' : 'ies'}
+          {' '}match the current search.
         </div>
       </div>
 
@@ -2174,6 +2146,12 @@ function OperationEntry({
           )}
         </tbody>
       </table>
+
+      <PaginationControls
+        currentPage={editablePage}
+        totalRows={filteredEditableEntries.length}
+        onPageChange={setEditablePage}
+      />
 
       <div className="info-box">
         Operation Entry is for creating new tickets and editing Draft/Rejected

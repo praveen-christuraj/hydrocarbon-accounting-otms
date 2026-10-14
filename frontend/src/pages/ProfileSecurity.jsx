@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import Icon from '../components/common/Icon'
 import {
   adminResetUserPassword,
   changeOwnPassword,
@@ -224,8 +225,8 @@ function ProfileSecurity({ loggedInUser, users = [] }) {
               onChange={(e) => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })}
               aria-invalid={fieldErrors.currentPassword ? 'true' : undefined}
             />
-            <button type="button" className="password-toggle" onClick={() => toggleShowPassword('currentPassword')} tabIndex={-1}>
-              {showPassword.currentPassword ? '🙈' : '👁'}
+            <button type="button" className="password-toggle" onClick={() => toggleShowPassword('currentPassword')} tabIndex={-1} aria-label={showPassword.currentPassword ? 'Hide password' : 'Show password'}>
+              <Icon name={showPassword.currentPassword ? 'eyeOff' : 'eye'} size={16} />
             </button>
           </div>
           {fieldErrors.currentPassword && <small className="field-error">{fieldErrors.currentPassword}</small>}
@@ -239,8 +240,8 @@ function ProfileSecurity({ loggedInUser, users = [] }) {
               onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
               aria-invalid={fieldErrors.newPassword ? 'true' : undefined}
             />
-            <button type="button" className="password-toggle" onClick={() => toggleShowPassword('newPassword')} tabIndex={-1}>
-              {showPassword.newPassword ? '🙈' : '👁'}
+            <button type="button" className="password-toggle" onClick={() => toggleShowPassword('newPassword')} tabIndex={-1} aria-label={showPassword.newPassword ? 'Hide password' : 'Show password'}>
+              <Icon name={showPassword.newPassword ? 'eyeOff' : 'eye'} size={16} />
             </button>
           </div>
           {fieldErrors.newPassword && <small className="field-error">{fieldErrors.newPassword}</small>}
@@ -260,8 +261,8 @@ function ProfileSecurity({ loggedInUser, users = [] }) {
               onChange={(e) => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })}
               aria-invalid={fieldErrors.confirmPassword ? 'true' : undefined}
             />
-            <button type="button" className="password-toggle" onClick={() => toggleShowPassword('confirmPassword')} tabIndex={-1}>
-              {showPassword.confirmPassword ? '🙈' : '👁'}
+            <button type="button" className="password-toggle" onClick={() => toggleShowPassword('confirmPassword')} tabIndex={-1} aria-label={showPassword.confirmPassword ? 'Hide password' : 'Show password'}>
+              <Icon name={showPassword.confirmPassword ? 'eyeOff' : 'eye'} size={16} />
             </button>
           </div>
           {fieldErrors.confirmPassword && <small className="field-error">{fieldErrors.confirmPassword}</small>}
@@ -321,8 +322,8 @@ function ProfileSecurity({ loggedInUser, users = [] }) {
                   onChange={(e) => setDisableForm({ ...disableForm, currentPassword: e.target.value })}
                   aria-invalid={fieldErrors.currentPassword ? 'true' : undefined}
                 />
-                <button type="button" className="password-toggle" onClick={() => toggleShowPassword('disablePassword')} tabIndex={-1}>
-                  {showPassword.disablePassword ? '🙈' : '👁'}
+                <button type="button" className="password-toggle" onClick={() => toggleShowPassword('disablePassword')} tabIndex={-1} aria-label={showPassword.disablePassword ? 'Hide password' : 'Show password'}>
+                  <Icon name={showPassword.disablePassword ? 'eyeOff' : 'eye'} size={16} />
                 </button>
               </div>
               {fieldErrors.currentPassword && <small className="field-error">{fieldErrors.currentPassword}</small>}
@@ -385,8 +386,8 @@ function ProfileSecurity({ loggedInUser, users = [] }) {
                   value={adminForm.newPassword}
                   onChange={(e) => setAdminForm({ ...adminForm, newPassword: e.target.value })}
                 />
-                <button type="button" className="password-toggle" onClick={() => toggleShowPassword('adminPassword')} tabIndex={-1}>
-                  {showPassword.adminPassword ? '🙈' : '👁'}
+                <button type="button" className="password-toggle" onClick={() => toggleShowPassword('adminPassword')} tabIndex={-1} aria-label={showPassword.adminPassword ? 'Hide password' : 'Show password'}>
+                  <Icon name={showPassword.adminPassword ? 'eyeOff' : 'eye'} size={16} />
                 </button>
               </div>
             </div>

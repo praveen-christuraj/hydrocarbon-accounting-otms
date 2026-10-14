@@ -1,8 +1,16 @@
 import { useEffect, useState, useMemo, useCallback } from 'react'
 import { createUser, deleteUser, getUsers, updateUser } from '../api/userApi'
-import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import AlertMessage from '../components/common/AlertMessage'
+import { useConfirm } from '../components/common/ConfirmProvider'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
+import { logUiAction } from '../utils/actionLogger'
 
-const PAGE_SIZE = 50
+const FETCH_CHUNK = 200
+const MAX_USERS = 10000
+const USER_STATUSES = ['Active', 'Inactive', 'Blocked']
 
 const calcPasswordStrength = (pw) => {
   let score = 0
@@ -12,10 +20,10 @@ const calcPasswordStrength = (pw) => {
   if (/[A-Z]/.test(pw)) score += 1
   if (/[0-9]/.test(pw)) score += 1
   if (/[^a-zA-Z0-9]/.test(pw)) score += 1
-  if (score <= 2) return { level: 'weak', label: 'Weak', pct: 25, color: '#dc2626' }
-  if (score <= 3) return { level: 'fair', label: 'Fair', pct: 50, color: '#ea580c' }
-  if (score <= 5) return { level: 'good', label: 'Good', pct: 75, color: '#ca8a04' }
-  return { level: 'strong', label: 'Strong', pct: 100, color: '#16a34a' }
+  if (score <= 2) return { level: 'weak', label: 'Weak', pct: 25, color: 'var(--danger)' }
+  if (score <= 3) return { level: 'fair', label: 'Fair', pct: 50, color: 'var(--warning)' }
+  if (score <= 5) return { level: 'good', label: 'Good', pct: 75, color: 'var(--info)' }
+  return { level: 'strong', label: 'Strong', pct: 100, color: 'var(--success)' }
 }
 
 function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
@@ -34,15 +42,23 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
   const [user, setUser] = useState(emptyUser)
   const [editId, setEditId] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [listLoading, setListLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
-  const [search, setSearch] = useState('')
-  const [skip, setSkip] = useState(0)
-  const [total, setTotal] = useState(0)
-  const [hasMore, setHasMore] = useState(false)
   const [confirmPassword, setConfirmPassword] = useState('')
-  const [confirmDelete, setConfirmDelete] = useState(null)
   const [fieldErrors, setFieldErrors] = useState({})
+  const [page, setPage] = useState(1)
+  const pageSize = usePageSize()
+  const confirm = useConfirm()
+
+  const columns = useAutoColumns(users, {
+    exclude: ['password'],
+    labels: { fullName: 'Full Name', username: 'Username', createdAt: 'Created', updatedAt: 'Updated' },
+    types: { createdAt: 'date', updatedAt: 'date' },
+  })
+  const filters = useDataFilters(users, columns, { module: 'User Master' })
+  const visibleUsers = paginateRows(filters.filteredRows, page, pageSize)
+  const total = users.length
 
   const isAdminBootstrap =
     String(loggedInUser?.username || '').toLowerCase() === 'admin'
@@ -63,30 +79,33 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
   const clearError = () => setError('')
   const clearSuccess = () => setSuccess('')
 
-  const reloadUsers = useCallback(async (searchTerm = search, offset = skip) => {
+  // Load the complete user list in chunks (the API serves at most 200 per
+  // call) so filtering, paging and export work on the full data set.
+  const reloadUsers = useCallback(async () => {
     try {
-      const result = await getUsers({ skip: offset, limit: PAGE_SIZE, search: searchTerm })
-      setUsers(result.items)
-      setTotal(result.total)
-      setSkip(result.skip)
-      setHasMore(result.has_more)
+      await Promise.resolve()
+      setListLoading(true)
+      const all = []
+      let offset = 0
+      let more = true
+      while (more && offset < MAX_USERS) {
+        const result = await getUsers({ skip: offset, limit: FETCH_CHUNK })
+        all.push(...result.items)
+        more = result.has_more && result.items.length > 0
+        offset += FETCH_CHUNK
+      }
+      setUsers(all)
     } catch (err) {
       setError(err.message)
       setUsers([])
-      setTotal(0)
-      setHasMore(false)
+    } finally {
+      setListLoading(false)
     }
-  }, [search, skip])
+  }, [])
 
   useEffect(() => {
     reloadUsers()
-  }, [])
-
-  const handleSearchChange = (e) => {
-    const val = e.target.value
-    setSearch(val)
-    reloadUsers(val, 0)
-  }
+  }, [reloadUsers])
 
   const handleChange = (e) => {
     setUser({ ...user, [e.target.name]: e.target.value })
@@ -168,7 +187,7 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
 
       setConfirmPassword('')
       setFieldErrors({})
-      await reloadUsers(search, 0)
+      await reloadUsers()
       if (appReloadUsers) await appReloadUsers()
       setUser(emptyUser)
       setEditId(null)
@@ -182,8 +201,8 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
   const handleEdit = (u) => {
     clearError()
     clearSuccess()
-    setConfirmDelete(null)
     setFieldErrors({})
+    logUiAction('User Master', 'Start Edit', { username: u.username })
     setUser({
       fullName: u.fullName,
       username: u.username,
@@ -198,27 +217,33 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
     setEditId(u.id)
   }
 
-  const handleDeleteRequest = (id) => {
+  const handleDelete = async (item) => {
     clearError()
     clearSuccess()
-    setConfirmDelete(id)
-  }
 
-  const handleDeleteConfirm = async (id) => {
     if (!canManageUser) {
       setError('You do not have permission to manage users.')
       return
     }
 
+    const confirmed = await confirm({
+      title: 'Delete user',
+      message: `Delete user "${item.fullName}" (${item.username})?`,
+      details: 'The user loses access immediately. This action is recorded in the audit log.',
+      tone: 'danger',
+      confirmLabel: 'Delete user',
+      module: 'User Master',
+    })
+    if (!confirmed) return
+
     try {
       setLoading(true)
-      await deleteUser(id)
-      setConfirmDelete(null)
+      await deleteUser(item.id)
       setSuccess('User deleted successfully')
-      await reloadUsers(search, 0)
+      await reloadUsers()
       if (appReloadUsers) await appReloadUsers()
 
-      if (editId === id) {
+      if (editId === item.id) {
         setUser(emptyUser)
         setEditId(null)
         setConfirmPassword('')
@@ -237,22 +262,43 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
     setFieldErrors({})
     clearError()
     clearSuccess()
-    setConfirmDelete(null)
   }
 
-  const handlePrevPage = () => {
-    const newSkip = Math.max(0, skip - PAGE_SIZE)
-    reloadUsers(search, newSkip)
-  }
+  const importFields = [
+    { key: 'fullName', label: 'Full Name', required: true, example: 'Jane Doe' },
+    { key: 'username', label: 'Username', required: true, example: 'jdoe' },
+    { key: 'email', label: 'Email', required: true, example: 'jane.doe@example.com' },
+    { key: 'password', label: 'Password', required: true, hint: 'Minimum 12 characters', example: 'ChangeMe!2026xyz' },
+    { key: 'phone', label: 'Phone', example: '+234 800 000 0000' },
+    { key: 'department', label: 'Department', example: 'Operations' },
+    { key: 'designation', label: 'Designation', example: 'Officer' },
+    { key: 'status', label: 'Status', options: USER_STATUSES, defaultValue: 'Active', example: 'Active' },
+  ]
 
-  const handleNextPage = () => {
-    if (hasMore) {
-      reloadUsers(search, skip + PAGE_SIZE)
+  const validateImportRow = (record) => {
+    if (String(record.password || '').length < 12) return 'Password must be at least 12 characters'
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(record.email || '').trim())) return 'Invalid email format'
+    if (record.status && !USER_STATUSES.includes(record.status)) return `Status must be one of ${USER_STATUSES.join(', ')}`
+    if (users.some((item) => item.username.toLowerCase() === String(record.username).toLowerCase())) {
+      return 'Username already exists'
     }
+    return null
   }
 
-  const currentPage = Math.floor(skip / PAGE_SIZE) + 1
-  const totalPages = Math.ceil(total / PAGE_SIZE)
+  const importConfig = {
+    title: 'Import users',
+    description: 'Create users from an Excel or CSV file. Existing usernames are skipped.',
+    fields: importFields,
+    validateRow: validateImportRow,
+    onImportRow: async (record) => {
+      await createUser({ ...emptyUser, ...record, status: record.status || 'Active' })
+    },
+    onComplete: async (summary) => {
+      await reloadUsers()
+      if (appReloadUsers) await appReloadUsers()
+      if (summary.success > 0) setSuccess(`${summary.success} user${summary.success === 1 ? '' : 's'} imported`)
+    },
+  }
 
   return (
     <div>
@@ -264,19 +310,8 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
         <span className="record-count">{total} Users</span>
       </div>
 
-      {success && (
-        <div className="success-box">
-          {success}
-          <button className="error-close" onClick={clearSuccess} type="button">&times;</button>
-        </div>
-      )}
-
-      {error && (
-        <div className="error-box">
-          {error}
-          <button className="error-close" onClick={clearError} type="button">&times;</button>
-        </div>
-      )}
+      <AlertMessage tone="success" message={success} onDismiss={clearSuccess} />
+      <AlertMessage tone="error" message={error} onDismiss={clearError} />
 
       {!canManageUser && (
         <div className="info-box">
@@ -432,7 +467,7 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
         <div className="form-actions">
           <button type="submit" disabled={loading || !canManageUser}>
             {loading
-              ? 'Please wait...'
+              ? 'Please wait…'
               : editId === null
                 ? 'Save User'
                 : 'Update User'}
@@ -448,22 +483,19 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
 
       <div className="section-title">
         <h3>Saved Users</h3>
-        <p>Users are loaded from the live database.</p>
+        <p>All users are loaded from the live database. Use the filters to narrow the list.</p>
       </div>
 
-      <div style={{ display: 'flex', gap: 12, marginBottom: 14, alignItems: 'end' }}>
-        <div style={{ flex: 1, maxWidth: 320 }}>
-          <label htmlFor="search-input" style={{ fontSize: 13 }}>Search</label>
-          <input
-            id="search-input"
-            type="text"
-            value={search}
-            onChange={handleSearchChange}
-            placeholder="Search by name, username or email"
-            style={{ width: '100%' }}
-          />
-        </div>
-      </div>
+      <DataTableToolbar
+        filters={filters}
+        columns={columns}
+        exportFileName="users"
+        exportTitle="User Master"
+        module="User Master"
+        importConfig={importConfig}
+        canImport={canManageUser}
+        searchPlaceholder="Search by name, username, email, department…"
+      />
 
       <table>
         <thead>
@@ -479,20 +511,20 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
         </thead>
 
         <tbody>
-          {loading && users.length === 0 ? (
+          {listLoading && users.length === 0 ? (
             <tr>
               <td colSpan="7" className="empty-table">
-                Loading users...
+                Loading users…
               </td>
             </tr>
-          ) : users.length === 0 ? (
+          ) : filters.filteredRows.length === 0 ? (
             <tr>
               <td colSpan="7" className="empty-table">
-                {search ? 'No users match your search.' : 'No users found.'}
+                {users.length > 0 ? 'No users match the current filters.' : 'No users found.'}
               </td>
             </tr>
           ) : (
-            users.map((item) => (
+            visibleUsers.map((item) => (
               <tr key={item.id}>
                 <td>{item.fullName}</td>
                 <td>{item.username}</td>
@@ -513,34 +545,13 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
                     Edit
                   </button>
 
-                  {confirmDelete === item.id ? (
-                    <span>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteConfirm(item.id)}
-                        disabled={loading}
-                        className="btn-danger"
-                      >
-                        {loading ? 'Deleting...' : 'Confirm'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setConfirmDelete(null)}
-                        disabled={loading}
-                        className="btn-secondary"
-                      >
-                        Cancel
-                      </button>
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteRequest(item.id)}
-                      disabled={!canManageUser || loading}
-                    >
-                      Delete
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(item)}
+                    disabled={!canManageUser || loading}
+                  >
+                    Delete
+                  </button>
                 </td>
               </tr>
             ))
@@ -548,13 +559,11 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
         </tbody>
       </table>
 
-      {total > 0 && (
-        <PaginationControls
-          currentPage={currentPage}
-          totalRows={total}
-          onPageChange={(page) => reloadUsers(search, (page - 1) * PAGE_SIZE)}
-        />
-      )}
+      <PaginationControls
+        currentPage={page}
+        totalRows={filters.filteredRows.length}
+        onPageChange={setPage}
+      />
     </div>
   )
 }

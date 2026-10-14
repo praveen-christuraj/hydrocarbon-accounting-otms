@@ -9,6 +9,8 @@ import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
 
+const IMPORT_STATUSES = ['Active', 'Inactive', 'Blocked']
+
 function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
   const emptyAssetType = {
     assetTypeName: '',
@@ -167,6 +169,30 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
     setEditId(null)
   }
 
+
+  const importConfig = {
+    title: 'Import asset type master rows',
+    description: 'Create records from an Excel or CSV file. Existing codes are skipped.',
+    fields: [
+    { key: 'assetTypeName', label: 'Asset Type Name', required: true, example: 'Storage Tank' },
+    { key: 'assetTypeCode', label: 'Asset Type Code', required: true, example: 'TANK' },
+    { key: 'description', label: 'Description', example: '' },
+    { key: 'status', label: 'Status', options: IMPORT_STATUSES, defaultValue: 'Active', example: 'Active' },
+  ],
+    validateRow: (record) => {
+    const code = String(record.assetTypeCode || '').trim().toLowerCase()
+    if (assetTypes.some((item) => item.assetTypeCode.toLowerCase() === code)) return 'Asset type code already exists'
+    if (record.status && !IMPORT_STATUSES.includes(record.status)) return `Status must be one of ${IMPORT_STATUSES.join(', ')}`
+    return null
+  },
+    onImportRow: async (record) => {
+      await createAssetType({ ...emptyAssetType, ...record, status: record.status || 'Active' })
+    },
+    onComplete: async () => {
+      await reloadAssetTypes()
+    },
+  }
+
   return (
     <div>
       <div className="page-title">
@@ -293,6 +319,9 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
         columns={assetTypesFilters.columns}
         exportFileName="asset-type-master"
         exportTitle="Asset Type Master"
+        module="Asset Type Master"
+        importConfig={importConfig}
+        canImport={canManageAssetType}
       />
 
       <table>

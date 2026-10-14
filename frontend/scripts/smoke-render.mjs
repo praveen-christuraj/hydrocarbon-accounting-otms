@@ -8,6 +8,7 @@
  */
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
+import fs from 'node:fs'
 import { GlobalRegistrator } from '@happy-dom/global-registrator'
 
 const frontendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -57,6 +58,17 @@ if (!globalThis.ResizeObserver) {
 
 const errors = []
 const downloads = []
+
+// jspdf's node build writes `doc.save(name)` straight to disk via fs; record
+// those exports as downloads instead of leaving PDF files in the repo.
+const nativeWriteFileSync = fs.writeFileSync
+fs.writeFileSync = function writeFileSync(file, ...rest) {
+  if (typeof file === 'string' && /\.pdf$/i.test(file) && !path.isAbsolute(file)) {
+    downloads.push(path.basename(file))
+    return undefined
+  }
+  return nativeWriteFileSync.call(this, file, ...rest)
+}
 const origError = console.error
 console.error = (...args) => {
   const text = args.map((a) => (a && a.stack) || String(a)).join(' ')
@@ -363,7 +375,7 @@ try {
       click(q('.export-menu-button'))
       await flush()
       check('export menu lists xlsx/csv/pdf', qa('.export-menu-item').length === 3)
-      const before = errors.length
+      let before = errors.length
       click(qa('.export-menu-item').find((b) => text(b).includes('CSV')))
       await flush(300)
       check('csv export runs without error', errors.length === before, text(q('.toast')))
@@ -378,6 +390,26 @@ try {
       await flush(800)
       for (let i = 0; i < 20 && !qa('.toast').some((el) => text(el).includes('PDF')); i += 1) await flush(200)
       check('pdf export runs without error', errors.length === before && !q('.toast.tone-error'), qa('.toast').map(text).join(' | '))
+
+      // Import dialog: opens from the toolbar, ignores backdrop clicks, closes on Cancel only.
+      const importButton = qa('.data-filter-bar button, .data-filter-actions button').find((b) => text(b).trim() === 'Import')
+      check('import button present', Boolean(importButton))
+      if (importButton) {
+        click(importButton)
+        await flush()
+        check('import dialog opens', Boolean(q('.import-dialog')), text(q('.import-dialog .app-modal-title, .import-dialog h2')).slice(0, 60))
+        check('import dialog lists required fields', qa('.import-dialog .import-fields em').length >= 1, `${qa('.import-dialog .import-fields em').length} required`)
+        click(q('.app-modal-backdrop'))
+        await flush()
+        check('import dialog ignores backdrop click', Boolean(q('.import-dialog')))
+        before = errors.length
+        click(qa('.import-dialog button').find((b) => text(b).includes('template')))
+        await flush(600)
+        check('import template download runs without error', errors.length === before, downloads.slice(-1).join(''))
+        click(qa('.import-dialog button').find((b) => text(b).trim() === 'Cancel'))
+        await flush()
+        check('import dialog closes on Cancel', !q('.import-dialog'))
+      }
     }
   }
 
