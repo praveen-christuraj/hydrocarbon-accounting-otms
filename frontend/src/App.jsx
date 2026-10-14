@@ -58,15 +58,18 @@ import OperationWorkflowPolicyMaster from './pages/OperationWorkflowPolicyMaster
 import OperationTaskManager from './pages/OperationTaskManager'
 import ProfileSecurity from './pages/ProfileSecurity'
 import SystemNotificationMaster from './pages/SystemNotificationMaster'
-import SystemNotificationCenter from './components/SystemNotificationCenter'
 import BackupRecovery from './pages/BackupRecovery'
 import DatabaseBrowser from './pages/DatabaseBrowser'
 import ExportOperations from './pages/ExportOperations'
 
 import { getCurrentUser, logoutUser } from './api/authApi'
+import AppShell from './components/layout/AppShell'
+import Modal from './components/common/Modal'
+import { useToast } from './components/common/Toast'
+import { AuthProvider } from './hooks/usePermissions'
+import { logUiAction, setActionLogUser } from './utils/actionLogger'
 import { getLocationOperationAvailability } from './api/locationOperationAvailabilityApi'
 import { helpContent } from './data/helpContent'
-import { navigationItems } from './data/navigationItems'
 import { getRoles } from './api/roleApi'
 import { getPermissions } from './api/permissionApi'
 import { getAllRolePermissions } from './api/rolePermissionApi'
@@ -99,44 +102,39 @@ function PageHelp() {
       <div className="page-help-bar">
         <button
           type="button"
-          className="page-help-button"
-          onClick={() => setShowHelp(true)}
+          className="btn-secondary btn-sm page-help-button"
+          onClick={() => {
+            setShowHelp(true)
+            logUiAction(currentHelp.title, 'Open Help')
+          }}
         >
-          ? Help
+          Help
         </button>
       </div>
 
-      {showHelp && (
-        <div className="help-modal-overlay">
-          <div className="help-modal">
-            <div className="help-modal-header">
-              <h3>{currentHelp.title}</h3>
+      <Modal
+        open={showHelp}
+        title={currentHelp.title}
+        onClose={() => setShowHelp(false)}
+        size="md"
+        footer={
+          <button type="button" className="btn-secondary" onClick={() => setShowHelp(false)}>
+            Close
+          </button>
+        }
+      >
+        <p>{currentHelp.description}</p>
 
-              <button
-                type="button"
-                className="help-close-button"
-                onClick={() => setShowHelp(false)}
-              >
-                ×
-              </button>
-            </div>
+        <div className="help-section">
+          <h4>Important Notes</h4>
 
-            <div className="help-modal-body">
-              <p>{currentHelp.description}</p>
-
-              <div className="help-section">
-                <h4>Important Notes</h4>
-
-                <ul>
-                  {currentHelp.points.map((point, index) => (
-                    <li key={index}>{point}</li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          </div>
+          <ul>
+            {currentHelp.points.map((point, index) => (
+              <li key={index}>{point}</li>
+            ))}
+          </ul>
         </div>
-      )}
+      </Modal>
     </>
   )
 }
@@ -160,112 +158,6 @@ function LegacyPageDisabled({ title, description, primaryPath, primaryLabel }) {
         Use <Link to={primaryPath}>{primaryLabel}</Link> instead.
       </div>
     </div>
-  )
-}
-
-function NavigationBar({ loggedInUser }) {
-  const currentUser = loggedInUser
-
-  const username = String(currentUser?.username || '').toLowerCase()
-
-  const isAdmin =
-    username === 'admin' ||
-    (currentUser?.roles || []).some(
-      (r) => String(r?.role_name || r?.roleName || '').toLowerCase() === 'admin'
-    ) ||
-    String(currentUser?.role_name || currentUser?.roleName || '').toLowerCase() === 'admin'
-
-  const hasPermission = (permissionName) => {
-    if (isAdmin) return true
-
-    if (!permissionName) {
-      return true
-    }
-
-    if (!loggedInUser || !loggedInUser.permissions) {
-      return false
-    }
-
-    return loggedInUser.permissions.some((permission) => {
-      return permission.permissionName === permissionName
-    })
-  }
-
-  const hasRequiredPermissions = (item) => {
-    if (item.requiredPermissions && item.requiredPermissions.length > 0) {
-      return item.requiredPermissions.every((permissionName) => {
-        return hasPermission(permissionName)
-      })
-    }
-
-    if (item.requiredPermission) {
-      return hasPermission(item.requiredPermission)
-    }
-
-    if (item.permission) {
-      return hasPermission(item.permission)
-    }
-
-    return true
-  }
-
-  const getVisibleDropdownItems = (items) => {
-    return isAdmin
-      ? items.filter((i) => !i.disabled)
-      : items.filter((item) => {
-          return hasRequiredPermissions(item)
-        })
-  }
-
-  return (
-    <nav className="navbar">
-      {navigationItems.map((navItem, index) => {
-        if (navItem.type === 'link') {
-          if (!hasRequiredPermissions(navItem)) {
-            return null
-          }
-
-          return (
-            <Link key={index} to={navItem.path} className="nav-link">
-              {navItem.label}
-            </Link>
-          )
-        }
-
-        const visibleItems = getVisibleDropdownItems(navItem.items)
-        const hasVisibleItem = visibleItems.length > 0
-
-        if (!hasVisibleItem) {
-          return null
-        }
-
-        return (
-          <div key={index} className="nav-dropdown">
-            <button type="button" className="nav-dropdown-button">
-              {navItem.label} ▾
-            </button>
-
-            <div className="nav-dropdown-menu">
-              {visibleItems.map((item, itemIndex) => {
-                if (item.disabled) {
-                  return (
-                    <span key={itemIndex} className="disabled-menu-item">
-                      {item.label}
-                    </span>
-                  )
-                }
-
-                return (
-                  <Link key={itemIndex} to={item.path}>
-                    {item.label}
-                  </Link>
-                )
-              })}
-            </div>
-          </div>
-        )
-      })}
-    </nav>
   )
 }
 
@@ -352,33 +244,8 @@ function AppContent({
     })
   }
   return (
-    <div className="app">
-      <header className="topbar">
-        <div>
-          <h1>Hydrocarbon Accounting System</h1>
-          <p>Centralized user, role, location, asset, and operation management</p>
-        </div>
-
-        <div className="logged-in-user-panel">
-          <div>
-            <strong>{loggedInUser.fullName}</strong>
-            <span>
-              {loggedInUser.username} | Role:{' '}
-              {loggedInUser.role ? loggedInUser.role.roleName : 'No role'}
-            </span>
-          </div>
-
-          <button type="button" onClick={onLogout}>
-            Logout
-          </button>
-        </div>
-      </header>
-
-      <NavigationBar loggedInUser={loggedInUser} />
-      <SystemNotificationCenter loggedInUser={loggedInUser} />
-
-      <main className="main-content">
-        <PageHelp />
+    <AppShell loggedInUser={loggedInUser} onLogout={onLogout}>
+      <PageHelp />
 
         <Routes>
           <Route path="/" element={<Home hasPermission={hasPermission} />} />
@@ -1246,12 +1113,12 @@ function AppContent({
             }
           />
         </Routes>
-      </main>
-    </div>
+    </AppShell>
   )
 }
 
 function App() {
+  const toast = useToast()
   const [users, setUsers] = useState([])
   const [roles, setRoles] = useState([])
   const [permissions, setPermissions] = useState([])
@@ -1306,7 +1173,7 @@ function App() {
       setUsers(usersFromApi.items)
     } catch (error) {
       console.error('reloadUsers failed:', error.message)
-      alert('Unable to load users from backend')
+      toast.error('Unable to load users from the server.', { title: 'Loading failed' })
     }
   }
 
@@ -1316,7 +1183,7 @@ function App() {
       setRoles(rolesFromApi.items)
     } catch (error) {
       console.error(error)
-      alert('Unable to load roles from backend')
+      toast.error('Unable to load roles from the server.', { title: 'Loading failed' })
     }
   }
 
@@ -1326,7 +1193,7 @@ function App() {
       setPermissions(permissionsFromApi.items)
     } catch (error) {
       console.error(error)
-      alert('Unable to load permissions from backend')
+      toast.error('Unable to load permissions from the server.', { title: 'Loading failed' })
     }
   }
 
@@ -1336,7 +1203,7 @@ function App() {
       setRolePermissionAssignments(rolePermissionsFromApi)
     } catch (error) {
       console.error(error)
-      alert('Unable to load role permissions from backend')
+      toast.error('Unable to load role permissions from the server.', { title: 'Loading failed' })
     }
   }
 
@@ -1346,7 +1213,7 @@ function App() {
       setUserRoleAssignments(userRoleAssignmentsFromApi)
     } catch (error) {
       console.error(error)
-      alert('Unable to load user role assignments from backend')
+      toast.error('Unable to load user role assignments from the server.', { title: 'Loading failed' })
     }
   }
 
@@ -1374,7 +1241,7 @@ function App() {
       setLocations(locationsFromApi.items)
     } catch (error) {
       console.error(error)
-      alert('Unable to load locations from backend')
+      toast.error('Unable to load locations from the server.', { title: 'Loading failed' })
     }
   }
 
@@ -1384,7 +1251,7 @@ function App() {
       setAssetTypes(assetTypesFromApi.items)
     } catch (error) {
       console.error(error)
-      alert('Unable to load asset types from backend')
+      toast.error('Unable to load asset types from the server.', { title: 'Loading failed' })
     }
   }
 
@@ -1394,7 +1261,7 @@ function App() {
       setAssets(assetsFromApi.items)
     } catch (error) {
       console.error(error)
-      alert('Unable to load assets from backend')
+      toast.error('Unable to load assets from the server.', { title: 'Loading failed' })
     }
   }
 
@@ -1404,7 +1271,7 @@ function App() {
       setAssetAssignments(assignmentsFromApi)
     } catch (error) {
       console.error(error)
-      alert('Unable to load asset assignments from backend')
+      toast.error('Unable to load asset assignments from the server.', { title: 'Loading failed' })
     }
   }
 
@@ -1414,7 +1281,7 @@ function App() {
       setCalibrationTemplates(templatesFromApi)
     } catch (error) {
       console.error(error)
-      alert('Unable to load calibration templates from backend')
+      toast.error('Unable to load calibration templates from the server.', { title: 'Loading failed' })
     }
   }
 
@@ -1424,7 +1291,7 @@ function App() {
       setCalibrationTables(tablesFromApi)
     } catch (error) {
       console.error(error)
-      alert('Unable to load asset calibration tables from backend')
+      toast.error('Unable to load asset calibration tables from the server.', { title: 'Loading failed' })
     }
   }
 
@@ -1434,7 +1301,7 @@ function App() {
       setOperationTypes(operationTypesFromApi)
     } catch (error) {
       console.error(error)
-      alert('Unable to load operation types from backend')
+      toast.error('Unable to load operation types from the server.', { title: 'Loading failed' })
     }
   }
 
@@ -1444,7 +1311,7 @@ function App() {
       setLocationOperationAvailability(availabilityFromApi)
     } catch (error) {
       console.error(error)
-      alert('Unable to load location operation availability from backend')
+      toast.error('Unable to load location operation availability from the server.', { title: 'Loading failed' })
     }
   }
 
@@ -1454,7 +1321,7 @@ function App() {
       setOperationTemplates(templatesFromApi)
     } catch (error) {
       console.error(error)
-      alert('Unable to load operation templates from backend')
+      toast.error('Unable to load operation templates from the server.', { title: 'Loading failed' })
     }
   }
 
@@ -1464,7 +1331,7 @@ function App() {
       setOperationEntries(entriesFromApi)
     } catch (error) {
       console.error(error)
-      alert('Unable to load operation entries from backend')
+      toast.error('Unable to load operation entries from the server.', { title: 'Loading failed' })
     }
   }
 
@@ -1474,16 +1341,25 @@ function App() {
       setOperationTransactions(transactionsFromApi)
     } catch (error) {
       console.error(error)
-      alert('Unable to load operation transactions from backend')
+      toast.error('Unable to load operation transactions from the server.', { title: 'Loading failed' })
     }
   }
 
   const handleLogout = () => {
-  logoutUser()
-  setLoggedInUser(null)
-  setOperationEntries([])
-  setOperationTransactions([])
-}
+    logUiAction('Session', 'Logout', { username: loggedInUser?.username })
+    logoutUser()
+    setActionLogUser(null)
+    setLoggedInUser(null)
+    setOperationEntries([])
+    setOperationTransactions([])
+  }
+
+  useEffect(() => {
+    setActionLogUser(loggedInUser)
+    if (loggedInUser) {
+      logUiAction('Session', 'Login', { username: loggedInUser.username })
+    }
+  }, [loggedInUser?.id])
 
 useEffect(() => {
   restoreLoggedInUser()
@@ -1566,7 +1442,7 @@ useEffect(() => {
       <div className="login-page">
         <div className="login-card">
           <h1>Hydrocarbon Accounting System</h1>
-          <p>Checking login session...</p>
+          <p>Checking login session…</p>
         </div>
       </div>
     )
@@ -1577,8 +1453,9 @@ useEffect(() => {
   }
 
   return (
-    <BrowserRouter>
-      <AppContent
+    <AuthProvider value={{ loggedInUser }}>
+      <BrowserRouter>
+        <AppContent
         loggedInUser={loggedInUser}
         onLogout={handleLogout}
 
@@ -1646,7 +1523,8 @@ useEffect(() => {
         setLocationOperationAvailability={setLocationOperationAvailability}
         reloadLocationOperationAvailability={reloadLocationOperationAvailability}
       />
-    </BrowserRouter>
+      </BrowserRouter>
+    </AuthProvider>
   )
 }
 

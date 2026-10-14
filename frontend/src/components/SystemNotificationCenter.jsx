@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
+import Icon from './common/Icon'
+import { useToast } from './common/Toast'
 import {
   acknowledgeSystemNotification,
   dismissSystemNotification,
@@ -7,7 +10,8 @@ import {
   getMySystemNotifications,
 } from '../api/systemNotificationApi'
 
-function SystemNotificationCenter({ loggedInUser }) {
+function SystemNotificationCenter({ loggedInUser, toplineContainer = null }) {
+  const toast = useToast()
   const [activeNotifications, setActiveNotifications] = useState([])
   const [inboxNotifications, setInboxNotifications] = useState([])
   const [showInbox, setShowInbox] = useState(false)
@@ -75,7 +79,9 @@ function SystemNotificationCenter({ loggedInUser }) {
       await dismissSystemNotification(notificationId)
       await loadNotifications()
     } catch (error) {
-      alert(error.message)
+      toast.error(error.message || 'Unable to dismiss the notification.', {
+        title: 'Notifications',
+      })
     }
   }
 
@@ -91,7 +97,9 @@ function SystemNotificationCenter({ loggedInUser }) {
       }))
       await loadNotifications()
     } catch (error) {
-      alert(error.message)
+      toast.error(error.message || 'Unable to acknowledge the notification.', {
+        title: 'Notifications',
+      })
     }
   }
 
@@ -129,24 +137,35 @@ function SystemNotificationCenter({ loggedInUser }) {
     )
   }
 
+  const topline = (
+    <div className="notification-topline no-print">
+      {canViewTaskManager && (
+        <Link className="notification-task-button" to="/operation-tasks">
+          <Icon name="clipboardList" size={16} />
+          <span>Task Manager</span>
+        </Link>
+      )}
+      <button
+        type="button"
+        className="notification-bell-button"
+        onClick={() => setShowInbox((current) => !current)}
+        disabled={loading}
+        aria-label={
+          unreadCount > 0
+            ? `Notifications, ${unreadCount} unread`
+            : 'Notifications'
+        }
+        aria-expanded={showInbox}
+      >
+        <Icon name="bell" size={17} />
+        {unreadCount > 0 && <span className="notification-badge">{unreadCount}</span>}
+      </button>
+    </div>
+  )
+
   return (
     <div className="system-notification-shell">
-      <div className="notification-topline no-print">
-        {canViewTaskManager && (
-          <Link className="notification-task-button" to="/operation-tasks">
-            Task Manager
-          </Link>
-        )}
-        <button
-          type="button"
-          className="notification-bell-button"
-          onClick={() => setShowInbox((current) => !current)}
-          disabled={loading}
-        >
-          Notifications
-          {unreadCount > 0 && <span>{unreadCount}</span>}
-        </button>
-      </div>
+      {toplineContainer ? createPortal(topline, toplineContainer) : topline}
 
       {visibleBanners.map((notification) => (
         <div
