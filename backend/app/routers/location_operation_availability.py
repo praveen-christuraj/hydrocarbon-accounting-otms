@@ -187,7 +187,7 @@ def create_location_operation_availability(
 ):
     require_user_permission(
         current_user,
-        "Manage Location Operation Availability",
+        "Create Location Operation Availability",
         db,
     )
     ensure_location_in_user_scope(current_user, db, availability.location_code, "Location")
@@ -237,7 +237,7 @@ def update_location_operation_availability(
 ):
     require_user_permission(
         current_user,
-        "Manage Location Operation Availability",
+        "Edit Location Operation Availability",
         db,
     )
 
@@ -303,7 +303,7 @@ def delete_location_operation_availability(
 ):
     require_user_permission(
         current_user,
-        "Manage Location Operation Availability",
+        "Delete Location Operation Availability",
         db,
     )
 

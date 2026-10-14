@@ -385,7 +385,7 @@ def get_operation_tasks(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Operation Tasks", db)
+    require_user_permission(current_user, "Supervise Operation Tasks", db)
     query = apply_location_filter(db.query(OperationTask), OperationTask, current_user, db)
     query = query.order_by(OperationTask.created_at.desc(), OperationTask.id.desc())
     query = apply_operation_task_filters(
@@ -417,7 +417,7 @@ def get_operation_task(
     if not task:
         raise HTTPException(status_code=404, detail="Operation task not found")
     ensure_operation_task_location_scope(task, current_user, db)
-    if not user_can_act_on_operation_task(db, current_user, task) and not user_has_permission(current_user, "Manage Operation Tasks", db):
+    if not user_can_act_on_operation_task(db, current_user, task) and not user_has_permission(current_user, "Supervise Operation Tasks", db):
         raise HTTPException(status_code=403, detail="You are not assigned to this task")
     return build_operation_task_response(task, db)
 
@@ -513,7 +513,7 @@ def release_operation_task(
     ensure_operation_task_location_scope(task, current_user, db)
     if task.status != "In Progress":
         raise HTTPException(status_code=400, detail="Only In Progress tasks can be released")
-    if task.taken_by_user_id != current_user.id and not user_has_permission(current_user, "Manage Operation Tasks", db):
+    if task.taken_by_user_id != current_user.id and not user_has_permission(current_user, "Supervise Operation Tasks", db):
         raise HTTPException(status_code=403, detail="Only the owner or task manager can release this task")
 
     old_status = task.status

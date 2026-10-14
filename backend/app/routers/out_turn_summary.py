@@ -678,7 +678,7 @@ def update_out_turn_summary_config(
 ):
     require_user_permission(
         current_user,
-        "Manage Out-Turn Summary",
+        "Edit Out-Turn Summary",
         db,
     )
 

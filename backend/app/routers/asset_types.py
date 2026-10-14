@@ -46,7 +46,7 @@ def create_asset_type(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Asset Type", db)
+    require_user_permission(current_user, "Create Asset Type", db)
 
     existing_asset_type = db.query(AssetType).filter(
         AssetType.asset_type_code.ilike(asset_type.asset_type_code)
@@ -97,7 +97,7 @@ def update_asset_type(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Asset Type", db)
+    require_user_permission(current_user, "Edit Asset Type", db)
 
     existing_asset_type = db.query(AssetType).filter(
         AssetType.id == asset_type_id
@@ -157,7 +157,7 @@ def delete_asset_type(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Asset Type", db)
+    require_user_permission(current_user, "Delete Asset Type", db)
 
     existing_asset_type = db.query(AssetType).filter(
         AssetType.id == asset_type_id

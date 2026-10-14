@@ -57,7 +57,7 @@ def bulk_save_barge_seal_master(
 ):
     require_user_permission(
         current_user,
-        "Manage Barge Seal Master",
+        "Edit Barge Seal Master",
         db,
     )
 

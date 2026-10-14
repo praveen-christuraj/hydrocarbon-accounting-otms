@@ -171,7 +171,7 @@ def save_user_role(
     replace the prior assignment. Keep that contract; multi-role clients use
     PUT /user-roles/{user_id} instead.
     """
-    require_user_permission(current_user, "Manage User Role Assignment", db)
+    require_user_permission(current_user, "Edit User Role Assignment", db)
     user = db.query(User).filter(User.id == request.user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -198,7 +198,7 @@ def replace_user_roles(
     db: Session = Depends(get_db),
 ):
     """Atomically replace a user's roles after validating every requested role."""
-    require_user_permission(current_user, "Manage User Role Assignment", db)
+    require_user_permission(current_user, "Edit User Role Assignment", db)
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -222,7 +222,7 @@ def delete_user_role(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage User Role Assignment", db)
+    require_user_permission(current_user, "Delete User Role Assignment", db)
     assignment = db.query(UserRole).filter(UserRole.id == assignment_id).first()
     if not assignment:
         raise HTTPException(status_code=404, detail="User role assignment not found")

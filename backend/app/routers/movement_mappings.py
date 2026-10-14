@@ -232,7 +232,7 @@ def create_movement_mapping(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Movement Mapping", db)
+    require_user_permission(current_user, "Create Movement Mapping", db)
     location_code = clean_optional_text(request.location_code)
     if not location_code:
         raise HTTPException(status_code=400, detail="location_code is required")
@@ -287,7 +287,7 @@ def add_mapping_items(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Movement Mapping", db)
+    require_user_permission(current_user, "Edit Movement Mapping", db)
 
     mapping = db.query(MovementMapping).filter(MovementMapping.id == mapping_id).first()
     if not mapping:
@@ -376,7 +376,7 @@ def remove_mapping_item(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Movement Mapping", db)
+    require_user_permission(current_user, "Edit Movement Mapping", db)
 
     mapping = db.query(MovementMapping).filter(MovementMapping.id == mapping_id).first()
     if not mapping:
@@ -428,7 +428,7 @@ def close_mapping(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Movement Mapping", db)
+    require_user_permission(current_user, "Close Movement Mapping", db)
 
     mapping = db.query(MovementMapping).filter(MovementMapping.id == mapping_id).first()
     if not mapping:

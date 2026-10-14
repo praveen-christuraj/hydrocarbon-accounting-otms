@@ -374,7 +374,7 @@ def change_own_password(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Own Security Settings", db)
+    require_user_permission(current_user, "Edit Own Security Settings", db)
     if payload.new_password != payload.confirm_password:
         raise HTTPException(status_code=400, detail="New password and confirmation do not match")
     validate_password_policy(payload.new_password, payload.current_password)
@@ -562,7 +562,7 @@ def cleanup_token_blacklist(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage System Settings", db)
+    require_user_permission(current_user, "Edit System Settings", db)
     deleted = (
         db.query(TokenBlacklist)
         .filter(TokenBlacklist.expires_at <= datetime.now(timezone.utc))
@@ -623,7 +623,7 @@ def start_2fa_setup(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Own Security Settings", db)
+    require_user_permission(current_user, "Edit Own Security Settings", db)
     import pyotp
     secret = pyotp.random_base32()
     current_user.totp_secret_encrypted = encrypt_security_value(secret)
@@ -660,7 +660,7 @@ def verify_2fa_setup(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Own Security Settings", db)
+    require_user_permission(current_user, "Edit Own Security Settings", db)
     from app.utils.security import decrypt_security_value
     secret = decrypt_security_value(current_user.totp_secret_encrypted)
     if not secret:
@@ -695,7 +695,7 @@ def regenerate_2fa_backup_codes(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Own Security Settings", db)
+    require_user_permission(current_user, "Edit Own Security Settings", db)
     if normalize_yes_no(current_user.totp_enabled) != "Yes":
         raise HTTPException(status_code=400, detail="2FA is not enabled")
     backup_codes = generate_backup_codes()
@@ -723,7 +723,7 @@ def disable_own_2fa(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Own Security Settings", db)
+    require_user_permission(current_user, "Edit Own Security Settings", db)
     if normalize_yes_no(current_user.force_2fa) == "Yes":
         raise HTTPException(status_code=400, detail="2FA is mandatory for this account")
     if not verify_password(payload.current_password, current_user.password_hash):

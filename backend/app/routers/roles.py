@@ -47,7 +47,7 @@ def create_role(
 ):
     require_user_permission(
         current_user,
-        "Manage Role",
+        "Create Role",
         db,
     )
 
@@ -112,7 +112,7 @@ def update_role(
 ):
     require_user_permission(
         current_user,
-        "Manage Role",
+        "Edit Role",
         db,
     )
 
@@ -188,7 +188,7 @@ def delete_role(
 ):
     require_user_permission(
         current_user,
-        "Manage Role",
+        "Delete Role",
         db,
     )
 

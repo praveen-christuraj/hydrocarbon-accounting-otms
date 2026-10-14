@@ -27,6 +27,7 @@ from app.dependencies.permissions import (
     ensure_location_in_user_scope,
     get_user_location_codes,
     require_user_permission,
+    require_any_user_permission,
 )
 from app.services.audit_service import create_audit_log
 from app.utils.helpers import (
@@ -134,7 +135,7 @@ def get_convoy_tracker(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "View Operation Transaction", db)
+    require_user_permission(current_user, "View Barge Tracking", db)
 
     convoy = clean_optional_text(convoy_number)
     if convoy is None:
@@ -204,7 +205,7 @@ def create_trip_event(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Create Operation Entry", db)
+    require_user_permission(current_user, "Edit Barge Tracking", db)
 
     convoy = clean_optional_text(request.convoy_number)
     if convoy is None:
@@ -465,7 +466,7 @@ def get_trip_timeline_by_convoy(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "View Operation Transaction", db)
+    require_any_user_permission(current_user, ["View Barge Tracking", "View Movement Mapping"], db)
 
     convoy = clean_optional_text(convoy_number)
     if convoy is None:
@@ -630,7 +631,7 @@ def create_trip_comparison(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Create Operation Entry", db)
+    require_user_permission(current_user, "Edit Barge Tracking", db)
 
     convoy = clean_optional_text(request.convoy_number)
     if convoy is None:
@@ -772,7 +773,7 @@ def close_trip(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Create Operation Entry", db)
+    require_user_permission(current_user, "Close Barge Movement", db)
 
     trip = db.query(Trip).filter(Trip.id == trip_id).first()
     if not trip:
@@ -823,7 +824,7 @@ def reopen_trip(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Create Operation Entry", db)
+    require_user_permission(current_user, "Reopen Barge Movement", db)
 
     trip = db.query(Trip).filter(Trip.id == trip_id).first()
     if not trip:

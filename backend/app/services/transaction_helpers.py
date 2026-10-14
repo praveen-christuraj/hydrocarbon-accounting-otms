@@ -110,7 +110,7 @@ def create_approved_transaction_revoke_task(
         "Admin Revoke Approved Transaction",
     )
     if not assigned_role_ids:
-        assigned_role_ids = get_role_ids_with_permission(db, "Manage Operation Tasks")
+        assigned_role_ids = get_role_ids_with_permission(db, "Supervise Operation Tasks")
 
     task = OperationTask(
         task_number=generate_operation_task_number(db),

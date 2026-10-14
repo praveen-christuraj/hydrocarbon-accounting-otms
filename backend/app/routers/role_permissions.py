@@ -106,7 +106,7 @@ def save_role_permissions(
 ):
     require_user_permission(
         current_user,
-        "Manage Role Permission Assignment",
+        "Edit Role Permission Assignment",
         db,
     )
 

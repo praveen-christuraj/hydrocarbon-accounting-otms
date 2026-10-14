@@ -20,11 +20,13 @@ from app.schemas import (
     PermitBulkUploadRequest, PermitBulkUploadItem,
 )
 from app.dependencies.auth import get_current_user_from_token
+from app.utils.default_permissions import EXPORT_VIEW_PERMISSIONS
 from app.dependencies.permissions import (
     get_user_location_codes,
     is_admin_user,
     normalize_location_code,
     require_user_permission,
+    require_any_user_permission,
 )
 from app.services.audit_service import create_audit_log
 
@@ -449,7 +451,7 @@ def build_transaction_response(tx, db):
 
 @router.get("/locations", response_model=list[ExportLocationResponse])
 def list_export_locations(db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "View Export Operations", db)
+    require_any_user_permission(current_user, EXPORT_VIEW_PERMISSIONS, db)
     query = db.query(ExportLocation).filter(ExportLocation.status == "Active")
     query = apply_export_location_scope(query, ExportLocation.location_code, current_user, db)
     return [build_location_response(location) for location in query.all()]
@@ -457,7 +459,7 @@ def list_export_locations(db: Session = Depends(get_db), current_user: User = De
 
 @router.post("/locations", response_model=ExportLocationResponse)
 def create_export_location(data: ExportLocationCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "Manage Export Operations", db)
+    require_user_permission(current_user, "Create Export Location", db)
     ensure_export_location_scope(current_user, db, data.location_code)
     existing = db.query(ExportLocation).filter(ExportLocation.location_code.ilike(data.location_code)).first()
     if existing:
@@ -472,7 +474,7 @@ def create_export_location(data: ExportLocationCreate, db: Session = Depends(get
 
 @router.put("/locations/{location_id}", response_model=ExportLocationResponse)
 def update_export_location(location_id: int, data: ExportLocationCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "Manage Export Operations", db)
+    require_user_permission(current_user, "Edit Export Location", db)
     loc = db.query(ExportLocation).filter(ExportLocation.id == location_id).first()
     if not loc:
         raise HTTPException(status_code=404, detail="Export location not found")
@@ -488,7 +490,7 @@ def update_export_location(location_id: int, data: ExportLocationCreate, db: Ses
 
 @router.delete("/locations/{location_id}")
 def delete_export_location(location_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "Manage Export Operations", db)
+    require_user_permission(current_user, "Delete Export Location", db)
     loc = db.query(ExportLocation).filter(ExportLocation.id == location_id).first()
     if not loc:
         raise HTTPException(status_code=404, detail="Export location not found")
@@ -520,7 +522,7 @@ def delete_export_location(location_id: int, db: Session = Depends(get_db), curr
 
 @router.get("/entities", response_model=list[ExportEntityResponse])
 def list_export_entities(location_code: str = Query(None), db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "View Export Operations", db)
+    require_any_user_permission(current_user, EXPORT_VIEW_PERMISSIONS, db)
     q = db.query(ExportEntity).filter(ExportEntity.status == "Active")
     allowed_codes = get_user_location_codes(current_user, db)
     if location_code:
@@ -542,7 +544,7 @@ def list_export_entities(location_code: str = Query(None), db: Session = Depends
 
 @router.post("/entities", response_model=ExportEntityResponse)
 def create_export_entity(data: ExportEntityCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "Manage Export Operations", db)
+    require_user_permission(current_user, "Create Export Entity", db)
     existing = db.query(ExportEntity).filter(ExportEntity.entity_code.ilike(data.entity_code)).first()
     if existing:
         raise HTTPException(status_code=400, detail="Export entity code already exists")
@@ -556,7 +558,7 @@ def create_export_entity(data: ExportEntityCreate, db: Session = Depends(get_db)
 
 @router.put("/entities/{entity_id}", response_model=ExportEntityResponse)
 def update_export_entity(entity_id: int, data: ExportEntityCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "Manage Export Operations", db)
+    require_user_permission(current_user, "Edit Export Entity", db)
     ent = db.query(ExportEntity).filter(ExportEntity.id == entity_id).first()
     if not ent:
         raise HTTPException(status_code=404, detail="Export entity not found")
@@ -571,7 +573,7 @@ def update_export_entity(entity_id: int, data: ExportEntityCreate, db: Session =
 
 @router.delete("/entities/{entity_id}")
 def delete_export_entity(entity_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "Manage Export Operations", db)
+    require_user_permission(current_user, "Delete Export Entity", db)
     ent = db.query(ExportEntity).filter(ExportEntity.id == entity_id).first()
     if not ent:
         raise HTTPException(status_code=404, detail="Export entity not found")
@@ -593,7 +595,7 @@ def delete_export_entity(entity_id: int, db: Session = Depends(get_db), current_
 
 @router.get("/location-entities")
 def list_location_entities(location_code: str = Query(None), db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "View Export Operations", db)
+    require_any_user_permission(current_user, EXPORT_VIEW_PERMISSIONS, db)
     q = db.query(ExportLocationEntity).filter(ExportLocationEntity.status == "Active")
     if location_code:
         ensure_export_location_scope(current_user, db, location_code)
@@ -616,7 +618,7 @@ def list_location_entities(location_code: str = Query(None), db: Session = Depen
 
 @router.post("/location-entities")
 def create_location_entity(location_code: str, entity_code: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "Manage Export Operations", db)
+    require_user_permission(current_user, "Edit Export Entity", db)
     ensure_export_location_scope(current_user, db, location_code)
     ensure_export_entity_scope(current_user, db, entity_code, allow_unassigned=True)
     existing_active = db.query(ExportLocationEntity).filter(
@@ -645,7 +647,7 @@ def create_location_entity(location_code: str, entity_code: str, db: Session = D
 
 @router.delete("/location-entities/{mapping_id}")
 def delete_location_entity(mapping_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "Manage Export Operations", db)
+    require_user_permission(current_user, "Edit Export Entity", db)
     le = db.query(ExportLocationEntity).filter(ExportLocationEntity.id == mapping_id).first()
     if not le:
         raise HTTPException(status_code=404, detail="Mapping not found")
@@ -662,7 +664,7 @@ def delete_location_entity(mapping_id: int, db: Session = Depends(get_db), curre
 
 @router.get("/blocks", response_model=list[ExportBlockResponse])
 def list_export_blocks(entity_code: str = Query(None), db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "View Export Operations", db)
+    require_any_user_permission(current_user, EXPORT_VIEW_PERMISSIONS, db)
     q = db.query(ExportBlock).filter(ExportBlock.status == "Active")
     if entity_code:
         ensure_export_entity_scope(current_user, db, entity_code)
@@ -692,7 +694,7 @@ def list_export_blocks(entity_code: str = Query(None), db: Session = Depends(get
 
 @router.post("/blocks", response_model=ExportBlockResponse)
 def create_export_block(data: ExportBlockCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "Manage Export Operations", db)
+    require_user_permission(current_user, "Create Export Block", db)
     existing = db.query(ExportBlock).filter(ExportBlock.block_code.ilike(data.block_code)).first()
     if existing:
         raise HTTPException(status_code=400, detail="Export block code already exists")
@@ -709,7 +711,7 @@ def create_export_block(data: ExportBlockCreate, db: Session = Depends(get_db), 
 
 @router.put("/blocks/{block_id}", response_model=ExportBlockResponse)
 def update_export_block(block_id: int, data: ExportBlockCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "Manage Export Operations", db)
+    require_user_permission(current_user, "Edit Export Block", db)
     blk = db.query(ExportBlock).filter(ExportBlock.id == block_id).first()
     if not blk:
         raise HTTPException(status_code=404, detail="Export block not found")
@@ -726,7 +728,7 @@ def update_export_block(block_id: int, data: ExportBlockCreate, db: Session = De
 
 @router.delete("/blocks/{block_id}")
 def delete_export_block(block_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "Manage Export Operations", db)
+    require_user_permission(current_user, "Delete Export Block", db)
     blk = db.query(ExportBlock).filter(ExportBlock.id == block_id).first()
     if not blk:
         raise HTTPException(status_code=404, detail="Export block not found")
@@ -743,7 +745,7 @@ def delete_export_block(block_id: int, db: Session = Depends(get_db), current_us
 
 @router.get("/entity-blocks")
 def list_entity_blocks(entity_code: str = Query(None), block_code: str = Query(None), db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "View Export Operations", db)
+    require_any_user_permission(current_user, EXPORT_VIEW_PERMISSIONS, db)
     q = db.query(ExportEntityBlock).filter(ExportEntityBlock.status == "Active")
     if entity_code:
         ensure_export_entity_scope(current_user, db, entity_code)
@@ -778,7 +780,7 @@ def list_entity_blocks(entity_code: str = Query(None), block_code: str = Query(N
 
 @router.post("/entity-blocks")
 def create_entity_block(entity_code: str, block_code: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "Manage Export Operations", db)
+    require_user_permission(current_user, "Edit Export Block", db)
     ensure_export_entity_scope(current_user, db, entity_code)
     ensure_export_block_scope(current_user, db, block_code, allow_unassigned=True)
     existing_active = db.query(ExportEntityBlock).filter(
@@ -807,7 +809,7 @@ def create_entity_block(entity_code: str, block_code: str, db: Session = Depends
 
 @router.delete("/entity-blocks/{mapping_id}")
 def delete_entity_block(mapping_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "Manage Export Operations", db)
+    require_user_permission(current_user, "Edit Export Block", db)
     eb = db.query(ExportEntityBlock).filter(ExportEntityBlock.id == mapping_id).first()
     if not eb:
         raise HTTPException(status_code=404, detail="Mapping not found")
@@ -832,7 +834,7 @@ def list_export_permits(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_from_token),
 ):
-    require_user_permission(current_user, "View Export Operations", db)
+    require_any_user_permission(current_user, EXPORT_VIEW_PERMISSIONS, db)
     expire_permits_if_needed(db)
     q = db.query(ExportPermit)
     if location_code:
@@ -851,7 +853,7 @@ def list_export_permits(
 
 @router.post("/permits", response_model=ExportPermitResponse)
 def create_export_permit(data: ExportPermitCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "Manage Export Operations", db)
+    require_user_permission(current_user, "Create Export Permit", db)
     ensure_export_location_scope(current_user, db, data.location_code)
     existing = db.query(ExportPermit).filter(ExportPermit.permit_number == data.permit_number).first()
     if existing:
@@ -876,7 +878,7 @@ def create_export_permit(data: ExportPermitCreate, db: Session = Depends(get_db)
 
 @router.put("/permits/{permit_id}", response_model=ExportPermitResponse)
 def update_export_permit(permit_id: int, data: ExportPermitUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "Manage Export Operations", db)
+    require_user_permission(current_user, "Edit Export Permit", db)
     permit = db.query(ExportPermit).filter(ExportPermit.id == permit_id).first()
     if not permit:
         raise HTTPException(status_code=404, detail="Export permit not found")
@@ -901,7 +903,7 @@ def update_export_permit(permit_id: int, data: ExportPermitUpdate, db: Session =
 
 @router.delete("/permits/{permit_id}")
 def delete_export_permit(permit_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "Manage Export Operations", db)
+    require_user_permission(current_user, "Delete Export Permit", db)
     permit = db.query(ExportPermit).filter(ExportPermit.id == permit_id).first()
     if not permit:
         raise HTTPException(status_code=404, detail="Export permit not found")
@@ -925,7 +927,7 @@ def list_export_transactions(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_from_token),
 ):
-    require_user_permission(current_user, "View Export Operations", db)
+    require_user_permission(current_user, "View Export Transaction", db)
     q = db.query(ExportTransaction).filter(ExportTransaction.status == "Active")
     if location_code:
         ensure_export_location_scope(current_user, db, location_code)
@@ -941,7 +943,7 @@ def list_export_transactions(
 
 @router.post("/transactions", response_model=ExportTransactionResponse)
 def create_export_transaction(data: ExportTransactionCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "Manage Export Operations", db)
+    require_user_permission(current_user, "Create Export Transaction", db)
     payload_data = data.model_dump()
     override = bool(payload_data.get("override", False))
     payload_rows = expand_export_transaction_payloads({k: v for k, v in payload_data.items() if k != "override"})
@@ -990,7 +992,7 @@ def create_export_transaction(data: ExportTransactionCreate, db: Session = Depen
 
 @router.put("/transactions/{transaction_id}", response_model=ExportTransactionResponse)
 def update_export_transaction(transaction_id: int, data: ExportTransactionUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "Manage Export Operations", db)
+    require_user_permission(current_user, "Edit Export Transaction", db)
     tx = db.query(ExportTransaction).filter(ExportTransaction.id == transaction_id).first()
     if not tx:
         raise HTTPException(status_code=404, detail="Export transaction not found")
@@ -1047,7 +1049,7 @@ def update_export_transaction(transaction_id: int, data: ExportTransactionUpdate
 
 @router.delete("/transactions/{transaction_id}")
 def delete_export_transaction(transaction_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "Manage Export Operations", db)
+    require_user_permission(current_user, "Delete Export Transaction", db)
     tx = db.query(ExportTransaction).filter(ExportTransaction.id == transaction_id).first()
     if not tx:
         raise HTTPException(status_code=404, detail="Export transaction not found")
@@ -1064,7 +1066,7 @@ def delete_export_transaction(transaction_id: int, db: Session = Depends(get_db)
 
 @router.post("/bulk-upload")
 def bulk_upload_export_transactions(data: BulkUploadRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "Manage Export Operations", db)
+    require_user_permission(current_user, "Create Export Transaction", db)
     created = 0
     errors = []
     for item in data.items:
@@ -1097,7 +1099,7 @@ def bulk_upload_export_transactions(data: BulkUploadRequest, db: Session = Depen
 
 @router.post("/permits/bulk-upload")
 def bulk_upload_export_permits(data: PermitBulkUploadRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "Manage Export Operations", db)
+    require_user_permission(current_user, "Create Export Permit", db)
     created = 0
     errors = []
     created_permits = []
@@ -1145,7 +1147,7 @@ def bulk_upload_export_permits(data: PermitBulkUploadRequest, db: Session = Depe
 
 @router.get("/configs", response_model=list[ExportConfigResponse])
 def list_export_configs(db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "View Export Operations", db)
+    require_any_user_permission(current_user, EXPORT_VIEW_PERMISSIONS, db)
     return [
         {
             "id": c.id,
@@ -1162,7 +1164,7 @@ def list_export_configs(db: Session = Depends(get_db), current_user: User = Depe
 
 @router.post("/configs", response_model=ExportConfigResponse)
 def create_export_config(data: ExportConfigCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "Manage Export Operations", db)
+    require_user_permission(current_user, "Edit Export Settings", db)
     existing = db.query(ExportConfig).filter(ExportConfig.config_key == data.config_key).first()
     if existing:
         existing.config_value = data.config_value
@@ -1199,7 +1201,7 @@ def create_export_config(data: ExportConfigCreate, db: Session = Depends(get_db)
 
 @router.get("/consignees", response_model=list[ExportConsigneeResponse])
 def list_export_consignees(db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "View Export Operations", db)
+    require_any_user_permission(current_user, EXPORT_VIEW_PERMISSIONS, db)
     return [
         {
             "id": c.id,
@@ -1215,7 +1217,7 @@ def list_export_consignees(db: Session = Depends(get_db), current_user: User = D
 
 @router.post("/consignees", response_model=ExportConsigneeResponse)
 def create_export_consignee(data: ExportConsigneeCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "Manage Export Operations", db)
+    require_user_permission(current_user, "Create Export Consignee", db)
     existing = db.query(ExportConsignee).filter(ExportConsignee.consignee_name == data.consignee_name).first()
     if existing:
         if existing.status == "Inactive":
@@ -1248,7 +1250,7 @@ def create_export_consignee(data: ExportConsigneeCreate, db: Session = Depends(g
 
 @router.put("/consignees/{consignee_id}", response_model=ExportConsigneeResponse)
 def update_export_consignee(consignee_id: int, data: ExportConsigneeUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "Manage Export Operations", db)
+    require_user_permission(current_user, "Edit Export Consignee", db)
     c = db.query(ExportConsignee).filter(ExportConsignee.id == consignee_id).first()
     if not c:
         raise HTTPException(status_code=404, detail="Consignee not found")
@@ -1268,7 +1270,7 @@ def update_export_consignee(consignee_id: int, data: ExportConsigneeUpdate, db: 
 
 @router.delete("/consignees/{consignee_id}")
 def delete_export_consignee(consignee_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
-    require_user_permission(current_user, "Manage Export Operations", db)
+    require_user_permission(current_user, "Delete Export Consignee", db)
     c = db.query(ExportConsignee).filter(ExportConsignee.id == consignee_id).first()
     if not c:
         raise HTTPException(status_code=404, detail="Consignee not found")
@@ -1293,7 +1295,7 @@ def get_export_dashboard(
     current_user: User = Depends(get_current_user_from_token),
 ):
     # --- Transaction query base ---
-    require_user_permission(current_user, "View Export Operations", db)
+    require_user_permission(current_user, "View Export Dashboard", db)
     if location_code:
         ensure_export_location_scope(current_user, db, location_code)
     tx_q = db.query(ExportTransaction).filter(ExportTransaction.status == "Active")
@@ -1509,7 +1511,7 @@ def get_export_report(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_from_token),
 ):
-    require_user_permission(current_user, "View Export Operations", db)
+    require_user_permission(current_user, "View Export Report", db)
     if location_code:
         ensure_export_location_scope(current_user, db, location_code)
     q = db.query(ExportTransaction).filter(ExportTransaction.status == "Active")

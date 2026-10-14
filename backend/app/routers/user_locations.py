@@ -161,7 +161,7 @@ def save_user_locations(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage User Location Assignment", db)
+    require_user_permission(current_user, "Edit User Location Assignment", db)
 
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -267,7 +267,7 @@ def update_user_all_locations_access(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage User Location Assignment", db)
+    require_user_permission(current_user, "Edit User Location Assignment", db)
 
     if request.all_locations_access not in ("Yes", "No"):
         raise HTTPException(
@@ -339,7 +339,7 @@ def delete_user_location(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage User Location Assignment", db)
+    require_user_permission(current_user, "Delete User Location Assignment", db)
 
     assignment = (
         db.query(UserLocation)

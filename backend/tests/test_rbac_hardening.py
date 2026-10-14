@@ -148,7 +148,7 @@ def test_notification_recipient_matching_uses_all_roles_and_assigned_locations(d
 
 
 def test_notification_target_scope_is_limited_to_actor_locations(db):
-    role, _ = create_role_with_permission(db, "Scoped Notification Manager", "Manage System Notification")
+    role, _ = create_role_with_permission(db, "Scoped Notification Manager", "Create System Notification")
     actor = create_user(db, "scoped_notification_manager", roles=[role])
     db.add(UserLocation(user_id=actor.id, location_code="AGGE"))
     db.commit()
@@ -247,7 +247,7 @@ def test_delivery_report_hides_recipients_with_out_of_scope_locations(db):
 
 
 def test_location_scopes_normalize_case_and_whitespace(db):
-    role, _ = create_role_with_permission(db, "Location Reader", "View Export Operations")
+    role, _ = create_role_with_permission(db, "Location Reader", "View Export Transaction")
     user = create_user(db, "agge_reader", roles=[role])
     db.add(UserLocation(user_id=user.id, location_code=" AGGE "))
     db.add_all([
@@ -294,9 +294,9 @@ def test_general_location_filter_trims_case_variants(db):
 
 
 def test_non_admin_cannot_assign_a_role_with_unheld_permissions(db):
-    manager_role, _ = create_role_with_permission(db, "Assignment Manager", "Manage User Role Assignment")
+    manager_role, _ = create_role_with_permission(db, "Assignment Manager", "Edit User Role Assignment")
     actor = create_user(db, "role_manager", roles=[manager_role])
-    elevated_role, _ = create_role_with_permission(db, "Elevated", "Manage User")
+    elevated_role, _ = create_role_with_permission(db, "Elevated", "Create User")
     db.commit()
 
     with pytest.raises(HTTPException) as exc:
@@ -324,20 +324,20 @@ def test_scoped_role_admin_cannot_change_role_shared_outside_their_scope(db):
 
 
 def test_non_admin_cannot_grant_unheld_role_permissions(db):
-    role, _ = create_role_with_permission(db, "Assignment Manager", "Manage Role Permission Assignment")
+    role, _ = create_role_with_permission(db, "Assignment Manager", "Edit Role Permission Assignment")
     actor = create_user(db, "permission_manager", roles=[role])
     db.commit()
 
     with pytest.raises(HTTPException) as exc:
-        ensure_role_permissions_within_actor_scope(actor, {"Manage User"}, db)
+        ensure_role_permissions_within_actor_scope(actor, {"Create User"}, db)
     assert exc.value.status_code == 403
 
 
 def test_role_assignment_endpoint_blocks_privilege_escalation_and_admin_role(db):
-    manager_role, _ = create_role_with_permission(db, "Assignment Manager", "Manage User Role Assignment")
+    manager_role, _ = create_role_with_permission(db, "Assignment Manager", "Edit User Role Assignment")
     actor = create_user(db, "role_api_manager", roles=[manager_role])
     target = create_user(db, "role_api_target")
-    elevated_role, _ = create_role_with_permission(db, "Elevated Role", "Manage User")
+    elevated_role, _ = create_role_with_permission(db, "Elevated Role", "Create User")
     admin_role = Role(role_name="Admin", status="Active")
     db.add(admin_role)
     db.commit()
@@ -367,7 +367,7 @@ def test_user_and_role_administration_respects_actor_location_scope(db):
         db, "Scoped User Viewer", "View User Role Assignment"
     )
     manage_role, _ = create_role_with_permission(
-        db, "Scoped User Manager", "Manage User Role Assignment"
+        db, "Scoped User Manager", "Edit User Role Assignment"
     )
     user_view_role, _ = create_role_with_permission(db, "Scoped User Master Viewer", "View User")
     actor = create_user(db, "scoped_user_manager", roles=[view_role, manage_role, user_view_role])
@@ -409,14 +409,14 @@ def test_user_and_role_administration_respects_actor_location_scope(db):
 
 def test_role_permission_endpoint_blocks_granting_unheld_capability(db):
     manager_role, _ = create_role_with_permission(
-        db, "Permission API Manager", "Manage Role Permission Assignment"
+        db, "Permission API Manager", "Edit Role Permission Assignment"
     )
     actor = create_user(db, "permission_api_manager", roles=[manager_role])
     target_role = Role(role_name="Target Role", status="Active")
     db.add(target_role)
     elevated_permission = Permission(
-        permission_name="Manage User",
-        module_name="Users",
+        permission_name="Create User",
+        module_name="User Master",
         status="Active",
     )
     db.add(elevated_permission)
@@ -434,7 +434,7 @@ def test_role_permission_endpoint_blocks_granting_unheld_capability(db):
 
 
 def test_export_transaction_endpoint_requires_permission_and_applies_location_scope(db):
-    view_role, _ = create_role_with_permission(db, "Export Viewer", "View Export Operations")
+    view_role, _ = create_role_with_permission(db, "Export Viewer", "View Export Transaction")
     viewer = create_user(db, "scoped_export_viewer", roles=[view_role])
     unprivileged = create_user(db, "unprivileged_export_viewer")
     db.add(UserLocation(user_id=viewer.id, location_code=" AGGE "))
@@ -531,7 +531,7 @@ def test_asset_list_keeps_global_assets_and_hides_other_locations(db):
 
 
 def test_non_admin_cannot_create_global_asset(db):
-    role, _ = create_role_with_permission(db, "Asset Manager", "Manage Asset")
+    role, _ = create_role_with_permission(db, "Asset Manager", "Create Asset")
     actor = create_user(db, "asset_manager", roles=[role])
     db.add(AssetType(asset_type_name="Shuttle", asset_type_code="SHUTTLE", status="Active"))
     db.commit()
@@ -553,7 +553,7 @@ def test_non_admin_cannot_create_global_asset(db):
 
 def test_asset_calibration_tables_are_location_scoped_and_global_tables_are_read_only(db):
     view_role, _ = create_role_with_permission(db, "Calibration Viewer", "View Asset Calibration")
-    manage_role, _ = create_role_with_permission(db, "Calibration Manager", "Manage Asset Calibration")
+    manage_role, _ = create_role_with_permission(db, "Calibration Manager", "Create Asset Calibration")
     viewer = create_user(db, "calibration_scope_viewer", roles=[view_role, manage_role])
     db.add(UserLocation(user_id=viewer.id, location_code="AGGE"))
     db.add_all([
@@ -606,7 +606,7 @@ def test_material_balance_template_list_and_mutations_enforce_location_scope(db)
         db, "Material Balance Viewer", "View Material Balance Template"
     )
     manage_role, _ = create_role_with_permission(
-        db, "Material Balance Manager", "Manage Material Balance Template"
+        db, "Material Balance Manager", "Create Material Balance Template"
     )
     actor = create_user(db, "material_balance_scoped", roles=[view_role, manage_role])
     db.add(UserLocation(user_id=actor.id, location_code="AGGE"))
@@ -649,7 +649,7 @@ def test_movement_mapping_list_and_details_enforce_location_scope(db):
         db, "Movement Mapping Viewer", "View Movement Mapping"
     )
     manage_role, _ = create_role_with_permission(
-        db, "Movement Mapping Manager", "Manage Movement Mapping"
+        db, "Movement Mapping Manager", "Create Movement Mapping"
     )
     actor = create_user(db, "movement_mapping_scoped", roles=[view_role, manage_role])
     db.add(UserLocation(user_id=actor.id, location_code="AGGE"))

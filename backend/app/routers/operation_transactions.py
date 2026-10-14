@@ -1395,7 +1395,7 @@ def update_operation_transaction(
 ):
     require_user_permission(
         current_user,
-        "Create Operation Entry",
+        "Edit Operation Entry",
         db,
     )
 
@@ -1623,7 +1623,7 @@ def backfill_operation_transaction_ticket_numbers(
 ):
     require_user_permission(
         current_user,
-        "Manage Operation Template",
+        "Edit Operation Template",
         db,
     )
 

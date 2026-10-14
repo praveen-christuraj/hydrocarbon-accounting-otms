@@ -489,7 +489,7 @@ def update_operation_entry(
 ):
     require_user_permission(
         current_user,
-        "Create Operation Entry",
+        "Edit Operation Entry",
         db,
     )
 

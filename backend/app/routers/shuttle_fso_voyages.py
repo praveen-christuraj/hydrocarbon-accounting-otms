@@ -126,7 +126,7 @@ def close_shuttle_voyage(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Shuttle Tracking", db)
+    require_user_permission(current_user, "Close Shuttle Voyage", db)
     ensure_location_in_user_scope(current_user, db, request.location_code, "Location")
 
     voyage = get_or_create_shuttle_voyage(
@@ -173,7 +173,7 @@ def reopen_shuttle_voyage(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Shuttle Tracking", db)
+    require_user_permission(current_user, "Reopen Shuttle Voyage", db)
     ensure_location_in_user_scope(current_user, db, request.location_code, "Location")
 
     voyage = get_shuttle_voyage_by_key(
@@ -226,7 +226,7 @@ def close_fso_voyage(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage FSO Tracking", db)
+    require_user_permission(current_user, "Close FSO Voyage", db)
     ensure_location_in_user_scope(current_user, db, request.location_code, "Location")
 
     voyage = get_or_create_fso_voyage(
@@ -273,7 +273,7 @@ def reopen_fso_voyage(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage FSO Tracking", db)
+    require_user_permission(current_user, "Reopen FSO Voyage", db)
     ensure_location_in_user_scope(current_user, db, request.location_code, "Location")
 
     voyage = get_fso_voyage_by_key(

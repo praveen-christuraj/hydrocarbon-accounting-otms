@@ -1009,7 +1009,7 @@ def update_backup_settings(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Backup Settings", db)
+    require_user_permission(current_user, "Edit Backup Settings", db)
     mode, run_time = validate_backup_settings_payload(payload)
     settings = get_or_create_backup_settings(db)
     old_details = build_backup_settings_response(settings)

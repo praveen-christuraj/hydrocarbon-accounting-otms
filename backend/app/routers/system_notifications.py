@@ -384,7 +384,7 @@ def create_system_notification(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage System Notification", db)
+    require_user_permission(current_user, "Create System Notification", db)
     data = validate_system_notification_payload(payload)
     ensure_notification_target_scope(
         current_user,
@@ -448,7 +448,7 @@ def update_system_notification(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage System Notification", db)
+    require_user_permission(current_user, "Edit System Notification", db)
     notification = db.query(SystemNotification).filter(SystemNotification.id == notification_id).first()
     if not notification:
         raise HTTPException(status_code=404, detail="System notification not found")

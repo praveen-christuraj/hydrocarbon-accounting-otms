@@ -227,7 +227,7 @@ def create_flowmeter_config(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Flowmeter Config", db)
+    require_user_permission(current_user, "Create Flowmeter Config", db)
 
     location, asset = validate_flowmeter_asset(request.asset_code, db)
     ensure_location_in_user_scope(current_user, db, location.location_code, "Location")
@@ -335,7 +335,7 @@ def update_flowmeter_config(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Flowmeter Config", db)
+    require_user_permission(current_user, "Edit Flowmeter Config", db)
 
     row = db.query(FlowmeterConfig).filter(FlowmeterConfig.id == config_id).first()
     if not row:
@@ -450,7 +450,7 @@ def delete_flowmeter_config(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Manage Flowmeter Config", db)
+    require_user_permission(current_user, "Delete Flowmeter Config", db)
 
     row = db.query(FlowmeterConfig).filter(FlowmeterConfig.id == config_id).first()
     if not row:

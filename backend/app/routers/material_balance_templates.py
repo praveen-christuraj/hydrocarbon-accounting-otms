@@ -322,7 +322,7 @@ def create_material_balance_template(
 ):
     require_user_permission(
         current_user,
-        "Manage Material Balance Template",
+        "Create Material Balance Template",
         db,
     )
 
@@ -407,7 +407,7 @@ def update_material_balance_template(
 ):
     require_user_permission(
         current_user,
-        "Manage Material Balance Template",
+        "Edit Material Balance Template",
         db,
     )
 
@@ -494,7 +494,7 @@ def delete_material_balance_template(
 ):
     require_user_permission(
         current_user,
-        "Manage Material Balance Template",
+        "Delete Material Balance Template",
         db,
     )
 
@@ -545,7 +545,7 @@ def create_material_balance_template_column(
 ):
     require_user_permission(
         current_user,
-        "Manage Material Balance Template",
+        "Edit Material Balance Template",
         db,
     )
 
@@ -630,7 +630,7 @@ def update_material_balance_template_column(
 ):
     require_user_permission(
         current_user,
-        "Manage Material Balance Template",
+        "Edit Material Balance Template",
         db,
     )
 
@@ -719,7 +719,7 @@ def delete_material_balance_template_column(
 ):
     require_user_permission(
         current_user,
-        "Manage Material Balance Template",
+        "Edit Material Balance Template",
         db,
     )
 

@@ -2378,7 +2378,7 @@ def rebuild_tank_stock_ledger(
 ):
     require_user_permission(
         current_user,
-        "Manage Tank Stock Ledger",
+        "Rebuild Tank Stock Ledger",
         db,
     )
 

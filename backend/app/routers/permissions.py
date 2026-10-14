@@ -7,7 +7,8 @@ from app.schemas import PermissionCreate, PermissionResponse
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import is_admin_user, require_user_permission
 from app.services.audit_service import create_audit_log
-from app.utils.default_permissions import STANDARD_PERMISSIONS
+from app.services.permission_catalog import apply_permission_catalog
+from app.utils.default_permissions import ACTION_ORDER, STANDARD_PERMISSIONS, get_permission_catalog
 from app.utils.helpers import clean_optional_text
 from app.utils.pagination import paginate_query
 
@@ -39,6 +40,22 @@ def get_permissions(
     }
 
 
+@router.get("/catalog")
+def get_standard_permission_catalog(
+    current_user: User = Depends(get_current_user_from_token),
+):
+    """Module-wise CRUD structure of the standard permissions.
+
+    Static metadata (no role or user data): categories follow the navigation
+    menu, each module lists its permissions with the CRUD action they map to.
+    """
+    return {
+        "actions": ACTION_ORDER,
+        "categories": get_permission_catalog(),
+        "total_standard_permissions": len(STANDARD_PERMISSIONS),
+    }
+
+
 @router.post("", response_model=PermissionResponse)
 def create_permission(
     permission: PermissionCreate,
@@ -47,7 +64,7 @@ def create_permission(
 ):
     require_user_permission(
         current_user,
-        "Manage Permission",
+        "Create Permission",
         db,
     )
 
@@ -113,7 +130,7 @@ def update_permission(
 ):
     require_user_permission(
         current_user,
-        "Manage Permission",
+        "Edit Permission",
         db,
     )
 
@@ -205,7 +222,7 @@ def delete_permission(
 ):
     require_user_permission(
         current_user,
-        "Manage Permission",
+        "Delete Permission",
         db,
     )
 
@@ -270,38 +287,12 @@ def seed_standard_permissions(
 ):
     require_user_permission(
         current_user,
-        "Manage Permission",
+        "Create Permission",
         db,
     )
 
-    standard_permissions = STANDARD_PERMISSIONS
-
-    created_count = 0
-    existing_count = 0
-
-    for permission_data in standard_permissions:
-        existing_permission = (
-            db.query(Permission)
-            .filter(
-                Permission.permission_name.ilike(permission_data["permission_name"]),
-                Permission.module_name.ilike(permission_data["module_name"]),
-            )
-            .first()
-        )
-
-        if existing_permission:
-            existing_count += 1
-            continue
-
-        new_permission = Permission(
-            permission_name=permission_data["permission_name"],
-            module_name=permission_data["module_name"],
-            description=permission_data["description"],
-            status="Active",
-        )
-
-        db.add(new_permission)
-        created_count += 1
+    result = apply_permission_catalog(db)
+    migration = result["migration"]
 
     create_audit_log(
         db=db,
@@ -314,9 +305,12 @@ def seed_standard_permissions(
         remarks="Seeded standard permissions",
         request_path="/permissions/seed-standard",
         details={
-            "created_count": created_count,
-            "existing_count": existing_count,
-            "total_standard_permissions": len(standard_permissions),
+            "created_count": result["created_count"],
+            "updated_count": result["updated_count"],
+            "existing_count": result["existing_count"],
+            "total_standard_permissions": result["total_standard_permissions"],
+            "legacy_permissions_removed": migration["legacy_permissions_removed"],
+            "role_permissions_granted": migration["role_permissions_granted"],
         },
     )
 
@@ -324,7 +318,10 @@ def seed_standard_permissions(
 
     return {
         "message": "Standard permissions seed completed",
-        "created_count": created_count,
-        "existing_count": existing_count,
-        "total_standard_permissions": len(standard_permissions),
+        "created_count": result["created_count"],
+        "updated_count": result["updated_count"],
+        "existing_count": result["existing_count"],
+        "total_standard_permissions": result["total_standard_permissions"],
+        "legacy_permissions_removed": migration["legacy_permissions_removed"],
+        "role_permissions_granted": migration["role_permissions_granted"],
     }

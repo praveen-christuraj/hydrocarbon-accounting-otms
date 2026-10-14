@@ -328,7 +328,7 @@ def get_prime_mover_tanker_links(
 ):
     require_user_permission(
         current_user,
-        "View Asset",
+        "View Prime Mover Tanker Link",
         db,
     )
 
@@ -396,7 +396,7 @@ def get_current_prime_mover_tanker_link(
 ):
     require_user_permission(
         current_user,
-        "View Asset",
+        "View Prime Mover Tanker Link",
         db,
     )
 
@@ -441,7 +441,7 @@ def create_prime_mover_tanker_link(
 ):
     require_user_permission(
         current_user,
-        "Manage Asset",
+        "Create Prime Mover Tanker Link",
         db,
     )
 
@@ -507,7 +507,7 @@ def update_prime_mover_tanker_link(
 ):
     require_user_permission(
         current_user,
-        "Manage Asset",
+        "Edit Prime Mover Tanker Link",
         db,
     )
 
@@ -596,7 +596,7 @@ def close_prime_mover_tanker_link(
 ):
     require_user_permission(
         current_user,
-        "Manage Asset",
+        "Edit Prime Mover Tanker Link",
         db,
     )
 
@@ -684,7 +684,7 @@ def delete_prime_mover_tanker_link(
 ):
     require_user_permission(
         current_user,
-        "Manage Asset",
+        "Delete Prime Mover Tanker Link",
         db,
     )
 

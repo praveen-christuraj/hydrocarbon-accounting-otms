@@ -74,7 +74,7 @@ def create_asset(
 ):
     require_user_permission(
         current_user,
-        "Manage Asset",
+        "Create Asset",
         db,
     )
 
@@ -200,7 +200,7 @@ def update_asset(
 ):
     require_user_permission(
         current_user,
-        "Manage Asset",
+        "Edit Asset",
         db,
     )
 
@@ -358,7 +358,7 @@ def delete_asset(
 ):
     require_user_permission(
         current_user,
-        "Manage Asset",
+        "Delete Asset",
         db,
     )
 

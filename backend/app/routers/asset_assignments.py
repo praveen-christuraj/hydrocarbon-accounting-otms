@@ -279,7 +279,7 @@ def create_asset_assignment(
 ):
     require_user_permission(
         current_user,
-        "Manage Asset Assignment",
+        "Create Asset Assignment",
         db,
     )
     ensure_location_in_user_scope(current_user, db, assignment.assignment_location_code, "Assignment location")
@@ -341,7 +341,7 @@ def update_asset_assignment(
 ):
     require_user_permission(
         current_user,
-        "Manage Asset Assignment",
+        "Edit Asset Assignment",
         db,
     )
 
@@ -423,7 +423,7 @@ def delete_asset_assignment(
 ):
     require_user_permission(
         current_user,
-        "Manage Asset Assignment",
+        "Delete Asset Assignment",
         db,
     )
 
