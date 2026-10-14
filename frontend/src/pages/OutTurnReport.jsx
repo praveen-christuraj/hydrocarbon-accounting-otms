@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getOutTurnReport } from '../api/outTurnReportApi'
 import { getCompanyReportProfiles } from '../api/companyReportProfileApi'
-import PaginationControls, {
-  paginateRows,
-} from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 
 function OutTurnReport({ locations, assets }) {
   const emptyFilters = {
@@ -18,6 +19,7 @@ function OutTurnReport({ locations, assets }) {
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
+  const pageSize = usePageSize()
   const [successMsg, setSuccessMsg] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
 
@@ -192,7 +194,8 @@ function OutTurnReport({ locations, assets }) {
     return ''
   }
 
-  const visibleRows = paginateRows(rows, currentPage)
+  const rowsFilters = useDataFilters(rows, useAutoColumns(rows), { module: 'Out-Turn Report' })
+  const visibleRows = paginateRows(rowsFilters.filteredRows, currentPage, pageSize)
 
   const escapeCsvValue = (value) => {
     if (value === null || value === undefined) {
@@ -568,6 +571,13 @@ function OutTurnReport({ locations, assets }) {
         </p>
       </div>
 
+      <DataTableToolbar
+        filters={rowsFilters}
+        columns={rowsFilters.columns}
+        exportFileName="out-turn-report"
+        exportTitle="Out-Turn Report"
+      />
+
       <table>
         <thead>
           <tr>
@@ -648,7 +658,7 @@ function OutTurnReport({ locations, assets }) {
 
       <PaginationControls
         currentPage={currentPage}
-        totalRows={rows.length}
+        totalRows={rowsFilters.filteredRows.length}
         onPageChange={setCurrentPage}
       />
 
@@ -660,7 +670,7 @@ function OutTurnReport({ locations, assets }) {
       </div>
 
       {profile && (
-        <div className="print-only" style={{ marginTop: 20, fontSize: 11, color: '#555' }}>
+        <div className="print-only print-footnote">
           <p>{profile.footerFormula}</p>
           <p>{profile.footerNote}</p>
         </div>

@@ -483,7 +483,7 @@ function OperationTransactionRegister({
       )}
 
       {profile && (
-        <div className="print-only" style={{ marginTop: 20, fontSize: 11, color: '#555' }}>
+        <div className="print-only print-footnote">
           <p>{profile.footerFormula}</p>
           <p>{profile.footerNote}</p>
         </div>

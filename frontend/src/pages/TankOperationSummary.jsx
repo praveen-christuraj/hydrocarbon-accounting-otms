@@ -4,9 +4,10 @@ import {
   getTankOperationSummaryColumns,
 } from '../api/tankOperationSummaryApi'
 import { getCompanyReportProfiles } from '../api/companyReportProfileApi'
-import PaginationControls, {
-  paginateRows,
-} from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 
 function TankOperationSummary({ locations, assets, loggedInUser }) {
   const emptyFilters = {
@@ -22,6 +23,7 @@ function TankOperationSummary({ locations, assets, loggedInUser }) {
   const [columns, setColumns] = useState([])
   const [loading, setLoading] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
+  const pageSize = usePageSize()
   const [successMsg, setSuccessMsg] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
 
@@ -173,7 +175,8 @@ function TankOperationSummary({ locations, assets, loggedInUser }) {
     return value
   }
 
-  const visibleRows = paginateRows(rows, currentPage)
+  const rowsFilters = useDataFilters(rows, useAutoColumns(rows), { module: 'Tank Operation Summary' })
+  const visibleRows = paginateRows(rowsFilters.filteredRows, currentPage, pageSize)
 
   const escapeCsvValue = (value) => {
     if (value === null || value === undefined) {
@@ -410,6 +413,13 @@ function TankOperationSummary({ locations, assets, loggedInUser }) {
         </p>
       </div>
 
+      <DataTableToolbar
+        filters={rowsFilters}
+        columns={rowsFilters.columns}
+        exportFileName="tank-operation-summary"
+        exportTitle="Tank Operation Summary"
+      />
+
       <div className="tank-operation-summary-table-wrap">
         <table>
           <thead>
@@ -442,7 +452,7 @@ function TankOperationSummary({ locations, assets, loggedInUser }) {
 
       <PaginationControls
         currentPage={currentPage}
-        totalRows={rows.length}
+        totalRows={rowsFilters.filteredRows.length}
         onPageChange={setCurrentPage}
       />
 
@@ -453,7 +463,7 @@ function TankOperationSummary({ locations, assets, loggedInUser }) {
       </div>
 
       {profile && (
-        <div className="print-only" style={{ marginTop: 20, fontSize: 11, color: '#555' }}>
+        <div className="print-only print-footnote">
           <p>{profile.footerFormula}</p>
           <p>{profile.footerNote}</p>
         </div>

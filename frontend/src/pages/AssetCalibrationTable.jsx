@@ -4,7 +4,10 @@ import {
   deleteAssetCalibrationTable,
   updateAssetCalibrationTable,
 } from '../api/assetCalibrationApi'
-import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 
 function AssetCalibrationTable({
   assets,
@@ -41,7 +44,9 @@ function AssetCalibrationTable({
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [page, setPage] = useState(1)
 
-  const visibleTables = paginateRows(calibrationTables, page)
+  const pageSize = usePageSize()
+  const calibrationTablesFilters = useDataFilters(calibrationTables, useAutoColumns(calibrationTables), { module: 'Asset Calibration Table' })
+  const visibleTables = paginateRows(calibrationTablesFilters.filteredRows, page, pageSize)
 
   const visibleRowLimit = 10
 
@@ -1129,6 +1134,13 @@ function AssetCalibrationTable({
         <p>Calibration rows are stored as JSONB in PostgreSQL.</p>
       </div>
 
+      <DataTableToolbar
+        filters={calibrationTablesFilters}
+        columns={calibrationTablesFilters.columns}
+        exportFileName="asset-calibration-table"
+        exportTitle="Asset Calibration Table"
+      />
+
       <table>
         <thead>
           <tr>
@@ -1183,7 +1195,7 @@ function AssetCalibrationTable({
         </tbody>
       </table>
 
-      <PaginationControls currentPage={page} totalRows={calibrationTables.length} onPageChange={setPage} />
+      <PaginationControls currentPage={page} totalRows={calibrationTablesFilters.filteredRows.length} onPageChange={setPage} />
 
       <div className="info-box">
         CSV headers must match the selected calibration template columns.

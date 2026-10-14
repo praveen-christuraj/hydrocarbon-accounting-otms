@@ -193,7 +193,7 @@ function ProfileSecurity({ loggedInUser, users = [] }) {
       </div>
 
       {success && (
-        <div className="error-box" style={{ background: '#f0fdf4', color: '#166534', borderColor: '#bbf7d0' }}>
+        <div className="success-box">
           {success}
           <button className="error-close" onClick={() => setSuccess('')} type="button">&times;</button>
         </div>
@@ -222,13 +222,13 @@ function ProfileSecurity({ loggedInUser, users = [] }) {
               type={showPassword.currentPassword ? 'text' : 'password'}
               value={passwordForm.currentPassword}
               onChange={(e) => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })}
-              style={fieldErrors.currentPassword ? { borderColor: '#dc2626' } : {}}
+              aria-invalid={fieldErrors.currentPassword ? 'true' : undefined}
             />
             <button type="button" className="password-toggle" onClick={() => toggleShowPassword('currentPassword')} tabIndex={-1}>
               {showPassword.currentPassword ? '🙈' : '👁'}
             </button>
           </div>
-          {fieldErrors.currentPassword && <small style={{ color: '#dc2626', marginTop: 4 }}>{fieldErrors.currentPassword}</small>}
+          {fieldErrors.currentPassword && <small className="field-error">{fieldErrors.currentPassword}</small>}
         </div>
         <div>
           <label>New Password</label>
@@ -237,13 +237,13 @@ function ProfileSecurity({ loggedInUser, users = [] }) {
               type={showPassword.newPassword ? 'text' : 'password'}
               value={passwordForm.newPassword}
               onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
-              style={fieldErrors.newPassword ? { borderColor: '#dc2626' } : {}}
+              aria-invalid={fieldErrors.newPassword ? 'true' : undefined}
             />
             <button type="button" className="password-toggle" onClick={() => toggleShowPassword('newPassword')} tabIndex={-1}>
               {showPassword.newPassword ? '🙈' : '👁'}
             </button>
           </div>
-          {fieldErrors.newPassword && <small style={{ color: '#dc2626', marginTop: 4 }}>{fieldErrors.newPassword}</small>}
+          {fieldErrors.newPassword && <small className="field-error">{fieldErrors.newPassword}</small>}
           {passwordForm.newPassword.length > 0 && (
             <div className="password-strength">
               <div className="password-strength-bar" style={{ width: `${pwStrength.pct}%`, background: pwStrength.color }} />
@@ -258,13 +258,13 @@ function ProfileSecurity({ loggedInUser, users = [] }) {
               type={showPassword.confirmPassword ? 'text' : 'password'}
               value={passwordForm.confirmPassword}
               onChange={(e) => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })}
-              style={fieldErrors.confirmPassword ? { borderColor: '#dc2626' } : {}}
+              aria-invalid={fieldErrors.confirmPassword ? 'true' : undefined}
             />
             <button type="button" className="password-toggle" onClick={() => toggleShowPassword('confirmPassword')} tabIndex={-1}>
               {showPassword.confirmPassword ? '🙈' : '👁'}
             </button>
           </div>
-          {fieldErrors.confirmPassword && <small style={{ color: '#dc2626', marginTop: 4 }}>{fieldErrors.confirmPassword}</small>}
+          {fieldErrors.confirmPassword && <small className="field-error">{fieldErrors.confirmPassword}</small>}
         </div>
         <div className="form-actions">
           <button type="submit" disabled={loading}>Change Password</button>
@@ -302,10 +302,10 @@ function ProfileSecurity({ loggedInUser, users = [] }) {
           <div className="form-actions">
             {confirmAction === 'regenerateCodes' ? (
               <span>
-                <button type="button" onClick={() => { clearConfirm(); handleRegenerateCodes() }} disabled={loading} style={{ background: '#f59e0b', color: '#fff' }}>
+                <button type="button" onClick={() => { clearConfirm(); handleRegenerateCodes() }} disabled={loading} style={{ background: 'var(--warning)', color: 'var(--text-inverse)' }}>
                   {loading ? 'Working...' : 'Confirm Regenerate'}
                 </button>
-                <button type="button" onClick={clearConfirm} disabled={loading} style={{ background: '#64748b', color: '#fff' }}>Cancel</button>
+                <button className="btn-secondary" type="button" onClick={clearConfirm} disabled={loading}>Cancel</button>
               </span>
             ) : (
               <button type="button" onClick={() => setConfirmAction('regenerateCodes')} disabled={loading}>Regenerate Backup Codes</button>
@@ -319,24 +319,24 @@ function ProfileSecurity({ loggedInUser, users = [] }) {
                   type={showPassword.disablePassword ? 'text' : 'password'}
                   value={disableForm.currentPassword}
                   onChange={(e) => setDisableForm({ ...disableForm, currentPassword: e.target.value })}
-                  style={fieldErrors.currentPassword ? { borderColor: '#dc2626' } : {}}
+                  aria-invalid={fieldErrors.currentPassword ? 'true' : undefined}
                 />
                 <button type="button" className="password-toggle" onClick={() => toggleShowPassword('disablePassword')} tabIndex={-1}>
                   {showPassword.disablePassword ? '🙈' : '👁'}
                 </button>
               </div>
-              {fieldErrors.currentPassword && <small style={{ color: '#dc2626', marginTop: 4 }}>{fieldErrors.currentPassword}</small>}
+              {fieldErrors.currentPassword && <small className="field-error">{fieldErrors.currentPassword}</small>}
             </div>
             <div>
               <label>2FA Code or Backup Code</label>
-              <input value={disableForm.code} onChange={(e) => setDisableForm({ ...disableForm, code: e.target.value })} style={fieldErrors.code ? { borderColor: '#dc2626' } : {}} />
-              {fieldErrors.code && <small style={{ color: '#dc2626', marginTop: 4 }}>{fieldErrors.code}</small>}
+              <input value={disableForm.code} onChange={(e) => setDisableForm({ ...disableForm, code: e.target.value })} aria-invalid={fieldErrors.code ? 'true' : undefined} />
+              {fieldErrors.code && <small className="field-error">{fieldErrors.code}</small>}
             </div>
             <div className="form-actions">
               {confirmAction === 'disable2FA' ? (
                 <span>
-                  <button type="submit" disabled={loading} style={{ background: '#dc2626', color: '#fff' }}>{loading ? 'Working...' : 'Confirm Disable'}</button>
-                  <button type="button" onClick={clearConfirm} disabled={loading} style={{ background: '#64748b', color: '#fff' }}>Cancel</button>
+                  <button className="btn-danger" type="submit" disabled={loading}>{loading ? 'Working...' : 'Confirm Disable'}</button>
+                  <button className="btn-secondary" type="button" onClick={clearConfirm} disabled={loading}>Cancel</button>
                 </span>
               ) : (
                 <button type="button" onClick={() => setConfirmAction('disable2FA')} disabled={loading}>Disable 2FA</button>
@@ -407,8 +407,8 @@ function ProfileSecurity({ loggedInUser, users = [] }) {
             <div className="form-actions">
               {confirmAction === 'adminReset' ? (
                 <span>
-                  <button type="submit" disabled={loading} style={{ background: '#f59e0b', color: '#fff' }}>{loading ? 'Working...' : 'Confirm Reset'}</button>
-                  <button type="button" onClick={clearConfirm} disabled={loading} style={{ background: '#64748b', color: '#fff' }}>Cancel</button>
+                  <button type="submit" disabled={loading} style={{ background: 'var(--warning)', color: 'var(--text-inverse)' }}>{loading ? 'Working...' : 'Confirm Reset'}</button>
+                  <button className="btn-secondary" type="button" onClick={clearConfirm} disabled={loading}>Cancel</button>
                 </span>
               ) : (
                 <button type="button" onClick={() => setConfirmAction('adminReset')} disabled={loading}>Reset Password</button>

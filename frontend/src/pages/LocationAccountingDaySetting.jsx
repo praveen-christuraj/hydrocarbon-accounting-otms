@@ -5,7 +5,10 @@ import {
   getLocationAccountingDaySettings,
   updateLocationAccountingDaySetting,
 } from '../api/locationAccountingDaySettingApi'
-import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 
 function LocationAccountingDaySetting({ locations, loggedInUser }) {
   const emptySetting = {
@@ -30,6 +33,7 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
   const [confirmDeleteItem, setConfirmDeleteItem] = useState(null)
   const [page, setPage] = useState(1)
 
+  const pageSize = usePageSize()
   const activeLocations = useMemo(() => {
     return (locations || []).filter((location) => location.status === 'Active')
   }, [locations])
@@ -57,7 +61,8 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
     })
   }, [loggedInUser])
 
-  const visibleSettings = paginateRows(settings, page)
+  const settingsFilters = useDataFilters(settings, useAutoColumns(settings), { module: 'Location Accounting Day Settings' })
+  const visibleSettings = paginateRows(settingsFilters.filteredRows, page, pageSize)
 
   const reloadSettings = async (locationCode = selectedLocationCode) => {
     try {

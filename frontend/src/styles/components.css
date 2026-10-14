@@ -51,6 +51,46 @@ button > .icon:last-child:not(:only-child) {
   outline: 2px solid var(--text-inverse);
 }
 
+/* Explicit button variants win over positional table-cell button styling */
+td button.btn-primary.btn-primary {
+  background: var(--primary);
+  color: var(--text-inverse);
+  border-color: transparent;
+}
+
+td button.btn-primary.btn-primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+  border-color: transparent;
+}
+
+td button.btn-danger.btn-danger {
+  background: var(--danger);
+  color: var(--text-inverse);
+  border-color: transparent;
+}
+
+td button.btn-danger.btn-danger:hover:not(:disabled) {
+  background: var(--danger-hover);
+  border-color: transparent;
+}
+
+td button.btn-secondary.btn-secondary {
+  background: var(--surface);
+  color: var(--text-secondary);
+  border-color: var(--border-strong);
+}
+
+td button.btn-secondary.btn-secondary:hover:not(:disabled) {
+  background: var(--btn-ghost-hover);
+  color: var(--text);
+}
+
+.print-footnote {
+  margin-top: 20px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 /* ------------------------------------------------------------ app shell */
 .app-shell {
   min-height: 100vh;

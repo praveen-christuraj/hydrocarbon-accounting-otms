@@ -4,7 +4,10 @@ import {
   updateCalibrationTemplate,
   deleteCalibrationTemplate,
 } from '../api/calibrationTemplateApi'
-import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 
 function CalibrationTemplateMaster({
   assetTypes,
@@ -42,7 +45,9 @@ function CalibrationTemplateMaster({
   const [confirmDeleteItem, setConfirmDeleteItem] = useState(null)
   const [page, setPage] = useState(1)
 
-  const visibleTemplates = paginateRows(calibrationTemplates, page)
+  const pageSize = usePageSize()
+  const calibrationTemplatesFilters = useDataFilters(calibrationTemplates, useAutoColumns(calibrationTemplates), { module: 'Calibration Template Master' })
+  const visibleTemplates = paginateRows(calibrationTemplatesFilters.filteredRows, page, pageSize)
 
   const activeAssetTypes = assetTypes.filter((item) => item.status === 'Active')
 

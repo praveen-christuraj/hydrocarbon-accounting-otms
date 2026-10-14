@@ -4,7 +4,10 @@ import {
   deleteAsset,
   updateAsset,
 } from '../api/assetApi'
-import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 
 function AssetMaster({ assets, reloadAssets, assetTypes, locations, loggedInUser }) {
   const emptyAsset = {
@@ -30,7 +33,9 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations, loggedInUser
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [assetPage, setAssetPage] = useState(1)
 
-  const visibleAssets = paginateRows(assets, assetPage)
+  const pageSize = usePageSize()
+  const assetsFilters = useDataFilters(assets, useAutoColumns(assets), { module: 'Asset Master' })
+  const visibleAssets = paginateRows(assetsFilters.filteredRows, assetPage, pageSize)
 
   const isAdminBootstrap =
     String(loggedInUser?.username || '').toLowerCase() === 'admin'
@@ -467,6 +472,13 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations, loggedInUser
         </p>
       </div>
 
+      <DataTableToolbar
+        filters={assetsFilters}
+        columns={assetsFilters.columns}
+        exportFileName="asset-master"
+        exportTitle="Asset Master"
+      />
+
       <table>
         <thead>
           <tr>
@@ -541,7 +553,7 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations, loggedInUser
         </tbody>
       </table>
 
-      <PaginationControls currentPage={assetPage} totalRows={assets.length} onPageChange={setAssetPage} />
+      <PaginationControls currentPage={assetPage} totalRows={assetsFilters.filteredRows.length} onPageChange={setAssetPage} />
 
       <div className="info-box">
         Asset Code must be unique. Local assets require a primary location.

@@ -36,8 +36,17 @@ if (!window.matchMedia) {
   })
 }
 if (!window.scrollTo) window.scrollTo = () => {}
-if (!window.URL.createObjectURL) window.URL.createObjectURL = () => 'blob:mock'
-if (!window.URL.revokeObjectURL) window.URL.revokeObjectURL = () => {}
+window.URL.createObjectURL = () => 'blob:http://localhost:5173/mock-download'
+window.URL.revokeObjectURL = () => {}
+// Downloads: do not navigate the happy-dom window
+const nativeAnchorClick = window.HTMLAnchorElement.prototype.click
+window.HTMLAnchorElement.prototype.click = function click() {
+  if (this.hasAttribute('download') || String(this.href).startsWith('blob:')) {
+    downloads.push(this.getAttribute('download') || this.href)
+    return undefined
+  }
+  return nativeAnchorClick.call(this)
+}
 if (!globalThis.ResizeObserver) {
   globalThis.ResizeObserver = class {
     observe() {}
@@ -47,6 +56,7 @@ if (!globalThis.ResizeObserver) {
 }
 
 const errors = []
+const downloads = []
 const origError = console.error
 console.error = (...args) => {
   const text = args.map((a) => (a && a.stack) || String(a)).join(' ')
@@ -229,10 +239,15 @@ try {
   const { default: App } = await server.ssrLoadModule('/src/App.jsx')
   const { ThemeProvider } = await server.ssrLoadModule('/src/theme/ThemeProvider.jsx')
   const { ToastProvider } = await server.ssrLoadModule('/src/components/common/Toast.jsx')
+  const { ConfirmProvider } = await server.ssrLoadModule('/src/components/common/ConfirmProvider.jsx')
 
   const reactRoot = createRoot(root)
   reactRoot.render(
-    React.createElement(ThemeProvider, null, React.createElement(ToastProvider, null, React.createElement(App)))
+    React.createElement(
+      ThemeProvider,
+      null,
+      React.createElement(ToastProvider, null, React.createElement(ConfirmProvider, null, React.createElement(App)))
+    )
   )
   await flush(150)
 
@@ -303,6 +318,67 @@ try {
     if (process.env.DUMP) {
       console.log(document.querySelector('.main-content').innerHTML.slice(0, Number(process.env.DUMP)))
     }
+
+    if (path === '/locations') {
+      // Filter bar interactions
+      const search = q('.data-filter-search input')
+      setValue(search, 'Depot')
+      await flush(120)
+      check('quick search filters rows', text(q('.data-filter-summary')).startsWith('Showing'), text(q('.data-filter-summary')))
+      console.log('      pagination after search:', text(q('.pagination-summary')))
+      setValue(search, '')
+      await flush(120)
+
+      click(qa('.filter-toggle').find((b) => text(b).includes('Advanced')))
+      await flush()
+      click(qa('.data-filter-panel-footer button')[0])
+      await flush()
+      const condition = q('.filter-condition')
+      check('advanced condition row added', Boolean(condition))
+      const [fieldSel, opSel] = condition.querySelectorAll('select')
+      setValue(fieldSel, 'status')
+      await flush()
+      const valueControl = condition.querySelector('.filter-condition-value select, .filter-condition-value input')
+      setValue(valueControl, 'Inactive')
+      await flush(120)
+      check('advanced filter applied', text(q('.data-filter-summary')).includes('1 filter'), text(q('.data-filter-summary')))
+      click(q('.filter-clear'))
+      await flush(120)
+      check('clear all resets filters', !text(q('.data-filter-summary')).includes('filter'), text(q('.data-filter-summary')))
+
+      click(qa('.filter-toggle').find((b) => text(b).includes('Date')))
+      await flush()
+      check('date filter panel has separate date and range groups', qa('.date-filter-group').length === 2)
+
+      // Page size change
+      const sizeSelect = q('.pagination-page-size select')
+      setValue(sizeSelect, '50')
+      await flush(120)
+      check('page size 50 applied', text(q('.pagination-summary')).includes('1–43') || text(q('.pagination-summary')).includes('of 43'), text(q('.pagination-summary')))
+      console.log('      table rows rendered:', qa('.main-content tbody tr').length)
+      setValue(sizeSelect, '20')
+      await flush(120)
+
+      // Export menu
+      click(q('.export-menu-button'))
+      await flush()
+      check('export menu lists xlsx/csv/pdf', qa('.export-menu-item').length === 3)
+      const before = errors.length
+      click(qa('.export-menu-item').find((b) => text(b).includes('CSV')))
+      await flush(300)
+      check('csv export runs without error', errors.length === before, text(q('.toast')))
+      click(q('.export-menu-button'))
+      await flush()
+      click(qa('.export-menu-item').find((b) => text(b).includes('Excel')))
+      await flush(600)
+      check('xlsx export runs without error', errors.length === before, text(q('.toast')))
+      click(q('.export-menu-button'))
+      await flush()
+      click(qa('.export-menu-item').find((b) => text(b).includes('PDF')))
+      await flush(800)
+      for (let i = 0; i < 20 && !qa('.toast').some((el) => text(el).includes('PDF')); i += 1) await flush(200)
+      check('pdf export runs without error', errors.length === before && !q('.toast.tone-error'), qa('.toast').map(text).join(' | '))
+    }
   }
 
   // Activity log
@@ -313,7 +389,8 @@ try {
   check('activity panel opens', Boolean(q('.activity-panel')), `${qa('.activity-item').length} entries`)
   console.log('      first entries:', qa('.activity-item').slice(0, 4).map((e) => text(e)).join(' | ').slice(0, 300))
 
-  console.log('\nAPI calls:', [...new Set(apiCalls)].slice(0, 40).join('\n  '))
+  console.log('\nDownloads:', downloads.join(', ') || 'none')
+  console.log('API calls:', [...new Set(apiCalls)].slice(0, 40).join('\n  '))
 } catch (error) {
   errors.push('harness: ' + (error.stack || error))
   console.error(error)

@@ -215,7 +215,7 @@ function StockMovementLayout({
             </select>
 
             {selectedOp && (
-              <div style={{ marginTop: 6, color: '#475569', fontSize: 13 }}>
+              <div style={{ marginTop: 6, color: 'var(--text-secondary)', fontSize: 13 }}>
                 Category: <strong>{selectedOp.operation_category}</strong> | Sign:{' '}
                 <strong>{selectedOp.operation_sign}</strong>
               </div>

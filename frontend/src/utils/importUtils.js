@@ -87,7 +87,8 @@ const cellToValue = (cell) => {
 }
 
 const parseXlsxFile = async (file) => {
-  const ExcelJS = (await import('exceljs')).default || (await import('exceljs'))
+  const excelModule = await import('exceljs')
+  const ExcelJS = excelModule.default || excelModule
   const workbook = new ExcelJS.Workbook()
   const buffer = await file.arrayBuffer()
   await workbook.xlsx.load(buffer)

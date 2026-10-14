@@ -4,7 +4,10 @@ import {
   deleteAssetType,
   updateAssetType,
 } from '../api/assetTypeApi'
-import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 
 function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
   const emptyAssetType = {
@@ -23,7 +26,9 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [page, setPage] = useState(1)
 
-  const visibleItems = paginateRows(assetTypes, page)
+  const pageSize = usePageSize()
+  const assetTypesFilters = useDataFilters(assetTypes, useAutoColumns(assetTypes), { module: 'Asset Type Master' })
+  const visibleItems = paginateRows(assetTypesFilters.filteredRows, page, pageSize)
 
   const isAdminBootstrap =
     String(loggedInUser?.username || '').toLowerCase() === 'admin'
@@ -283,6 +288,13 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
         <p>Asset types are now saved permanently in PostgreSQL.</p>
       </div>
 
+      <DataTableToolbar
+        filters={assetTypesFilters}
+        columns={assetTypesFilters.columns}
+        exportFileName="asset-type-master"
+        exportTitle="Asset Type Master"
+      />
+
       <table>
         <thead>
           <tr>
@@ -329,7 +341,7 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
         </tbody>
       </table>
 
-      <PaginationControls currentPage={page} totalRows={assetTypes.length} onPageChange={setPage} />
+      <PaginationControls currentPage={page} totalRows={assetTypesFilters.filteredRows.length} onPageChange={setPage} />
 
       <div className="info-box">
         Asset Type Code must be unique. Example: MSKID for Metering Skid.

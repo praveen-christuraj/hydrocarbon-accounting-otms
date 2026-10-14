@@ -1,6 +1,9 @@
 import { useState } from 'react'
 import { deleteUserRole, saveUserRole } from '../api/userRoleApi'
-import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 
 function UserRoleAssignment({
   users,
@@ -18,7 +21,9 @@ function UserRoleAssignment({
   const [fieldErrors, setFieldErrors] = useState({})
   const [page, setPage] = useState(1)
 
-  const visibleItems = paginateRows(userRoleAssignments, page)
+  const pageSize = usePageSize()
+  const userRoleAssignmentsFilters = useDataFilters(userRoleAssignments, useAutoColumns(userRoleAssignments), { module: 'User Role Assignment' })
+  const visibleItems = paginateRows(userRoleAssignmentsFilters.filteredRows, page, pageSize)
 
   const activeUsers = users.filter((user) => user.status === 'Active')
   const activeRoles = roles.filter((role) => role.status === 'Active')
@@ -147,7 +152,7 @@ function UserRoleAssignment({
       </div>
 
       {success && (
-        <div className="error-box" style={{ background: '#f0fdf4', color: '#166534', borderColor: '#bbf7d0' }}>
+        <div className="success-box">
           {success}
           <button className="error-close" onClick={clearSuccess} type="button">&times;</button>
         </div>
@@ -174,7 +179,7 @@ function UserRoleAssignment({
             <select
               value={selectedUserId}
               onChange={(e) => { setSelectedUserId(e.target.value); setFieldErrors({ ...fieldErrors, userId: '' }) }}
-              style={fieldErrors.userId ? { borderColor: '#dc2626' } : {}}
+              aria-invalid={fieldErrors.userId ? 'true' : undefined}
             >
               <option value="">Select User</option>
 
@@ -185,7 +190,7 @@ function UserRoleAssignment({
               ))}
             </select>
             {fieldErrors.userId && (
-              <small style={{ color: '#dc2626', marginTop: 4 }}>{fieldErrors.userId}</small>
+              <small className="field-error">{fieldErrors.userId}</small>
             )}
           </div>
 
@@ -194,7 +199,7 @@ function UserRoleAssignment({
             <select
               value={selectedRoleId}
               onChange={(e) => { setSelectedRoleId(e.target.value); setFieldErrors({ ...fieldErrors, roleId: '' }) }}
-              style={fieldErrors.roleId ? { borderColor: '#dc2626' } : {}}
+              aria-invalid={fieldErrors.roleId ? 'true' : undefined}
             >
               <option value="">Select Role</option>
 
@@ -205,7 +210,7 @@ function UserRoleAssignment({
               ))}
             </select>
             {fieldErrors.roleId && (
-              <small style={{ color: '#dc2626', marginTop: 4 }}>{fieldErrors.roleId}</small>
+              <small className="field-error">{fieldErrors.roleId}</small>
             )}
           </div>
 
@@ -234,6 +239,13 @@ function UserRoleAssignment({
           selected user&apos;s role.
         </p>
       </div>
+
+      <DataTableToolbar
+        filters={userRoleAssignmentsFilters}
+        columns={userRoleAssignmentsFilters.columns}
+        exportFileName="user-role-assignment"
+        exportTitle="User Role Assignment"
+      />
 
       <table>
         <thead>
@@ -281,7 +293,7 @@ function UserRoleAssignment({
                           type="button"
                           onClick={() => handleDeleteConfirm(assignment)}
                           disabled={loading}
-                          style={{ background: '#dc2626', color: '#fff' }}
+                          className="btn-danger"
                         >
                           {loading ? 'Deleting...' : 'Confirm'}
                         </button>
@@ -289,7 +301,7 @@ function UserRoleAssignment({
                           type="button"
                           onClick={() => setConfirmDelete(null)}
                           disabled={loading}
-                          style={{ background: '#64748b', color: '#fff' }}
+                          className="btn-secondary"
                         >
                           Cancel
                         </button>
@@ -310,7 +322,7 @@ function UserRoleAssignment({
         </tbody>
       </table>
 
-      <PaginationControls currentPage={page} totalRows={userRoleAssignments.length} onPageChange={setPage} />
+      <PaginationControls currentPage={page} totalRows={userRoleAssignmentsFilters.filteredRows.length} onPageChange={setPage} />
 
       {activeUsers.length === 0 && (
         <div className="info-box">

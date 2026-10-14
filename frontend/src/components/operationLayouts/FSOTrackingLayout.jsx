@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getVesselOperations } from '../../api/vesselOperationApi'
 import { getShuttleTracking } from '../../api/shuttleTrackingApi'
+import { useToast } from '../common/Toast'
 
 const parseObject = (value) => {
   if (!value) return null
@@ -21,6 +22,7 @@ const safeNumber = (v) => {
 }
 
 function FSOTrackingLayout({ entry, selectedAsset, handleValueChange, setEntryField }) {
+  const toast = useToast()
   const [ops, setOps] = useState([])
   const [loadingOps, setLoadingOps] = useState(false)
   const [fetching, setFetching] = useState(false)
@@ -85,7 +87,7 @@ function FSOTrackingLayout({ entry, selectedAsset, handleValueChange, setEntryFi
         })
         setOps(Array.isArray(data) ? data : [])
       } catch (e) {
-        alert(e.message || 'Unable to load Vessel Operations')
+        toast.error(e.message || 'Unable to load Vessel Operations', { title: 'FSO Tracking' })
       } finally {
         setLoadingOps(false)
       }
@@ -209,7 +211,7 @@ function FSOTrackingLayout({ entry, selectedAsset, handleValueChange, setEntryFi
   const fetchShuttleDischarge = async () => {
     const shuttleNo = String(form.shuttle_number || '').trim()
     if (!shuttleNo) {
-      alert('Enter Shuttle Number first.')
+      toast.warning('Enter Shuttle Number first.', { title: 'FSO Tracking' })
       return
     }
 
@@ -230,7 +232,7 @@ function FSOTrackingLayout({ entry, selectedAsset, handleValueChange, setEntryFi
       )
 
       if (!match) {
-        alert('No CLOSED shuttle voyage found for this Shuttle Number.')
+        toast.warning('No CLOSED shuttle voyage found for this Shuttle Number.', { title: 'FSO Tracking' })
         return
       }
 
@@ -257,9 +259,9 @@ function FSOTrackingLayout({ entry, selectedAsset, handleValueChange, setEntryFi
         }
       )
 
-      alert('Shuttle discharge captured successfully.')
+      toast.success('Shuttle discharge captured successfully.', { title: 'FSO Tracking' })
     } catch (e) {
-      alert(e.message || 'Unable to fetch shuttle discharge')
+      toast.error(e.message || 'Unable to fetch shuttle discharge', { title: 'FSO Tracking' })
     } finally {
       setFetching(false)
     }

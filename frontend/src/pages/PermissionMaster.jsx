@@ -4,7 +4,10 @@ import {
   deletePermission,
   updatePermission,
 } from '../api/permissionApi'
-import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 
 function PermissionMaster({ permissions, reloadPermissions, loggedInUser }) {
   const emptyPermission = {
@@ -23,7 +26,9 @@ function PermissionMaster({ permissions, reloadPermissions, loggedInUser }) {
   const [fieldErrors, setFieldErrors] = useState({})
   const [page, setPage] = useState(1)
 
-  const visibleItems = paginateRows(permissions, page)
+  const pageSize = usePageSize()
+  const permissionsFilters = useDataFilters(permissions, useAutoColumns(permissions), { module: 'Permission Master' })
+  const visibleItems = paginateRows(permissionsFilters.filteredRows, page, pageSize)
 
   const isAdminBootstrap =
     String(loggedInUser?.username || '').toLowerCase() === 'admin'
@@ -160,7 +165,7 @@ function PermissionMaster({ permissions, reloadPermissions, loggedInUser }) {
       </div>
 
       {success && (
-        <div className="error-box" style={{ background: '#f0fdf4', color: '#166534', borderColor: '#bbf7d0' }}>
+        <div className="success-box">
           {success}
           <button className="error-close" onClick={clearSuccess} type="button">&times;</button>
         </div>
@@ -190,10 +195,10 @@ function PermissionMaster({ permissions, reloadPermissions, loggedInUser }) {
               value={permission.permissionName}
               onChange={handleChange}
               placeholder="Example: View Asset"
-              style={fieldErrors.permissionName ? { borderColor: '#dc2626' } : {}}
+              aria-invalid={fieldErrors.permissionName ? 'true' : undefined}
             />
             {fieldErrors.permissionName && (
-              <small style={{ color: '#dc2626', marginTop: 4 }}>{fieldErrors.permissionName}</small>
+              <small className="field-error">{fieldErrors.permissionName}</small>
             )}
           </div>
 
@@ -203,7 +208,7 @@ function PermissionMaster({ permissions, reloadPermissions, loggedInUser }) {
               name="moduleName"
               value={permission.moduleName}
               onChange={handleChange}
-              style={fieldErrors.moduleName ? { borderColor: '#dc2626' } : {}}
+              aria-invalid={fieldErrors.moduleName ? 'true' : undefined}
             >
               <option value="">Select Module</option>
               <option>User Master</option>
@@ -226,7 +231,7 @@ function PermissionMaster({ permissions, reloadPermissions, loggedInUser }) {
               <option>Admin</option>
             </select>
             {fieldErrors.moduleName && (
-              <small style={{ color: '#dc2626', marginTop: 4 }}>{fieldErrors.moduleName}</small>
+              <small className="field-error">{fieldErrors.moduleName}</small>
             )}
           </div>
 
@@ -281,6 +286,13 @@ function PermissionMaster({ permissions, reloadPermissions, loggedInUser }) {
         <p>Permissions are now saved permanently in PostgreSQL.</p>
       </div>
 
+      <DataTableToolbar
+        filters={permissionsFilters}
+        columns={permissionsFilters.columns}
+        exportFileName="permission-master"
+        exportTitle="Permission Master"
+      />
+
       <table>
         <thead>
           <tr>
@@ -326,7 +338,7 @@ function PermissionMaster({ permissions, reloadPermissions, loggedInUser }) {
                           type="button"
                           onClick={() => handleDeleteConfirm(item.id)}
                           disabled={loading}
-                          style={{ background: '#dc2626', color: '#fff' }}
+                          className="btn-danger"
                         >
                           {loading ? 'Deleting...' : 'Confirm'}
                         </button>
@@ -334,7 +346,7 @@ function PermissionMaster({ permissions, reloadPermissions, loggedInUser }) {
                           type="button"
                           onClick={() => setConfirmDelete(null)}
                           disabled={loading}
-                          style={{ background: '#64748b', color: '#fff' }}
+                          className="btn-secondary"
                         >
                           Cancel
                         </button>
@@ -352,7 +364,7 @@ function PermissionMaster({ permissions, reloadPermissions, loggedInUser }) {
         </tbody>
       </table>
 
-      <PaginationControls currentPage={page} totalRows={permissions.length} onPageChange={setPage} />
+      <PaginationControls currentPage={page} totalRows={permissionsFilters.filteredRows.length} onPageChange={setPage} />
     </div>
   )
 }

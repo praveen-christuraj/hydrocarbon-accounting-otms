@@ -5,7 +5,10 @@ import {
   updateUserAllLocationsAccess,
   deleteUserLocation,
 } from '../api/userLocationApi'
-import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 
 function UserLocationAssignment({
   users,
@@ -26,6 +29,7 @@ function UserLocationAssignment({
   const [fieldErrors, setFieldErrors] = useState({})
   const [page, setPage] = useState(1)
 
+  const pageSize = usePageSize()
   const activeUsers = users.filter((user) => user.status === 'Active')
   const activeLocations = locations.filter((loc) => loc.status === 'Active')
 
@@ -42,7 +46,8 @@ function UserLocationAssignment({
 
   const canManage = hasPermission('Manage User Location Assignment')
   const canView = hasPermission('View User Location Assignment')
-  const visibleAssignments = paginateRows(userLocationAssignments, page)
+  const userLocationAssignmentsFilters = useDataFilters(userLocationAssignments, useAutoColumns(userLocationAssignments), { module: 'User Location Assignment' })
+  const visibleAssignments = paginateRows(userLocationAssignmentsFilters.filteredRows, page, pageSize)
 
   useEffect(() => {
     setPage(1)
@@ -228,9 +233,9 @@ function UserLocationAssignment({
         <div
           className="error-box"
           style={{
-            background: '#f0fdf4',
-            color: '#166534',
-            borderColor: '#bbf7d0',
+            background: 'var(--success-soft)',
+            color: 'var(--success-text)',
+            borderColor: 'var(--success-border)',
           }}
         >
           {success}
@@ -263,7 +268,7 @@ function UserLocationAssignment({
             <select
               value={selectedUserId}
               onChange={(e) => handleUserChange(e.target.value)}
-              style={fieldErrors.userId ? { borderColor: '#dc2626' } : {}}
+              aria-invalid={fieldErrors.userId ? 'true' : undefined}
             >
               <option value="">Select User</option>
               {activeUsers.map((user) => (
@@ -273,7 +278,7 @@ function UserLocationAssignment({
               ))}
             </select>
             {fieldErrors.userId && (
-              <small style={{ color: '#dc2626', marginTop: 4 }}>
+              <small className="field-error">
                 {fieldErrors.userId}
               </small>
             )}
@@ -293,8 +298,8 @@ function UserLocationAssignment({
                     type="button"
                     onClick={handleSelectAllLocations}
                     style={{
-                      background: '#2563eb',
-                      color: '#fff',
+                      background: 'var(--primary)',
+                      color: 'var(--text-inverse)',
                       padding: '4px 10px',
                       fontSize: 12,
                     }}
@@ -306,7 +311,7 @@ function UserLocationAssignment({
                   <span
                     style={{
                       fontSize: 12,
-                      color: '#64748b',
+                      color: 'var(--text-muted)',
                       alignSelf: 'center',
                     }}
                   >
@@ -363,7 +368,7 @@ function UserLocationAssignment({
                   gap: 8,
                   cursor: 'pointer',
                   padding: '10px 16px',
-                  border: '1px solid #d1d5db',
+                  border: '1px solid var(--border-strong)',
                   borderRadius: 6,
                   background:
                     allLocationsAccess === 'Yes' ? '#eff6ff' : '#fff',
@@ -382,7 +387,7 @@ function UserLocationAssignment({
                 />
                 <div>
                   <strong style={{ fontSize: 14 }}>Yes</strong>
-                  <span style={{ fontSize: 12, color: '#64748b' }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                     — User can access all locations
                   </span>
                 </div>
@@ -394,7 +399,7 @@ function UserLocationAssignment({
                   gap: 8,
                   cursor: 'pointer',
                   padding: '10px 16px',
-                  border: '1px solid #d1d5db',
+                  border: '1px solid var(--border-strong)',
                   borderRadius: 6,
                   background:
                     allLocationsAccess === 'No' ? '#f8fafc' : '#fff',
@@ -413,7 +418,7 @@ function UserLocationAssignment({
                 />
                 <div>
                   <strong style={{ fontSize: 14 }}>No</strong>
-                  <span style={{ fontSize: 12, color: '#64748b' }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                     — User is restricted to assigned locations only
                   </span>
                 </div>
@@ -448,6 +453,13 @@ function UserLocationAssignment({
         </p>
       </div>
 
+      <DataTableToolbar
+        filters={userLocationAssignmentsFilters}
+        columns={userLocationAssignmentsFilters.columns}
+        exportFileName="user-location-assignment"
+        exportTitle="User Location Assignment"
+      />
+
       <table>
         <thead>
           <tr>
@@ -481,7 +493,7 @@ function UserLocationAssignment({
                       <>
                         <strong>{assignment.fullName}</strong>
                         <br />
-                        <span style={{ fontSize: 12, color: '#64748b' }}>
+                        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                           {assignment.username}
                         </span>
                       </>
@@ -498,14 +510,14 @@ function UserLocationAssignment({
                       <span
                         className="permission-badge"
                         style={{
-                          background: '#dbeafe',
-                          color: '#1e40af',
+                          background: 'var(--info-soft)',
+                          color: 'var(--primary)',
                         }}
                       >
                         Yes
                       </span>
                     ) : (
-                      <span style={{ color: '#9ca3af', fontSize: 13 }}>
+                      <span style={{ color: 'var(--text-faint)', fontSize: 13 }}>
                         No
                       </span>
                     )}
@@ -542,8 +554,8 @@ function UserLocationAssignment({
                             }
                             disabled={loading}
                             style={{
-                              background: '#dc2626',
-                              color: '#fff',
+                              background: 'var(--danger)',
+                              color: 'var(--text-inverse)',
                               marginRight: 4,
                             }}
                           >
@@ -554,8 +566,8 @@ function UserLocationAssignment({
                             onClick={() => setConfirmDeleteId(null)}
                             disabled={loading}
                             style={{
-                              background: '#64748b',
-                              color: '#fff',
+                              background: 'var(--btn-secondary)',
+                              color: 'var(--text-inverse)',
                             }}
                           >
                             Cancel
@@ -580,7 +592,7 @@ function UserLocationAssignment({
 
       <PaginationControls
         currentPage={page}
-        totalRows={userLocationAssignments.length}
+        totalRows={userLocationAssignmentsFilters.filteredRows.length}
         onPageChange={setPage}
       />
     </div>

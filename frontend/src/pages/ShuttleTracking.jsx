@@ -913,7 +913,7 @@ function ShuttleTracking({
         <div className="confirm-overlay">
           <div className="confirm-dialog">
             <p>Type exactly to confirm reopen:</p>
-            <pre style={{ fontSize: 12, background: '#f5f5f5', padding: 8 }}>{promptModal.confirmText}</pre>
+            <pre style={{ fontSize: 12, background: 'var(--surface-2)', padding: 8 }}>{promptModal.confirmText}</pre>
             <input
               type="text"
               placeholder="Type the confirmation text above"

@@ -265,7 +265,7 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
       </div>
 
       {success && (
-        <div className="error-box" style={{ background: '#f0fdf4', color: '#166534', borderColor: '#bbf7d0' }}>
+        <div className="success-box">
           {success}
           <button className="error-close" onClick={clearSuccess} type="button">&times;</button>
         </div>
@@ -293,10 +293,10 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
             value={user.fullName}
             onChange={handleChange}
             placeholder="Enter full name"
-            style={fieldErrors.fullName ? { borderColor: '#dc2626' } : {}}
+            aria-invalid={fieldErrors.fullName ? 'true' : undefined}
           />
           {fieldErrors.fullName && (
-            <small style={{ color: '#dc2626', marginTop: 4 }}>{fieldErrors.fullName}</small>
+            <small className="field-error">{fieldErrors.fullName}</small>
           )}
         </div>
 
@@ -309,10 +309,10 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
             onChange={handleChange}
             placeholder="Enter username"
             disabled={editId !== null}
-            style={fieldErrors.username ? { borderColor: '#dc2626' } : {}}
+            aria-invalid={fieldErrors.username ? 'true' : undefined}
           />
           {fieldErrors.username && (
-            <small style={{ color: '#dc2626', marginTop: 4 }}>{fieldErrors.username}</small>
+            <small className="field-error">{fieldErrors.username}</small>
           )}
         </div>
 
@@ -324,10 +324,10 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
             value={user.email}
             onChange={handleChange}
             placeholder="Enter email address"
-            style={fieldErrors.email ? { borderColor: '#dc2626' } : {}}
+            aria-invalid={fieldErrors.email ? 'true' : undefined}
           />
           {fieldErrors.email && (
-            <small style={{ color: '#dc2626', marginTop: 4 }}>{fieldErrors.email}</small>
+            <small className="field-error">{fieldErrors.email}</small>
           )}
         </div>
 
@@ -373,11 +373,11 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
               value={user.password}
               onChange={handleChange}
               placeholder={editId !== null ? 'New password (optional)' : 'Enter password'}
-              style={fieldErrors.password ? { borderColor: '#dc2626' } : {}}
+              aria-invalid={fieldErrors.password ? 'true' : undefined}
             />
           </div>
           {fieldErrors.password && (
-            <small style={{ color: '#dc2626', marginTop: 4 }}>{fieldErrors.password}</small>
+            <small className="field-error">{fieldErrors.password}</small>
           )}
           {user.password.length > 0 && (
             <div className="password-strength">
@@ -391,7 +391,7 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
             </div>
           )}
           {user.password.length > 0 && !fieldErrors.password && (
-            <small style={{ color: '#64748b', marginTop: 4 }}>
+            <small style={{ color: 'var(--text-muted)', marginTop: 4 }}>
               Minimum 12 characters with uppercase, lowercase, number &amp; special character
             </small>
           )}
@@ -406,16 +406,16 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
               value={confirmPassword}
               onChange={handleConfirmPasswordChange}
               placeholder="Re-enter password"
-              style={fieldErrors.confirmPassword ? { borderColor: '#dc2626' } : {}}
+              aria-invalid={fieldErrors.confirmPassword ? 'true' : undefined}
             />
             {fieldErrors.confirmPassword && (
-              <small style={{ color: '#dc2626', marginTop: 4 }}>{fieldErrors.confirmPassword}</small>
+              <small className="field-error">{fieldErrors.confirmPassword}</small>
             )}
           </div>
         )}
 
         {isSelfEdit && (user.status === 'Inactive' || user.status === 'Blocked') && (
-          <div className="info-box" style={{ background: '#fef2f2', borderColor: '#fecaca', color: '#b91c1c', gridColumn: '1 / -1' }}>
+          <div className="info-box" style={{ background: 'var(--danger-soft)', borderColor: 'var(--danger-border)', color: 'var(--danger-text)', gridColumn: '1 / -1' }}>
             Warning: You are changing your own account status to &quot;{user.status}&quot;. This may lock you out of the system.
           </div>
         )}
@@ -519,7 +519,7 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
                         type="button"
                         onClick={() => handleDeleteConfirm(item.id)}
                         disabled={loading}
-                        style={{ background: '#dc2626', color: '#fff' }}
+                        className="btn-danger"
                       >
                         {loading ? 'Deleting...' : 'Confirm'}
                       </button>
@@ -527,7 +527,7 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
                         type="button"
                         onClick={() => setConfirmDelete(null)}
                         disabled={loading}
-                        style={{ background: '#64748b', color: '#fff' }}
+                        className="btn-secondary"
                       >
                         Cancel
                       </button>

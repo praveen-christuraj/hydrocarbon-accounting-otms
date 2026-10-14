@@ -6,7 +6,10 @@ import {
   getFlowmeterConfigs,
   updateFlowmeterConfig,
 } from '../api/flowmeterApi'
-import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 
 const emptyForm = {
   id: null,
@@ -33,10 +36,13 @@ function FlowmeterConfigMaster({ locations = [], assets = [], assetAssignments =
   const [validationErrors, setValidationErrors] = useState({})
   const [confirmDeleteItem, setConfirmDeleteItem] = useState(null)
   const [configPage, setConfigPage] = useState(1)
+  const pageSize = usePageSize()
   const [historyPage, setHistoryPage] = useState(1)
 
-  const visibleRows = paginateRows(rows, configPage)
-  const visibleHistoryRows = paginateRows(historyRows, historyPage)
+  const rowsFilters = useDataFilters(rows, useAutoColumns(rows), { module: 'Flowmeter Config' })
+  const historyRowsFilters = useDataFilters(historyRows, useAutoColumns(historyRows), { module: 'Flowmeter Config' })
+  const visibleRows = paginateRows(rowsFilters.filteredRows, configPage, pageSize)
+  const visibleHistoryRows = paginateRows(historyRowsFilters.filteredRows, historyPage, pageSize)
 
   useEffect(() => {
     setConfigPage(1)
@@ -342,6 +348,13 @@ function FlowmeterConfigMaster({ locations = [], assets = [], assetAssignments =
         <div className="info-box">Loading...</div>
       ) : (
         <>
+          <DataTableToolbar
+            filters={rowsFilters}
+            columns={rowsFilters.columns}
+            exportFileName="flowmeter-config-rows"
+            exportTitle="Flowmeter Config"
+          />
+
           <table>
             <thead>
               <tr>
@@ -385,7 +398,7 @@ function FlowmeterConfigMaster({ locations = [], assets = [], assetAssignments =
             </tbody>
           </table>
 
-          <PaginationControls currentPage={configPage} totalRows={rows.length} onPageChange={setConfigPage} />
+          <PaginationControls currentPage={configPage} totalRows={rowsFilters.filteredRows.length} onPageChange={setConfigPage} />
         </>
       )}
 
@@ -397,6 +410,13 @@ function FlowmeterConfigMaster({ locations = [], assets = [], assetAssignments =
         <div className="info-box">Loading history...</div>
       ) : (
         <>
+          <DataTableToolbar
+            filters={historyRowsFilters}
+            columns={historyRowsFilters.columns}
+            exportFileName="flowmeter-config-history-rows"
+            exportTitle="Flowmeter Config"
+          />
+
           <table>
             <thead>
               <tr>
@@ -439,7 +459,7 @@ function FlowmeterConfigMaster({ locations = [], assets = [], assetAssignments =
             </tbody>
           </table>
 
-          <PaginationControls currentPage={historyPage} totalRows={historyRows.length} onPageChange={setHistoryPage} />
+          <PaginationControls currentPage={historyPage} totalRows={historyRowsFilters.filteredRows.length} onPageChange={setHistoryPage} />
         </>
       )}
     </div>

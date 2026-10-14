@@ -4,7 +4,10 @@ import {
   deleteLocation,
   updateLocation,
 } from '../api/locationApi'
-import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 
 function LocationMaster({ locations, reloadLocations, loggedInUser }) {
   const emptyLocation = {
@@ -25,7 +28,9 @@ function LocationMaster({ locations, reloadLocations, loggedInUser }) {
   const [fieldErrors, setFieldErrors] = useState({})
   const [page, setPage] = useState(1)
 
-  const visibleItems = paginateRows(locations, page)
+  const pageSize = usePageSize()
+  const locationsFilters = useDataFilters(locations, useAutoColumns(locations), { module: 'Location Master' })
+  const visibleItems = paginateRows(locationsFilters.filteredRows, page, pageSize)
 
   const isAdminBootstrap =
     String(loggedInUser?.username || '').toLowerCase() === 'admin'
@@ -173,7 +178,7 @@ function LocationMaster({ locations, reloadLocations, loggedInUser }) {
       </div>
 
       {success && (
-        <div className="error-box" style={{ background: '#f0fdf4', color: '#166534', borderColor: '#bbf7d0' }}>
+        <div className="success-box">
           {success}
           <button className="error-close" onClick={() => setSuccess('')} type="button">&times;</button>
         </div>
@@ -194,26 +199,26 @@ function LocationMaster({ locations, reloadLocations, loggedInUser }) {
           <label>Location Name</label>
           <input name="locationName" type="text" value={location.locationName} onChange={handleChange}
             placeholder="Example: Utapate Terminal"
-            style={fieldErrors.locationName ? { borderColor: '#dc2626' } : {}} />
-          {fieldErrors.locationName && <small style={{ color: '#dc2626', marginTop: 4 }}>{fieldErrors.locationName}</small>}
+            aria-invalid={fieldErrors.locationName ? 'true' : undefined} />
+          {fieldErrors.locationName && <small className="field-error">{fieldErrors.locationName}</small>}
         </div>
         <div>
           <label>Location Code</label>
           <input name="locationCode" type="text" value={location.locationCode} onChange={handleChange}
             placeholder="Example: UTP"
-            style={fieldErrors.locationCode ? { borderColor: '#dc2626' } : {}} />
-          {fieldErrors.locationCode && <small style={{ color: '#dc2626', marginTop: 4 }}>{fieldErrors.locationCode}</small>}
+            aria-invalid={fieldErrors.locationCode ? 'true' : undefined} />
+          {fieldErrors.locationCode && <small className="field-error">{fieldErrors.locationCode}</small>}
         </div>
         <div>
           <label>Location Type</label>
           <select name="locationType" value={location.locationType} onChange={handleChange}
-            style={fieldErrors.locationType ? { borderColor: '#dc2626' } : {}}>
+            aria-invalid={fieldErrors.locationType ? 'true' : undefined}>
             <option value="">Select Location Type</option>
             <option>Company</option><option>Region</option><option>Terminal</option>
             <option>Station</option><option>Tank Farm</option><option>Jetty</option>
             <option>Warehouse</option><option>Office</option><option>Other</option>
           </select>
-          {fieldErrors.locationType && <small style={{ color: '#dc2626', marginTop: 4 }}>{fieldErrors.locationType}</small>}
+          {fieldErrors.locationType && <small className="field-error">{fieldErrors.locationType}</small>}
         </div>
         <div>
           <label>Parent Location</label>
@@ -223,7 +228,7 @@ function LocationMaster({ locations, reloadLocations, loggedInUser }) {
               <option key={item.id} value={item.locationCode}>{item.locationName} ({item.locationCode})</option>
             ))}
           </select>
-          {fieldErrors.parentLocation && <small style={{ color: '#dc2626', marginTop: 4 }}>{fieldErrors.parentLocation}</small>}
+          {fieldErrors.parentLocation && <small className="field-error">{fieldErrors.parentLocation}</small>}
         </div>
         <div>
           <label>Status</label>
@@ -251,6 +256,13 @@ function LocationMaster({ locations, reloadLocations, loggedInUser }) {
         <p>Locations are now saved permanently in PostgreSQL.</p>
       </div>
 
+      <DataTableToolbar
+        filters={locationsFilters}
+        columns={locationsFilters.columns}
+        exportFileName="location-master"
+        exportTitle="Location Master"
+      />
+
       <table>
         <thead>
           <tr>
@@ -277,9 +289,9 @@ function LocationMaster({ locations, reloadLocations, loggedInUser }) {
                     {confirmDelete === item.id ? (
                       <span>
                         <button type="button" onClick={() => handleDeleteConfirm(item.id)} disabled={loading}
-                          style={{ background: '#dc2626', color: '#fff' }}>{loading ? 'Deleting...' : 'Confirm'}</button>
+                          className="btn-danger">{loading ? 'Deleting...' : 'Confirm'}</button>
                         <button type="button" onClick={() => setConfirmDelete(null)} disabled={loading}
-                          style={{ background: '#64748b', color: '#fff' }}>Cancel</button>
+                          className="btn-secondary">Cancel</button>
                       </span>
                     ) : (
                       <button type="button" onClick={() => handleDeleteRequest(item.id)}>Delete</button>
@@ -292,7 +304,7 @@ function LocationMaster({ locations, reloadLocations, loggedInUser }) {
         </tbody>
       </table>
 
-      <PaginationControls currentPage={page} totalRows={locations.length} onPageChange={setPage} />
+      <PaginationControls currentPage={page} totalRows={locationsFilters.filteredRows.length} onPageChange={setPage} />
 
       <div className="info-box">Location Code must be unique. Example: UTP for Utapate Terminal.</div>
     </div>

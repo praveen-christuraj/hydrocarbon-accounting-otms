@@ -5,7 +5,10 @@ import {
   getTable11Factors,
   lookupTable11Factor,
 } from '../api/table11Api'
-import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 
 function Table11FactorMaster({ loggedInUser }) {
   const [rows, setRows] = useState([])
@@ -41,7 +44,10 @@ function Table11FactorMaster({ loggedInUser }) {
   }, [rows])
 
   const [page, setPage] = useState(1)
-  const visibleRows = paginateRows(sortedRows, page)
+
+  const pageSize = usePageSize()
+  const sortedRowsFilters = useDataFilters(sortedRows, useAutoColumns(sortedRows), { module: 'Table 11 Factor Master' })
+  const visibleRows = paginateRows(sortedRowsFilters.filteredRows, page, pageSize)
 
   const resetUploadState = () => {
     setUploadFileName('')
@@ -639,6 +645,13 @@ API@60 LT_FACTOR
         <p>Current common API@60 to LT factor reference table.</p>
       </div>
 
+      <DataTableToolbar
+        filters={sortedRowsFilters}
+        columns={sortedRowsFilters.columns}
+        exportFileName="table-11-factor-master"
+        exportTitle="Table 11 Factor Master"
+      />
+
       <table>
         <thead>
           <tr>
@@ -669,7 +682,7 @@ API@60 LT_FACTOR
         </tbody>
       </table>
 
-      <PaginationControls currentPage={page} totalRows={sortedRows.length} onPageChange={setPage} />
+      <PaginationControls currentPage={page} totalRows={sortedRowsFilters.filteredRows.length} onPageChange={setPage} />
 
       {sortedRows.length > 10 && (
         <div className="info-box">

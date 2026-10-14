@@ -81,7 +81,8 @@ export const exportCsv = ({ rows, columns, fileName }) => {
 
 /* ----------------------------------------------------------------- XLSX */
 export const exportXlsx = async ({ rows, columns, fileName, sheetName = 'Data', title }) => {
-  const ExcelJS = (await import('exceljs')).default || (await import('exceljs'))
+  const excelModule = await import('exceljs')
+  const ExcelJS = excelModule.default || excelModule
   const workbook = new ExcelJS.Workbook()
   workbook.creator = 'Hydrocarbon Accounting System'
   workbook.created = new Date()
@@ -151,11 +152,17 @@ export const exportPdf = async ({
   orientation,
   generatedBy,
 }) => {
-  const [{ default: JsPDF }, autoTableModule] = await Promise.all([
+  const [jspdfModule, autoTableModule] = await Promise.all([
     import('jspdf'),
     import('jspdf-autotable'),
   ])
-  const autoTable = autoTableModule.default || autoTableModule.autoTable
+  // The browser build exposes jsPDF as the default export; the node build
+  // (used by the headless smoke test) only as a named export.
+  const JsPDF =
+    jspdfModule.jsPDF ||
+    (jspdfModule.default && jspdfModule.default.jsPDF) ||
+    jspdfModule.default
+  const autoTable = autoTableModule.autoTable || autoTableModule.default
 
   const { header, body } = buildMatrix(rows, columns)
   const landscape = orientation ? orientation === 'landscape' : columns.length > 6
