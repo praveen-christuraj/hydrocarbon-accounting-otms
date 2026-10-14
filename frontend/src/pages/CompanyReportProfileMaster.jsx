@@ -9,6 +9,11 @@ import PaginationControls, { paginateRows, usePageSize } from '../components/com
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
+import AlertMessage from '../components/common/AlertMessage'
+import FormDialog from '../components/common/FormDialog'
+import Icon from '../components/common/Icon'
+import { usePermissions } from '../hooks/usePermissions'
+import { logUiAction } from '../utils/actionLogger'
 
 const emptyProfile = {
   id: null,
@@ -30,7 +35,6 @@ function CompanyReportProfileMaster({ loggedInUser }) {
   const [profile, setProfile] = useState(emptyProfile)
   const [editId, setEditId] = useState(null)
   const [loading, setLoading] = useState(false)
-  const [showPreview, setShowPreview] = useState(false)
   const [successMsg, setSuccessMsg] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
   const [validationErrors, setValidationErrors] = useState({})
@@ -38,22 +42,12 @@ function CompanyReportProfileMaster({ loggedInUser }) {
   const [page, setPage] = useState(1)
 
   const pageSize = usePageSize()
-  const isAdminBootstrap =
-    loggedInUser?.isAdmin === true ||
-    String(loggedInUser?.username || '').trim().toLowerCase() === 'admin' ||
-    (Array.isArray(loggedInUser?.roles) && loggedInUser.roles.some((role) =>
-      String(role?.role_name || role?.roleName || '').trim().toLowerCase() === 'admin'
-    ))
+  const { hasPermission } = usePermissions(loggedInUser)
 
-  const hasPermission = (permissionName) => {
-    if (isAdminBootstrap) return true
-    if (!loggedInUser || !Array.isArray(loggedInUser.permissions)) return false
-    return loggedInUser.permissions.some(
-      (p) => p.permissionName === permissionName
-    )
-  }
-
-  const canManageProfiles = hasPermission('Manage Company Report Profile')
+  const canCreate = hasPermission('Create Company Report Profile')
+  const canEdit = hasPermission('Edit Company Report Profile')
+  const canDelete = hasPermission('Delete Company Report Profile')
+  const [formOpen, setFormOpen] = useState(false)
   const profilesFilters = useDataFilters(profiles, useAutoColumns(profiles), { module: 'Company Report Profile Master' })
   const visibleProfiles = paginateRows(profilesFilters.filteredRows, page, pageSize)
 
@@ -134,8 +128,8 @@ function CompanyReportProfileMaster({ loggedInUser }) {
     setErrorMsg('')
     setValidationErrors({})
 
-    if (!canManageProfiles) {
-      setErrorMsg('You do not have permission to manage company report profiles.')
+    if (!(editId === null ? canCreate : canEdit)) {
+      setErrorMsg(`You do not have permission to ${editId === null ? 'create' : 'edit'} company report profiles.`)
       return
     }
 
@@ -191,7 +185,7 @@ function CompanyReportProfileMaster({ loggedInUser }) {
       await reloadProfiles()
       setProfile(emptyProfile)
       setEditId(null)
-      setShowPreview(false)
+      setFormOpen(false)
     } catch (error) {
       setErrorMsg(error.message)
     } finally {
@@ -203,8 +197,8 @@ function CompanyReportProfileMaster({ loggedInUser }) {
     setSuccessMsg('')
     setErrorMsg('')
 
-    if (!canManageProfiles) {
-      setErrorMsg('You do not have permission to manage company report profiles.')
+    if (!canEdit) {
+      setErrorMsg('You do not have permission to edit company report profiles.')
       return
     }
 
@@ -222,16 +216,16 @@ function CompanyReportProfileMaster({ loggedInUser }) {
     })
 
     setEditId(profileToEdit.id)
-    setShowPreview(true)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+    setFormOpen(true)
+    logUiAction('Company Report Profile Master', 'Open Edit Dialog', { profileName: profileToEdit.profileName })
   }
 
   const handleDelete = async () => {
     setSuccessMsg('')
     setErrorMsg('')
 
-    if (!canManageProfiles) {
-      setErrorMsg('You do not have permission to manage company report profiles.')
+    if (!canDelete) {
+      setErrorMsg('You do not have permission to delete company report profiles.')
       setConfirmDeleteId(null)
       return
     }
@@ -244,8 +238,7 @@ function CompanyReportProfileMaster({ loggedInUser }) {
       if (editId === confirmDeleteId) {
         setProfile(emptyProfile)
         setEditId(null)
-        setShowPreview(false)
-      }
+        }
 
       setConfirmDeleteId(null)
       setSuccessMsg('Company report profile deleted successfully')
@@ -259,13 +252,16 @@ function CompanyReportProfileMaster({ loggedInUser }) {
   const handleCancelEdit = () => {
     setProfile(emptyProfile)
     setEditId(null)
-    setShowPreview(false)
+    setValidationErrors({})
+    setErrorMsg('')
+    setFormOpen(false)
   }
 
-  const handleNewProfile = () => {
-    setProfile(emptyProfile)
-    setEditId(null)
-    setShowPreview(false)
+  const openCreate = () => {
+    handleCancelEdit()
+    setSuccessMsg('')
+    setFormOpen(true)
+    logUiAction('Company Report Profile Master', 'Open Create Dialog')
   }
 
   return (
@@ -279,14 +275,17 @@ function CompanyReportProfileMaster({ loggedInUser }) {
           </p>
         </div>
 
-        <span className="record-count">{profiles.length} Profiles</span>
+        <div className="page-title-actions">
+          {canCreate && (<button type="button" className="btn-primary" onClick={openCreate}><Icon name="plus" size={15} />New Profile</button>)}
+          <span className="record-count">{profiles.length} Profiles</span>
+        </div>
       </div>
 
-      {!canManageProfiles && (
-        <div className="info-box">
-          You have View Company Report Profile permission only. Create, edit, and
-          delete actions are disabled.
-        </div>
+      {!formOpen && <AlertMessage tone="success" message={successMsg} onDismiss={() => setSuccessMsg('')} />}
+      {!formOpen && <AlertMessage tone="error" message={errorMsg} onDismiss={() => setErrorMsg('')} />}
+
+      {!canCreate && !canEdit && !canDelete && (
+        <div className="info-box">You have view-only access to Company Report Profile Master.</div>
       )}
 
       {confirmDeleteId && (
@@ -305,219 +304,187 @@ function CompanyReportProfileMaster({ loggedInUser }) {
         </div>
       )}
 
-      {canManageProfiles && (
-        <>
-        <form onSubmit={handleSubmit}>
-          <div>
-            <label>Profile Name</label>
-            <input
-              name="profileName"
-              type="text"
-              value={profile.profileName}
-              onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, profileName: '' }) }}
-              placeholder="Example: Allied Company A"
-              disabled={loading}
-              className={validationErrors.profileName ? 'input-error' : ''}
-            />
-            {validationErrors.profileName && (
-              <span className="field-error">{validationErrors.profileName}</span>
-            )}
-          </div>
+      <FormDialog
+        open={formOpen}
+        title={editId === null ? 'New Profile' : 'Edit Profile'}
+        description="Company name, logo and footer used on printable reports. Keep one Active profile per allied company."
+        size="lg"
+        submitLabel={editId === null ? 'Save Profile' : 'Update Profile'}
+        busy={loading}
+        error={errorMsg}
+        onDismissError={() => setErrorMsg('')}
+        onSubmit={handleSubmit}
+        onCancel={handleCancelEdit}
+      >
+        <div>
+          <label>Profile Name</label>
+          <input
+            name="profileName"
+            type="text"
+            value={profile.profileName}
+            onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, profileName: '' }) }}
+            placeholder="Example: Allied Company A"
+            disabled={loading}
+            className={validationErrors.profileName ? 'input-error' : ''}
+          />
+          {validationErrors.profileName && (
+            <span className="field-error">{validationErrors.profileName}</span>
+          )}
+        </div>
 
-          <div>
-            <label>Company Name</label>
-            <input
-              name="companyName"
-              type="text"
-              value={profile.companyName}
-              onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, companyName: '' }) }}
-              placeholder="Enter company name"
-              disabled={loading}
-              className={validationErrors.companyName ? 'input-error' : ''}
-            />
-            {validationErrors.companyName && (
-              <span className="field-error">{validationErrors.companyName}</span>
-            )}
-          </div>
+        <div>
+          <label>Company Name</label>
+          <input
+            name="companyName"
+            type="text"
+            value={profile.companyName}
+            onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, companyName: '' }) }}
+            placeholder="Enter company name"
+            disabled={loading}
+            className={validationErrors.companyName ? 'input-error' : ''}
+          />
+          {validationErrors.companyName && (
+            <span className="field-error">{validationErrors.companyName}</span>
+          )}
+        </div>
 
-          <div>
-            <label>System Name</label>
-            <input
-              name="systemName"
-              type="text"
-              value={profile.systemName}
-              onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, systemName: '' }) }}
-              placeholder="Hydrocarbon Accounting System"
-              disabled={loading}
-              className={validationErrors.systemName ? 'input-error' : ''}
-            />
-            {validationErrors.systemName && (
-              <span className="field-error">{validationErrors.systemName}</span>
-            )}
-          </div>
+        <div>
+          <label>System Name</label>
+          <input
+            name="systemName"
+            type="text"
+            value={profile.systemName}
+            onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, systemName: '' }) }}
+            placeholder="Hydrocarbon Accounting System"
+            disabled={loading}
+            className={validationErrors.systemName ? 'input-error' : ''}
+          />
+          {validationErrors.systemName && (
+            <span className="field-error">{validationErrors.systemName}</span>
+          )}
+        </div>
 
-          <div>
-            <label>Report Subtitle</label>
-            <input
-              name="reportSubtitle"
-              type="text"
-              value={profile.reportSubtitle}
-              onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, reportSubtitle: '' }) }}
-              placeholder="Tank Gauging Quantity Report"
-              disabled={loading}
-              className={validationErrors.reportSubtitle ? 'input-error' : ''}
-            />
-            {validationErrors.reportSubtitle && (
-              <span className="field-error">{validationErrors.reportSubtitle}</span>
-            )}
-          </div>
+        <div>
+          <label>Report Subtitle</label>
+          <input
+            name="reportSubtitle"
+            type="text"
+            value={profile.reportSubtitle}
+            onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, reportSubtitle: '' }) }}
+            placeholder="Tank Gauging Quantity Report"
+            disabled={loading}
+            className={validationErrors.reportSubtitle ? 'input-error' : ''}
+          />
+          {validationErrors.reportSubtitle && (
+            <span className="field-error">{validationErrors.reportSubtitle}</span>
+          )}
+        </div>
 
-          <div>
-            <label>Logo Placeholder Text</label>
-            <input
-              name="logoText"
-              type="text"
-              value={profile.logoText}
-              onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, logoText: '' }) }}
-              placeholder="LOGO"
-              disabled={loading}
-              className={validationErrors.logoText ? 'input-error' : ''}
-            />
-            {validationErrors.logoText && (
-              <span className="field-error">{validationErrors.logoText}</span>
-            )}
-          </div>
+        <div>
+          <label>Logo Placeholder Text</label>
+          <input
+            name="logoText"
+            type="text"
+            value={profile.logoText}
+            onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, logoText: '' }) }}
+            placeholder="LOGO"
+            disabled={loading}
+            className={validationErrors.logoText ? 'input-error' : ''}
+          />
+          {validationErrors.logoText && (
+            <span className="field-error">{validationErrors.logoText}</span>
+          )}
+        </div>
 
-          <div>
-            <label>Status</label>
-            <select
-              name="status"
-              value={profile.status}
-              onChange={handleChange}
-              disabled={loading}
-            >
-              <option>Active</option>
-              <option>Inactive</option>
-              <option>Blocked</option>
-            </select>
-          </div>
+        <div>
+          <label>Status</label>
+          <select
+            name="status"
+            value={profile.status}
+            onChange={handleChange}
+            disabled={loading}
+          >
+            <option>Active</option>
+            <option>Inactive</option>
+            <option>Blocked</option>
+          </select>
+        </div>
 
-          <div className="full-width-field">
-            <label>Company Logo</label>
-            <input
-              type="file"
-              accept=".png,.jpg,.jpeg,image/png,image/jpeg"
-              onChange={handleLogoUpload}
-              disabled={loading}
-            />
+        <div className="full-width-field">
+          <label>Company Logo</label>
+          <input
+            type="file"
+            accept=".png,.jpg,.jpeg,image/png,image/jpeg"
+            onChange={handleLogoUpload}
+            disabled={loading}
+          />
 
-            {profile.logoUrl ? (
-              <div className="company-profile-logo-row">
-                <img
-                  src={profile.logoUrl}
-                  alt="Company Logo Preview"
-                  className="company-profile-logo-preview"
-                />
+          {profile.logoUrl ? (
+            <div className="company-profile-logo-row">
+              <img
+                src={profile.logoUrl}
+                alt="Company Logo Preview"
+                className="company-profile-logo-preview"
+              />
 
-                <button
-                  type="button"
-                  onClick={handleRemoveLogo}
-                  disabled={loading}
-                >
-                  Remove Logo
-                </button>
-              </div>
-            ) : (
-              <div className="info-box">
-                No logo uploaded. Printable reports will show the placeholder
-                text.
-              </div>
-            )}
-          </div>
-
-          <div className="full-width-field">
-            <label>Footer Formula</label>
-            <textarea
-              name="footerFormula"
-              value={profile.footerFormula}
-              onChange={handleChange}
-              rows="3"
-              placeholder="Enter formula text for report footer"
-              disabled={loading}
-            />
-          </div>
-
-          <div className="full-width-field">
-            <label>Footer Note</label>
-            <textarea
-              name="footerNote"
-              value={profile.footerNote}
-              onChange={handleChange}
-              rows="3"
-              placeholder="Enter footer note"
-              disabled={loading}
-            />
-          </div>
-
-          <div className="form-actions">
-            <button type="submit" disabled={loading}>
-              {loading
-                ? 'Please wait...'
-                : editId === null
-                  ? 'Save Profile'
-                  : 'Update Profile'}
-            </button>
-
-            <button type="button" onClick={handleNewProfile} disabled={loading}>
-              New Profile
-            </button>
-
-            {editId !== null && (
               <button
                 type="button"
-                onClick={handleCancelEdit}
+                onClick={handleRemoveLogo}
                 disabled={loading}
               >
-                Cancel Edit
+                Remove Logo
               </button>
-            )}
+            </div>
+          ) : (
+            <div className="info-box">
+              No logo uploaded. Printable reports will show the placeholder
+              text.
+            </div>
+          )}
+        </div>
 
-            <button
-              type="button"
-              onClick={() => setShowPreview(!showPreview)}
-              disabled={loading}
-            >
-              {showPreview ? 'Hide Preview' : 'Show Preview'}
-            </button>
-          </div>
-        </form>
+        <div className="full-width-field">
+          <label>Footer Formula</label>
+          <textarea
+            name="footerFormula"
+            value={profile.footerFormula}
+            onChange={handleChange}
+            rows="3"
+            placeholder="Enter formula text for report footer"
+            disabled={loading}
+          />
+        </div>
 
-      {successMsg && (
-        <div className="success-box">{successMsg}</div>
-      )}
-      {errorMsg && (
-        <div className="error-box">{errorMsg}</div>
-      )}
-      </>
-      )}
-
-      {canManageProfiles && showPreview && (
-        <div className="company-profile-preview-card">
-          <div className="company-profile-preview-logo">
-            {profile.logoUrl ? (
-              <img src={profile.logoUrl} alt="Company Logo" />
-            ) : (
-              <span>{profile.logoText || 'LOGO'}</span>
-            )}
-          </div>
-
-          <div>
-            <h3>{profile.companyName || 'Company Name'}</h3>
-            <p>{profile.systemName || 'Hydrocarbon Accounting System'}</p>
-            <p>{profile.reportSubtitle || 'Report Subtitle'}</p>
+        <div className="full-width-field">
+          <label>Footer Note</label>
+          <textarea
+            name="footerNote"
+            value={profile.footerNote}
+            onChange={handleChange}
+            rows="3"
+            placeholder="Enter footer note"
+            disabled={loading}
+          />
+        </div>
+        <div className="full-width-field">
+          <label>Report Header Preview</label>
+          <div className="company-profile-preview-card">
+            <div className="company-profile-preview-logo">
+              {profile.logoUrl ? (
+                <img src={profile.logoUrl} alt="Company Logo" />
+              ) : (
+                <span>{profile.logoText || 'LOGO'}</span>
+              )}
+            </div>
+            <div>
+              <h3>{profile.companyName || 'Company Name'}</h3>
+              <p>{profile.systemName || 'Hydrocarbon Accounting System'}</p>
+              <p>{profile.reportSubtitle || 'Report Subtitle'}</p>
+            </div>
           </div>
         </div>
-      )}
+      </FormDialog>
+
 
       <div className="section-title">
         <h3>Saved Company Report Profiles</h3>
@@ -532,6 +499,7 @@ function CompanyReportProfileMaster({ loggedInUser }) {
         columns={profilesFilters.columns}
         exportFileName="company-report-profile-master"
         exportTitle="Company Report Profile Master"
+        module="Company Report Profile Master"
       />
 
       <table>
@@ -543,7 +511,7 @@ function CompanyReportProfileMaster({ loggedInUser }) {
             <th>Report Subtitle</th>
             <th>Logo</th>
             <th>Status</th>
-            {canManageProfiles && <th>Actions</th>}
+            {(canEdit || canDelete) && <th>Actions</th>}
           </tr>
         </thead>
 
@@ -551,7 +519,7 @@ function CompanyReportProfileMaster({ loggedInUser }) {
           {profiles.length === 0 ? (
             <tr>
               <td
-                colSpan={canManageProfiles ? 7 : 6}
+                colSpan={canEdit || canDelete ? 7 : 6}
                 className="empty-table"
               >
                 No company report profiles found.
@@ -583,16 +551,19 @@ function CompanyReportProfileMaster({ loggedInUser }) {
                   </span>
                 </td>
 
-                {canManageProfiles && (
-                  <td>
+                {(canEdit || canDelete) && (
+                <td className="row-actions">
+                  {canEdit && (
                     <button type="button" onClick={() => handleEdit(item)}>
                       Edit
                     </button>
-
+                  )}
+                  {canDelete && (
                     <button type="button" onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteId(item.id) }}>
                       Delete
                     </button>
-                  </td>
+                  )}
+                </td>
                 )}
               </tr>
             ))
@@ -606,11 +577,6 @@ function CompanyReportProfileMaster({ loggedInUser }) {
         onPageChange={setPage}
       />
 
-      <div className="info-box">
-        Recommended: keep one Active profile for each allied company. Inactive
-        or Blocked profiles will remain stored but should not be selected for new
-        reports.
-      </div>
     </div>
   )
 }

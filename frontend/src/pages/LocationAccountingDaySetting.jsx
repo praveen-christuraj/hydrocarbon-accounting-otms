@@ -10,6 +10,10 @@ import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
 import { usePermissions } from '../hooks/usePermissions'
+import AlertMessage from '../components/common/AlertMessage'
+import FormDialog from '../components/common/FormDialog'
+import Icon from '../components/common/Icon'
+import { logUiAction } from '../utils/actionLogger'
 
 function LocationAccountingDaySetting({ locations, loggedInUser }) {
   const emptySetting = {
@@ -40,7 +44,11 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
   }, [locations])
 
   const { hasPermission } = usePermissions(loggedInUser)
-  const canManage = hasPermission('Manage Location Accounting Day Setting')
+  const canCreate = hasPermission('Create Location Accounting Day Setting')
+  const canEdit = hasPermission('Edit Location Accounting Day Setting')
+  const canDelete = hasPermission('Delete Location Accounting Day Setting')
+  const [formOpen, setFormOpen] = useState(false)
+  const canManage = editId === null ? canCreate : canEdit
 
   const settingsFilters = useDataFilters(settings, useAutoColumns(settings), { module: 'Location Accounting Day Settings' })
   const visibleSettings = paginateRows(settingsFilters.filteredRows, page, pageSize)
@@ -168,6 +176,7 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
         locationCode: selectedLocationCode,
       })
       setEditId(null)
+      setFormOpen(false)
 
       await reloadSettings(locationToReload)
     } catch (error) {
@@ -178,6 +187,14 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
   }
 
   const handleEdit = (item) => {
+    if (!canEdit) {
+      setErrorMsg('You do not have permission to edit Location Accounting Day Settings.')
+      return
+    }
+    setSuccessMsg('')
+    setErrorMsg('')
+    setFormOpen(true)
+    logUiAction('Location Accounting Day Settings', 'Open Edit Dialog', { locationCode: item.locationCode })
     setSetting({
       locationCode: item.locationCode,
       dayStartTime: item.dayStartTime,
@@ -196,8 +213,8 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
     setSuccessMsg('')
     setErrorMsg('')
 
-    if (!canManage) {
-      setErrorMsg('You do not have permission to manage Location Accounting Day Settings.')
+    if (!canDelete) {
+      setErrorMsg('You do not have permission to delete Location Accounting Day Settings.')
       return
     }
 
@@ -230,6 +247,15 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
       locationCode: selectedLocationCode,
     })
     setEditId(null)
+    setErrorMsg('')
+    setFormOpen(false)
+  }
+
+  const openCreate = () => {
+    handleCancelEdit()
+    setSuccessMsg('')
+    setFormOpen(true)
+    logUiAction('Location Accounting Day Settings', 'Open Create Dialog')
   }
 
   const getLocationDisplay = (locationCode) => {
@@ -259,9 +285,12 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
           </p>
         </div>
 
-        <span className="record-count">
+        <div className="page-title-actions">
+          {canCreate && (<button type="button" className="btn-primary" onClick={openCreate}><Icon name="plus" size={15} />New Setting</button>)}
+          <span className="record-count">
           {settings.length} Settings
         </span>
+        </div>
       </div>
 
       {activeLocations.length === 0 && (
@@ -271,11 +300,11 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
         </div>
       )}
 
-      {!canManage && (
-        <div className="info-box">
-          You can view accounting day settings, but you do not have permission to
-          create, update, or delete them.
-        </div>
+      {!formOpen && <AlertMessage tone="success" message={successMsg} onDismiss={() => setSuccessMsg('')} />}
+      {!formOpen && <AlertMessage tone="error" message={errorMsg} onDismiss={() => setErrorMsg('')} />}
+
+      {!canCreate && !canEdit && !canDelete && (
+        <div className="info-box">You have view-only access to Location Accounting Day Settings.</div>
       )}
 
       {confirmDeleteItem && (
@@ -323,14 +352,26 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
         </div>
       </div>
 
-      <form onSubmit={handleSubmit}>
+      <FormDialog
+        open={formOpen}
+        title={editId === null ? 'New Accounting Day Setting' : 'Edit Accounting Day Setting'}
+        description="Example: start 06:01 and end 06:00 means accounting date 17/05 runs from 17/05 06:01 to 18/05 06:00."
+        size="lg"
+        columns={3}
+        submitLabel={editId === null ? 'Save Setting' : 'Update Setting'}
+        busy={loading}
+        error={errorMsg}
+        onDismissError={() => setErrorMsg('')}
+        onSubmit={handleSubmit}
+        onCancel={handleCancelEdit}
+      >
         <div>
           <label>Location</label>
           <select
             name="locationCode"
             value={setting.locationCode}
             onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, locationCode: '' }) }}
-            disabled={!canManage || loading}
+            disabled={loading}
             className={validationErrors.locationCode ? 'input-error' : ''}
           >
             <option value="">Select Location</option>
@@ -353,7 +394,7 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
             type="time"
             value={setting.dayStartTime}
             onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, dayStartTime: '' }) }}
-            disabled={!canManage || loading}
+            disabled={loading}
             className={validationErrors.dayStartTime ? 'input-error' : ''}
           />
           {validationErrors.dayStartTime && (
@@ -368,7 +409,7 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
             type="time"
             value={setting.dayEndTime}
             onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, dayEndTime: '' }) }}
-            disabled={!canManage || loading}
+            disabled={loading}
             className={validationErrors.dayEndTime ? 'input-error' : ''}
           />
           {validationErrors.dayEndTime && (
@@ -384,7 +425,7 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
             value={setting.timezoneName}
             onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, timezoneName: '' }) }}
             placeholder="Example: Africa/Lagos"
-            disabled={!canManage || loading}
+            disabled={loading}
             className={validationErrors.timezoneName ? 'input-error' : ''}
           />
           {validationErrors.timezoneName && (
@@ -399,7 +440,7 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
             type="date"
             value={setting.effectiveFrom}
             onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, effectiveFrom: '' }) }}
-            disabled={!canManage || loading}
+            disabled={loading}
             className={validationErrors.effectiveFrom ? 'input-error' : ''}
           />
           {validationErrors.effectiveFrom && (
@@ -414,7 +455,7 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
             type="date"
             value={setting.effectiveTo}
             onChange={(e) => { handleChange(e); setValidationErrors({ ...validationErrors, effectiveTo: '' }) }}
-            disabled={!canManage || loading}
+            disabled={loading}
             className={validationErrors.effectiveTo ? 'input-error' : ''}
           />
           {validationErrors.effectiveTo && (
@@ -428,7 +469,7 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
             name="status"
             value={setting.status}
             onChange={handleChange}
-            disabled={!canManage || loading}
+            disabled={loading}
           >
             <option>Active</option>
             <option>Inactive</option>
@@ -444,38 +485,18 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
             onChange={handleChange}
             placeholder="Example: Daily accounting window from 06:01 to 06:00 next day"
             rows="3"
-            disabled={!canManage || loading}
+            disabled={loading}
           />
         </div>
+      </FormDialog>
 
-        <div className="form-actions">
-          <button type="submit" disabled={!canManage || loading}>
-            {loading
-              ? 'Please wait...'
-              : editId === null
-                ? 'Save Setting'
-                : 'Update Setting'}
-          </button>
-
-          {editId !== null && (
-            <button
-              type="button"
-              onClick={handleCancelEdit}
-              disabled={loading}
-            >
-              Cancel Edit
-            </button>
-          )}
-        </div>
-      </form>
-
-      <div className="section-title">
-        <h3>Saved Accounting Day Settings</h3>
-        <p>
-          These settings will be used by the Tank Stock Ledger to assign each
-          approved movement to the correct operational accounting date.
-        </p>
-      </div>
+      <DataTableToolbar
+        filters={settingsFilters}
+        columns={settingsFilters.columns}
+        exportFileName="location-accounting-day-settings"
+        exportTitle="Location Accounting Day Settings"
+        module="Location Accounting Day Settings"
+      />
 
       <table>
         <thead>
@@ -489,14 +510,14 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
             <th>Timezone</th>
             <th>Status</th>
             <th>Description</th>
-            <th>Actions</th>
+            {(canEdit || canDelete) && <th>Actions</th>}
           </tr>
         </thead>
 
         <tbody>
           {settings.length === 0 ? (
             <tr>
-              <td colSpan="10" className="empty-table">
+              <td colSpan={canEdit || canDelete ? 10 : 9} className="empty-table">
                 No Location Accounting Day Settings found.
               </td>
             </tr>
@@ -516,42 +537,31 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
                   </span>
                 </td>
                 <td>{item.description}</td>
-                <td>
-                  <button
-                    type="button"
-                    onClick={() => handleEdit(item)}
-                    disabled={loading}
-                  >
-                    Edit
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteItem(item) }}
-                    disabled={loading}
-                  >
-                    Delete
-                  </button>
-                </td>
+                {(canEdit || canDelete) && (
+                  <td className="row-actions">
+                    {canEdit && (
+                      <button type="button" onClick={() => handleEdit(item)} disabled={loading}>
+                        Edit
+                      </button>
+                    )}
+                    {canDelete && (
+                      <button
+                        type="button"
+                        onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteItem(item) }}
+                        disabled={loading}
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </td>
+                )}
               </tr>
             ))
           )}
         </tbody>
       </table>
 
-      {successMsg && (
-        <div className="success-box">{successMsg}</div>
-      )}
-      {errorMsg && (
-        <div className="error-box">{errorMsg}</div>
-      )}
-
-      <div className="info-box">
-        Example: if the start time is 06:01 and end time is 06:00, then
-        accounting date 17/05/2026 runs from 17/05/2026 06:01 to 18/05/2026
-        06:00. Any transaction before 06:01 belongs to the previous accounting
-        date.
-      </div>
+      <PaginationControls currentPage={page} totalRows={settingsFilters.filteredRows.length} onPageChange={setPage} />
     </div>
   )
 }

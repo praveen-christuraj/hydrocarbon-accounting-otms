@@ -8,6 +8,11 @@ import PaginationControls, { paginateRows, usePageSize } from '../components/com
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
+import AlertMessage from '../components/common/AlertMessage'
+import FormDialog from '../components/common/FormDialog'
+import Icon from '../components/common/Icon'
+import { usePermissions } from '../hooks/usePermissions'
+import { logUiAction } from '../utils/actionLogger'
 
 function LocationOperationAvailability({
   locations,
@@ -41,24 +46,12 @@ function LocationOperationAvailability({
     return operationType.status === 'Active'
   })
 
-  const isAdminBootstrap =
-    loggedInUser?.isAdmin === true ||
-    String(loggedInUser?.username || '').trim().toLowerCase() === 'admin' ||
-    (Array.isArray(loggedInUser?.roles) && loggedInUser.roles.some((role) =>
-      String(role?.role_name || role?.roleName || '').trim().toLowerCase() === 'admin'
-    ))
+  const { hasPermission } = usePermissions(loggedInUser)
 
-  const hasPermission = (permissionName) => {
-    if (isAdminBootstrap) return true
-    if (!loggedInUser || !Array.isArray(loggedInUser.permissions)) return false
-    return loggedInUser.permissions.some(
-      (p) => p.permissionName === permissionName
-    )
-  }
-
-  const canManageAvailability = hasPermission(
-    'Manage Location Operation Availability'
-  )
+  const canCreate = hasPermission('Create Location Operation Availability')
+  const canEdit = hasPermission('Edit Location Operation Availability')
+  const canDelete = hasPermission('Delete Location Operation Availability')
+  const [formOpen, setFormOpen] = useState(false)
   const locationOperationAvailabilityFilters = useDataFilters(locationOperationAvailability, useAutoColumns(locationOperationAvailability), { module: 'Location Operation Availability' })
   const visibleEntries = paginateRows(locationOperationAvailabilityFilters.filteredRows, page, pageSize)
 
@@ -120,8 +113,8 @@ function LocationOperationAvailability({
   const handleSubmit = async (e) => {
     e.preventDefault()
 
-    if (!canManageAvailability) {
-      setErrorMsg('You do not have permission to manage location operation availability.')
+    if (!(editId === null ? canCreate : canEdit)) {
+      setErrorMsg(`You do not have permission to ${editId === null ? 'create' : 'edit'} location operation availability.`)
       return
     }
 
@@ -144,6 +137,7 @@ function LocationOperationAvailability({
 
       setFormData(emptyForm)
       setEditId(null)
+      setFormOpen(false)
     } catch (error) {
       setErrorMsg(error.message)
     } finally {
@@ -152,10 +146,15 @@ function LocationOperationAvailability({
   }
 
   const handleEdit = (item) => {
-    if (!canManageAvailability) {
-      setErrorMsg('You do not have permission to manage location operation availability.')
+    if (!canEdit) {
+      setErrorMsg('You do not have permission to edit location operation availability.')
       return
     }
+    setSuccessMsg('')
+    setErrorMsg('')
+    setValidationErrors({})
+    setFormOpen(true)
+    logUiAction('Location Operation Availability', 'Open Edit Dialog', { locationCode: item.locationCode, operationTypeCode: item.operationTypeCode })
 
     setFormData({
       locationCode: item.locationCode,
@@ -168,8 +167,8 @@ function LocationOperationAvailability({
   }
 
   const handleDelete = (item) => {
-    if (!canManageAvailability) {
-      setErrorMsg('You do not have permission to manage location operation availability.')
+    if (!canDelete) {
+      setErrorMsg('You do not have permission to delete location operation availability.')
       return
     }
 
@@ -204,6 +203,16 @@ function LocationOperationAvailability({
   const handleCancelEdit = () => {
     setFormData(emptyForm)
     setEditId(null)
+    setValidationErrors({})
+    setErrorMsg('')
+    setFormOpen(false)
+  }
+
+  const openCreate = () => {
+    handleCancelEdit()
+    setSuccessMsg('')
+    setFormOpen(true)
+    logUiAction('Location Operation Availability', 'Open Create Dialog')
   }
 
   const getLocationDisplay = (locationCode) => {
@@ -251,109 +260,104 @@ function LocationOperationAvailability({
           </p>
         </div>
 
-        <span className="record-count">
+        <div className="page-title-actions">
+          {canCreate && (<button type="button" className="btn-primary" onClick={openCreate}><Icon name="plus" size={15} />New Availability</button>)}
+          <span className="record-count">
           {locationOperationAvailability.length} Configurations
         </span>
+        </div>
       </div>
 
-      {!canManageAvailability && (
-        <div className="info-box">
-          You have View Location Operation Availability permission only. Create,
-          edit, and delete actions are disabled.
-        </div>
+      {!formOpen && <AlertMessage tone="success" message={successMsg} onDismiss={() => setSuccessMsg('')} />}
+      {!formOpen && <AlertMessage tone="error" message={errorMsg} onDismiss={() => setErrorMsg('')} />}
+
+      {!canCreate && !canEdit && !canDelete && (
+        <div className="info-box">You have view-only access to Location Operation Availability.</div>
       )}
 
-      {canManageAvailability && (
-        <form onSubmit={handleSubmit}>
-          <div>
-            <label>Location</label>
-            <select
-              name="locationCode"
-              value={formData.locationCode}
-              onChange={handleChange}
-            >
-              <option value="">Select Location</option>
+      <FormDialog
+        open={formOpen}
+        title={editId === null ? 'New Availability' : 'Edit Availability'}
+        description="Operation Entry offers an operation type at a location only when it is configured here."
+        submitLabel={editId === null ? 'Save Availability' : 'Update Availability'}
+        busy={loading}
+        error={errorMsg}
+        onDismissError={() => setErrorMsg('')}
+        onSubmit={handleSubmit}
+        onCancel={handleCancelEdit}
+      >
+        <div>
+          <label>Location</label>
+          <select
+            name="locationCode"
+            value={formData.locationCode}
+            onChange={handleChange}
+          >
+            <option value="">Select Location</option>
 
-              {activeLocations.map((location) => (
-                <option key={location.id} value={location.locationCode}>
-                  {location.locationName} ({location.locationCode})
-                </option>
-              ))}
-            </select>
-            {validationErrors.locationCode && (
-              <span className="field-error">{validationErrors.locationCode}</span>
-            )}
-          </div>
-
-          <div>
-            <label>Operation Type</label>
-            <select
-              name="operationTypeCode"
-              value={formData.operationTypeCode}
-              onChange={handleChange}
-            >
-              <option value="">Select Operation Type</option>
-
-              {activeOperationTypes.map((operationType) => (
-                <option
-                  key={operationType.id}
-                  value={operationType.operationTypeCode}
-                >
-                  {operationType.operationTypeName} (
-                  {operationType.operationTypeCode})
-                </option>
-              ))}
-            </select>
-            {validationErrors.operationTypeCode && (
-              <span className="field-error">{validationErrors.operationTypeCode}</span>
-            )}
-          </div>
-
-          <div>
-            <label>Status</label>
-            <select
-              name="status"
-              value={formData.status}
-              onChange={handleChange}
-            >
-              <option>Active</option>
-              <option>Inactive</option>
-              <option>Blocked</option>
-            </select>
-          </div>
-
-          <div className="full-width-field">
-            <label>Remarks</label>
-            <textarea
-              name="remarks"
-              value={formData.remarks}
-              onChange={handleChange}
-              placeholder="Enter remarks"
-              rows="3"
-            />
-          </div>
-
-          <div className="form-actions">
-            <button type="submit" disabled={loading}>
-              {loading
-                ? 'Saving...'
-                : editId === null
-                  ? 'Save Configuration'
-                  : 'Update Configuration'}
-            </button>
-
-            {editId !== null && (
-              <button type="button" onClick={handleCancelEdit}>
-                Cancel Edit
-              </button>
-            )}
-          </div>
-          {validationErrors._form && (
-            <span className="field-error" style={{ display: 'block', marginTop: 8 }}>{validationErrors._form}</span>
+            {activeLocations.map((location) => (
+              <option key={location.id} value={location.locationCode}>
+                {location.locationName} ({location.locationCode})
+              </option>
+            ))}
+          </select>
+          {validationErrors.locationCode && (
+            <span className="field-error">{validationErrors.locationCode}</span>
           )}
-        </form>
-      )}
+        </div>
 
+        <div>
+          <label>Operation Type</label>
+          <select
+            name="operationTypeCode"
+            value={formData.operationTypeCode}
+            onChange={handleChange}
+          >
+            <option value="">Select Operation Type</option>
+
+            {activeOperationTypes.map((operationType) => (
+              <option
+                key={operationType.id}
+                value={operationType.operationTypeCode}
+              >
+                {operationType.operationTypeName} (
+                {operationType.operationTypeCode})
+              </option>
+            ))}
+          </select>
+          {validationErrors.operationTypeCode && (
+            <span className="field-error">{validationErrors.operationTypeCode}</span>
+          )}
+        </div>
+
+        <div>
+          <label>Status</label>
+          <select
+            name="status"
+            value={formData.status}
+            onChange={handleChange}
+          >
+            <option>Active</option>
+            <option>Inactive</option>
+            <option>Blocked</option>
+          </select>
+        </div>
+
+        <div className="full-width-field">
+          <label>Remarks</label>
+          <textarea
+            name="remarks"
+            value={formData.remarks}
+            onChange={handleChange}
+            placeholder="Enter remarks"
+            rows="3"
+          />
+        </div>
+
+        {validationErrors._form && (
+          <span className="field-error" style={{ display: 'block', marginTop: 8 }}>{validationErrors._form}</span>
+        )}
+      </FormDialog>
       <div className="section-title">
         <h3>Configured Availability</h3>
         <p>
@@ -375,7 +379,7 @@ function LocationOperationAvailability({
             <th>Operation Type</th>
             <th>Status</th>
             <th>Remarks</th>
-            {canManageAvailability && <th>Actions</th>}
+            {(canEdit || canDelete) && <th>Actions</th>}
           </tr>
         </thead>
 
@@ -383,7 +387,7 @@ function LocationOperationAvailability({
           {visibleEntries.length === 0 ? (
             <tr>
               <td
-                colSpan={canManageAvailability ? 5 : 4}
+                colSpan={canEdit || canDelete ? 5 : 4}
                 className="empty-table"
               >
                 No location operation availability configured yet.
@@ -401,15 +405,18 @@ function LocationOperationAvailability({
                 </td>
                 <td>{item.remarks}</td>
 
-                {canManageAvailability && (
-                  <td>
-                    <button type="button" onClick={() => handleEdit(item)}>
-                      Edit
-                    </button>
-
-                    <button type="button" onClick={() => handleDelete(item)}>
-                      Delete
-                    </button>
+                {(canEdit || canDelete) && (
+                  <td className="row-actions">
+                    {canEdit && (
+                      <button type="button" onClick={() => handleEdit(item)}>
+                        Edit
+                      </button>
+                    )}
+                    {canDelete && (
+                      <button type="button" onClick={() => handleDelete(item)}>
+                        Delete
+                      </button>
+                    )}
                   </td>
                 )}
               </tr>
@@ -424,21 +431,6 @@ function LocationOperationAvailability({
         onPageChange={setPage}
       />
 
-      <div className="info-box">
-        Example: If Truck Loading is configured for Utapate Terminal, then
-        Operation Entry can later show Truck Loading only for that location.
-      </div>
-
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
     </div>
   )
 }

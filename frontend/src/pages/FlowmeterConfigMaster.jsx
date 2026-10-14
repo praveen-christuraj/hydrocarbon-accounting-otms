@@ -10,6 +10,11 @@ import PaginationControls, { paginateRows, usePageSize } from '../components/com
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
+import AlertMessage from '../components/common/AlertMessage'
+import FormDialog from '../components/common/FormDialog'
+import Icon from '../components/common/Icon'
+import { usePermissions } from '../hooks/usePermissions'
+import { logUiAction } from '../utils/actionLogger'
 
 const emptyForm = {
   id: null,
@@ -52,20 +57,11 @@ function FlowmeterConfigMaster({ locations = [], assets = [], assetAssignments =
     setHistoryPage(1)
   }, [historyRows.length])
 
-  const isAdminBootstrap =
-    loggedInUser?.isAdmin === true ||
-    String(loggedInUser?.username || '').trim().toLowerCase() === 'admin' ||
-    (Array.isArray(loggedInUser?.roles) && loggedInUser.roles.some((role) =>
-      String(role?.role_name || role?.roleName || '').trim().toLowerCase() === 'admin'
-    ))
-  const hasPermission = (permissionName) => {
-    if (isAdminBootstrap) return true
-    if (!loggedInUser || !Array.isArray(loggedInUser.permissions)) return false
-    return loggedInUser.permissions.some(
-      (p) => p.permissionName === permissionName
-    )
-  }
-  const canManageFlowmeterConfig = hasPermission('Manage Flowmeter Config')
+  const { hasPermission } = usePermissions(loggedInUser)
+  const canCreate = hasPermission('Create Flowmeter Config')
+  const canEdit = hasPermission('Edit Flowmeter Config')
+  const canDelete = hasPermission('Delete Flowmeter Config')
+  const [formOpen, setFormOpen] = useState(false)
 
   const activeAssets = useMemo(() => {
     return (assets || []).filter((a) => String(a.status || '').toLowerCase() === 'active')
@@ -122,8 +118,8 @@ function FlowmeterConfigMaster({ locations = [], assets = [], assetAssignments =
   }, [])
 
   const handleSave = async () => {
-    if (!canManageFlowmeterConfig) {
-      setErrorMsg('You do not have permission to manage flowmeter configurations.')
+    if (!(form.id ? canEdit : canCreate)) {
+      setErrorMsg(`You do not have permission to ${form.id ? 'edit' : 'create'} flowmeter configurations.`)
       return
     }
 
@@ -156,6 +152,7 @@ function FlowmeterConfigMaster({ locations = [], assets = [], assetAssignments =
         setSuccessMsg('Flowmeter config created')
       }
       setForm(emptyForm)
+      setFormOpen(false)
       await reload()
     } catch (error) {
       setErrorMsg(error?.message || 'Save failed')
@@ -165,10 +162,15 @@ function FlowmeterConfigMaster({ locations = [], assets = [], assetAssignments =
   }
 
   const handleEdit = (row) => {
-    if (!canManageFlowmeterConfig) {
-      setErrorMsg('You do not have permission to manage flowmeter configurations.')
+    if (!canEdit) {
+      setErrorMsg('You do not have permission to edit flowmeter configurations.')
       return
     }
+    setSuccessMsg('')
+    setErrorMsg('')
+    setValidationErrors({})
+    setFormOpen(true)
+    logUiAction('Flowmeter Config', 'Open Edit Dialog', { meterLabel: row.meterLabel })
 
     setForm({
       id: row.id,
@@ -184,9 +186,25 @@ function FlowmeterConfigMaster({ locations = [], assets = [], assetAssignments =
     })
   }
 
+  const openCreate = () => {
+    setForm(emptyForm)
+    setSuccessMsg('')
+    setErrorMsg('')
+    setValidationErrors({})
+    setFormOpen(true)
+    logUiAction('Flowmeter Config', 'Open Create Dialog')
+  }
+
+  const closeForm = () => {
+    setForm(emptyForm)
+    setErrorMsg('')
+    setValidationErrors({})
+    setFormOpen(false)
+  }
+
   const handleDelete = async () => {
-    if (!canManageFlowmeterConfig) {
-      setErrorMsg('You do not have permission to manage flowmeter configurations.')
+    if (!canDelete) {
+      setErrorMsg('You do not have permission to delete flowmeter configurations.')
       return
     }
 
@@ -212,6 +230,10 @@ function FlowmeterConfigMaster({ locations = [], assets = [], assetAssignments =
           <h2>Flowmeter Config</h2>
           <p>Configure flowmeters (sub-assets) under selected metering stream asset.</p>
         </div>
+        <div className="page-title-actions">
+          {canCreate && (<button type="button" className="btn-primary" onClick={openCreate}><Icon name="plus" size={15} />New Flowmeter Config</button>)}
+          <span className="record-count">{rows.length} Configs</span>
+        </div>
       </div>
 
       {confirmDeleteItem && (
@@ -230,16 +252,26 @@ function FlowmeterConfigMaster({ locations = [], assets = [], assetAssignments =
         </div>
       )}
 
-      {!canManageFlowmeterConfig && (
-        <div className="info-box">
-          You are in view-only mode. Contact an administrator to configure
-          flowmeters.
-        </div>
+      {!formOpen && <AlertMessage tone="success" message={successMsg} onDismiss={() => setSuccessMsg('')} />}
+      {!formOpen && <AlertMessage tone="error" message={errorMsg} onDismiss={() => setErrorMsg('')} />}
+
+      {!canCreate && !canEdit && !canDelete && (
+        <div className="info-box">You have view-only access to Flowmeter Config.</div>
       )}
 
-      {canManageFlowmeterConfig && (
-      <>
-      <div className="form-grid">
+      <FormDialog
+        open={formOpen}
+        title={form.id ? 'Edit Flowmeter Config' : 'New Flowmeter Config'}
+        description="Flowmeters are configured under a metering stream asset with an active location assignment."
+        size="lg"
+        columns={3}
+        submitLabel={form.id ? 'Update Config' : 'Save Config'}
+        busy={saving}
+        error={errorMsg}
+        onDismissError={() => setErrorMsg('')}
+        onSubmit={handleSave}
+        onCancel={closeForm}
+      >
         <div>
           <label>Stream Asset *</label>
           <select
@@ -327,22 +359,7 @@ function FlowmeterConfigMaster({ locations = [], assets = [], assetAssignments =
           <label>Remarks</label>
           <input value={form.remarks} onChange={(e) => setForm((p) => ({ ...p, remarks: e.target.value }))} />
         </div>
-      </div>
-
-      <div className="form-actions">
-        <button type="button" onClick={handleSave} disabled={saving}>
-          {saving ? 'Saving...' : form.id ? 'Update Config' : 'Save Config'}
-        </button>
-        <button type="button" onClick={() => setForm(emptyForm)} disabled={saving}>Clear</button>
-      </div>
-      {successMsg && (
-        <div className="success-box">{successMsg}</div>
-      )}
-      {errorMsg && (
-        <div className="error-box">{errorMsg}</div>
-      )}
-      </>
-      )}
+      </FormDialog>
 
       <div className="section-title">
         <h3>Saved Configs</h3>
@@ -357,6 +374,7 @@ function FlowmeterConfigMaster({ locations = [], assets = [], assetAssignments =
             columns={rowsFilters.columns}
             exportFileName="flowmeter-config-rows"
             exportTitle="Flowmeter Config"
+            module="Flowmeter Config"
           />
 
           <table>
@@ -370,7 +388,7 @@ function FlowmeterConfigMaster({ locations = [], assets = [], assetAssignments =
                 <th>Unit</th>
                 <th>Calibration Date</th>
                 <th>Status</th>
-                <th>Action</th>
+                {(canEdit || canDelete) && <th>Actions</th>}
               </tr>
             </thead>
             <tbody>
@@ -383,20 +401,22 @@ function FlowmeterConfigMaster({ locations = [], assets = [], assetAssignments =
                   <td>{row.meterFactor}</td>
                   <td>{row.meterUnit}</td>
                   <td>{row.calibrationDate || '-'}</td>
-                  <td>{row.status}</td>
-                  <td className="action-buttons">
-                    {canManageFlowmeterConfig && (
-                      <button type="button" onClick={() => handleEdit(row)}>Edit</button>
-                    )}
-                    {canManageFlowmeterConfig && (
-                      <button type="button" className="danger-button" onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteItem(row) }}>Delete</button>
-                    )}
-                  </td>
+                  <td><span className={`status-badge ${String(row.status || '').toLowerCase()}`}>{row.status}</span></td>
+                  {(canEdit || canDelete) && (
+                    <td className="row-actions">
+                      {canEdit && (
+                        <button type="button" onClick={() => handleEdit(row)}>Edit</button>
+                      )}
+                      {canDelete && (
+                        <button type="button" onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteItem(row) }}>Delete</button>
+                      )}
+                    </td>
+                  )}
                 </tr>
               ))}
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={9}>No flowmeter config found.</td>
+                  <td colSpan={canEdit || canDelete ? 9 : 8} className="empty-table">No flowmeter config found.</td>
                 </tr>
               ) : null}
             </tbody>

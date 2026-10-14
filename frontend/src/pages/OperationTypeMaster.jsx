@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   createOperationType,
   deleteOperationType,
@@ -8,6 +8,11 @@ import PaginationControls, { paginateRows, usePageSize } from '../components/com
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
+import AlertMessage from '../components/common/AlertMessage'
+import FormDialog from '../components/common/FormDialog'
+import Icon from '../components/common/Icon'
+import { usePermissions } from '../hooks/usePermissions'
+import { logUiAction } from '../utils/actionLogger'
 
 function OperationTypeMaster({
   assetTypes,
@@ -15,24 +20,10 @@ function OperationTypeMaster({
   reloadOperationTypes,
   loggedInUser,
 }) {
-  const isAdminBootstrap =
-    loggedInUser?.isAdmin === true ||
-    String(loggedInUser?.username || '').trim().toLowerCase() === 'admin' ||
-    (Array.isArray(loggedInUser?.roles) && loggedInUser.roles.some((role) =>
-      String(role?.role_name || role?.roleName || '').trim().toLowerCase() === 'admin'
-    ))
-
-  const hasPermission = (permissionName) =>
-    Boolean(
-      loggedInUser?.permissions?.some(
-        (p) => p.permissionName === permissionName
-      )
-    )
-
-  const canManageOperationType = useMemo(() => {
-    if (isAdminBootstrap) return true
-    return hasPermission('Manage Operation Type')
-  }, [loggedInUser])
+  const { hasPermission } = usePermissions(loggedInUser)
+  const canCreate = hasPermission('Create Operation Type')
+  const canEdit = hasPermission('Edit Operation Type')
+  const canDelete = hasPermission('Delete Operation Type')
   const emptyOperationType = {
     operationTypeName: '',
     operationTypeCode: '',
@@ -48,6 +39,8 @@ function OperationTypeMaster({
 
   const [operationType, setOperationType] = useState(emptyOperationType)
   const [editId, setEditId] = useState(null)
+  const [formOpen, setFormOpen] = useState(false)
+  const canManageOperationType = editId === null ? canCreate : canEdit
   const [loading, setLoading] = useState(false)
   const [successMsg, setSuccessMsg] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
@@ -134,6 +127,7 @@ function OperationTypeMaster({
       await reloadOperationTypes()
       setOperationType(emptyOperationType)
       setEditId(null)
+      setFormOpen(false)
     } catch (error) {
       setErrorMsg(error.message)
     } finally {
@@ -142,8 +136,8 @@ function OperationTypeMaster({
   }
 
   const handleEdit = (item) => {
-    if (!canManageOperationType) {
-      setErrorMsg('You do not have permission to manage operation types')
+    if (!canEdit) {
+      setErrorMsg('You do not have permission to edit operation types.')
       return
     }
     setOperationType({
@@ -160,11 +154,13 @@ function OperationTypeMaster({
     })
 
     setEditId(item.id)
+    setFormOpen(true)
+    logUiAction('Operation Type Master', 'Open Edit Dialog')
   }
 
   const handleDelete = async () => {
-    if (!canManageOperationType) {
-      setErrorMsg('You do not have permission to manage operation types')
+    if (!canDelete) {
+      setErrorMsg('You do not have permission to delete operation types.')
       setConfirmDeleteId(null)
       return
     }
@@ -194,6 +190,16 @@ function OperationTypeMaster({
   const handleCancelEdit = () => {
     setOperationType(emptyOperationType)
     setEditId(null)
+    setValidationErrors({})
+    setErrorMsg('')
+    setFormOpen(false)
+  }
+
+  const openCreate = () => {
+    handleCancelEdit()
+    setSuccessMsg('')
+    setFormOpen(true)
+    logUiAction('Operation Type Master', 'Open Create Dialog')
   }
 
   const getAssetTypeName = (assetTypeCode) => {
@@ -218,9 +224,12 @@ function OperationTypeMaster({
           </p>
         </div>
 
-        <span className="record-count">
+        <div className="page-title-actions">
+          {canCreate && (<button type="button" className="btn-primary" onClick={openCreate}><Icon name="plus" size={15} />New Operation Type</button>)}
+          <span className="record-count">
           {operationTypes.length} Operation Types
         </span>
+        </div>
       </div>
 
       {activeAssetTypes.length === 0 && (
@@ -246,7 +255,18 @@ function OperationTypeMaster({
         </div>
       )}
 
-      <form onSubmit={handleSubmit}>
+      <FormDialog
+        open={formOpen}
+        title={editId === null ? 'New Operation Type' : 'Edit Operation Type'}
+        size="lg"
+        columns={3}
+        submitLabel={editId === null ? 'Save Operation Type' : 'Update Operation Type'}
+        busy={loading}
+        error={errorMsg}
+        onDismissError={() => setErrorMsg('')}
+        onSubmit={handleSubmit}
+        onCancel={handleCancelEdit}
+      >
         <div>
           <label>Operation Type Name</label>
           <input
@@ -402,35 +422,14 @@ function OperationTypeMaster({
             disabled={!canManageOperationType}
           />
         </div>
+      </FormDialog>
 
-        <div className="form-actions">
-          <button type="submit" disabled={loading || !canManageOperationType}>
-            {loading
-              ? 'Please wait...'
-              : editId === null
-                ? 'Save Operation Type'
-                : 'Update Operation Type'}
-          </button>
 
-          {editId !== null && (
-            <button type="button" onClick={handleCancelEdit} disabled={loading}>
-              Cancel Edit
-            </button>
-          )}
-        </div>
-      </form>
+      {!formOpen && <AlertMessage tone="success" message={successMsg} onDismiss={() => setSuccessMsg('')} />}
+      {!formOpen && <AlertMessage tone="error" message={errorMsg} onDismiss={() => setErrorMsg('')} />}
 
-      {successMsg && (
-        <div className="success-box">{successMsg}</div>
-      )}
-      {errorMsg && (
-        <div className="error-box">{errorMsg}</div>
-      )}
-
-      {!canManageOperationType && (
-        <div className="info-box">
-          You have view-only access. Assign <strong>Manage Operation Type</strong> to create, edit, or delete operation types.
-        </div>
+      {!canCreate && !canEdit && !canDelete && (
+        <div className="info-box">You have view-only access to Operation Type Master.</div>
       )}
 
       <div className="section-title">
@@ -491,13 +490,17 @@ function OperationTypeMaster({
                   </span>
                 </td>
                 <td>
-                  <button type="button" onClick={() => handleEdit(item)} disabled={!canManageOperationType}>
-                    Edit
-                  </button>
+                  {canEdit && (
+                    <button type="button" onClick={() => handleEdit(item)}>
+                      Edit
+                    </button>
+                  )}
 
-                  <button type="button" onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteId(item.id) }} disabled={!canManageOperationType}>
-                    Delete
-                  </button>
+                  {canDelete && (
+                    <button type="button" onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteId(item.id) }}>
+                      Delete
+                    </button>
+                  )}
                 </td>
               </tr>
             ))

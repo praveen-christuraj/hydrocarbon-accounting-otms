@@ -8,6 +8,11 @@ import PaginationControls, { paginateRows, usePageSize } from '../components/com
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
+import AlertMessage from '../components/common/AlertMessage'
+import FormDialog from '../components/common/FormDialog'
+import Icon from '../components/common/Icon'
+import { usePermissions } from '../hooks/usePermissions'
+import { logUiAction } from '../utils/actionLogger'
 
 const IMPORT_STATUSES = ['Active', 'Inactive', 'Blocked']
 
@@ -32,22 +37,12 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
   const assetTypesFilters = useDataFilters(assetTypes, useAutoColumns(assetTypes), { module: 'Asset Type Master' })
   const visibleItems = paginateRows(assetTypesFilters.filteredRows, page, pageSize)
 
-  const isAdminBootstrap =
-    loggedInUser?.isAdmin === true ||
-    String(loggedInUser?.username || '').trim().toLowerCase() === 'admin' ||
-    (Array.isArray(loggedInUser?.roles) && loggedInUser.roles.some((role) =>
-      String(role?.role_name || role?.roleName || '').trim().toLowerCase() === 'admin'
-    ))
+  const { hasPermission } = usePermissions(loggedInUser)
 
-  const hasPermission = (permissionName) => {
-    if (isAdminBootstrap) return true
-    if (!loggedInUser || !Array.isArray(loggedInUser.permissions)) return false
-    return loggedInUser.permissions.some(
-      (p) => p.permissionName === permissionName
-    )
-  }
-
-  const canManageAssetType = hasPermission('Manage Asset Type')
+  const canCreate = hasPermission('Create Asset Type')
+  const canEdit = hasPermission('Edit Asset Type')
+  const canDelete = hasPermission('Delete Asset Type')
+  const [formOpen, setFormOpen] = useState(false)
 
   const handleChange = (e) => {
     setAssetType({
@@ -62,8 +57,8 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
     setErrorMsg('')
     setValidationErrors({})
 
-    if (!canManageAssetType) {
-      setErrorMsg('You do not have permission to manage asset types.')
+    if (!(editId === null ? canCreate : canEdit)) {
+      setErrorMsg(`You do not have permission to ${editId === null ? 'create' : 'edit'} asset types.`)
       return
     }
 
@@ -111,6 +106,7 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
       await reloadAssetTypes()
       setAssetType(emptyAssetType)
       setEditId(null)
+      setFormOpen(false)
     } catch (error) {
       setErrorMsg(error.message)
     } finally {
@@ -123,8 +119,8 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
     setErrorMsg('')
     setValidationErrors({})
 
-    if (!canManageAssetType) {
-      setErrorMsg('You do not have permission to manage asset types.')
+    if (!canEdit) {
+      setErrorMsg('You do not have permission to edit asset types.')
       return
     }
 
@@ -136,14 +132,16 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
     })
 
     setEditId(assetTypeToEdit.id)
+    setFormOpen(true)
+    logUiAction('Asset Type Master', 'Open Edit Dialog', { assetTypeCode: assetTypeToEdit.assetTypeCode })
   }
 
   const handleDelete = async () => {
     setSuccessMsg('')
     setErrorMsg('')
 
-    if (!canManageAssetType) {
-      setErrorMsg('You do not have permission to manage asset types.')
+    if (!canDelete) {
+      setErrorMsg('You do not have permission to delete asset types.')
       setConfirmDeleteId(null)
       return
     }
@@ -171,6 +169,16 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
   const handleCancelEdit = () => {
     setAssetType(emptyAssetType)
     setEditId(null)
+    setValidationErrors({})
+    setErrorMsg('')
+    setFormOpen(false)
+  }
+
+  const openCreate = () => {
+    handleCancelEdit()
+    setSuccessMsg('')
+    setFormOpen(true)
+    logUiAction('Asset Type Master', 'Open Create Dialog')
   }
 
 
@@ -205,12 +213,18 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
           <p>Create, update, and manage asset categories.</p>
         </div>
 
-        <span className="record-count">{assetTypes.length} Asset Types</span>
+        <div className="page-title-actions">
+          {canCreate && (<button type="button" className="btn-primary" onClick={openCreate}><Icon name="plus" size={15} />New Asset Type</button>)}
+          <span className="record-count">{assetTypes.length} Asset Types</span>
+        </div>
       </div>
 
-      {!canManageAssetType && (
+      {!formOpen && <AlertMessage tone="success" message={successMsg} onDismiss={() => setSuccessMsg('')} />}
+      {!formOpen && <AlertMessage tone="error" message={errorMsg} onDismiss={() => setErrorMsg('')} />}
+
+      {!canCreate && !canEdit && !canDelete && (
         <div className="info-box">
-          You are in view-only mode. Admin can manage asset types.
+          You have view-only access to Asset Type Master.
         </div>
       )}
 
@@ -230,9 +244,17 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
         </div>
       )}
 
-      {canManageAssetType && (
-      <>
-      <form onSubmit={handleSubmit}>
+      <FormDialog
+        open={formOpen}
+        title={editId === null ? 'New Asset Type' : 'Edit Asset Type'}
+        description="Asset Type Code must be unique. Example: MSKID for Metering Skid."
+        submitLabel={editId === null ? 'Save Asset Type' : 'Update Asset Type'}
+        busy={loading}
+        error={errorMsg}
+        onDismissError={() => setErrorMsg('')}
+        onSubmit={handleSubmit}
+        onCancel={handleCancelEdit}
+      >
         <div>
           <label>Asset Type Name</label>
           <input
@@ -286,32 +308,7 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
             rows="3"
           />
         </div>
-
-        <div className="form-actions">
-          <button type="submit" disabled={loading}>
-            {loading
-              ? 'Please wait...'
-              : editId === null
-                ? 'Save Asset Type'
-                : 'Update Asset Type'}
-          </button>
-
-          {editId !== null && (
-            <button type="button" onClick={handleCancelEdit} disabled={loading}>
-              Cancel Edit
-            </button>
-          )}
-        </div>
-      </form>
-
-      {successMsg && (
-        <div className="success-box">{successMsg}</div>
-      )}
-      {errorMsg && (
-        <div className="error-box">{errorMsg}</div>
-      )}
-      </>
-      )}
+      </FormDialog>
 
       <div className="section-title">
         <h3>Saved Asset Types</h3>
@@ -325,7 +322,7 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
         exportTitle="Asset Type Master"
         module="Asset Type Master"
         importConfig={importConfig}
-        canImport={canManageAssetType}
+        canImport={canCreate}
       />
 
       <table>
@@ -335,14 +332,14 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
             <th>Asset Type Code</th>
             <th>Description</th>
             <th>Status</th>
-            {canManageAssetType && <th>Actions</th>}
+            {(canEdit || canDelete) && <th>Actions</th>}
           </tr>
         </thead>
 
         <tbody>
           {assetTypes.length === 0 ? (
             <tr>
-              <td colSpan={canManageAssetType ? 5 : 4} className="empty-table">
+              <td colSpan={canEdit || canDelete ? 5 : 4} className="empty-table">
                 No asset types added yet.
               </td>
             </tr>
@@ -357,15 +354,18 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
                     {item.status}
                   </span>
                 </td>
-                {canManageAssetType && (
-                <td>
-                  <button type="button" onClick={() => handleEdit(item)}>
-                    Edit
-                  </button>
-
-                  <button type="button" onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteId(item.id) }}>
-                    Delete
-                  </button>
+                {(canEdit || canDelete) && (
+                <td className="row-actions">
+                  {canEdit && (
+                    <button type="button" onClick={() => handleEdit(item)}>
+                      Edit
+                    </button>
+                  )}
+                  {canDelete && (
+                    <button type="button" onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteId(item.id) }}>
+                      Delete
+                    </button>
+                  )}
                 </td>
                 )}
               </tr>
