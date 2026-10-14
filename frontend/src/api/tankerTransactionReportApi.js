@@ -112,7 +112,8 @@ const convertTotalsFromApi = (totals = {}) => {
 
 export const getTankerTransactionReport = async (filters = {}) => {
   const queryString = buildQueryString(filters)
-  const data = await apiGet(`/tanker-transaction-report${queryString}`)
+  // The report is served by the tanker-tracking router (prefix /tanker-tracking).
+  const data = await apiGet(`/tanker-tracking/tanker-transaction-report${queryString}`)
 
   return {
     rows: (data.rows || []).map(convertRowFromApi),

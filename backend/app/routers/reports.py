@@ -1864,10 +1864,11 @@ def build_fso_otr_report(
         movement_qty = abs(net_stock) + abs(net_water)
 
         vessel_qty = float(safe_float(inputs.get("vessel_quantity_bbl")))
-        variance = abs(net_stock + net_water) - vessel_qty
+        # FSO variance = shuttle discharge (vessel qty) - FSO movement.
+        variance = vessel_qty - abs(net_stock + net_water)
 
         src_discharge = float(safe_float(meta.get("source_shuttle_discharge_bbl")))
-        compare_var = movement_qty - src_discharge if op_sign == "IN" and src_discharge > 0 else 0.0
+        compare_var = src_discharge - movement_qty if op_sign == "IN" and src_discharge > 0 else 0.0
 
         setting = get_active_location_day_setting(db, loc_code, tx.operation_date)
         day_start = setting.day_start_time if setting else datetime_time(0, 0)
@@ -2089,7 +2090,8 @@ def build_fso_outturn_report(
     for (acc_date, shuttle_no) in sorted(buckets.keys()):
         discharge = float(buckets[(acc_date, shuttle_no)]["discharge"])
         receipt = float(buckets[(acc_date, shuttle_no)]["receipt"])
-        variance = receipt - discharge
+        # FSO variance = shuttle discharge - FSO receipt.
+        variance = discharge - receipt
         pct = (variance / discharge * 100.0) if discharge != 0 else 0.0
 
         rows.append(

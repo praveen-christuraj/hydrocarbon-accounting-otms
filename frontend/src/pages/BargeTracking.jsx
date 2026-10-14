@@ -1,15 +1,40 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   createTripEvent,
   getBargeTracking,
+  getBargeVoyages,
   getTripTimelineByConvoy,
   closeTrip,
   reopenTrip,
 } from '../api/bargeTrackingApi'
 import { useCompanyPrintProfile } from '../hooks/useCompanyPrintProfile'
+import { useDataFilters } from '../hooks/useDataFilters'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import AlertMessage from '../components/common/AlertMessage'
 import CompanyPrintHeader from '../components/reports/CompanyPrintHeader'
 import CompanyPrintFooter from '../components/reports/CompanyPrintFooter'
+import { logUiAction } from '../utils/actionLogger'
+
+const VOYAGE_TABS = [
+  { value: 'OPEN', label: 'Open Voyages' },
+  { value: 'CLOSED', label: 'Closed Voyages' },
+]
+
+const voyageColumns = [
+  { key: 'convoyNumber', label: 'Convoy No' },
+  { key: 'status', label: 'Status' },
+  { key: 'bargeText', label: 'Barge(s)' },
+  { key: 'bargeCount', label: 'Barges', type: 'number' },
+  { key: 'ticketCount', label: 'Tickets', type: 'number' },
+  { key: 'originText', label: 'Origin' },
+  { key: 'destinationText', label: 'Destination' },
+  { key: 'firstOperationDate', label: 'First Operation Date', type: 'date' },
+  { key: 'lastOperationDate', label: 'Last Operation Date', type: 'date' },
+  { key: 'tripCreatedBy', label: 'Created By' },
+  { key: 'tripRemarks', label: 'Remarks' },
+]
 
 function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
   const profile = useCompanyPrintProfile()
@@ -22,6 +47,16 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
   const [successMsg, setSuccessMsg] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
   const [timelineWarning, setTimelineWarning] = useState('')
+
+  // Voyage list (Open / Closed tabs)
+  const [voyageTab, setVoyageTab] = useState('OPEN')
+  const [voyages, setVoyages] = useState([])
+  const [voyageCounts, setVoyageCounts] = useState({ open: 0, closed: 0 })
+  const [voyagesLoading, setVoyagesLoading] = useState(false)
+  const [voyageError, setVoyageError] = useState('')
+  const [voyagePage, setVoyagePage] = useState(1)
+  const [selectedVoyage, setSelectedVoyage] = useState('')
+  const voyagePageSize = usePageSize()
   const [confirmAction, setConfirmAction] = useState(null) // { type, message, data }
   const [promptModal, setPromptModal] = useState(null) // { type, message, default, value }
 
@@ -126,6 +161,90 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
     return loc ? `${loc.locationName} (${loc.locationCode})` : (code || '')
   }
 
+  // Re-fetch the voyage list after a convoy action (close / reopen / movement).
+  const refreshVoyages = async () => {
+    setVoyagesLoading(true)
+    setVoyageError('')
+    try {
+      const data = await getBargeVoyages(voyageTab)
+      setVoyages(data.rows)
+      setVoyageCounts({ open: data.openCount, closed: data.closedCount })
+    } catch (e) {
+      setVoyageError(e.message || 'Unable to load barge voyages')
+    } finally {
+      setVoyagesLoading(false)
+    }
+  }
+
+  // Load the list whenever the active tab changes. Stale responses are ignored.
+  useEffect(() => {
+    let active = true
+    getBargeVoyages(voyageTab)
+      .then((data) => {
+        if (!active) return
+        setVoyages(data.rows)
+        setVoyageCounts({ open: data.openCount, closed: data.closedCount })
+        setVoyageError('')
+      })
+      .catch((e) => {
+        if (!active) return
+        setVoyages([])
+        setVoyageError(e.message || 'Unable to load barge voyages')
+      })
+      .finally(() => {
+        if (active) setVoyagesLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [voyageTab])
+
+  const switchVoyageTab = (tab) => {
+    if (tab === voyageTab) return
+    logUiAction('Barge Tracking', 'Switch Voyage Tab', { tab })
+    setVoyagesLoading(true)
+    setVoyageError('')
+    setVoyageTab(tab)
+  }
+
+  const voyageRows = useMemo(() => {
+    return voyages.map((voyage) => ({
+      convoyNumber: voyage.convoyNumber,
+      status: voyage.status === 'CLOSED' ? 'Closed' : 'Open',
+      bargeText: voyage.barges
+        .map((barge) => (barge.assetName ? `${barge.assetName} (${barge.assetCode})` : barge.assetCode))
+        .join(', '),
+      bargeCount: voyage.bargeCount,
+      ticketCount: voyage.ticketCount,
+      originText: voyage.originLocationCodes.join(', '),
+      destinationText: voyage.destinationLocationCodes.join(', '),
+      firstOperationDate: voyage.firstOperationDate,
+      lastOperationDate: voyage.lastOperationDate,
+      tripCreatedBy: voyage.tripCreatedBy,
+      tripRemarks: voyage.tripRemarks,
+    }))
+  }, [voyages])
+
+  const voyageFilters = useDataFilters(voyageRows, voyageColumns, { module: 'Barge Tracking' })
+  const filteredVoyageCount = voyageFilters.filteredRows.length
+  const visibleVoyageRows = paginateRows(voyageFilters.filteredRows, voyagePage, voyagePageSize)
+
+  // Go back to page 1 when the tab or the filtered result set changes.
+  const pageResetKey = `${voyageTab}|${filteredVoyageCount}`
+  const [appliedPageResetKey, setAppliedPageResetKey] = useState(pageResetKey)
+  if (appliedPageResetKey !== pageResetKey) {
+    setAppliedPageResetKey(pageResetKey)
+    setVoyagePage(1)
+  }
+
+  const openVoyage = (convoy) => {
+    logUiAction('Barge Tracking', 'Open Voyage', { convoyNumber: convoy })
+    setSelectedVoyage(convoy)
+    setConvoyNumber(convoy)
+    loadAll(convoy)
+    document.getElementById('barge-voyage-detail')?.scrollIntoView()
+  }
+
   const loadAll = async (cn) => {
     const clean = String(cn || '').trim()
     if (!clean) {
@@ -167,6 +286,8 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
       )
     } finally {
       setLoading(false)
+      // Keep the Open / Closed lists in step with any movement change.
+      refreshVoyages()
     }
   }
 
@@ -965,6 +1086,122 @@ return (
           acknowledge/revoke receipts, close/reopen barge movements, or use Fix Timeline.
         </div>
       )}
+
+      {/* Voyage list: Open / Closed tabs with the standard filter bar */}
+      <div className="section-title">
+        <h3>Barge Voyages</h3>
+        <p>
+          Approved barge voyages grouped by convoy number. Open a voyage to view its
+          timeline, comparisons and actions.
+        </p>
+      </div>
+
+      <div className="list-tabs" role="tablist" aria-label="Barge voyage status">
+        {VOYAGE_TABS.map((tab) => {
+          const count = tab.value === 'CLOSED' ? voyageCounts.closed : voyageCounts.open
+          const selected = voyageTab === tab.value
+
+          return (
+            <button
+              key={tab.value}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              className="list-tab"
+              onClick={() => switchVoyageTab(tab.value)}
+            >
+              {tab.label}
+              <span className="list-tab-count">{count}</span>
+            </button>
+          )
+        })}
+      </div>
+
+      <AlertMessage
+        tone="error"
+        message={voyageError}
+        onDismiss={() => setVoyageError('')}
+      />
+
+      <DataTableToolbar
+        filters={voyageFilters}
+        columns={voyageFilters.columns}
+        exportFileName={`barge-voyages-${voyageTab.toLowerCase()}`}
+        exportTitle={`Barge Voyages - ${voyageTab === 'CLOSED' ? 'Closed' : 'Open'}`}
+        module="Barge Tracking"
+      />
+
+      <table>
+        <thead>
+          <tr>
+            <th>Convoy No</th>
+            <th>Status</th>
+            <th>Barge(s)</th>
+            <th>Tickets</th>
+            <th>Origin</th>
+            <th>Destination</th>
+            <th>First Date</th>
+            <th>Last Date</th>
+            <th className="no-print">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {voyagesLoading ? (
+            <tr>
+              <td colSpan="9" className="empty-table">Loading voyages...</td>
+            </tr>
+          ) : visibleVoyageRows.length === 0 ? (
+            <tr>
+              <td colSpan="9" className="empty-table">
+                {voyageRows.length === 0
+                  ? `No ${voyageTab === 'CLOSED' ? 'closed' : 'open'} barge voyages.`
+                  : 'No voyages match the current filters.'}
+              </td>
+            </tr>
+          ) : (
+            visibleVoyageRows.map((row) => (
+              <tr
+                key={row.convoyNumber}
+                className={row.convoyNumber === selectedVoyage ? 'is-selected' : ''}
+              >
+                <td><strong>{row.convoyNumber}</strong></td>
+                <td>
+                  <span className={`status-badge ${row.status === 'Closed' ? 'active' : 'draft'}`}>
+                    {row.status}
+                  </span>
+                </td>
+                <td>{row.bargeText || '-'}</td>
+                <td>{row.ticketCount}</td>
+                <td>{row.originText || '-'}</td>
+                <td>{row.destinationText || '-'}</td>
+                <td>{row.firstOperationDate || '-'}</td>
+                <td>{row.lastOperationDate || '-'}</td>
+                <td className="no-print">
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={() => openVoyage(row.convoyNumber)}
+                  >
+                    View
+                  </button>
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+
+      <PaginationControls
+        currentPage={voyagePage}
+        totalRows={filteredVoyageCount}
+        onPageChange={setVoyagePage}
+      />
+
+      {/* Convoy lookup and voyage detail */}
+      <div id="barge-voyage-detail" className="section-title">
+        <h3>Voyage Detail</h3>
+        <p>Search a convoy number, or open a voyage from the list above.</p>
+      </div>
 
       <form onSubmit={handleSearch}>
         <div>

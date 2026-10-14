@@ -24,6 +24,7 @@ from app.schemas import (
 )
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
+    apply_location_filter,
     ensure_location_in_user_scope,
     get_user_location_codes,
     require_user_permission,
@@ -45,6 +46,7 @@ from app.services.transaction_helpers import (
     transaction_has_pending_correction_request,
 )
 from app.services.tracking_helpers import (
+    is_barge_transaction,
     get_trip_by_convoy_or_none,
     ensure_trip_not_closed,
     ensure_barge_trip_timeline as _ensure_barge_trip_timeline,
@@ -197,6 +199,141 @@ def get_barge_tracking(
         current_user=current_user,
         db=db,
     )
+
+
+@router.get("/voyages")
+def get_barge_voyages(
+    tab: str | None = "OPEN",
+    current_user: User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db),
+):
+    """
+    List barge voyages (convoys) for the Barge Tracking Open / Closed tabs.
+
+    A voyage is built from its Approved barge tickets, grouped by convoy number.
+    Its status comes from the Trip row; a convoy without a Trip row is OPEN.
+    This endpoint is read-only: it never creates or repairs trip rows (that is
+    done by GET /trips/by-convoy/{convoy_number} when a voyage is opened).
+    Both tab counts are returned so the UI can show them without a second call.
+    """
+    require_user_permission(current_user, "View Barge Tracking", db)
+
+    tab_norm = (clean_optional_text(tab) or "OPEN").upper()
+    if tab_norm not in ("OPEN", "CLOSED"):
+        raise HTTPException(status_code=400, detail="tab must be OPEN or CLOSED")
+
+    base_query = db.query(OperationTransaction).filter(
+        OperationTransaction.convoy_number.isnot(None),
+        OperationTransaction.status == APPROVED_TRANSACTION_STATUS,
+    )
+    base_query = apply_location_filter(
+        base_query,
+        OperationTransaction,
+        current_user,
+        db,
+        column_name="origin_location_code",
+    )
+    transactions = base_query.order_by(
+        OperationTransaction.operation_date.asc(),
+        OperationTransaction.id.asc(),
+    ).all()
+
+    voyages = {}
+    asset_name_cache = {}
+
+    def asset_name_for(asset_code):
+        if asset_code not in asset_name_cache:
+            asset = get_asset_by_code(asset_code, db)
+            asset_name_cache[asset_code] = asset.asset_name if asset else ""
+        return asset_name_cache[asset_code]
+
+    for tx in transactions:
+        convoy = clean_optional_text(tx.convoy_number)
+        if convoy is None or not is_barge_transaction(db, tx):
+            continue
+
+        key = convoy.lower()
+        voyage = voyages.get(key)
+        if voyage is None:
+            voyage = {
+                "convoy_number": convoy,
+                "barge_asset_codes": [],
+                "ticket_count": 0,
+                "first_operation_date": tx.operation_date,
+                "last_operation_date": tx.operation_date,
+                "origin_location_codes": [],
+                "destination_location_codes": [],
+            }
+            voyages[key] = voyage
+
+        voyage["ticket_count"] += 1
+        voyage["last_operation_date"] = tx.operation_date or voyage["last_operation_date"]
+
+        asset_code = clean_optional_text(tx.primary_asset_code)
+        if asset_code and asset_code not in voyage["barge_asset_codes"]:
+            voyage["barge_asset_codes"].append(asset_code)
+
+        origin = clean_optional_text(tx.origin_location_code)
+        if origin and origin not in voyage["origin_location_codes"]:
+            voyage["origin_location_codes"].append(origin)
+
+        destination = clean_optional_text(tx.destination_location_code)
+        if destination and destination not in voyage["destination_location_codes"]:
+            voyage["destination_location_codes"].append(destination)
+
+    trips = {}
+    if voyages:
+        trip_rows = db.query(Trip).filter(
+            func.lower(Trip.convoy_number).in_(list(voyages.keys()))
+        ).all()
+        trips = {str(trip.convoy_number or "").strip().lower(): trip for trip in trip_rows}
+
+    all_rows = []
+    for key, voyage in voyages.items():
+        trip = trips.get(key)
+        status = str(trip.status or "OPEN").strip().upper() if trip else "OPEN"
+
+        all_rows.append({
+            "trip_id": trip.id if trip else None,
+            "convoy_number": voyage["convoy_number"],
+            "status": status,
+            "barge_asset_codes": voyage["barge_asset_codes"],
+            "barges": [
+                {"asset_code": code, "asset_name": asset_name_for(code)}
+                for code in voyage["barge_asset_codes"]
+            ],
+            "barge_count": len(voyage["barge_asset_codes"]),
+            "ticket_count": voyage["ticket_count"],
+            "first_operation_date": voyage["first_operation_date"],
+            "last_operation_date": voyage["last_operation_date"],
+            "origin_location_codes": voyage["origin_location_codes"],
+            "destination_location_codes": voyage["destination_location_codes"],
+            "trip_created_by": trip.created_by if trip else None,
+            "trip_remarks": trip.remarks if trip else None,
+            "trip_updated_at": trip.updated_at if trip else None,
+        })
+
+    open_count = sum(1 for row in all_rows if row["status"] != "CLOSED")
+    closed_count = sum(1 for row in all_rows if row["status"] == "CLOSED")
+
+    rows = [
+        row for row in all_rows
+        if (row["status"] == "CLOSED") == (tab_norm == "CLOSED")
+    ]
+    rows.sort(
+        key=lambda row: (
+            str(row["last_operation_date"] or ""),
+            row["convoy_number"].lower(),
+        ),
+        reverse=True,
+    )
+
+    return {
+        "tab": tab_norm,
+        "open_count": open_count,
+        "closed_count": closed_count,
+        "rows": rows,
+    }
 
 
 @router.post("/trip-events", response_model=TripEventResponse)
