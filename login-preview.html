@@ -1,0 +1,84 @@
+<!-- Design preview of the new login layout -->
+<div style="display:flex;min-height:100vh;font-family:'DM Sans',system-ui,sans-serif;">
+  <!-- LEFT DARK PANEL -->
+  <div style="flex:1;background:linear-gradient(160deg,#0b2447 0%,#12315f 60%,#16407a 100%);color:#e6edf5;padding:64px 56px;display:flex;flex-direction:column;justify-content:space-between;max-width:680px;">
+    <div>
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:48px;">
+        <div style="width:44px;height:44px;border-radius:10px;background:#1b3f7a;display:grid;place-items:center;border:2px solid rgba(255,255,255,0.15);">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#8fb8e4" stroke-width="2.2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        </div>
+        <div>
+          <div style="font-family:'Manrope',sans-serif;font-weight:800;font-size:20px;letter-spacing:-0.6px;color:#fff;line-height:1.1;">Hydrocarbon Accounting</div>
+          <div style="font-size:11px;color:#93b0dd;letter-spacing:1.2px;text-transform:uppercase;font-weight:600;">System</div>
+        </div>
+      </div>
+      <div style="font-family:'Manrope',sans-serif;font-size:42px;font-weight:800;line-height:1.1;letter-spacing:-2px;margin-bottom:16px;">Clarity at<br/>every <em style="color:#8fb8e4;font-style:normal;">depth.</em></div>
+      <div style="color:#a7b8cb;font-size:15px;line-height:1.6;max-width:420px;">A more intelligent way to manage hydrocarbon accounting, your people, and the decisions that move operations forward.</div>
+    </div>
+    
+    <div style="margin-top:48px;">
+      <div style="font-size:11px;color:#93b0dd;letter-spacing:1.8px;font-weight:700;text-transform:uppercase;margin-bottom:20px;">Key Benefits</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px 16px;backdrop-filter:blur(4px);">
+          <div style="font-size:20px;font-weight:800;color:#fff;margin-bottom:2px;">45–70%</div>
+          <div style="font-size:11px;color:#a7b8cb;line-height:1.35;">Administrative & reporting effort reduced</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px 16px;backdrop-filter:blur(4px);">
+          <div style="font-size:20px;font-weight:800;color:#fff;margin-bottom:2px;">2–3 hrs</div>
+          <div style="font-size:11px;color:#a7b8cb;line-height:1.35;">Month-end closing vs 1–2 working days</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px 16px;backdrop-filter:blur(4px);">
+          <div style="font-size:20px;font-weight:800;color:#fff;margin-bottom:2px;">80–180</div>
+          <div style="font-size:11px;color:#a7b8cb;line-height:1.35;">Man-hours saved per month</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:14px 16px;backdrop-filter:blur(4px);">
+          <div style="font-size:20px;font-weight:800;color:#fff;margin-bottom:2px;">Real-time</div>
+          <div style="font-size:11px;color:#a7b8cb;line-height:1.35;">Reporting instead of reconstruction</div>
+        </div>
+      </div>
+      <div style="margin-top:20px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.1);display:flex;gap:20px;font-size:12px;color:#93b0dd;">
+        <span>✓ Automated Calculations &amp; Workflows</span>
+        <span>✓ Centralized Data Management</span>
+        <span>✓ Digital Approval Workflow</span>
+      </div>
+    </div>
+    
+    <div style="margin-top:40px;font-size:11px;color:#93b0dd;display:flex;align-items:center;gap:8px;">
+      <span style="width:6px;height:6px;border-radius:50%;background:#6ecf8f;display:inline-block;"></span>
+      Built for connected teams • Secure access controls
+    </div>
+  </div>
+  
+  <!-- RIGHT LIGHT FORM -->
+  <div style="flex:1.2;background:#f3f5f9;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:48px;">
+    <div style="width:100%;max-width:420px;background:#fff;border-radius:14px;padding:48px 40px;box-shadow:0 2px 20px rgba(16,35,58,0.06),0 1px 3px rgba(16,35,58,0.04);border:1px solid #e3e9f0;">
+      <div style="display:flex;align-items:center;justify-content:center;width:48px;height:48px;border-radius:12px;background:#12315f;margin:0 auto 20px;box-shadow:0 4px 14px rgba(18,49,95,0.22);">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/></svg>
+      </div>
+      <h2 style="font-family:'Manrope',sans-serif;font-size:28px;font-weight:800;letter-spacing:-1.2px;color:#0b2447;text-align:center;margin:0 0 6px;">Welcome back</h2>
+      <p style="text-align:center;color:#6b7a8d;font-size:14px;margin:0 0 28px;">Sign in to your workspace to continue.</p>
+      
+      <form onsubmit="event.preventDefault();" style="display:grid;gap:16px;">
+        <div>
+          <label style="font-size:11px;font-weight:700;color:#12315f;letter-spacing:0.8px;text-transform:uppercase;display:block;margin-bottom:6px;">Username</label>
+          <input type="text" placeholder="Enter username" style="width:100%;padding:12px 14px;border:1px solid #d8e0ea;border-radius:8px;font-size:15px;outline:none;transition:border-color .15s;" />
+        </div>
+        <div>
+          <label style="font-size:11px;font-weight:700;color:#12315f;letter-spacing:0.8px;text-transform:uppercase;display:block;margin-bottom:6px;">Password</label>
+          <input type="password" placeholder="Enter password" style="width:100%;padding:12px 14px;border:1px solid #d8e0ea;border-radius:8px;font-size:15px;outline:none;transition:border-color .15s;" />
+        </div>
+        <button type="submit" style="width:100%;padding:14px;background:#12315f;color:#fff;border:0;border-radius:8px;font-weight:700;font-size:15px;cursor:pointer;box-shadow:0 4px 14px rgba(18,49,95,0.25);display:flex;align-items:center;justify-content:center;gap:8px;">Sign in <span style="font-size:18px;">→</span></button>
+      </form>
+      
+      <div style="margin-top:20px;padding-top:16px;border-top:1px solid #e3e9f0;display:flex;justify-content:space-between;font-size:12px;color:#6b7a8d;align-items:center;">
+        <a href="#" style="color:#2f63b3;text-decoration:none;font-weight:600;">Forgot password?</a>
+        <span>Secure workspace sign-in</span>
+      </div>
+      
+      <div style="margin-top:24px;background:#f7f9fc;border:1px solid #e3e9f0;border-radius:10px;padding:14px;font-size:12px;color:#5b6b7f;display:flex;align-items:center;gap:10px;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#12315f" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        Your workspace is protected with secure access controls.
+      </div>
+    </div>
+  </div>
+</div>
