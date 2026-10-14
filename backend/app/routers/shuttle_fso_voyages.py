@@ -66,6 +66,7 @@ from app.services.tracking_helpers import (
     _is_sts_out,
     _is_unloading,
     _is_top_up,
+    shuttle_movement_totals,
 )
 
 router = APIRouter(prefix="/shuttle-fso", tags=["Shuttle / FSO Voyages"])
@@ -436,10 +437,13 @@ def get_shuttle_tracking(
         .group_by(key_loc, key_shuttle, key_asset, voyage_status_expr)
     )
 
-    if tab_norm == "CLOSED":
-        group_q = group_q.filter(voyage_status_expr == "CLOSED")
-    else:
-        group_q = group_q.filter(voyage_status_expr != "CLOSED")
+    # An explicit voyage detail request must also work after closure. Tabs
+    # filter lists, not an already selected composite voyage key.
+    if not group_key:
+        if tab_norm == "CLOSED":
+            group_q = group_q.filter(voyage_status_expr == "CLOSED")
+        else:
+            group_q = group_q.filter(voyage_status_expr != "CLOSED")
 
     total_groups = group_q.count()
 
@@ -464,88 +468,6 @@ def get_shuttle_tracking(
         for r in group_rows
     ]
 
-    if not include_tickets:
-        key_filters = []
-        for (loc_code, sh_num, asset_code) in keys:
-            key_filters.append(
-                and_(
-                    OperationTransaction.origin_location_code == loc_code,
-                    OperationTransaction.convoy_number == sh_num,
-                    OperationTransaction.primary_asset_code == asset_code,
-                )
-            )
-
-        payload_rows = (
-            db.query(
-                OperationTransaction.origin_location_code,
-                OperationTransaction.convoy_number,
-                OperationTransaction.primary_asset_code,
-                OperationTransactionValue.field_value,
-            )
-            .join(
-                OperationTransactionValue,
-                OperationTransactionValue.transaction_id == OperationTransaction.id,
-            )
-            .filter(
-                OperationTransactionValue.field_code == "shuttle_payload",
-                OperationTransaction.status == APPROVED_TRANSACTION_STATUS,
-                approved_transaction_not_on_correction_hold(db),
-            )
-            .filter(or_(*key_filters))
-            .all()
-        )
-
-        totals_map = {}
-        for (loc_code, sh_num, asset_code, field_value) in payload_rows:
-            k = f"{loc_code}|{sh_num}|{asset_code}"
-            if k not in totals_map:
-                totals_map[k] = {"net_receipt_bbl": 0.0, "net_discharge_bbl": 0.0}
-            if isinstance(field_value, dict):
-                fv = field_value
-                meta = fv.get("meta") or {}
-                net = ((fv.get("calculated") or {}).get("net") or {})
-                net_stock = float(safe_float(net.get("net_stock_bbl")))
-                net_water = float(safe_float(net.get("net_water_bbl")))
-                qty_bbl = _abs_qty(net_stock, net_water)
-                if (_is_loading(meta) or _is_sts_in(meta) or _is_top_up(meta)) and (not _is_unloading(meta)):
-                    totals_map[k]["net_receipt_bbl"] += qty_bbl
-                if _is_unloading(meta) and not _is_sts_out(meta):
-                    totals_map[k]["net_discharge_bbl"] += qty_bbl
-
-        rows = []
-        for (loc_code, sh_num, asset_code) in keys:
-            asset = get_asset_by_code(asset_code, db)
-            loc = get_location_by_code(loc_code, db)
-            voyage = get_shuttle_voyage_by_key(db, loc_code, sh_num or "", asset_code)
-            k = f"{loc_code}|{sh_num}|{asset_code}"
-            t = totals_map.get(k, {"net_receipt_bbl": 0.0, "net_discharge_bbl": 0.0})
-            rows.append({
-                "group_key": k,
-                "location_code": loc_code,
-                "location_name": loc.location_name if loc else "",
-                "shuttle_number": sh_num or "",
-                "shuttle_asset_code": asset_code,
-                "shuttle_asset_name": asset.asset_name if asset else "",
-                "voyage_status": voyage.status if voyage else "OPEN",
-                "closed_by": voyage.closed_by if voyage else None,
-                "closed_at": voyage.closed_at if voyage else None,
-                "closure_remarks": voyage.closure_remarks if voyage else None,
-                "total_tov_bbl": 0.0,
-                "total_free_water_bbl": 0.0,
-                "total_nsv_bbl": 0.0,
-                "net_receipt_bbl": float(t["net_receipt_bbl"]),
-                "net_discharge_bbl": float(t["net_discharge_bbl"]),
-                "tickets": [],
-            })
-
-        return {
-            "rows": rows,
-            "total_groups": total_groups,
-            "page": page,
-            "page_size": page_size,
-            "has_more": total_groups > offset_val + page_size,
-        }
-
     tx_q = (
         db.query(OperationTransaction)
         .join(
@@ -558,23 +480,6 @@ def get_shuttle_tracking(
             approved_transaction_not_on_correction_hold(db),
         )
     )
-
-    if df:
-        tx_q = tx_q.filter(OperationTransaction.operation_date >= df)
-    if dt:
-        tx_q = tx_q.filter(OperationTransaction.operation_date <= dt)
-    if search_norm:
-        like = f"%{search_norm}%"
-        tx_q = tx_q.filter(
-            or_(
-                OperationTransaction.origin_location_code.ilike(like),
-                OperationTransaction.convoy_number.ilike(like),
-                OperationTransaction.primary_asset_code.ilike(like),
-                OperationTransaction.operation_number.ilike(like),
-                OperationTransaction.operation_ticket_number.ilike(like),
-                OperationTransaction.product_name.ilike(like),
-            )
-        )
 
     key_filters = []
     for (loc_code, sh_num, asset_code) in keys:
@@ -603,16 +508,10 @@ def get_shuttle_tracking(
         fw_raw = float(safe_float(net.get("FW")))
         nsv_raw = float(safe_float(net.get("NSV")))
 
-        sign = str(meta.get("vessel_operation_sign") or "").strip().upper()
-        multiplier = 1.0
-        if sign in ("OUT", "-"):
-            multiplier = -1.0
-        elif sign in ("SET", "NEUTRAL", "0"):
-            multiplier = 0.0
-
-        tov = tov_raw * multiplier
-        fw = fw_raw * multiplier
-        nsv = nsv_raw * multiplier
+        # V2 compatibility totals are already signed closing-minus-opening.
+        tov = tov_raw
+        fw = fw_raw
+        nsv = nsv_raw
 
         event_time = inputs.get("event_time")
         opening_stock = float(safe_float(inputs.get("opening_stock_bbl")))
@@ -655,11 +554,8 @@ def get_shuttle_tracking(
                 "net_discharge_bbl": 0.0,
             }
 
-        qty_bbl = _abs_qty(net_stock, net_water)
-        if (_is_loading(meta) or _is_sts_in(meta) or _is_top_up(meta)) and (not _is_unloading(meta)):
-            grouped[key]["net_receipt_bbl"] += qty_bbl
-        if _is_unloading(meta) and not _is_sts_out(meta):
-            grouped[key]["net_discharge_bbl"] += qty_bbl
+        for field, value in shuttle_movement_totals(meta, net_stock, net_water).items():
+            grouped[key][field] = grouped[key].get(field, 0.0) + value
 
         grouped[key]["tickets"].append({
             "transaction_id": tx.id,
@@ -726,6 +622,10 @@ def get_shuttle_tracking(
                 "net_discharge_bbl": 0.0,
             })
 
+    if not include_tickets:
+        for row in rows:
+            row["tickets"] = []
+
     return {
         "rows": rows,
         "total_groups": total_groups,
@@ -774,11 +674,18 @@ def export_shuttle_voyage_xlsx(
     if not txs:
         raise HTTPException(status_code=404, detail="No approved shuttle tickets found for this voyage")
 
+    txs.sort(key=lambda tx: (
+        tx.operation_date or date.min,
+        str((get_shuttle_payload_for_transaction(db, tx.id) or {}).get("inputs", {}).get("event_time") or ""),
+        tx.id,
+    ))
     loc = get_location_by_code(loc_code, db)
     asset = get_asset_by_code(asset_code, db)
 
     receipt_total = 0.0
     discharge_total = 0.0
+    transfer_in_total = 0.0
+    transfer_out_total = 0.0
     last_closing_stock = 0.0
     last_closing_water = 0.0
     rows = []
@@ -801,10 +708,11 @@ def export_shuttle_voyage_xlsx(
         net_water = _sf(net.get("net_water_bbl"))
         qty = _abs_qty(net_stock, net_water)
 
-        if op_code in ("LOADING", "STS_IN", "TOP_UP"):
-            receipt_total += qty
-        if op_code == "UNLOADING":
-            discharge_total += qty
+        movements = shuttle_movement_totals(meta, net_stock, net_water)
+        receipt_total += movements["net_receipt_bbl"]
+        discharge_total += movements["net_discharge_bbl"]
+        transfer_in_total += movements["transfer_in_bbl"]
+        transfer_out_total += movements["transfer_out_bbl"]
 
         last_closing_stock = closing_stock
         last_closing_water = closing_water
@@ -830,8 +738,8 @@ def export_shuttle_voyage_xlsx(
     ws.append([f"Shuttle Number: {shuttle_no}"])
     ws.append([""])
 
-    ws.append(["Status", "Tickets", "Net Receipt (BBL)", "Net Discharge (BBL)", "Last Closing Stock", "Last Closing Water"])
-    ws.append(["Approved", len(rows), round(receipt_total, 3), round(discharge_total, 3), round(last_closing_stock, 3), round(last_closing_water, 3)])
+    ws.append(["Status", "Tickets", "Net Receipt (BBL)", "Net Discharge (BBL)", "Last Closing Stock", "Last Closing Water", "STS In (BBL, included in receipts)", "STS Out (BBL)"])
+    ws.append(["Approved", len(rows), round(receipt_total, 3), round(discharge_total, 3), round(last_closing_stock, 3), round(last_closing_water, 3), round(transfer_in_total, 3), round(transfer_out_total, 3)])
     ws.append([""])
 
     ws.append(["Date", "Time", "Operation", "Sign", "Net Stock", "Net Water", "Qty (Abs S+W)", "Ticket"])
@@ -988,7 +896,7 @@ def get_fso_tracking(
                 OperationTransaction.origin_location_code.ilike(f"%{s}%"),
                 OperationTransaction.primary_asset_code.ilike(f"%{s}%"),
                 OperationTransaction.convoy_number.ilike(f"%{s}%"),
-                OperationTransaction.ticket_number.ilike(f"%{s}%"),
+                OperationTransaction.operation_ticket_number.ilike(f"%{s}%"),
             )
         )
 
@@ -1018,10 +926,13 @@ def get_fso_tracking(
         .group_by(key_loc, key_shuttle, key_asset, voyage_status_expr)
     )
 
-    if tab_norm == "CLOSED":
-        group_q = group_q.filter(voyage_status_expr == "CLOSED")
-    else:
-        group_q = group_q.filter(voyage_status_expr != "CLOSED")
+    # An explicit voyage detail request must also work after closure. Tabs
+    # filter lists, not an already selected composite voyage key.
+    if not group_key:
+        if tab_norm == "CLOSED":
+            group_q = group_q.filter(voyage_status_expr == "CLOSED")
+        else:
+            group_q = group_q.filter(voyage_status_expr != "CLOSED")
 
     total_groups = group_q.count()
 
@@ -1101,7 +1012,7 @@ def get_fso_tracking(
             variance = vessel_qty - qty_bbl
             if op_sign == "IN":
                 totals_map[k]["fso_receipt_bbl"] += qty_bbl
-                totals_map[k]["shuttle_discharge_meta"] += _sf(meta.get("source_shuttle_discharge_bbl"))
+                totals_map[k]["shuttle_discharge_meta"] = max(totals_map[k]["shuttle_discharge_meta"], _sf(meta.get("source_shuttle_discharge_bbl")))
 
             if op_norm == "receipt":
                 totals_map[k]["receipts"] += max(net_stock, 0.0)
@@ -1251,17 +1162,21 @@ def get_fso_tracking(
         op_label = meta.get("operation_label") or meta.get("operation") or ""
         op_norm = _norm_op(op_label)
 
-        opening_stock = _safe_float(meta.get("opening_stock_bbl"))
-        opening_water = _safe_float(meta.get("opening_water_bbl"))
-        closing_stock = _safe_float(meta.get("closing_stock_bbl"))
-        closing_water = _safe_float(meta.get("closing_water_bbl"))
+        inputs = payload.get("inputs") or {}
+        def input_value(key):
+            return inputs.get(key) if inputs.get(key) is not None else meta.get(key)
+
+        opening_stock = _safe_float(input_value("opening_stock_bbl"))
+        opening_water = _safe_float(input_value("opening_water_bbl"))
+        closing_stock = _safe_float(input_value("closing_stock_bbl"))
+        closing_water = _safe_float(input_value("closing_water_bbl"))
         net_stock = _safe_float(net_calc.get("net_stock_bbl"))
         net_water = _safe_float(net_calc.get("net_water_bbl"))
         inputs = payload.get("inputs") or {}
-        vessel_qty = _safe_float(inputs.get("vessel_quantity_bbl") or meta.get("vessel_quantity_bbl"))
+        vessel_qty = _safe_float(input_value("vessel_quantity_bbl"))
         # FSO variance = shuttle discharge (vessel qty) - FSO movement (|net stock + net water|).
         # Export tickets carry no variance, matching the group total below.
-        movement_qty = abs(net_stock + net_water)
+        movement_qty = _abs_qty(net_stock, net_water)
         variance = (vessel_qty - movement_qty) if op_norm != "export" else 0.0
 
         ticket = {
@@ -1275,9 +1190,9 @@ def get_fso_tracking(
             "fso_asset_name": groups[k]["fso_asset_name"],
             "product_name": tx.product_name,
             "operation_date": tx.operation_date,
-            "event_time": meta.get("event_time"),
+            "event_time": input_value("event_time"),
             "operation_label": op_label,
-            "vessel_name": meta.get("vessel_name"),
+            "vessel_name": input_value("vessel_name"),
             "vessel_quantity_bbl": vessel_qty,
             "opening_stock_bbl": opening_stock,
             "opening_water_bbl": opening_water,
@@ -1286,7 +1201,7 @@ def get_fso_tracking(
             "net_stock_bbl": net_stock,
             "net_water_bbl": net_water,
             "variance_bbl": variance,
-            "remarks": meta.get("remarks") or tx.remarks,
+            "remarks": input_value("remarks") or tx.remarks,
             "status": tx.status,
             "created_by": tx.created_by,
             "created_at": tx.created_at,
@@ -1299,7 +1214,7 @@ def get_fso_tracking(
         qty_bbl = _abs_qty(_safe_float(net_calc.get("net_stock_bbl")), _safe_float(net_calc.get("net_water_bbl")))
         if op_sign == "IN":
             groups[k]["fso_receipt_bbl"] += qty_bbl
-            groups[k]["shuttle_discharge_bbl"] += _safe_float(meta.get("source_shuttle_discharge_bbl"))
+            groups[k]["shuttle_discharge_bbl"] = max(groups[k]["shuttle_discharge_bbl"], _safe_float(meta.get("source_shuttle_discharge_bbl")))
 
         if op_norm == "receipt":
             groups[k]["total_receipts_bbl"] += max(net_stock, 0.0)
@@ -1493,11 +1408,8 @@ def build_shuttle_summary_rows(
             net = ((fv.get("calculated") or {}).get("net") or {})
             net_stock = float(safe_float(net.get("net_stock_bbl")))
             net_water = float(safe_float(net.get("net_water_bbl")))
-            qty_bbl = _abs_qty(net_stock, net_water)
-            if (_is_loading(meta) or _is_sts_in(meta) or _is_top_up(meta)) and (not _is_unloading(meta)):
-                totals_map[k]["net_receipt_bbl"] += qty_bbl
-            if _is_unloading(meta) and not _is_sts_out(meta):
-                totals_map[k]["net_discharge_bbl"] += qty_bbl
+            for field, value in shuttle_movement_totals(meta, net_stock, net_water).items():
+                totals_map[k][field] = totals_map[k].get(field, 0.0) + value
 
     rows = []
     for (loc_code, sh_num, asset_code) in keys:

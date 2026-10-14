@@ -462,7 +462,7 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
           <h2>Out-Turn Summary</h2>
           <p>
             Chronological tank gauging tickets with previous stock, stock after
-            operation, and net receipt/dispatch values computed per tank/product.
+            operation, and net receipt/dispatch values computed per location/tank.
           </p>
         </div>
 
@@ -576,8 +576,9 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
         <h3>Out-Turn Summary</h3>
         <p>
           Rows are ordered chronologically. Previous stock is the prior ticket of
-          the same location/tank/product; net receipt and net dispatch are derived
-          from the difference between consecutive stock snapshots.
+          the same location/tank; net receipt and net dispatch are derived
+          from the difference between consecutive stock snapshots. Product and
+          date filters select displayed rows without changing the prior snapshot.
         </p>
       </div>
 
@@ -628,7 +629,7 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
         Out-Turn Summary shows approved Tank Gauging tickets in chronological
         order. Receipt and dispatch quantities are calculated by comparing the
         current stock snapshot with the previous chronological stock snapshot for
-        the same location/tank/product.
+        the same location/tank.
       </div>
 
       {profile && (

@@ -667,7 +667,6 @@ def get_trip_timeline_by_convoy(
         })
 
     comparison_rows = []
-    did_backfill = False
 
     for cmp in comparisons:
         left_tx = (
@@ -681,35 +680,19 @@ def get_trip_timeline_by_convoy(
             .first()
         )
 
-        stored_seal_checks = (cmp.summary_json or {}).get("seal_checks")
-        seal_checks_missing = (
-            not isinstance(stored_seal_checks, list) or len(stored_seal_checks) == 0
-        )
-
-        needs_rebuild = (
-            cmp.summary_json is None
-            or cmp.per_tank_json is None
-            or seal_checks_missing
-        )
-
-        if needs_rebuild and left_tx and right_tx:
+        summary_json = cmp.summary_json
+        per_tank_json = cmp.per_tank_json
+        if left_tx and right_tx:
+            require_approved_transaction_for_tracking(left_tx, "barge comparison report", db=db)
+            require_approved_transaction_for_tracking(right_tx, "barge comparison report", db=db)
             left_payload = load_multi_tank_payload(db, left_tx.id)
             right_payload = load_multi_tank_payload(db, right_tx.id)
             if left_payload and right_payload:
-                auto_summary, auto_per_tank = build_multitank_comparison_json(
-                    left_tx=left_tx,
-                    right_tx=right_tx,
+                summary_json, per_tank_json = build_multitank_comparison_json(
+                    left_tx=left_tx, right_tx=right_tx,
                     comparison_type=cmp.comparison_type,
-                    left_payload=left_payload,
-                    right_payload=right_payload,
+                    left_payload=left_payload, right_payload=right_payload,
                 )
-                if cmp.summary_json is None or seal_checks_missing:
-                    # Older comparisons were stored without seal checks, so the
-                    # printed MTR report could not show seal match/mismatch.
-                    cmp.summary_json = auto_summary
-                if cmp.per_tank_json is None:
-                    cmp.per_tank_json = auto_per_tank
-                did_backfill = True
 
         asset_code = (left_tx.primary_asset_code if left_tx else "") or (
             right_tx.primary_asset_code if right_tx else ""
@@ -727,16 +710,13 @@ def get_trip_timeline_by_convoy(
             "left_ticket_number": get_transaction_ticket_number(left_tx) if left_tx else "",
             "right_transaction_id": cmp.right_transaction_id,
             "right_ticket_number": get_transaction_ticket_number(right_tx) if right_tx else "",
-            "summary_json": cmp.summary_json,
-            "per_tank_json": cmp.per_tank_json,
+            "summary_json": summary_json,
+            "per_tank_json": per_tank_json,
             "created_by": cmp.created_by,
             "remarks": cmp.remarks,
             "created_at": cmp.created_at,
             "updated_at": cmp.updated_at,
         })
-
-    if did_backfill:
-        db.commit()
 
     warnings = []
     if timeline_changed:
@@ -811,30 +791,26 @@ def create_trip_comparison(
     if str(left_tx.convoy_number).strip().lower() != convoy.lower() or str(right_tx.convoy_number).strip().lower() != convoy.lower():
         raise HTTPException(status_code=400, detail="Both tickets must belong to the same convoy_number")
 
+    if (left_tx.id == right_tx.id
+            or not is_barge_transaction(db, left_tx)
+            or not is_barge_transaction(db, right_tx)
+            or str(left_tx.primary_asset_code or "").strip().lower()
+               != str(right_tx.primary_asset_code or "").strip().lower()):
+        raise HTTPException(status_code=400, detail="Comparison requires two distinct tickets for the same barge")
+
     comparison_type = clean_optional_text(request.comparison_type)
     if comparison_type is None:
         raise HTTPException(status_code=400, detail="comparison_type is required")
 
-    summary_json = request.summary_json
-    per_tank_json = request.per_tank_json
-    left_payload = None
-    right_payload = None
-
-    if summary_json is None or per_tank_json is None:
-        left_payload = load_multi_tank_payload(db, left_tx.id)
-        right_payload = load_multi_tank_payload(db, right_tx.id)
-        if left_payload and right_payload:
-            auto_summary, auto_per_tank = build_multitank_comparison_json(
-                left_tx=left_tx,
-                right_tx=right_tx,
-                comparison_type=comparison_type,
-                left_payload=left_payload,
-                right_payload=right_payload,
-            )
-            if summary_json is None:
-                summary_json = auto_summary
-            if per_tank_json is None:
-                per_tank_json = auto_per_tank
+    left_payload = load_multi_tank_payload(db, left_tx.id)
+    right_payload = load_multi_tank_payload(db, right_tx.id)
+    summary_json = None
+    per_tank_json = None
+    if left_payload and right_payload:
+        summary_json, per_tank_json = build_multitank_comparison_json(
+            left_tx=left_tx, right_tx=right_tx, comparison_type=comparison_type,
+            left_payload=left_payload, right_payload=right_payload,
+        )
 
     if summary_json is None or per_tank_json is None:
         raise HTTPException(

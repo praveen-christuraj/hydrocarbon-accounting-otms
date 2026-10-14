@@ -4777,6 +4777,24 @@ table[border] {
     font-size: 8.8px;
   }
 
+  .barge-mtr-report .barge-mtr-two-column {
+    display: block;
+  }
+
+  .barge-mtr-report .barge-mtr-section {
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+
+  .barge-mtr-report tr {
+    break-inside: avoid;
+  }
+
+  .barge-mtr-report thead {
+    display: table-header-group;
+  }
+
+
   .barge-mtr-section {
     margin-top: 4px;
   }

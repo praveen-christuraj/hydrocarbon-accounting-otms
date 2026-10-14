@@ -909,6 +909,9 @@ class ShuttleTrackingGroupResponse(BaseModel):
     net_receipt_bbl: float = 0
     net_discharge_bbl: float = 0
 
+    transfer_in_bbl: float = 0
+    transfer_out_bbl: float = 0
+
     tickets: list[ShuttleTrackingTicketResponse] = []
 
 

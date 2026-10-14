@@ -1,3 +1,4 @@
+import { logUiAction } from '../utils/actionLogger'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
@@ -596,6 +597,7 @@ function TankerTracking({
       return
     }
 
+    logUiAction('Tanker Tracking', 'Print Comparison Report', { groupKey: row.groupKey })
     setPrintGroup(row)
 
     window.setTimeout(() => {

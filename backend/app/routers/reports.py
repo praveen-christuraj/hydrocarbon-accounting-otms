@@ -1832,7 +1832,7 @@ def build_fso_otr_report(
             OperationTransaction.origin_location_code == loc_code,
             OperationTransaction.primary_asset_code == asset_code,
             OperationTransaction.operation_date >= date_from,
-            OperationTransaction.operation_date <= date_to,
+            OperationTransaction.operation_date <= date_to + timedelta(days=1),
             OperationTransactionValue.field_code == "fso_payload",
         )
         .order_by(OperationTransaction.operation_date.asc(), OperationTransaction.id.asc())
@@ -1865,7 +1865,7 @@ def build_fso_otr_report(
 
         vessel_qty = float(safe_float(inputs.get("vessel_quantity_bbl")))
         # FSO variance = shuttle discharge (vessel qty) - FSO movement.
-        variance = vessel_qty - abs(net_stock + net_water)
+        variance = vessel_qty - movement_qty if op_sign == "IN" else 0.0
 
         src_discharge = float(safe_float(meta.get("source_shuttle_discharge_bbl")))
         compare_var = src_discharge - movement_qty if op_sign == "IN" and src_discharge > 0 else 0.0
@@ -1873,6 +1873,8 @@ def build_fso_otr_report(
         setting = get_active_location_day_setting(db, loc_code, tx.operation_date)
         day_start = setting.day_start_time if setting else datetime_time(0, 0)
         acc_date = compute_accounting_date(tx.operation_date, event_time, day_start)
+        if not date_from <= acc_date <= date_to:
+            continue
 
         row = {
             "transaction_id": tx.id,
@@ -1933,7 +1935,7 @@ def build_fso_material_balance(
             OperationTransaction.origin_location_code == loc_code,
             OperationTransaction.primary_asset_code == asset_code,
             OperationTransaction.operation_date >= date_from,
-            OperationTransaction.operation_date <= date_to,
+            OperationTransaction.operation_date <= date_to + timedelta(days=1),
             OperationTransactionValue.field_code == "fso_payload",
         )
         .order_by(OperationTransaction.operation_date.asc(), OperationTransaction.id.asc())
@@ -2031,7 +2033,7 @@ def build_fso_outturn_report(
             OperationTransaction.origin_location_code == loc_code,
             OperationTransaction.primary_asset_code == asset_code,
             OperationTransaction.operation_date >= date_from,
-            OperationTransaction.operation_date <= date_to,
+            OperationTransaction.operation_date <= date_to + timedelta(days=1),
             OperationTransactionValue.field_code == "fso_payload",
         )
         .order_by(OperationTransaction.operation_date.asc(), OperationTransaction.id.asc())
@@ -2058,6 +2060,8 @@ def build_fso_outturn_report(
         setting = get_active_location_day_setting(db, loc_code, tx.operation_date)
         day_start = setting.day_start_time if setting else datetime_time(0, 0)
         acc_date = compute_accounting_date(tx.operation_date, event_time, day_start)
+        if not date_from <= acc_date <= date_to:
+            continue
 
         shuttle_no = (
             inputs.get("shuttle_number")
