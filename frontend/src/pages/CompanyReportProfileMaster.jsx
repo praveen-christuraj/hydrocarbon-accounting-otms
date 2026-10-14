@@ -5,7 +5,10 @@ import {
   updateCompanyReportProfile,
   deleteCompanyReportProfile,
 } from '../api/companyReportProfileApi'
-import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 
 const emptyProfile = {
   id: null,
@@ -34,6 +37,7 @@ function CompanyReportProfileMaster({ loggedInUser }) {
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [page, setPage] = useState(1)
 
+  const pageSize = usePageSize()
   const isAdminBootstrap =
     String(loggedInUser?.username || '').toLowerCase() === 'admin'
 
@@ -46,7 +50,8 @@ function CompanyReportProfileMaster({ loggedInUser }) {
   }
 
   const canManageProfiles = hasPermission('Manage Company Report Profile')
-  const visibleProfiles = paginateRows(profiles, page)
+  const profilesFilters = useDataFilters(profiles, useAutoColumns(profiles), { module: 'Company Report Profile Master' })
+  const visibleProfiles = paginateRows(profilesFilters.filteredRows, page, pageSize)
 
   const reloadProfiles = async () => {
     try {
@@ -518,6 +523,13 @@ function CompanyReportProfileMaster({ loggedInUser }) {
         </p>
       </div>
 
+      <DataTableToolbar
+        filters={profilesFilters}
+        columns={profilesFilters.columns}
+        exportFileName="company-report-profile-master"
+        exportTitle="Company Report Profile Master"
+      />
+
       <table>
         <thead>
           <tr>
@@ -586,7 +598,7 @@ function CompanyReportProfileMaster({ loggedInUser }) {
 
       <PaginationControls
         currentPage={page}
-        totalRows={profiles.length}
+        totalRows={profilesFilters.filteredRows.length}
         onPageChange={setPage}
       />
 

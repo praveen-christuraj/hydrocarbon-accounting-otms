@@ -122,9 +122,9 @@ const WidgetShell = ({ title, children }) => {
     <div
       style={{
         height: '100%',
-        border: '1px solid #e5e7eb',
+        border: '1px solid var(--border)',
         borderRadius: 8,
-        background: '#fff',
+        background: 'var(--surface)',
         overflow: 'hidden',
         display: 'flex',
         flexDirection: 'column',
@@ -133,7 +133,7 @@ const WidgetShell = ({ title, children }) => {
       <div
         style={{
           padding: '10px 12px',
-          borderBottom: '1px solid #e5e7eb',
+          borderBottom: '1px solid var(--border)',
           fontWeight: 600,
           fontSize: 14,
         }}
@@ -174,7 +174,7 @@ const KPIWidget = ({ title, data, meta, mapping }) => {
 
   return (
     <WidgetShell title={title}>
-      {label ? <div style={{ color: '#6b7280', fontSize: 12 }}>{label}</div> : null}
+      {label ? <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>{label}</div> : null}
       <div style={{ fontSize: 34, fontWeight: 700, marginTop: 6 }}>{formatNumber(value)}</div>
     </WidgetShell>
   )
@@ -185,7 +185,7 @@ const TableWidget = ({ title, data, columns, limit }) => {
 
   return (
     <WidgetShell title={title}>
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <table>
         <thead>
           <tr>
             {(columns || []).map((col, idx) => (
@@ -194,8 +194,8 @@ const TableWidget = ({ title, data, columns, limit }) => {
                 style={{
                   textAlign: 'left',
                   fontSize: 12,
-                  color: '#374151',
-                  borderBottom: '1px solid #e5e7eb',
+                  color: 'var(--text-secondary)',
+                  borderBottom: '1px solid var(--border)',
                   padding: '6px 4px',
                 }}
               >
@@ -218,7 +218,7 @@ const TableWidget = ({ title, data, columns, limit }) => {
                   <td
                     key={`${idx}-${j}-${safeString(col?.field)}`}
                     style={{
-                      borderBottom: '1px solid #f3f4f6',
+                      borderBottom: '1px solid var(--divider)',
                       padding: '6px 4px',
                       fontSize: 12,
                     }}
@@ -493,7 +493,7 @@ const TankVisualWidget = ({ title, rows, config }) => {
               <div
                 key={code || name}
                 style={{
-                  border: '1px solid #e5e7eb',
+                  border: '1px solid var(--border)',
                   borderRadius: 12,
                   padding: 12,
                   height: cardHeight,
@@ -505,7 +505,7 @@ const TankVisualWidget = ({ title, rows, config }) => {
                 <TankSvg percent={percent} color={color} />
 
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 800, fontSize: 13, color: '#111827' }}>
+                  <div style={{ fontWeight: 800, fontSize: 13, color: 'var(--text)' }}>
                     {name}
                   </div>
                   <div style={{ fontSize: 12, opacity: 0.75, marginTop: 2 }}>
@@ -682,7 +682,7 @@ const DataWidget = ({ widgetId, widget, selectedLocationCode, allowedParamsByCod
         {state.loading ? (
           <div style={{ fontSize: 12, opacity: 0.8 }}>Loading…</div>
         ) : state.error ? (
-          <div style={{ color: 'red', fontSize: 12 }}>{state.error}</div>
+          <div style={{ color: 'var(--danger-text)', fontSize: 12 }}>{state.error}</div>
         ) : (
           renderEChart({ chartType, rows: state.rows, xField, yField })
         )}
@@ -696,7 +696,7 @@ const DataWidget = ({ widgetId, widget, selectedLocationCode, allowedParamsByCod
         {state.loading ? (
           <div style={{ fontSize: 12, opacity: 0.8 }}>Loading…</div>
         ) : state.error ? (
-          <div style={{ color: 'red', fontSize: 12 }}>{state.error}</div>
+          <div style={{ color: 'var(--danger-text)', fontSize: 12 }}>{state.error}</div>
         ) : (
           <TankVisualWidget title={title} rows={state.rows} config={widget?.config || {}} />
         )}
@@ -715,7 +715,7 @@ const DataWidget = ({ widgetId, widget, selectedLocationCode, allowedParamsByCod
   if (state.error) {
     return (
       <WidgetShell title={title}>
-        <div style={{ color: '#b91c1c' }}>{state.error}</div>
+        <div style={{ color: 'var(--danger-text)' }}>{state.error}</div>
       </WidgetShell>
     )
   }
@@ -910,7 +910,7 @@ export default function Dashboard({ locations }) {
           </button>
         </div>
 
-        <div style={{ color: '#6b7280', fontSize: 12 }}>
+        <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>
           {activeConfig ? (
             <span>
               Using: <strong>{safeString(activeConfig?.name)}</strong> ({safeString(activeConfig?.scope_type)})
@@ -922,10 +922,10 @@ export default function Dashboard({ locations }) {
       </div>
 
       {dataSourcesLoading ? <div style={{ padding: 12 }}>Loading data sources...</div> : null}
-      {dataSourcesError ? <div style={{ padding: 12, color: '#b91c1c' }}>{dataSourcesError}</div> : null}
+      {dataSourcesError ? <div style={{ padding: 12, color: 'var(--danger-text)' }}>{dataSourcesError}</div> : null}
 
       {loading ? <div style={{ padding: 12 }}>Loading dashboard...</div> : null}
-      {error ? <div style={{ padding: 12, color: '#b91c1c' }}>{error}</div> : null}
+      {error ? <div style={{ padding: 12, color: 'var(--danger-text)' }}>{error}</div> : null}
 
       {!loading && !error && versionConfigJson ? (
         <div style={{ padding: 12 }}>

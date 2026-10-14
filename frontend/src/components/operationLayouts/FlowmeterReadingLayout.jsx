@@ -528,14 +528,14 @@ function FlowmeterReadingLayout({
             <div
               key={label}
               style={{
-                border: '1px solid #d1d5db',
+                border: '1px solid var(--border-strong)',
                 borderRadius: 10,
                 padding: '10px 12px',
-                background: '#fff',
+                background: 'var(--surface)',
               }}
             >
-              <div style={{ fontSize: 12, color: '#6b7280' }}>{label}</div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: '#111827' }}>{value}</div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{label}</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>{value}</div>
             </div>
           ))}
         </div>

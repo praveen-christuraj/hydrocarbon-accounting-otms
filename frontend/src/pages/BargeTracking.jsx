@@ -747,7 +747,7 @@ return (
                     {sealChecks.length === 0 ? (
                       <span>(Not Captured)</span>
                     ) : sealMismatch ? (
-                      <span style={{ color: 'red' }}>(Mismatch)</span>
+                      <span style={{ color: 'var(--danger-text)' }}>(Mismatch)</span>
                     ) : (
                       <span style={{ color: 'green' }}>(Matched)</span>
                     )}

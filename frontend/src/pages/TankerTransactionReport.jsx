@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getTankerTransactionReport } from '../api/tankerTransactionReportApi'
 import { getCompanyReportProfiles } from '../api/companyReportProfileApi'
-import PaginationControls, {
-  paginateRows,
-} from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 
 const formatNumber = (value, decimals = 3) => {
   const numericValue = Number(value || 0)
@@ -87,6 +88,7 @@ function TankerTransactionReport({ locations = [], assets = [] }) {
   const [selectedRow, setSelectedRow] = useState(null)
   const [loading, setLoading] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
+  const pageSize = usePageSize()
   const [successMsg, setSuccessMsg] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
 
@@ -245,7 +247,8 @@ function TankerTransactionReport({ locations = [], assets = [] }) {
     window.print()
   }
 
-  const visibleRows = paginateRows(rows, currentPage)
+  const rowsFilters = useDataFilters(rows, useAutoColumns(rows), { module: 'Tanker Transaction Report' })
+  const visibleRows = paginateRows(rowsFilters.filteredRows, currentPage, pageSize)
 
   return (
     <div>
@@ -443,6 +446,13 @@ function TankerTransactionReport({ locations = [], assets = [] }) {
         </p>
       </div>
 
+      <DataTableToolbar
+        filters={rowsFilters}
+        columns={rowsFilters.columns}
+        exportFileName="tanker-transaction-report"
+        exportTitle="Tanker Transaction Report"
+      />
+
       <table>
         <thead>
           <tr>
@@ -505,12 +515,12 @@ function TankerTransactionReport({ locations = [], assets = [] }) {
 
       <PaginationControls
         currentPage={currentPage}
-        totalRows={rows.length}
+        totalRows={rowsFilters.filteredRows.length}
         onPageChange={setCurrentPage}
       />
 
       {profile && (
-        <div className="print-only" style={{ marginTop: 20, fontSize: 11, color: '#555' }}>
+        <div className="print-only print-footnote">
           <p>{profile.footerFormula}</p>
           <p>{profile.footerNote}</p>
           <p><strong>Printed:</strong> {new Date().toLocaleString()}</p>

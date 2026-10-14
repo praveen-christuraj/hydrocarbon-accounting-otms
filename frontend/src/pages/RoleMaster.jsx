@@ -1,6 +1,11 @@
 import { useState } from 'react'
 import { createRole, deleteRole, updateRole } from '../api/roleApi'
-import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
+
+const IMPORT_STATUSES = ['Active', 'Inactive', 'Blocked']
 
 function RoleMaster({ roles, reloadRoles, loggedInUser }) {
   const emptyRole = {
@@ -18,7 +23,9 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
   const [fieldErrors, setFieldErrors] = useState({})
   const [page, setPage] = useState(1)
 
-  const visibleItems = paginateRows(roles, page)
+  const pageSize = usePageSize()
+  const rolesFilters = useDataFilters(roles, useAutoColumns(roles), { module: 'Role Master' })
+  const visibleItems = paginateRows(rolesFilters.filteredRows, page, pageSize)
 
   const isAdminBootstrap =
     String(loggedInUser?.username || '').toLowerCase() === 'admin'
@@ -141,6 +148,29 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
     setConfirmDelete(null)
   }
 
+
+  const importConfig = {
+    title: 'Import role master rows',
+    description: 'Create records from an Excel or CSV file. Existing codes are skipped.',
+    fields: [
+    { key: 'roleName', label: 'Role Name', required: true, example: 'Terminal Supervisor' },
+    { key: 'description', label: 'Description', example: '' },
+    { key: 'status', label: 'Status', options: IMPORT_STATUSES, defaultValue: 'Active', example: 'Active' },
+  ],
+    validateRow: (record) => {
+    const name = String(record.roleName || '').trim().toLowerCase()
+    if (roles.some((item) => item.roleName.toLowerCase() === name)) return 'Role name already exists'
+    if (record.status && !IMPORT_STATUSES.includes(record.status)) return `Status must be one of ${IMPORT_STATUSES.join(', ')}`
+    return null
+  },
+    onImportRow: async (record) => {
+      await createRole({ ...emptyRole, ...record, status: record.status || 'Active' })
+    },
+    onComplete: async () => {
+      await reloadRoles()
+    },
+  }
+
   return (
     <div>
       <div className="page-title">
@@ -153,7 +183,7 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
       </div>
 
       {success && (
-        <div className="error-box" style={{ background: '#f0fdf4', color: '#166534', borderColor: '#bbf7d0' }}>
+        <div className="success-box">
           {success}
           <button className="error-close" onClick={clearSuccess} type="button">&times;</button>
         </div>
@@ -183,10 +213,10 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
               value={role.roleName}
               onChange={handleChange}
               placeholder="Enter role name"
-              style={fieldErrors.roleName ? { borderColor: '#dc2626' } : {}}
+              aria-invalid={fieldErrors.roleName ? 'true' : undefined}
             />
             {fieldErrors.roleName && (
-              <small style={{ color: '#dc2626', marginTop: 4 }}>{fieldErrors.roleName}</small>
+              <small className="field-error">{fieldErrors.roleName}</small>
             )}
           </div>
 
@@ -237,6 +267,16 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
         <p>Roles are now saved permanently in PostgreSQL.</p>
       </div>
 
+      <DataTableToolbar
+        filters={rolesFilters}
+        columns={rolesFilters.columns}
+        exportFileName="role-master"
+        exportTitle="Role Master"
+        module="Role Master"
+        importConfig={importConfig}
+        canImport={canManageRole}
+      />
+
       <table>
         <thead>
           <tr>
@@ -277,7 +317,7 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
                           type="button"
                           onClick={() => handleDeleteConfirm(item.id)}
                           disabled={loading}
-                          style={{ background: '#dc2626', color: '#fff' }}
+                          className="btn-danger"
                         >
                           {loading ? 'Deleting...' : 'Confirm'}
                         </button>
@@ -285,7 +325,7 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
                           type="button"
                           onClick={() => setConfirmDelete(null)}
                           disabled={loading}
-                          style={{ background: '#64748b', color: '#fff' }}
+                          className="btn-secondary"
                         >
                           Cancel
                         </button>
@@ -303,7 +343,7 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
         </tbody>
       </table>
 
-      <PaginationControls currentPage={page} totalRows={roles.length} onPageChange={setPage} />
+      <PaginationControls currentPage={page} totalRows={rolesFilters.filteredRows.length} onPageChange={setPage} />
     </div>
   )
 }

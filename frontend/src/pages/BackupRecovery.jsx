@@ -16,7 +16,10 @@ import {
   validateBackupRestoreRequest,
   verifyBackupChecksum,
 } from '../api/backupApi'
-import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 
 const emptySettings = {
   enabled: false,
@@ -58,6 +61,7 @@ function BackupRecovery({ loggedInUser }) {
   const [typeFilter, setTypeFilter] = useState('')
   const [restoreStatusFilter, setRestoreStatusFilter] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
+  const pageSize = usePageSize()
   const [restoreCurrentPage, setRestoreCurrentPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [successMsg, setSuccessMsg] = useState('')
@@ -134,8 +138,10 @@ function BackupRecovery({ loggedInUser }) {
     }
   }, [jobs])
 
-  const visibleJobs = paginateRows(jobs, currentPage)
-  const visibleRestoreRequests = paginateRows(restoreRequests, restoreCurrentPage)
+  const jobsFilters = useDataFilters(jobs, useAutoColumns(jobs), { module: 'Backup Recovery' })
+  const restoreRequestsFilters = useDataFilters(restoreRequests, useAutoColumns(restoreRequests), { module: 'Backup Recovery' })
+  const visibleJobs = paginateRows(jobsFilters.filteredRows, currentPage, pageSize)
+  const visibleRestoreRequests = paginateRows(restoreRequestsFilters.filteredRows, restoreCurrentPage, pageSize)
   const completedBackupOptions = jobs.filter((job) => job.status === 'Completed')
 
   const updateField = (fieldName, value) => {
@@ -775,6 +781,13 @@ function BackupRecovery({ loggedInUser }) {
         </div>
       </div>
 
+      <DataTableToolbar
+        filters={jobsFilters}
+        columns={jobsFilters.columns}
+        exportFileName="backup-recovery-jobs"
+        exportTitle="Backup Recovery"
+      />
+
       <table>
         <thead>
           <tr>
@@ -863,7 +876,7 @@ function BackupRecovery({ loggedInUser }) {
       </table>
 
       <PaginationControls
-        totalRows={jobs.length}
+        totalRows={jobsFilters.filteredRows.length}
         currentPage={currentPage}
         onPageChange={setCurrentPage}
       />
@@ -952,6 +965,13 @@ function BackupRecovery({ loggedInUser }) {
           </button>
         </div>
       </div>
+
+      <DataTableToolbar
+        filters={restoreRequestsFilters}
+        columns={restoreRequestsFilters.columns}
+        exportFileName="backup-recovery-restore-requests"
+        exportTitle="Backup Recovery"
+      />
 
       <table>
         <thead>
@@ -1076,7 +1096,7 @@ function BackupRecovery({ loggedInUser }) {
       </table>
 
       <PaginationControls
-        totalRows={restoreRequests.length}
+        totalRows={restoreRequestsFilters.filteredRows.length}
         currentPage={restoreCurrentPage}
         onPageChange={setRestoreCurrentPage}
       />

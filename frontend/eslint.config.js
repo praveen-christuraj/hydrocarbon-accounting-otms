@@ -17,5 +17,13 @@ export default defineConfig([
       globals: globals.browser,
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
+    rules: {
+      // Owner rule 8: user feedback must be shown inline or as in-app pop-ups,
+      // never through native browser dialogs.
+      'no-alert': 'error',
+      // Shared modules (providers, hooks, constants) intentionally export more
+      // than components; this only affects HMR granularity in development.
+      'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
+    },
   },
 ])

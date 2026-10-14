@@ -4,7 +4,10 @@ import {
   updateLocationOperationAvailability,
   deleteLocationOperationAvailability,
 } from '../api/locationOperationAvailabilityApi'
-import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 
 function LocationOperationAvailability({
   locations,
@@ -29,6 +32,7 @@ function LocationOperationAvailability({
   const [confirmDeleteItem, setConfirmDeleteItem] = useState(null)
   const [page, setPage] = useState(1)
 
+  const pageSize = usePageSize()
   const activeLocations = locations.filter((location) => {
     return location.status === 'Active'
   })
@@ -51,7 +55,8 @@ function LocationOperationAvailability({
   const canManageAvailability = hasPermission(
     'Manage Location Operation Availability'
   )
-  const visibleEntries = paginateRows(locationOperationAvailability, page)
+  const locationOperationAvailabilityFilters = useDataFilters(locationOperationAvailability, useAutoColumns(locationOperationAvailability), { module: 'Location Operation Availability' })
+  const visibleEntries = paginateRows(locationOperationAvailabilityFilters.filteredRows, page, pageSize)
 
   useEffect(() => {
     setPage(1)
@@ -352,6 +357,13 @@ function LocationOperationAvailability({
         </p>
       </div>
 
+      <DataTableToolbar
+        filters={locationOperationAvailabilityFilters}
+        columns={locationOperationAvailabilityFilters.columns}
+        exportFileName="location-operation-availability"
+        exportTitle="Location Operation Availability"
+      />
+
       <table>
         <thead>
           <tr>
@@ -404,7 +416,7 @@ function LocationOperationAvailability({
 
       <PaginationControls
         currentPage={page}
-        totalRows={locationOperationAvailability.length}
+        totalRows={locationOperationAvailabilityFilters.filteredRows.length}
         onPageChange={setPage}
       />
 

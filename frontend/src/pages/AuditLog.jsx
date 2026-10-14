@@ -1,14 +1,16 @@
 import { Fragment, useEffect, useState } from 'react'
 import { getAuditLogs } from '../api/auditLogApi'
-import PaginationControls, {
-  paginateRows,
-} from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 
 function AuditLog() {
   const [auditLogs, setAuditLogs] = useState([])
   const [loading, setLoading] = useState(false)
   const [expandedLogId, setExpandedLogId] = useState(null)
   const [currentPage, setCurrentPage] = useState(1)
+  const pageSize = usePageSize()
   const [errorMsg, setErrorMsg] = useState('')
 
   const [filters, setFilters] = useState({
@@ -87,7 +89,8 @@ function AuditLog() {
     setExpandedLogId(logId)
   }
 
-  const visibleAuditLogs = paginateRows(auditLogs, currentPage)
+  const auditLogsFilters = useDataFilters(auditLogs, useAutoColumns(auditLogs), { module: 'Audit Log' })
+  const visibleAuditLogs = paginateRows(auditLogsFilters.filteredRows, currentPage, pageSize)
 
   return (
     <div>
@@ -236,6 +239,13 @@ function AuditLog() {
         </p>
       </div>
 
+      <DataTableToolbar
+        filters={auditLogsFilters}
+        columns={auditLogsFilters.columns}
+        exportFileName="audit-log"
+        exportTitle="Audit Log"
+      />
+
       <table>
         <thead>
           <tr>
@@ -323,7 +333,7 @@ function AuditLog() {
 
       <PaginationControls
         currentPage={currentPage}
-        totalRows={auditLogs.length}
+        totalRows={auditLogsFilters.filteredRows.length}
         onPageChange={setCurrentPage}
       />
 

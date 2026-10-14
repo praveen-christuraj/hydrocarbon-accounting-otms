@@ -1,3 +1,68 @@
+# Hydrocarbon Accounting – Project Memory
+
+> **Read this file first in every session.** The "Standing Instructions" below are permanent
+> project rules given by the product owner. They apply to every page, every module and every
+> future change. Never drop or weaken them.
+
+## 0. Hard Constraint – Backend & Database Are Frozen
+
+- **Do NOT change backend code (`backend/`) or any database structure** (models, migrations,
+  seed data, routers, schemas) unless the owner explicitly asks for it. UI/UX work must be done
+  entirely in `frontend/`. Changing the backend "will collapse the functionality".
+- The backend already writes an audit row for every mutation via
+  `app/services/audit_service.create_audit_log` (used in 40+ routers) – the frontend relies on
+  this for server-side auditing and must never bypass the API.
+
+## 1. Standing Instructions (product owner, 2026-10-14)
+
+| # | Rule | How it is implemented in this repo |
+|---|------|------------------------------------|
+| 1 | **All actions in all pages must be properly logged and audited.** | Server: every create/update/delete/approve/export endpoint writes an `AuditLog` row (already in place – keep using the existing API endpoints). Client: `frontend/src/utils/actionLogger.js` (`logUiAction`) records UI-only actions (navigation, exports, imports, prints, filter use, theme changes) with user, route and timestamp into a local ring buffer that is visible from the user menu ("Activity"). Every new page must call `logUiAction` for its user-triggered actions. |
+| 2 | **Provide Light & Dark theme selection** with matching fonts, colours and other changes. | `frontend/src/theme/ThemeProvider.jsx` + CSS variables in `frontend/src/index.css` (`:root` = light, `[data-theme="dark"]` = dark). Never hard-code colours in new CSS/JSX – use the tokens (`var(--surface)`, `var(--text)`, `var(--primary)` …). Theme choice (Light / Dark / System) is persisted per browser in `localStorage` and toggled from the top bar. |
+| 3 | **Top-side navigation with dropdown menus** – never a side navigation. | `frontend/src/components/layout/TopNavigation.jsx` driven by `frontend/src/data/navigationItems.js`. New pages are registered there (label, path, permission). |
+| 4 | **Always paginate list pages** with page sizes **20 / 50 / 100**. | `frontend/src/components/common/PaginationControls.jsx` (`paginateRows`, `usePageSize`, `PAGE_SIZE_OPTIONS`). The chosen page size is a global, persisted user preference. Every table of data must use it. Server-paginated pages pass the same page size as `limit`. |
+| 5 | **Easy + advanced filters** on any criteria of the available content, with **date and date-range filters kept separate**. | `frontend/src/components/common/DataFilterBar.jsx` + `frontend/src/hooks/useDataFilters.js`: quick search (all columns), advanced condition builder (field / operator / value, match all/any), a single-date filter and a separate date-range filter. Every list page must wire its rows through `useDataFilters`. |
+| 6 | **Import & export from Excel (xlsx & csv) and export to PDF.** | `frontend/src/utils/exportUtils.js` (CSV / XLSX via `exceljs`, PDF via `jspdf` + `jspdf-autotable`), `frontend/src/components/common/ExportMenu.jsx`, `frontend/src/components/common/ImportDialog.jsx` (`parseImportFile`, column mapping, preview, row-by-row result). List pages expose export; master-data pages that have a create API also expose import. |
+| 7 | **Professional Navy Blue & White theme**, no unnecessary animations, no emojis, enterprise-grade and well-structured modules. | Palette & type scale are documented in `frontend/DESIGN_SYSTEM.md`. Only state-feedback transitions (≤150 ms, colour/opacity) are allowed; no hover "lift" transforms, no decorative motion, `prefers-reduced-motion` is honoured. Icons are inline SVG (`frontend/src/components/common/Icon.jsx`), never emoji characters. |
+| 8 | **All user alerts (errors, cautions, success) are shown next to the respective data-entry section or as pop-ups** – never `window.alert`, never far away from the field/section they belong to. | Inline: `frontend/src/components/common/AlertMessage.jsx` placed directly above/below the form or table it concerns, field errors under the field. Pop-up: `ToastProvider`/`useToast` (`frontend/src/components/common/Toast.jsx`) for non-blocking notices and `ConfirmDialog` for confirmations. `window.alert`/`window.confirm` are banned (ESLint `no-alert`). |
+| 9 | **Every page ships with Auditing and RBAC by default**, controlled by the admin user. | Wrap every route in `PermissionGuard` (view permission) and gate every mutating control with `usePermissions().hasPermission('Manage …')`. The permission names must exist in the Permission Master so the admin can assign them per role. Audit = rule 1. |
+| 10 | **Pop-ups must not close when the user clicks outside them.** Only the Cancel / Close button closes a dialog. | Use `frontend/src/components/common/Modal.jsx` (and `ConfirmDialog`) for every dialog. The backdrop has no click handler and Escape is ignored by design. Never add `onClick` to a backdrop/overlay element. |
+
+### UI craft references (apply the principles manually – plugins are not installed here)
+
+The owner asked that the following Claude Code UI skills guide all UI work. Their key rules are
+condensed in `frontend/DESIGN_SYSTEM.md` and must be followed even though the plugins themselves
+cannot be installed in the sandbox:
+
+1. `frontend-design` (Anthropic) – commit to one deliberate aesthetic (here: navy & white
+   enterprise), real hierarchy, no generic "card kit", no decorative motion, visible focus.
+2. `UI UX Pro Max` – derive a full design system (style, palette, fonts, spacing, anti-patterns)
+   before building; it lives in `frontend/DESIGN_SYSTEM.md`.
+3. `Taste Skill` – metric-driven spacing/typography/motion rules; audit existing screens.
+4. `Impeccable` – critique → polish → typeset → colorize passes before shipping.
+5. `Emil Kowalski's skills` – motion only where it answers a user action, correct easing/duration.
+6. `Interface Design` – persist design decisions (button heights, radius, spacing, colours) in a
+   system file so new pages stay consistent → `frontend/DESIGN_SYSTEM.md`.
+7. `shadcn/ui` – CSS-variable theming & dark mode conventions (we are not using shadcn
+   components, only its theming approach).
+8. `Web Design Guidelines` (Vercel) – accessibility, focus states, forms, reduced motion,
+   `Intl` formatting, dark-mode `color-scheme`; use as the pre-ship checklist.
+9. `webapp-testing` (Anthropic) – when a browser is available, click through the flows and take
+   screenshots before handing over.
+
+### Checklist for every new or modified page
+
+1. Route wrapped in `PermissionGuard`; mutating buttons gated by `hasPermission`.
+2. Page header via `PageHeader`; lists via `DataFilterBar` + `PaginationControls` (20/50/100).
+3. `ExportMenu` (CSV / XLSX / PDF) on every list; `ImportDialog` where a create API exists.
+4. Dialogs only via `Modal` / `ConfirmDialog` (no outside-click close).
+5. Alerts via `AlertMessage` next to the section, or `useToast`; never `alert()`.
+6. `logUiAction` on user-triggered actions that the backend does not already audit.
+7. Colours and fonts only via CSS variables; verify in both Light and Dark themes.
+8. No emojis, no decorative animation; icons from `Icon.jsx`.
+
+---
+
 ## graphify
 
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.

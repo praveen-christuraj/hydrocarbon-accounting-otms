@@ -4,7 +4,12 @@ import {
   deleteAssetType,
   updateAssetType,
 } from '../api/assetTypeApi'
-import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
+
+const IMPORT_STATUSES = ['Active', 'Inactive', 'Blocked']
 
 function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
   const emptyAssetType = {
@@ -23,7 +28,9 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [page, setPage] = useState(1)
 
-  const visibleItems = paginateRows(assetTypes, page)
+  const pageSize = usePageSize()
+  const assetTypesFilters = useDataFilters(assetTypes, useAutoColumns(assetTypes), { module: 'Asset Type Master' })
+  const visibleItems = paginateRows(assetTypesFilters.filteredRows, page, pageSize)
 
   const isAdminBootstrap =
     String(loggedInUser?.username || '').toLowerCase() === 'admin'
@@ -162,6 +169,30 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
     setEditId(null)
   }
 
+
+  const importConfig = {
+    title: 'Import asset type master rows',
+    description: 'Create records from an Excel or CSV file. Existing codes are skipped.',
+    fields: [
+    { key: 'assetTypeName', label: 'Asset Type Name', required: true, example: 'Storage Tank' },
+    { key: 'assetTypeCode', label: 'Asset Type Code', required: true, example: 'TANK' },
+    { key: 'description', label: 'Description', example: '' },
+    { key: 'status', label: 'Status', options: IMPORT_STATUSES, defaultValue: 'Active', example: 'Active' },
+  ],
+    validateRow: (record) => {
+    const code = String(record.assetTypeCode || '').trim().toLowerCase()
+    if (assetTypes.some((item) => item.assetTypeCode.toLowerCase() === code)) return 'Asset type code already exists'
+    if (record.status && !IMPORT_STATUSES.includes(record.status)) return `Status must be one of ${IMPORT_STATUSES.join(', ')}`
+    return null
+  },
+    onImportRow: async (record) => {
+      await createAssetType({ ...emptyAssetType, ...record, status: record.status || 'Active' })
+    },
+    onComplete: async () => {
+      await reloadAssetTypes()
+    },
+  }
+
   return (
     <div>
       <div className="page-title">
@@ -283,6 +314,16 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
         <p>Asset types are now saved permanently in PostgreSQL.</p>
       </div>
 
+      <DataTableToolbar
+        filters={assetTypesFilters}
+        columns={assetTypesFilters.columns}
+        exportFileName="asset-type-master"
+        exportTitle="Asset Type Master"
+        module="Asset Type Master"
+        importConfig={importConfig}
+        canImport={canManageAssetType}
+      />
+
       <table>
         <thead>
           <tr>
@@ -329,7 +370,7 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
         </tbody>
       </table>
 
-      <PaginationControls currentPage={page} totalRows={assetTypes.length} onPageChange={setPage} />
+      <PaginationControls currentPage={page} totalRows={assetTypesFilters.filteredRows.length} onPageChange={setPage} />
 
       <div className="info-box">
         Asset Type Code must be unique. Example: MSKID for Metering Skid.

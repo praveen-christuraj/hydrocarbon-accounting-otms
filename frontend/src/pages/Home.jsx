@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import Icon from '../components/common/Icon'
 
 const dashboardCards = [
   {
@@ -7,7 +8,7 @@ const dashboardCards = [
     path: '/users',
     permission: 'View User',
     group: 'User Management',
-    icon: '👤',
+    icon: 'user',
   },
   {
     title: 'Role Master',
@@ -15,7 +16,7 @@ const dashboardCards = [
     path: '/roles',
     permission: 'View Role',
     group: 'User Management',
-    icon: '🧩',
+    icon: 'shield',
   },
   {
     title: 'Permission Master',
@@ -23,7 +24,7 @@ const dashboardCards = [
     path: '/permissions',
     permission: 'View Permission',
     group: 'User Management',
-    icon: '🔐',
+    icon: 'key',
   },
   {
     title: 'Role Permissions',
@@ -31,7 +32,7 @@ const dashboardCards = [
     path: '/role-permissions',
     permission: 'View Role Permission Assignment',
     group: 'User Management',
-    icon: '🛡️',
+    icon: 'shieldCheck',
   },
   {
     title: 'User Roles',
@@ -39,7 +40,7 @@ const dashboardCards = [
     path: '/user-roles',
     permission: 'View User Role Assignment',
     group: 'User Management',
-    icon: '👥',
+    icon: 'users',
   },
   {
     title: 'User Locations',
@@ -47,7 +48,7 @@ const dashboardCards = [
     path: '/user-locations',
     permission: 'View User Location Assignment',
     group: 'User Management',
-    icon: '🌍',
+    icon: 'mapPin',
   },
   {
     title: 'Access Summary',
@@ -55,7 +56,7 @@ const dashboardCards = [
     path: '/access-summary',
     permission: 'View Access Summary',
     group: 'User Management',
-    icon: '📋',
+    icon: 'clipboardList',
   },
   {
     title: 'Location Master',
@@ -63,7 +64,7 @@ const dashboardCards = [
     path: '/locations',
     permission: 'View Location',
     group: 'Master Data',
-    icon: '📍',
+    icon: 'globe',
   },
   {
     title: 'Asset Type',
@@ -71,7 +72,7 @@ const dashboardCards = [
     path: '/asset-types',
     permission: 'View Asset Type',
     group: 'Master Data',
-    icon: '🏷️',
+    icon: 'tag',
   },
   {
     title: 'Asset Master',
@@ -79,7 +80,7 @@ const dashboardCards = [
     path: '/assets',
     permission: 'View Asset',
     group: 'Master Data',
-    icon: '🏭',
+    icon: 'factory',
   },
   {
     title: 'Calibration Templates',
@@ -87,7 +88,7 @@ const dashboardCards = [
     path: '/calibration-templates',
     permission: 'View Calibration Template',
     group: 'Master Data',
-    icon: '📐',
+    icon: 'ruler',
   },
   {
     title: 'Asset Calibration',
@@ -95,7 +96,7 @@ const dashboardCards = [
     path: '/asset-calibrations',
     permission: 'View Asset Calibration',
     group: 'Master Data',
-    icon: '📊',
+    icon: 'barChart',
   },
   {
     title: 'Table 11 Factors',
@@ -103,7 +104,7 @@ const dashboardCards = [
     path: '/table11-factors',
     permission: 'View Asset Calibration',
     group: 'Master Data',
-    icon: '📈',
+    icon: 'calculator',
   },
   {
     title: 'Asset Assignment',
@@ -111,7 +112,7 @@ const dashboardCards = [
     path: '/asset-assignments',
     permission: 'View Asset Assignment',
     group: 'Master Data',
-    icon: '🔁',
+    icon: 'repeat',
   },
   {
     title: 'Assignment Summary',
@@ -119,7 +120,7 @@ const dashboardCards = [
     path: '/asset-assignment-summary',
     permission: 'View Asset Assignment Summary',
     group: 'Master Data',
-    icon: '🗂️',
+    icon: 'folder',
   },
   {
     title: 'Operation Types',
@@ -127,7 +128,7 @@ const dashboardCards = [
     path: '/operation-types',
     permission: 'View Operation Type',
     group: 'Operations',
-    icon: '⚙️',
+    icon: 'settings',
   },
   {
     title: 'Operation Availability',
@@ -135,7 +136,7 @@ const dashboardCards = [
     path: '/location-operation-availability',
     permission: 'View Location Operation Availability',
     group: 'Operations',
-    icon: '🧭',
+    icon: 'compass',
   },
   {
     title: 'Operation Templates',
@@ -143,7 +144,7 @@ const dashboardCards = [
     path: '/operation-templates',
     permission: 'View Operation Template',
     group: 'Operations',
-    icon: '📝',
+    icon: 'fileText',
   },
   {
     title: 'Operation Entry',
@@ -151,7 +152,7 @@ const dashboardCards = [
     path: '/operation-entry',
     permission: 'Create Operation Entry',
     group: 'Operations',
-    icon: '➕',
+    icon: 'filePlus',
   },
   {
     title: 'Transaction Register',
@@ -159,7 +160,7 @@ const dashboardCards = [
     path: '/operation-transactions',
     permission: 'View Operation Transaction',
     group: 'Operations',
-    icon: '📑',
+    icon: 'list',
   },
 ]
 
@@ -215,7 +216,7 @@ function Home({ hasPermission }) {
             <div className="dashboard-tile-grid">
               {cards.map((card) => (
                 <Link key={card.path} to={card.path} className="dashboard-tile">
-                  <div className="dashboard-tile-icon">{card.icon}</div>
+                  <div className="dashboard-tile-icon" aria-hidden="true"><Icon name={card.icon} size={20} /></div>
 
                   <div className="dashboard-tile-content">
                     <h3>{card.title}</h3>

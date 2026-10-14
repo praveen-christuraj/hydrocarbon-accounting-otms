@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { getDbTables, getDbTableData } from '../api/adminDbBrowserApi'
+import Icon from '../components/common/Icon'
 
 const REDACTED_PLACEHOLDER = '*** REDACTED ***'
 
@@ -27,7 +28,7 @@ function JsonDisplay({ value }) {
     return (
       <div className="json-cell">
         <button type="button" className="json-toggle" onClick={() => setExpanded(!expanded)}>
-          {expanded ? '▼' : '▶'} JSON
+          <Icon name={expanded ? 'chevronDown' : 'chevronRight'} size={14} /> JSON
         </button>
         {expanded && <pre className="json-expanded">{JSON.stringify(parsed, null, 2)}</pre>}
       </div>
@@ -100,8 +101,11 @@ function DatabaseBrowser() {
 
   return (
     <div className="page-container">
-      <div className="page-header">
-        <h1>Database Browser</h1>
+      <div className="page-title">
+        <div>
+          <h2>Database Browser</h2>
+          <p>Read-only view of database tables for administrators. Sensitive columns are redacted.</p>
+        </div>
       </div>
 
       {errorMsg && (

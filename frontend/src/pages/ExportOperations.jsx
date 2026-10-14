@@ -6,6 +6,7 @@ import {
   getExportPermits, createExportPermit, updateExportPermit, deleteExportPermit,
   getExportTransactions, createExportTransaction, updateExportTransaction, deleteExportTransaction,
   bulkUploadExport,
+  bulkUploadPermits,
   getExportConfigs, saveExportConfig,
   getExportDashboard,
   getExportReport,
@@ -15,6 +16,8 @@ import {
 import { useCompanyPrintProfile } from '../hooks/useCompanyPrintProfile'
 import CompanyPrintHeader from '../components/reports/CompanyPrintHeader'
 import CompanyPrintFooter from '../components/reports/CompanyPrintFooter'
+import { useToast } from '../components/common/Toast'
+import { useConfirm } from '../components/common/ConfirmProvider'
 
 const fmt = (v, d = 2) => {
   const n = Number(v || 0)
@@ -192,7 +195,7 @@ function DashboardTab({ loggedInUser }) {
         <>
 
           {dash.permit_insufficient_count > 0 && (
-            <div className="warn-box" style={{ background: '#fff3cd', border: '1px solid #ffc107', padding: '1rem', borderRadius: '8px', marginBottom: '1rem' }}>
+            <div className="warning-box">
               <strong>Permit Insufficiency Alert:</strong> {dash.permit_insufficient_count} permit(s) exceed {dash.insufficient_threshold_pct}% usage. Supplementary permits may be required.
             </div>
           )}
@@ -215,7 +218,7 @@ function DashboardTab({ loggedInUser }) {
                       {blockColumns.map((bc) => {
                         const b = g.blocks[bc]
                         return [
-                          <td key={`${bc}-exp`} style={b && b.usage_pct >= (dash?.insufficient_threshold_pct || 90) ? { background: '#fff3cd' } : {}}>{b ? fmt(b.export_volume) : '-'}</td>,
+                          <td key={`${bc}-exp`} style={b && b.usage_pct >= (dash?.insufficient_threshold_pct || 90) ? { background: 'var(--warning-soft)' } : {}}>{b ? fmt(b.export_volume) : '-'}</td>,
                           <td key={`${bc}-per`} style={{ fontSize: '0.8rem' }}>{b ? fmt(b.permit_volume) : '-'}</td>,
                         ]
                       })}
@@ -249,6 +252,7 @@ function DashboardTab({ loggedInUser }) {
 }
 
 function DataEntryTab({ loggedInUser, canManage }) {
+  const confirm = useConfirm()
   const [txns, setTxns] = useState([])
   const [locations, setLocations] = useState([])
   const [entities, setEntities] = useState([])
@@ -379,7 +383,8 @@ function DataEntryTab({ loggedInUser, canManage }) {
   }
 
   const remove = async (tx) => {
-    if (!canManage || !window.confirm(`Delete export for ${tx.bl_date}?`)) return
+    if (!canManage) return
+    if (!(await confirm({ title: 'Confirm delete', message: `Delete export for ${tx.bl_date}?`, tone: 'danger', confirmLabel: 'Delete', module: 'Export Operations' }))) return
     try {
       setLoading(true); await deleteExportTransaction(tx.id)
       setSuccessMsg('Deleted'); await load()
@@ -546,80 +551,80 @@ function DataEntryTab({ loggedInUser, canManage }) {
       {errorMsg && <div className="error-box" onClick={() => setErrorMsg('')}>{errorMsg}</div>}
 
       {showBulk && (
-        <div style={{ border: '1px solid #ccc', padding: '1rem', margin: '1rem 0', borderRadius: '8px' }}>
+        <div style={{ border: '1px solid var(--border-strong)', padding: '1rem', margin: '1rem 0', borderRadius: '8px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
             <h4 style={{ margin: 0 }}>Bulk Upload</h4>
             <button type="button" onClick={downloadCSVTemplate} style={{ padding: '0.25rem 0.75rem', fontSize: '0.85rem' }}>Download Template</button>
           </div>
-          <p style={{ margin: '0.5rem 0', color: '#555', fontSize: '0.9rem' }}>CSV columns: bl_date, location_code, entity_code, block_code, volume, consignee, destination, country, vessel_name, permit_number, remarks</p>
+          <p style={{ margin: '0.5rem 0', color: 'var(--text-muted)', fontSize: '0.9rem' }}>CSV columns: bl_date, location_code, entity_code, block_code, volume, consignee, destination, country, vessel_name, permit_number, remarks</p>
           <input type="file" accept=".csv" onChange={handleFileUpload} style={{ marginBottom: '0.5rem' }} />
           {bulkItems.length > 0 && (
             <div style={{ maxHeight: '400px', overflow: 'auto', marginTop: '0.5rem' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <table>
                 <thead>
-                  <tr style={{ background: '#f5f5f5', position: 'sticky', top: 0 }}>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', border: '1px solid #ddd' }}>#</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', border: '1px solid #ddd' }}>BL Date</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', border: '1px solid #ddd' }}>Location</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', border: '1px solid #ddd' }}>Entity</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', border: '1px solid #ddd' }}>Block</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', border: '1px solid #ddd' }}>Volume</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', border: '1px solid #ddd' }}>Consignee</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', border: '1px solid #ddd' }}>Destination</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', border: '1px solid #ddd' }}>Country</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', border: '1px solid #ddd' }}>Vessel Name</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', border: '1px solid #ddd' }}>Permit #</th>
+                  <tr style={{ background: 'var(--table-head-bg)', position: 'sticky', top: 0 }}>
+                    <th>#</th>
+                    <th>BL Date</th>
+                    <th>Location</th>
+                    <th>Entity</th>
+                    <th>Block</th>
+                    <th>Volume</th>
+                    <th>Consignee</th>
+                    <th>Destination</th>
+                    <th>Country</th>
+                    <th>Vessel Name</th>
+                    <th>Permit #</th>
                   </tr>
                 </thead>
                 <tbody>
                   {bulkItems.map((item, idx) => {
                     const rowErrors = getRowValidationErrors(idx)
                     return (
-                      <tr key={idx} style={{ background: rowErrors.length ? '#fff3cd' : '' }}>
-                        <td style={{ padding: '0.5rem', border: '1px solid #ddd' }}>{idx + 1}</td>
-                        <td style={{ padding: '0.5rem', border: '1px solid #ddd' }}>
+                      <tr key={idx} style={{ background: rowErrors.length ? 'var(--warning-soft)' : '' }}>
+                        <td>{idx + 1}</td>
+                        <td>
                           <input type="date" style={{ width: '120px' }} value={item.bl_date} onChange={(e) => updateBulkRow(idx, 'bl_date', e.target.value)} />
                         </td>
-                        <td style={{ padding: '0.5rem', border: '1px solid #ddd' }}>
+                        <td>
                           <select style={{ width: '100px' }} value={item.location_code} onChange={(e) => updateBulkRow(idx, 'location_code', e.target.value)} disabled={!canManage || loading}>
                             <option value="">Select</option>
                             {sortOptions(locations, 'location_name', 'location_code')}
                           </select>
                         </td>
-                        <td style={{ padding: '0.5rem', border: '1px solid #ddd' }}>
+                        <td>
                           <select style={{ width: '100px' }} value={item.entity_code} onChange={(e) => updateBulkRow(idx, 'entity_code', e.target.value)} disabled={!canManage || loading}>
                             <option value="">Select</option>
                             {sortOptions(entities, 'entity_name', 'entity_code')}
                           </select>
                         </td>
-                        <td style={{ padding: '0.5rem', border: '1px solid #ddd' }}>
+                        <td>
                           <select style={{ width: '100px' }} value={item.block_code} onChange={(e) => updateBulkRow(idx, 'block_code', e.target.value)} disabled={!canManage || loading}>
                             <option value="">Select</option>
                             {sortOptions(blocks, 'block_name', 'block_code')}
                           </select>
                         </td>
-                        <td style={{ padding: '0.5rem', border: '1px solid #ddd' }}>
+                        <td>
                           <input type="number" step="0.01" style={{ width: '90px' }} value={item.volume} onChange={(e) => updateBulkRow(idx, 'volume', e.target.value)} disabled={!canManage || loading} />
                         </td>
-                        <td style={{ padding: '0.5rem', border: '1px solid #ddd' }}>
+                        <td>
                           <select style={{ width: '120px' }} value={item.consignee} onChange={(e) => updateBulkRow(idx, 'consignee', e.target.value)} disabled={!canManage || loading}>
                             <option value="">Select</option>
                             {sortOptions(consignees, 'consignee_name', 'consignee_name')}
                           </select>
                         </td>
-                        <td style={{ padding: '0.5rem', border: '1px solid #ddd' }}>
+                        <td>
                           <input style={{ width: '100px' }} value={item.destination} onChange={(e) => updateBulkRow(idx, 'destination', e.target.value)} disabled={!canManage || loading} />
                         </td>
-                        <td style={{ padding: '0.5rem', border: '1px solid #ddd' }}>
+                        <td>
                           <select style={{ width: '100px' }} value={item.country} onChange={(e) => updateBulkRow(idx, 'country', e.target.value)} disabled={!canManage || loading}>
                             <option value="">Select</option>
                             {COUNTRIES.map((c) => <option key={c} value={c}>{c}</option>)}
                           </select>
                         </td>
-                        <td style={{ padding: '0.5rem', border: '1px solid #ddd' }}>
+                        <td>
                           <input style={{ width: '100px' }} value={item.vessel_name || ''} onChange={(e) => updateBulkRow(idx, 'vessel_name', e.target.value)} disabled={!canManage || loading} />
                         </td>
-                        <td style={{ padding: '0.5rem', border: '1px solid #ddd' }}>
+                        <td>
                           <input style={{ width: '100px' }} value={item.permit_number} onChange={(e) => updateBulkRow(idx, 'permit_number', e.target.value)} disabled={!canManage || loading} />
                         </td>
                       </tr>
@@ -629,13 +634,13 @@ function DataEntryTab({ loggedInUser, canManage }) {
               </table>
               <div className="form-actions" style={{ marginTop: '0.75rem' }}>
                 <button type="button" onClick={handleBulkUpload} disabled={loading || !canManage || bulkErrors.length > 0}>{loading ? 'Uploading...' : `Upload ${bulkItems.length}`}</button>
-                {bulkErrors.length > 0 && <span style={{ marginLeft: '1rem', color: '#dc3545', fontSize: '0.9rem' }}>Fix {bulkErrors.length} error(s) before upload</span>}
+                {bulkErrors.length > 0 && <span style={{ marginLeft: '1rem', color: 'var(--danger-text)', fontSize: '0.9rem' }}>Fix {bulkErrors.length} error(s) before upload</span>}
               </div>
               {bulkErrors.length > 0 && (
                 <div className="error-box" style={{ marginTop: '0.75rem', fontSize: '0.85rem' }}>
                   <strong>Validation Errors:</strong>
                   {bulkErrors.map((e, i) => (
-                    <div key={i} style={{ marginTop: '0.25rem', padding: '0.25rem', background: '#fff', border: '1px solid #f5c6cb', borderRadius: '4px' }}>
+                    <div key={i} style={{ marginTop: '0.25rem', padding: '0.25rem', background: 'var(--surface)', border: '1px solid var(--danger-border)', borderRadius: '4px' }}>
                       <strong>Row {e.row}:</strong> {e.errors.join('; ')}
                     </div>
                   ))}
@@ -680,7 +685,7 @@ function DataEntryTab({ loggedInUser, canManage }) {
           <div><label>Remarks</label><textarea rows="2" value={form.remarks} onChange={(e) => setForm((c) => ({ ...c, remarks: e.target.value }))} disabled={!canManage || loading} /></div>
         </div>
         {form.entity_code && filteredBlocks.length > 0 && (
-          <div style={{ marginTop: '1rem', border: '1px solid #ddd', borderRadius: '8px', padding: '0.75rem' }}>
+          <div style={{ marginTop: '1rem', border: '1px solid var(--border)', borderRadius: '8px', padding: '0.75rem' }}>
             <div style={{ fontWeight: 600, marginBottom: '0.5rem' }}>Block volumes</div>
             <table style={{ width: '100%' }}>
               <thead><tr><th style={{ textAlign: 'left' }}>Block</th><th style={{ textAlign: 'left' }}>Volume</th></tr></thead>
@@ -694,8 +699,8 @@ function DataEntryTab({ loggedInUser, canManage }) {
               </tbody>
               <tfoot>
                 <tr style={{ fontWeight: 700 }}>
-                  <td style={{ borderTop: '2px solid #333', padding: '0.5rem 0' }}>Total</td>
-                  <td style={{ borderTop: '2px solid #333', padding: '0.5rem 0' }}>{fmt((form.block_entries || []).reduce((s, e) => s + Number(e.volume || 0), 0))}</td>
+                  <td style={{ borderTop: '2px solid var(--border-strong)', padding: '0.5rem 0' }}>Total</td>
+                  <td style={{ borderTop: '2px solid var(--border-strong)', padding: '0.5rem 0' }}>{fmt((form.block_entries || []).reduce((s, e) => s + Number(e.volume || 0), 0))}</td>
                 </tr>
               </tfoot>
             </table>
@@ -705,7 +710,7 @@ function DataEntryTab({ loggedInUser, canManage }) {
           <div className="info-box" style={{ marginTop: '1rem' }}>Select an entity to show all available blocks and enter volumes per block.</div>
         )}
         {permitIssues.length > 0 && (
-          <div className="warn-box" style={{ marginTop: '1rem', background: '#fff3cd', border: '1px solid #ffc107', padding: '0.75rem', borderRadius: '8px' }}>
+          <div className="warning-box" style={{ marginTop: '1rem' }}>
             <strong>Permit warning:</strong> The requested volume exceeds the remaining permit volume for {permitIssues.map((issue) => `${issue.block_code}`).join(', ')}.
             <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.5rem' }}>
               <input type="checkbox" checked={permitOverride} onChange={(e) => setPermitOverride(e.target.checked)} />
@@ -887,6 +892,8 @@ function ConfigurationTab({ loggedInUser, canManage }) {
 }
 
 function LocationConfig({ canManage }) {
+  const toast = useToast()
+  const confirm = useConfirm()
   const [items, setItems] = useState([])
   const [form, setForm] = useState({ location_name: '', location_code: '', description: '' })
   const [editing, setEditing] = useState(null)
@@ -897,7 +904,7 @@ function LocationConfig({ canManage }) {
       setLoading(true)
       const data = await getExportLocations()
       setItems(Array.isArray(data) ? data : [])
-    } catch (e) { alert(e.message) } finally { setLoading(false) }
+    } catch (e) { toast.error(e.message, { title: 'Export Operations' }) } finally { setLoading(false) }
   }
   useEffect(() => { load() }, [])
 
@@ -908,12 +915,13 @@ function LocationConfig({ canManage }) {
       if (editing?.id) await updateExportLocation(editing.id, form)
       else await createExportLocation(form)
       setEditing(null); setForm({ location_name: '', location_code: '', description: '' }); await load()
-    } catch (e) { alert(e.message) } finally { setLoading(false) }
+    } catch (e) { toast.error(e.message, { title: 'Export Operations' }) } finally { setLoading(false) }
   }
 
   const remove = async (item) => {
-    if (!canManage || !window.confirm(`Delete ${item.location_name}?`)) return
-    try { await deleteExportLocation(item.id); await load() } catch (e) { alert(e.message) }
+    if (!canManage) return
+    if (!(await confirm({ title: 'Confirm delete', message: `Delete ${item.location_name}?`, tone: 'danger', confirmLabel: 'Delete', module: 'Export Operations' }))) return
+    try { await deleteExportLocation(item.id); await load() } catch (e) { toast.error(e.message, { title: 'Export Operations' }) }
   }
 
   return (
@@ -946,6 +954,8 @@ function LocationConfig({ canManage }) {
 }
 
 function EntityConfig({ canManage }) {
+  const toast = useToast()
+  const confirm = useConfirm()
   const [items, setItems] = useState([])
   const [form, setForm] = useState({ entity_name: '', entity_code: '', description: '' })
   const [editing, setEditing] = useState(null)
@@ -956,7 +966,7 @@ function EntityConfig({ canManage }) {
       setLoading(true)
       const data = await getExportEntities()
       setItems(Array.isArray(data) ? data : [])
-    } catch (e) { alert(e.message) } finally { setLoading(false) }
+    } catch (e) { toast.error(e.message, { title: 'Export Operations' }) } finally { setLoading(false) }
   }
   useEffect(() => { load() }, [])
 
@@ -967,12 +977,13 @@ function EntityConfig({ canManage }) {
       if (editing?.id) await updateExportEntity(editing.id, form)
       else await createExportEntity(form)
       setEditing(null); setForm({ entity_name: '', entity_code: '', description: '' }); await load()
-    } catch (e) { alert(e.message) } finally { setLoading(false) }
+    } catch (e) { toast.error(e.message, { title: 'Export Operations' }) } finally { setLoading(false) }
   }
 
   const remove = async (item) => {
-    if (!canManage || !window.confirm(`Delete ${item.entity_name}?`)) return
-    try { await deleteExportEntity(item.id); await load() } catch (e) { alert(e.message) }
+    if (!canManage) return
+    if (!(await confirm({ title: 'Confirm delete', message: `Delete ${item.entity_name}?`, tone: 'danger', confirmLabel: 'Delete', module: 'Export Operations' }))) return
+    try { await deleteExportEntity(item.id); await load() } catch (e) { toast.error(e.message, { title: 'Export Operations' }) }
   }
 
   return (
@@ -1005,6 +1016,8 @@ function EntityConfig({ canManage }) {
 }
 
 function BlockConfig({ canManage }) {
+  const toast = useToast()
+  const confirm = useConfirm()
   const [items, setItems] = useState([])
   const [entities, setEntities] = useState([])
   const [blocks, setBlocks] = useState([])
@@ -1024,7 +1037,7 @@ function BlockConfig({ canManage }) {
       setBlocks(Array.isArray(blks) ? blks : [])
       setEntities(Array.isArray(ents) ? ents : [])
       setEntityBlocks(Array.isArray(ebs) ? ebs : [])
-    } catch (e) { alert(e.message) } finally { setLoading(false) }
+    } catch (e) { toast.error(e.message, { title: 'Export Operations' }) } finally { setLoading(false) }
   }
   useEffect(() => { load() }, [])
 
@@ -1035,12 +1048,13 @@ function BlockConfig({ canManage }) {
       if (editing?.id) await updateExportBlock(editing.id, form)
       else await createExportBlock(form)
       setEditing(null); setForm({ block_name: '', block_code: '', description: '' }); await load()
-    } catch (e) { alert(e.message) } finally { setLoading(false) }
+    } catch (e) { toast.error(e.message, { title: 'Export Operations' }) } finally { setLoading(false) }
   }
 
   const remove = async (item) => {
-    if (!canManage || !window.confirm(`Delete ${item.block_name}?`)) return
-    try { await deleteExportBlock(item.id); await load() } catch (e) { alert(e.message) }
+    if (!canManage) return
+    if (!(await confirm({ title: 'Confirm delete', message: `Delete ${item.block_name}?`, tone: 'danger', confirmLabel: 'Delete', module: 'Export Operations' }))) return
+    try { await deleteExportBlock(item.id); await load() } catch (e) { toast.error(e.message, { title: 'Export Operations' }) }
   }
 
   const saveEntityBlock = async () => {
@@ -1053,12 +1067,13 @@ function BlockConfig({ canManage }) {
       }
       await createEntityBlock(entityBlockForm.entity_code, entityBlockForm.block_code)
       setEntityBlockEditing(null); setEntityBlockForm({ entity_code: '', block_code: '' }); await load()
-    } catch (e) { alert(e.message) } finally { setLoading(false) }
+    } catch (e) { toast.error(e.message, { title: 'Export Operations' }) } finally { setLoading(false) }
   }
 
   const removeEntityBlock = async (item) => {
-    if (!canManage || !window.confirm(`Delete mapping ${item.entity_name} - ${item.block_name}?`)) return
-    try { await deleteEntityBlock(item.id); await load() } catch (e) { alert(e.message) }
+    if (!canManage) return
+    if (!(await confirm({ title: 'Confirm delete', message: `Delete mapping ${item.entity_name} - ${item.block_name}?`, tone: 'danger', confirmLabel: 'Delete', module: 'Export Operations' }))) return
+    try { await deleteEntityBlock(item.id); await load() } catch (e) { toast.error(e.message, { title: 'Export Operations' }) }
   }
 
   const startEntityBlockEdit = (item) => {
@@ -1150,6 +1165,8 @@ function BlockConfig({ canManage }) {
 }
 
 function PermitConfig({ canManage }) {
+  const toast = useToast()
+  const confirm = useConfirm()
   const [items, setItems] = useState([])
   const [locations, setLocations] = useState([])
   const [entities, setEntities] = useState([])
@@ -1181,7 +1198,7 @@ function PermitConfig({ canManage }) {
       setEntities(Array.isArray(ents) ? ents : [])
       setBlocks(Array.isArray(blks) ? blks : [])
       setEntityBlocks(Array.isArray(eb) ? eb : [])
-    } catch (e) { alert(e.message) } finally { setLoading(false) }
+    } catch (e) { toast.error(e.message, { title: 'Export Operations' }) } finally { setLoading(false) }
   }
   useEffect(() => { load() }, [])
 
@@ -1355,12 +1372,13 @@ function PermitConfig({ canManage }) {
       if (editing?.id) await updateExportPermit(editing.id, payload)
       else await createExportPermit(payload)
       setEditing(null); setForm({ permit_number: '', location_code: '', entity_code: '', block_code: '', block_codes: [], permit_quarter: getCurrentQuarter(), permit_year: new Date().getFullYear(), permit_volume: '', supplementary_permit: 'No', permit_status: 'Active', permit_remarks: '' }); setSuccessMsg(editing?.id ? 'Permit updated successfully' : 'Permit created successfully'); await load()
-    } catch (e) { alert(e.message) } finally { setLoading(false) }
+    } catch (e) { toast.error(e.message, { title: 'Export Operations' }) } finally { setLoading(false) }
   }
 
   const remove = async (item) => {
-    if (!canManage || !window.confirm(`Delete permit ${item.permit_number}?`)) return
-    try { await deleteExportPermit(item.id); await load() } catch (e) { alert(e.message) }
+    if (!canManage) return
+    if (!(await confirm({ title: 'Confirm delete', message: `Delete permit ${item.permit_number}?`, tone: 'danger', confirmLabel: 'Delete', module: 'Export Operations' }))) return
+    try { await deleteExportPermit(item.id); await load() } catch (e) { toast.error(e.message, { title: 'Export Operations' }) }
   }
 
   const quarterOpts = ['Q1', 'Q2', 'Q3', 'Q4']
@@ -1384,84 +1402,84 @@ function PermitConfig({ canManage }) {
       {errorMsg && <div className="error-box" onClick={() => setErrorMsg('')}>{errorMsg}</div>}
 
       {showBulk && (
-        <div style={{ border: '1px solid #ccc', padding: '1rem', margin: '1rem 0', borderRadius: '8px' }}>
+        <div style={{ border: '1px solid var(--border-strong)', padding: '1rem', margin: '1rem 0', borderRadius: '8px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
             <h4 style={{ margin: 0 }}>Bulk Upload Permits</h4>
             <button type="button" onClick={downloadPermitTemplate} style={{ padding: '0.25rem 0.75rem', fontSize: '0.85rem' }}>Download Template</button>
           </div>
-          <p style={{ margin: '0.5rem 0', color: '#555', fontSize: '0.9rem' }}>CSV columns: permit_number, location_code, entity_code, block_code, quarter, year, permit_volume, supplementary_permit, status, remarks</p>
+          <p style={{ margin: '0.5rem 0', color: 'var(--text-muted)', fontSize: '0.9rem' }}>CSV columns: permit_number, location_code, entity_code, block_code, quarter, year, permit_volume, supplementary_permit, status, remarks</p>
           <input type="file" accept=".csv" onChange={handleFileUpload} style={{ marginBottom: '0.5rem' }} />
           {bulkItems.length > 0 && (
             <div style={{ maxHeight: '400px', overflow: 'auto', marginTop: '0.5rem' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <table>
                 <thead>
-                  <tr style={{ background: '#f5f5f5', position: 'sticky', top: 0 }}>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', border: '1px solid #ddd' }}>#</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', border: '1px solid #ddd' }}>Permit #</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', border: '1px solid #ddd' }}>Location</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', border: '1px solid #ddd' }}>Entity</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', border: '1px solid #ddd' }}>Block</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', border: '1px solid #ddd' }}>Quarter</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', border: '1px solid #ddd' }}>Year</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', border: '1px solid #ddd' }}>Volume</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', border: '1px solid #ddd' }}>Supplementary</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', border: '1px solid #ddd' }}>Status</th>
-                    <th style={{ padding: '0.5rem', textAlign: 'left', border: '1px solid #ddd' }}>Remarks</th>
+                  <tr style={{ background: 'var(--table-head-bg)', position: 'sticky', top: 0 }}>
+                    <th>#</th>
+                    <th>Permit #</th>
+                    <th>Location</th>
+                    <th>Entity</th>
+                    <th>Block</th>
+                    <th>Quarter</th>
+                    <th>Year</th>
+                    <th>Volume</th>
+                    <th>Supplementary</th>
+                    <th>Status</th>
+                    <th>Remarks</th>
                   </tr>
                 </thead>
                 <tbody>
                   {bulkItems.map((item, idx) => {
                     const rowErrors = getRowValidationErrors(idx)
                     return (
-                      <tr key={idx} style={{ background: rowErrors.length ? '#fff3cd' : '' }}>
-                        <td style={{ padding: '0.5rem', border: '1px solid #ddd' }}>{idx + 1}</td>
-                        <td style={{ padding: '0.5rem', border: '1px solid #ddd' }}>
+                      <tr key={idx} style={{ background: rowErrors.length ? 'var(--warning-soft)' : '' }}>
+                        <td>{idx + 1}</td>
+                        <td>
                           <input style={{ width: '120px' }} value={item.permit_number} onChange={(e) => updateBulkRow(idx, 'permit_number', e.target.value)} disabled={!canManage || loading} />
                         </td>
-                        <td style={{ padding: '0.5rem', border: '1px solid #ddd' }}>
+                        <td>
                           <select style={{ width: '120px' }} value={item.location_code} onChange={(e) => updateBulkRow(idx, 'location_code', e.target.value)} disabled={!canManage || loading}>
                             <option value="">Select</option>
                             {sortOptions(locations, 'location_name', 'location_code')}
                           </select>
                         </td>
-                        <td style={{ padding: '0.5rem', border: '1px solid #ddd' }}>
+                        <td>
                           <select style={{ width: '120px' }} value={item.entity_code} onChange={(e) => { updateBulkRow(idx, 'entity_code', e.target.value); updateBulkRow(idx, 'block_code', '') }} disabled={!canManage || loading}>
                             <option value="">Select</option>
                             {sortOptions(entities, 'entity_name', 'entity_code')}
                           </select>
                         </td>
-                        <td style={{ padding: '0.5rem', border: '1px solid #ddd' }}>
+                        <td>
                           <select style={{ width: '120px' }} value={item.block_code} onChange={(e) => updateBulkRow(idx, 'block_code', e.target.value)} disabled={!canManage || loading}>
                             <option value="">Select</option>
                             {sortOptions(getFilteredBlocks(item.entity_code), 'block_name', 'block_code')}
                           </select>
                         </td>
-                        <td style={{ padding: '0.5rem', border: '1px solid #ddd' }}>
+                        <td>
                           <select style={{ width: '80px' }} value={item.quarter} onChange={(e) => updateBulkRow(idx, 'quarter', e.target.value)} disabled={!canManage || loading}>
                             <option value="">Select</option>
                             {quarterOpts.map((q) => <option key={q} value={q}>{q}</option>)}
                           </select>
                         </td>
-                        <td style={{ padding: '0.5rem', border: '1px solid #ddd' }}>
+                        <td>
                           <select style={{ width: '80px' }} value={item.year} onChange={(e) => updateBulkRow(idx, 'year', e.target.value)} disabled={!canManage || loading}>
                             <option value="">Select</option>
                             {yearOpts.map((y) => <option key={y} value={y}>{y}</option>)}
                           </select>
                         </td>
-                        <td style={{ padding: '0.5rem', border: '1px solid #ddd' }}>
+                        <td>
                           <input type="number" step="0.01" style={{ width: '100px' }} value={item.permit_volume} onChange={(e) => updateBulkRow(idx, 'permit_volume', e.target.value)} disabled={!canManage || loading} />
                         </td>
-                        <td style={{ padding: '0.5rem', border: '1px solid #ddd' }}>
+                        <td>
                           <select style={{ width: '100px' }} value={item.supplementary_permit} onChange={(e) => updateBulkRow(idx, 'supplementary_permit', e.target.value)} disabled={!canManage || loading}>
                             <option value="No">No</option><option value="Yes">Yes</option>
                           </select>
                         </td>
-                        <td style={{ padding: '0.5rem', border: '1px solid #ddd' }}>
+                        <td>
                           <select style={{ width: '100px' }} value={item.status} onChange={(e) => updateBulkRow(idx, 'status', e.target.value)} disabled={!canManage || loading}>
                             <option value="Active">Active</option><option value="Expired">Expired</option><option value="Inactive">Inactive</option>
                           </select>
                         </td>
-                        <td style={{ padding: '0.5rem', border: '1px solid #ddd' }}>
+                        <td>
                           <input style={{ width: '120px' }} value={item.remarks || ''} onChange={(e) => updateBulkRow(idx, 'remarks', e.target.value)} disabled={!canManage || loading} />
                         </td>
                       </tr>
@@ -1471,13 +1489,13 @@ function PermitConfig({ canManage }) {
               </table>
               <div className="form-actions" style={{ marginTop: '0.75rem' }}>
                 <button type="button" onClick={handleBulkUpload} disabled={loading || !canManage || bulkErrors.length > 0}>{loading ? 'Uploading...' : `Upload ${bulkItems.length}`}</button>
-                {bulkErrors.length > 0 && <span style={{ marginLeft: '1rem', color: '#dc3545', fontSize: '0.9rem' }}>Fix {bulkErrors.length} error(s) before upload</span>}
+                {bulkErrors.length > 0 && <span style={{ marginLeft: '1rem', color: 'var(--danger-text)', fontSize: '0.9rem' }}>Fix {bulkErrors.length} error(s) before upload</span>}
               </div>
               {bulkErrors.length > 0 && (
                 <div className="error-box" style={{ marginTop: '0.75rem', fontSize: '0.85rem' }}>
                   <strong>Validation Errors:</strong>
                   {bulkErrors.map((e, i) => (
-                    <div key={i} style={{ marginTop: '0.25rem', padding: '0.25rem', background: '#fff', border: '1px solid #f5c6cb', borderRadius: '4px' }}>
+                    <div key={i} style={{ marginTop: '0.25rem', padding: '0.25rem', background: 'var(--surface)', border: '1px solid var(--danger-border)', borderRadius: '4px' }}>
                       <strong>Row {e.row}:</strong> {e.errors.join('; ')}
                     </div>
                   ))}
@@ -1507,7 +1525,7 @@ function PermitConfig({ canManage }) {
             {filteredBlocks.map((b) => {
               const checked = form.block_codes?.includes(b.block_code) || (!form.block_codes?.length && form.block_code === b.block_code)
               return (
-                <label key={b.block_code} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer', padding: '0.25rem 0.5rem', borderRadius: '4px', background: checked ? '#e3f2fd' : '#f5f5f5', border: '1px solid ' + (checked ? '#1976d2' : '#ddd') }}>
+                <label key={b.block_code} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer', padding: '0.25rem 0.5rem', borderRadius: '4px', background: checked ? 'var(--primary-soft)' : 'var(--surface-2)', border: '1px solid ' + (checked ? 'var(--primary)' : 'var(--border)') }}>
                   <input type="checkbox" checked={checked} onChange={() => {
                     const cur = form.block_codes || []
                     let next
@@ -1522,7 +1540,7 @@ function PermitConfig({ canManage }) {
                 </label>
               )
             })}
-            {!filteredBlocks.length && <span style={{ color: '#999' }}>No blocks available for selected entity</span>}
+            {!filteredBlocks.length && <span style={{ color: 'var(--text-faint)' }}>No blocks available for selected entity</span>}
           </div>
         </div>
         <div><label>Quarter *</label>
@@ -1582,6 +1600,8 @@ function PermitConfig({ canManage }) {
 }
 
 function ConsigneeConfig({ canManage }) {
+  const toast = useToast()
+  const confirm = useConfirm()
   const [items, setItems] = useState([])
   const [form, setForm] = useState({ consignee_name: '', description: '' })
   const [editing, setEditing] = useState(null)
@@ -1589,7 +1609,7 @@ function ConsigneeConfig({ canManage }) {
 
   const load = async () => {
     try { setLoading(true); const data = await getExportConsignees(); setItems(Array.isArray(data) ? data : []) }
-    catch (e) { alert(e.message) } finally { setLoading(false) }
+    catch (e) { toast.error(e.message, { title: 'Export Operations' }) } finally { setLoading(false) }
   }
   useEffect(() => { load() }, [])
 
@@ -1600,12 +1620,13 @@ function ConsigneeConfig({ canManage }) {
       if (editing) { await updateExportConsignee(editing.id, { consignee_name: form.consignee_name, description: form.description }) }
       else { await createExportConsignee({ consignee_name: form.consignee_name, description: form.description }) }
       setForm({ consignee_name: '', description: '' }); setEditing(null); await load()
-    } catch (e) { alert(e.message) } finally { setLoading(false) }
+    } catch (e) { toast.error(e.message, { title: 'Export Operations' }) } finally { setLoading(false) }
   }
 
   const remove = async (item) => {
-    if (!canManage || !window.confirm(`Delete consignee "${item.consignee_name}"?`)) return
-    try { await deleteExportConsignee(item.id); await load() } catch (e) { alert(e.message) }
+    if (!canManage) return
+    if (!(await confirm({ title: 'Confirm delete', message: `Delete consignee "${item.consignee_name}"?`, tone: 'danger', confirmLabel: 'Delete', module: 'Export Operations' }))) return
+    try { await deleteExportConsignee(item.id); await load() } catch (e) { toast.error(e.message, { title: 'Export Operations' }) }
   }
 
   return (
@@ -1638,6 +1659,7 @@ function ConsigneeConfig({ canManage }) {
 }
 
 function SettingsConfig({ canManage }) {
+  const toast = useToast()
   const [configs, setConfigs] = useState([])
   const [loading, setLoading] = useState(false)
   const [form, setForm] = useState({ config_key: '', config_value: '', description: '' })
@@ -1647,7 +1669,7 @@ function SettingsConfig({ canManage }) {
       setLoading(true)
       const data = await getExportConfigs()
       setConfigs(Array.isArray(data) ? data : [])
-    } catch (e) { alert(e.message) } finally { setLoading(false) }
+    } catch (e) { toast.error(e.message, { title: 'Export Operations' }) } finally { setLoading(false) }
   }
   useEffect(() => { load() }, [])
 
@@ -1657,7 +1679,7 @@ function SettingsConfig({ canManage }) {
       setLoading(true)
       await saveExportConfig(form)
       setForm({ config_key: '', config_value: '', description: '' }); await load()
-    } catch (e) { alert(e.message) } finally { setLoading(false) }
+    } catch (e) { toast.error(e.message, { title: 'Export Operations' }) } finally { setLoading(false) }
   }
 
   const defaults = [

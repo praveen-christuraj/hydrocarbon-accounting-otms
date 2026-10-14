@@ -4,7 +4,10 @@ import {
   deleteAssetAssignment,
   updateAssetAssignment,
 } from '../api/assetAssignmentApi'
-import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 
 function AssetAssignment({
   assets,
@@ -34,6 +37,7 @@ function AssetAssignment({
   const [validationErrors, setValidationErrors] = useState({})
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [activePage, setActivePage] = useState(1)
+  const pageSize = usePageSize()
   const [historyPage, setHistoryPage] = useState(1)
 
   const isAdminBootstrap =
@@ -208,8 +212,10 @@ function AssetAssignment({
   const activeAssignments = assetAssignments.filter(
     (item) => item.status === 'Active'
   )
-  const visibleActive = paginateRows(activeAssignments, activePage)
-  const visibleHistory = paginateRows(assetAssignments, historyPage)
+  const activeAssignmentsFilters = useDataFilters(activeAssignments, useAutoColumns(activeAssignments), { module: 'Asset Assignment' })
+  const assetAssignmentsFilters = useDataFilters(assetAssignments, useAutoColumns(assetAssignments), { module: 'Asset Assignment' })
+  const visibleActive = paginateRows(activeAssignmentsFilters.filteredRows, activePage, pageSize)
+  const visibleHistory = paginateRows(assetAssignmentsFilters.filteredRows, historyPage, pageSize)
 
   return (
     <div>
@@ -471,6 +477,13 @@ function AssetAssignment({
         </p>
       </div>
 
+      <DataTableToolbar
+        filters={activeAssignmentsFilters}
+        columns={activeAssignmentsFilters.columns}
+        exportFileName="asset-assignment-active-assignments"
+        exportTitle="Asset Assignment"
+      />
+
       <table>
         <thead>
           <tr>
@@ -525,12 +538,19 @@ function AssetAssignment({
         </tbody>
       </table>
 
-      <PaginationControls currentPage={activePage} totalRows={activeAssignments.length} onPageChange={setActivePage} />
+      <PaginationControls currentPage={activePage} totalRows={activeAssignmentsFilters.filteredRows.length} onPageChange={setActivePage} />
 
       <div className="section-title">
         <h3>Assignment History</h3>
         <p>All assignment records are shown here for audit and tracking.</p>
       </div>
+
+      <DataTableToolbar
+        filters={assetAssignmentsFilters}
+        columns={assetAssignmentsFilters.columns}
+        exportFileName="asset-assignment-asset-assignments"
+        exportTitle="Asset Assignment"
+      />
 
       <table>
         <thead>
@@ -604,7 +624,7 @@ function AssetAssignment({
         </tbody>
       </table>
 
-      <PaginationControls currentPage={historyPage} totalRows={assetAssignments.length} onPageChange={setHistoryPage} />
+      <PaginationControls currentPage={historyPage} totalRows={assetAssignmentsFilters.filteredRows.length} onPageChange={setHistoryPage} />
 
       <div className="info-box">
         Rule: Local assets can have only one active assignment. Global assets can

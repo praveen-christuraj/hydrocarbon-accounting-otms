@@ -7,7 +7,10 @@ import {
   publishSystemNotification,
   updateSystemNotification,
 } from '../api/systemNotificationApi'
-import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 
 const emptyForm = {
   title: '',
@@ -50,10 +53,13 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
   const [deactivateItem, setDeactivateItem] = useState(null)
   const [deactivateReason, setDeactivateReason] = useState('')
   const [page, setPage] = useState(1)
+  const pageSize = usePageSize()
   const [deliveryPage, setDeliveryPage] = useState(1)
 
-  const visibleNotifications = paginateRows(notifications, page)
-  const visibleDeliveryRows = paginateRows(deliveryRows, deliveryPage)
+  const notificationsFilters = useDataFilters(notifications, useAutoColumns(notifications), { module: 'System Notifications' })
+  const deliveryRowsFilters = useDataFilters(deliveryRows, useAutoColumns(deliveryRows), { module: 'System Notifications' })
+  const visibleNotifications = paginateRows(notificationsFilters.filteredRows, page, pageSize)
+  const visibleDeliveryRows = paginateRows(deliveryRowsFilters.filteredRows, deliveryPage, pageSize)
 
   const activeRoles = useMemo(() => roles.filter((role) => role.status === 'Active'), [roles])
   const activeUsers = useMemo(() => users.filter((user) => user.status === 'Active'), [users])
@@ -535,6 +541,13 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
         </div>
       </div>
 
+      <DataTableToolbar
+        filters={notificationsFilters}
+        columns={notificationsFilters.columns}
+        exportFileName="system-notifications-notifications"
+        exportTitle="System Notifications"
+      />
+
       <table>
         <thead>
           <tr>
@@ -606,7 +619,7 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
         </tbody>
       </table>
 
-      <PaginationControls currentPage={page} totalRows={notifications.length} onPageChange={setPage} />
+      <PaginationControls currentPage={page} totalRows={notificationsFilters.filteredRows.length} onPageChange={setPage} />
 
       {selectedNotification && (
         <div className="info-box">
@@ -614,6 +627,13 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
             <h3>Delivery Report - {selectedNotification.notificationNumber}</h3>
             <p>{selectedNotification.title}</p>
           </div>
+          <DataTableToolbar
+            filters={deliveryRowsFilters}
+            columns={deliveryRowsFilters.columns}
+            exportFileName="system-notifications-delivery-rows"
+            exportTitle="System Notifications"
+          />
+
           <table>
             <thead>
               <tr>
@@ -647,7 +667,7 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
             </tbody>
           </table>
 
-          <PaginationControls currentPage={deliveryPage} totalRows={deliveryRows.length} onPageChange={setDeliveryPage} />
+          <PaginationControls currentPage={deliveryPage} totalRows={deliveryRowsFilters.filteredRows.length} onPageChange={setDeliveryPage} />
         </div>
       )}
     </div>

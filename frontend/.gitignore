@@ -44,3 +44,8 @@ Desktop.ini
 *.tsbuildinfo
 .vercel/
 .netlify/
+
+# Smoke-test export artifacts (jspdf node build writes PDFs to cwd)
+/*.pdf
+/*.xlsx
+/*.csv

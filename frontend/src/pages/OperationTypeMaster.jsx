@@ -4,7 +4,10 @@ import {
   deleteOperationType,
   updateOperationType,
 } from '../api/operationTypeApi'
-import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 
 function OperationTypeMaster({
   assetTypes,
@@ -48,8 +51,10 @@ function OperationTypeMaster({
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [page, setPage] = useState(1)
 
+  const pageSize = usePageSize()
   const activeAssetTypes = assetTypes.filter((item) => item.status === 'Active')
-  const visibleOperationTypes = paginateRows(operationTypes, page)
+  const operationTypesFilters = useDataFilters(operationTypes, useAutoColumns(operationTypes), { module: 'Operation Type Master' })
+  const visibleOperationTypes = paginateRows(operationTypesFilters.filteredRows, page, pageSize)
 
   useEffect(() => {
     setPage(1)
@@ -432,6 +437,13 @@ function OperationTypeMaster({
         </p>
       </div>
 
+      <DataTableToolbar
+        filters={operationTypesFilters}
+        columns={operationTypesFilters.columns}
+        exportFileName="operation-type-master"
+        exportTitle="Operation Type Master"
+      />
+
       <table>
         <thead>
           <tr>
@@ -491,7 +503,7 @@ function OperationTypeMaster({
 
       <PaginationControls
         currentPage={page}
-        totalRows={operationTypes.length}
+        totalRows={operationTypesFilters.filteredRows.length}
         onPageChange={setPage}
       />
 

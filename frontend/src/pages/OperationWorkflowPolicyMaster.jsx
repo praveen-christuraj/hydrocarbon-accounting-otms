@@ -6,7 +6,10 @@ import {
   saveOperationWorkflowPolicyRoles,
   updateOperationWorkflowPolicy,
 } from '../api/operationWorkflowPolicyApi'
-import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 
 function OperationWorkflowPolicyMaster({ roles = [], operationTypes = [], operationTemplates = [], assets = [], locations = [], loggedInUser }) {
   const isAdminBootstrap =
@@ -43,8 +46,10 @@ function OperationWorkflowPolicyMaster({ roles = [], operationTypes = [], operat
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [page, setPage] = useState(1)
 
+  const pageSize = usePageSize()
   const activeRoles = useMemo(() => roles.filter((r) => r.status === 'Active'), [roles])
-  const visiblePolicies = paginateRows(policies, page)
+  const policiesFilters = useDataFilters(policies, useAutoColumns(policies), { module: 'Operation Workflow Policy' })
+  const visiblePolicies = paginateRows(policiesFilters.filteredRows, page, pageSize)
 
   const load = async () => {
     const data = await getOperationWorkflowPolicies()
@@ -183,6 +188,13 @@ function OperationWorkflowPolicyMaster({ roles = [], operationTypes = [], operat
         </div>
         <div className="form-actions"><button type="submit" disabled={loading || !canManageWorkflowPolicy}>{loading ? 'Please wait...' : editId ? 'Update Policy' : 'Save Policy'}</button>{editId && <button type="button" onClick={() => { setEditId(null); setForm(empty) }}>Cancel</button>}</div>
       </form>
+      <DataTableToolbar
+        filters={policiesFilters}
+        columns={policiesFilters.columns}
+        exportFileName="operation-workflow-policy"
+        exportTitle="Operation Workflow Policy"
+      />
+
       <table>
         <thead><tr><th>Name</th><th>Action</th><th>Scope</th><th>Priority</th><th>Status</th><th>Roles</th><th>Actions</th></tr></thead>
         <tbody>
@@ -197,7 +209,7 @@ function OperationWorkflowPolicyMaster({ roles = [], operationTypes = [], operat
         </tbody>
       </table>
 
-      <PaginationControls currentPage={page} totalRows={policies.length} onPageChange={setPage} />
+      <PaginationControls currentPage={page} totalRows={policiesFilters.filteredRows.length} onPageChange={setPage} />
 
       {successMsg && (
         <div className="success-box" onClick={() => setSuccessMsg('')}>

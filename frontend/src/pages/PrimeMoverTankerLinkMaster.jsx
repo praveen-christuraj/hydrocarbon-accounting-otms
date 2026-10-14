@@ -6,7 +6,10 @@ import {
   getPrimeMoverTankerLinks,
   updatePrimeMoverTankerLink,
 } from '../api/primeMoverTankerLinkApi'
-import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 
 const today = new Date().toISOString().slice(0, 10)
 
@@ -57,13 +60,15 @@ function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
   const [validationErrors, setValidationErrors] = useState({})
   const [confirmDeleteItem, setConfirmDeleteItem] = useState(null)
   const [page, setPage] = useState(1)
+  const pageSize = usePageSize()
   const [closeForm, setCloseForm] = useState({
     linkId: null,
     linkedTo: today,
     remarks: '',
   })
 
-  const visibleLinks = paginateRows(links, page)
+  const linksFilters = useDataFilters(links, useAutoColumns(links), { module: 'Prime Mover - Tanker Link' })
+  const visibleLinks = paginateRows(linksFilters.filteredRows, page, pageSize)
 
   const activeAssets = useMemo(() => {
     return assets.filter((asset) => asset.status === 'Active')
@@ -537,6 +542,13 @@ function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
         </div>
       )}
 
+      <DataTableToolbar
+        filters={linksFilters}
+        columns={linksFilters.columns}
+        exportFileName="prime-mover-tanker-link"
+        exportTitle="Prime Mover - Tanker Link"
+      />
+
       <table>
         <thead>
           <tr>
@@ -626,7 +638,7 @@ function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
         </tbody>
       </table>
 
-      <PaginationControls currentPage={page} totalRows={links.length} onPageChange={setPage} />
+      <PaginationControls currentPage={page} totalRows={linksFilters.filteredRows.length} onPageChange={setPage} />
     </div>
   )
 }

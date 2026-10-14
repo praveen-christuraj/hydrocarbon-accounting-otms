@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react'
 import { loginUser, requestPasswordReset, verifyLogin2FA } from '../api/authApi'
+import Icon from '../components/common/Icon'
 
 // Simple password strength calculator
 const calcPasswordStrength = (pw) => {
@@ -195,7 +196,7 @@ function LoginPage({ onLogin }) {
                   tabIndex={-1}
                   aria-label={showPassword ? 'Hide password' : 'Show password'}
                 >
-                  {showPassword ? '🙈' : '👁'}
+                  <Icon name={showPassword ? 'eyeOff' : 'eye'} size={16} />
                 </button>
               </div>
               {password.length > 0 && (

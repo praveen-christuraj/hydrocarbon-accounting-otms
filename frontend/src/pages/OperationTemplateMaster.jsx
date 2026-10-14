@@ -8,7 +8,10 @@ import {
   updateOperationTemplateLayout,
   updateOperationTemplate,
 } from '../api/operationTemplateApi'
-import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 
 function OperationTemplateMaster({
   operationTypes,
@@ -67,6 +70,7 @@ function OperationTemplateMaster({
   const [confirmDeleteTemplate, setConfirmDeleteTemplate] = useState(null)
   const [draggingSectionId, setDraggingSectionId] = useState('')
   const [page, setPage] = useState(1)
+  const pageSize = usePageSize()
   const [draggingItemId, setDraggingItemId] = useState('')
   const [layoutDraft, setLayoutDraft] = useState({
     layoutName: '',
@@ -81,7 +85,8 @@ function OperationTemplateMaster({
     (item) => item.status === 'Active'
   )
 
-  const visibleOperationTemplates = paginateRows(operationTemplates, page)
+  const operationTemplatesFilters = useDataFilters(operationTemplates, useAutoColumns(operationTemplates), { module: 'Operation Template Master' })
+  const visibleOperationTemplates = paginateRows(operationTemplatesFilters.filteredRows, page, pageSize)
 
   const fieldOptions = useMemo(() => {
     return [...(template.fields || [])].sort(
@@ -1202,6 +1207,13 @@ function OperationTemplateMaster({
         </p>
       </div>
 
+      <DataTableToolbar
+        filters={operationTemplatesFilters}
+        columns={operationTemplatesFilters.columns}
+        exportFileName="operation-template-master"
+        exportTitle="Operation Template Master"
+      />
+
       <table>
         <thead>
           <tr>
@@ -1268,7 +1280,7 @@ function OperationTemplateMaster({
 
       <PaginationControls
         currentPage={page}
-        totalRows={operationTemplates.length}
+        totalRows={operationTemplatesFilters.filteredRows.length}
         onPageChange={setPage}
       />
 

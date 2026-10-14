@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getVesselOperations } from '../../api/vesselOperationApi'
+import { useToast } from '../common/Toast'
 
 const parseObject = (value) => {
   if (!value) return null
@@ -20,6 +21,7 @@ const safeNumber = (v) => {
 }
 
 function ShuttleTrackingLayout({ entry, selectedAsset, handleValueChange }) {
+  const toast = useToast()
   const [ops, setOps] = useState([])
   const [loadingOps, setLoadingOps] = useState(false)
 
@@ -80,7 +82,7 @@ function ShuttleTrackingLayout({ entry, selectedAsset, handleValueChange }) {
         })
         setOps(Array.isArray(data) ? data : [])
       } catch (e) {
-        alert(e.message || 'Unable to load Vessel Operations')
+        toast.error(e.message || 'Unable to load Vessel Operations', { title: 'Shuttle Tracking' })
       } finally {
         setLoadingOps(false)
       }

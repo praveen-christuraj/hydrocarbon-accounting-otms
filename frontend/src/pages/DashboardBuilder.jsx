@@ -916,7 +916,7 @@ function DashboardBuilder({
                       border: isSelected ? '2px solid #1976d2' : '1px solid #ccc',
                       borderRadius: 8,
                       padding: 8,
-                      background: '#fff',
+                      background: 'var(--surface)',
                       cursor: 'pointer',
                       overflow: 'hidden',
                     }}
@@ -1220,7 +1220,7 @@ function DashboardBuilder({
                     <div style={{ marginTop: 10 }}>
                       <strong>Preview</strong>
                       {widgetPreview[selectedWidgetId].error ? (
-                        <div style={{ color: 'red', marginTop: 6 }}>{widgetPreview[selectedWidgetId].error}</div>
+                        <div style={{ color: 'var(--danger-text)', marginTop: 6 }}>{widgetPreview[selectedWidgetId].error}</div>
                       ) : (
                         <>
                           <div style={{ fontSize: 12, opacity: 0.8, marginTop: 6 }}>
@@ -1238,7 +1238,7 @@ function DashboardBuilder({
                           ) : null}
 
                           {selectedWidget.type === 'CHART' ? (
-                            <div style={{ marginTop: 8, border: '1px solid #ddd' }}>
+                            <div style={{ marginTop: 8, border: '1px solid var(--border)' }}>
                               {renderEChartPreview({
                                 chartType: selectedWidget.config?.chartType,
                                 rows: widgetPreview[selectedWidgetId].rows || [],

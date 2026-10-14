@@ -5,9 +5,10 @@ import {
   getTankStockLedgerSummary,
 } from '../api/tankStockLedgerApi'
 import { getCompanyReportProfiles } from '../api/companyReportProfileApi'
-import PaginationControls, {
-  paginateRows,
-} from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 
 function TankStockLedger({ locations, assets, loggedInUser }) {
   const emptyFilters = {
@@ -27,6 +28,7 @@ function TankStockLedger({ locations, assets, loggedInUser }) {
   const [activeView, setActiveView] = useState('daily-summary')
   const [loading, setLoading] = useState(false)
   const [dailySummaryPage, setDailySummaryPage] = useState(1)
+  const pageSize = usePageSize()
   const [stockSummaryPage, setStockSummaryPage] = useState(1)
   const [ledgerDetailsPage, setLedgerDetailsPage] = useState(1)
   const [successMsg, setSuccessMsg] = useState('')
@@ -210,12 +212,12 @@ function TankStockLedger({ locations, assets, loggedInUser }) {
     return formatNumber(row.movementNsvBbl)
   }
 
-  const visibleDailySummaryRows = paginateRows(
-    dailySummaryRows,
-    dailySummaryPage
-  )
-  const visibleSummaryRows = paginateRows(summaryRows, stockSummaryPage)
-  const visibleLedgerRows = paginateRows(ledgerRows, ledgerDetailsPage)
+  const dailySummaryRowsFilters = useDataFilters(dailySummaryRows, useAutoColumns(dailySummaryRows), { module: 'Tank Stock Ledger' })
+  const summaryRowsFilters = useDataFilters(summaryRows, useAutoColumns(summaryRows), { module: 'Tank Stock Ledger' })
+  const ledgerRowsFilters = useDataFilters(ledgerRows, useAutoColumns(ledgerRows), { module: 'Tank Stock Ledger' })
+  const visibleDailySummaryRows = paginateRows(dailySummaryRowsFilters.filteredRows, dailySummaryPage, pageSize)
+  const visibleSummaryRows = paginateRows(summaryRowsFilters.filteredRows, stockSummaryPage, pageSize)
+  const visibleLedgerRows = paginateRows(ledgerRowsFilters.filteredRows, ledgerDetailsPage, pageSize)
 
   const escapeCsvValue = (value) => {
     if (value === null || value === undefined) {
@@ -650,6 +652,13 @@ function TankStockLedger({ locations, assets, loggedInUser }) {
             </p>
           </div>
 
+          <DataTableToolbar
+            filters={dailySummaryRowsFilters}
+            columns={dailySummaryRowsFilters.columns}
+            exportFileName="tank-stock-ledger-daily-summary-rows"
+            exportTitle="Tank Stock Ledger"
+          />
+
           <table>
             <thead>
               <tr>
@@ -716,7 +725,7 @@ function TankStockLedger({ locations, assets, loggedInUser }) {
 
           <PaginationControls
             currentPage={dailySummaryPage}
-            totalRows={dailySummaryRows.length}
+            totalRows={dailySummaryRowsFilters.filteredRows.length}
             onPageChange={setDailySummaryPage}
           />
 
@@ -737,6 +746,13 @@ function TankStockLedger({ locations, assets, loggedInUser }) {
               from the latest running balance in the selected period.
             </p>
           </div>
+
+          <DataTableToolbar
+            filters={summaryRowsFilters}
+            columns={summaryRowsFilters.columns}
+            exportFileName="tank-stock-ledger-summary-rows"
+            exportTitle="Tank Stock Ledger"
+          />
 
           <table>
             <thead>
@@ -784,7 +800,7 @@ function TankStockLedger({ locations, assets, loggedInUser }) {
 
           <PaginationControls
             currentPage={stockSummaryPage}
-            totalRows={summaryRows.length}
+            totalRows={summaryRowsFilters.filteredRows.length}
             onPageChange={setStockSummaryPage}
           />
 
@@ -804,6 +820,13 @@ function TankStockLedger({ locations, assets, loggedInUser }) {
               approved.
             </p>
           </div>
+
+          <DataTableToolbar
+            filters={ledgerRowsFilters}
+            columns={ledgerRowsFilters.columns}
+            exportFileName="tank-stock-ledger-ledger-rows"
+            exportTitle="Tank Stock Ledger"
+          />
 
           <table>
             <thead>
@@ -883,7 +906,7 @@ function TankStockLedger({ locations, assets, loggedInUser }) {
 
           <PaginationControls
             currentPage={ledgerDetailsPage}
-            totalRows={ledgerRows.length}
+            totalRows={ledgerRowsFilters.filteredRows.length}
             onPageChange={setLedgerDetailsPage}
           />
 
@@ -907,7 +930,7 @@ function TankStockLedger({ locations, assets, loggedInUser }) {
       )}
 
       {profile && (
-        <div className="print-only" style={{ marginTop: 20, fontSize: 11, color: '#555' }}>
+        <div className="print-only print-footnote">
           <p>{profile.footerFormula}</p>
           <p>{profile.footerNote}</p>
         </div>

@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 import {
   acknowledgeTankerReceipt,
   closeTankerMovement,
@@ -153,6 +156,7 @@ function TankerTracking({
   const [confirmCloseGroup, setConfirmCloseGroup] = useState(null)
   const [page, setPage] = useState(1)
   
+  const pageSize = usePageSize()
   const trackingExceptionSummary = useMemo(() => {
     const rows = report.rows || []
 
@@ -183,7 +187,8 @@ function TankerTracking({
     })
   }, [report.rows, trackingStatusFilter])
 
-  const visibleTrackingRows = paginateRows(filteredTrackingRows, page)
+  const filteredTrackingRowsFilters = useDataFilters(filteredTrackingRows, useAutoColumns(filteredTrackingRows), { module: 'Tanker Tracking' })
+  const visibleTrackingRows = paginateRows(filteredTrackingRowsFilters.filteredRows, page, pageSize)
 
   useEffect(() => {
     setPage(1)
@@ -1070,6 +1075,13 @@ function TankerTracking({
         </button>
       </div>
 
+      <DataTableToolbar
+        filters={filteredTrackingRowsFilters}
+        columns={filteredTrackingRowsFilters.columns}
+        exportFileName="tanker-tracking"
+        exportTitle="Tanker Tracking"
+      />
+
       <table>
         <thead>
           <tr>
@@ -1290,7 +1302,7 @@ function TankerTracking({
         </tbody>
       </table>
 
-      <PaginationControls currentPage={page} totalRows={filteredTrackingRows.length} onPageChange={setPage} />
+      <PaginationControls currentPage={page} totalRows={filteredTrackingRowsFilters.filteredRows.length} onPageChange={setPage} />
 
       {ackGroup && (
         <div className="report-detail-panel no-print">

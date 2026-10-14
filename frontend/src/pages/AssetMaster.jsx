@@ -4,7 +4,13 @@ import {
   deleteAsset,
   updateAsset,
 } from '../api/assetApi'
-import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
+
+const ASSET_SCOPES = ['Local', 'Global']
+const IMPORT_STATUSES = ['Active', 'Inactive', 'Blocked']
 
 function AssetMaster({ assets, reloadAssets, assetTypes, locations, loggedInUser }) {
   const emptyAsset = {
@@ -30,7 +36,9 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations, loggedInUser
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [assetPage, setAssetPage] = useState(1)
 
-  const visibleAssets = paginateRows(assets, assetPage)
+  const pageSize = usePageSize()
+  const assetsFilters = useDataFilters(assets, useAutoColumns(assets), { module: 'Asset Master' })
+  const visibleAssets = paginateRows(assetsFilters.filteredRows, assetPage, pageSize)
 
   const isAdminBootstrap =
     String(loggedInUser?.username || '').toLowerCase() === 'admin'
@@ -223,6 +231,41 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations, loggedInUser
     }
 
     return selectedLocation.locationName
+  }
+
+
+  const importConfig = {
+    title: 'Import asset master rows',
+    description: 'Create records from an Excel or CSV file. Existing codes are skipped.',
+    fields: [
+    { key: 'assetName', label: 'Asset Name', required: true, example: 'Tank 101' },
+    { key: 'assetCode', label: 'Asset Code', required: true, example: 'TK-101' },
+    { key: 'assetScope', label: 'Asset Scope', required: true, options: ASSET_SCOPES, example: 'Local' },
+    { key: 'assetTypeCode', label: 'Asset Type Code', required: true, example: 'TANK' },
+    { key: 'locationCode', label: 'Location Code', hint: 'Required for Local assets', example: 'UTP' },
+    { key: 'serialNumber', label: 'Serial Number', example: '' },
+    { key: 'manufacturer', label: 'Manufacturer', example: '' },
+    { key: 'model', label: 'Model', example: '' },
+    { key: 'commissionDate', label: 'Commission Date', type: 'date', hint: 'YYYY-MM-DD', example: '' },
+    { key: 'description', label: 'Description', example: '' },
+    { key: 'status', label: 'Status', options: IMPORT_STATUSES, defaultValue: 'Active', example: 'Active' },
+  ],
+    validateRow: (record) => {
+    const code = String(record.assetCode || '').trim().toLowerCase()
+    if (assets.some((item) => item.assetCode.toLowerCase() === code)) return 'Asset code already exists'
+    if (!ASSET_SCOPES.includes(record.assetScope)) return `Asset scope must be one of ${ASSET_SCOPES.join(', ')}`
+    if (!assetTypes.some((item) => item.assetTypeCode === record.assetTypeCode)) return 'Unknown asset type code'
+    if (record.assetScope === 'Local' && !record.locationCode) return 'Location code is required for Local assets'
+    if (record.locationCode && !locations.some((item) => item.locationCode === record.locationCode)) return 'Unknown location code'
+    if (record.status && !IMPORT_STATUSES.includes(record.status)) return `Status must be one of ${IMPORT_STATUSES.join(', ')}`
+    return null
+  },
+    onImportRow: async (record) => {
+      await createAsset({ ...emptyAsset, ...record, status: record.status || 'Active' })
+    },
+    onComplete: async () => {
+      await reloadAssets()
+    },
   }
 
   return (
@@ -467,6 +510,16 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations, loggedInUser
         </p>
       </div>
 
+      <DataTableToolbar
+        filters={assetsFilters}
+        columns={assetsFilters.columns}
+        exportFileName="asset-master"
+        exportTitle="Asset Master"
+        module="Asset Master"
+        importConfig={importConfig}
+        canImport={canManageAsset}
+      />
+
       <table>
         <thead>
           <tr>
@@ -541,7 +594,7 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations, loggedInUser
         </tbody>
       </table>
 
-      <PaginationControls currentPage={assetPage} totalRows={assets.length} onPageChange={setAssetPage} />
+      <PaginationControls currentPage={assetPage} totalRows={assetsFilters.filteredRows.length} onPageChange={setAssetPage} />
 
       <div className="info-box">
         Asset Code must be unique. Local assets require a primary location.

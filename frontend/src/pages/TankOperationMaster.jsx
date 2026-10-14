@@ -5,7 +5,10 @@ import {
   getTankOperations,
   updateTankOperation,
 } from '../api/tankOperationApi'
-import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 
 function TankOperationMaster({ locations, loggedInUser }) {
   const emptyTankOperation = {
@@ -42,7 +45,9 @@ function TankOperationMaster({ locations, loggedInUser }) {
   const [confirmDeleteItem, setConfirmDeleteItem] = useState(null)
   const [page, setPage] = useState(1)
 
-  const visibleTankOperations = paginateRows(tankOperations, page)
+  const pageSize = usePageSize()
+  const tankOperationsFilters = useDataFilters(tankOperations, useAutoColumns(tankOperations), { module: 'Tank Operation Master' })
+  const visibleTankOperations = paginateRows(tankOperationsFilters.filteredRows, page, pageSize)
 
   const activeLocations = useMemo(() => {
     return (locations || []).filter((location) => location.status === 'Active')
@@ -506,6 +511,13 @@ function TankOperationMaster({ locations, loggedInUser }) {
         </p>
       </div>
 
+      <DataTableToolbar
+        filters={tankOperationsFilters}
+        columns={tankOperationsFilters.columns}
+        exportFileName="tank-operation-master"
+        exportTitle="Tank Operation Master"
+      />
+
       <table>
         <thead>
           <tr>
@@ -577,7 +589,7 @@ function TankOperationMaster({ locations, loggedInUser }) {
         </tbody>
       </table>
 
-      <PaginationControls currentPage={page} totalRows={tankOperations.length} onPageChange={setPage} />
+      <PaginationControls currentPage={page} totalRows={tankOperationsFilters.filteredRows.length} onPageChange={setPage} />
 
       {successMsg && (
         <div className="success-box">{successMsg}</div>

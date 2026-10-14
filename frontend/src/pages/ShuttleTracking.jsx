@@ -11,6 +11,7 @@ import { getVesselOperations } from '../api/vesselOperationApi'
 import { useCompanyPrintProfile } from '../hooks/useCompanyPrintProfile'
 import CompanyPrintHeader from '../components/reports/CompanyPrintHeader'
 import CompanyPrintFooter from '../components/reports/CompanyPrintFooter'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
 
 const defaultFilters = {
   date_from: '',
@@ -103,7 +104,7 @@ function ShuttleTracking({
   const [voyagePage, setVoyagePage] = useState(1)
   const [openVoyageCount, setOpenVoyageCount] = useState(0)
   const [closedVoyageCount, setClosedVoyageCount] = useState(0)
-  const VOYAGE_PAGE_SIZE = 20
+  const pageSize = usePageSize()
 
   const filteredVoyageRows = useMemo(() => {
     const rows = [...(report.rows || [])]
@@ -132,14 +133,9 @@ function ShuttleTracking({
     return filtered
   }, [report.rows, activeVoyageTab, voyageSearch])
 
-  const voyageTotalPages = useMemo(() => {
-    return Math.max(1, Math.ceil(filteredVoyageRows.length / VOYAGE_PAGE_SIZE))
-  }, [filteredVoyageRows.length])
-
-  const pagedVoyageRows = useMemo(() => {
-    const start = (voyagePage - 1) * VOYAGE_PAGE_SIZE
-    return filteredVoyageRows.slice(start, start + VOYAGE_PAGE_SIZE)
-  }, [filteredVoyageRows, voyagePage])
+  // The voyage list is paginated by the server (page / page_size), so the
+  // rows returned for the current page are shown as-is.
+  const pagedVoyageRows = filteredVoyageRows
 
   useEffect(() => {
     setVoyagePage(1)
@@ -170,7 +166,6 @@ function ShuttleTracking({
   const [timelineSearch, setTimelineSearch] = useState('')
   const [timelineOpCode, setTimelineOpCode] = useState('')
   const [timelinePage, setTimelinePage] = useState(1)
-  const TIMELINE_PAGE_SIZE = 30
   const [expandedTicketIds, setExpandedTicketIds] = useState(() => new Set())
 
   const filteredTimelineTickets = useMemo(() => {
@@ -188,13 +183,12 @@ function ShuttleTracking({
   }, [sortedSelectedTickets, timelineSearch, timelineOpCode])
 
   const timelineTotalPages = useMemo(() => {
-    return Math.max(1, Math.ceil(filteredTimelineTickets.length / TIMELINE_PAGE_SIZE))
-  }, [filteredTimelineTickets.length])
+    return Math.max(1, Math.ceil(filteredTimelineTickets.length / pageSize))
+  }, [filteredTimelineTickets.length, pageSize])
 
   const pagedTimelineTickets = useMemo(() => {
-    const start = (timelinePage - 1) * TIMELINE_PAGE_SIZE
-    return filteredTimelineTickets.slice(start, start + TIMELINE_PAGE_SIZE)
-  }, [filteredTimelineTickets, timelinePage])
+    return paginateRows(filteredTimelineTickets, timelinePage, pageSize)
+  }, [filteredTimelineTickets, timelinePage, pageSize])
 
   const getDisplayOperationLabel = (tickets, index) => {
     const t = tickets[index]
@@ -490,7 +484,7 @@ function ShuttleTracking({
         tab: activeVoyageTab,
         search: voyageSearch,
         page: voyagePage,
-        page_size: 20,
+        page_size: pageSize,
         include_tickets: false,
       })
 
@@ -537,7 +531,7 @@ function ShuttleTracking({
   useEffect(() => {
     loadTracking()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeVoyageTab, voyageSearch, voyagePage])
+  }, [activeVoyageTab, voyageSearch, voyagePage, pageSize])
 
   const onFilterChange = (e) => {
     const { name, value } = e.target
@@ -913,7 +907,7 @@ function ShuttleTracking({
         <div className="confirm-overlay">
           <div className="confirm-dialog">
             <p>Type exactly to confirm reopen:</p>
-            <pre style={{ fontSize: 12, background: '#f5f5f5', padding: 8 }}>{promptModal.confirmText}</pre>
+            <pre style={{ fontSize: 12, background: 'var(--surface-2)', padding: 8 }}>{promptModal.confirmText}</pre>
             <input
               type="text"
               placeholder="Type the confirmation text above"
@@ -1128,33 +1122,14 @@ function ShuttleTracking({
                 <input
                   value={voyageSearch}
                   onChange={(e) => setVoyageSearch(e.target.value)}
-                  placeholder="Live search: location / asset / shuttle number..."
+                  placeholder="Live search: location / asset / shuttle number…"
                 />
               </div>
 
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button
-                  type="button"
-                  disabled={voyagePage <= 1}
-                  onClick={() => setVoyagePage((p) => Math.max(1, p - 1))}
-                >
-                  Prev
-                </button>
-                <span style={{ alignSelf: 'center' }}>
-                  Page {voyagePage} / {voyageTotalPages}
-                </span>
-                <button
-                  type="button"
-                  disabled={voyagePage >= voyageTotalPages}
-                  onClick={() => setVoyagePage((p) => Math.min(voyageTotalPages, p + 1))}
-                >
-                  Next
-                </button>
-              </div>
             </div>
 
-            <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
-              Showing {pagedVoyageRows.length} of {filteredVoyageRows.length} voyages
+            <div className="field-hint">
+              Showing {pagedVoyageRows.length} of {report.totalGroups || 0} voyages
             </div>
           </div>
 
@@ -1201,6 +1176,12 @@ function ShuttleTracking({
               )}
             </tbody>
           </table>
+
+          <PaginationControls
+            currentPage={voyagePage}
+            totalRows={report.totalGroups || 0}
+            onPageChange={setVoyagePage}
+          />
         </div>
 
         {/* RIGHT COLUMN */}
@@ -1364,33 +1345,13 @@ function ShuttleTracking({
                   </div>
 
                   <div className="compact-toolbar-right">
-                    <button
-                      type="button"
-                      disabled={timelinePage <= 1}
-                      onClick={() => setTimelinePage((p) => Math.max(1, p - 1))}
-                    >
-                      Prev
-                    </button>
-
-                    <span style={{ fontSize: 12, opacity: 0.8 }}>
-                      Page {timelinePage} / {timelineTotalPages}
-                    </span>
-
-                    <button
-                      type="button"
-                      disabled={timelinePage >= timelineTotalPages}
-                      onClick={() => setTimelinePage((p) => Math.min(timelineTotalPages, p + 1))}
-                    >
-                      Next
-                    </button>
-
-                    <button type="button" disabled={timelineTotalPages <= 1} onClick={() => setTimelinePage(timelineTotalPages)}>
+                    <button type="button" disabled={timelineTotalPages <= 1 || timelinePage >= timelineTotalPages} onClick={() => setTimelinePage(timelineTotalPages)}>
                       Latest
                     </button>
                   </div>
                 </div>
 
-                <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>
+                <div className="field-hint">
                   Showing {pagedTimelineTickets.length} of {filteredTimelineTickets.length} tickets (filtered)
                 </div>
               </div>
@@ -1417,7 +1378,7 @@ function ShuttleTracking({
                   ) : (
                     pagedTimelineTickets.map((t, index) => {
                       const expanded = isTicketExpanded(t.transactionId)
-                      const globalIndex = (timelinePage - 1) * TIMELINE_PAGE_SIZE + index
+                      const globalIndex = (timelinePage - 1) * pageSize + index
 
                       return (
                         <>
@@ -1502,6 +1463,12 @@ function ShuttleTracking({
                   )}
                 </tbody>
               </table>
+
+              <PaginationControls
+                currentPage={timelinePage}
+                totalRows={filteredTimelineTickets.length}
+                onPageChange={setTimelinePage}
+              />
 
               {/* ✅ IMPORTANT: Create module hidden completely when voyage is CLOSED */}
               {!isVoyageClosed ? (

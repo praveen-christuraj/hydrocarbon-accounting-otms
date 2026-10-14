@@ -1,6 +1,9 @@
 import { useState } from 'react'
 import { saveRolePermissions } from '../api/rolePermissionApi'
-import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 
 function RolePermissionAssignment({
   roles,
@@ -16,7 +19,9 @@ function RolePermissionAssignment({
   const [success, setSuccess] = useState('')
   const [page, setPage] = useState(1)
 
-  const visibleItems = paginateRows(rolePermissionAssignments, page)
+  const pageSize = usePageSize()
+  const rolePermissionAssignmentsFilters = useDataFilters(rolePermissionAssignments, useAutoColumns(rolePermissionAssignments), { module: 'Role Permission Assignment' })
+  const visibleItems = paginateRows(rolePermissionAssignmentsFilters.filteredRows, page, pageSize)
 
   const isAdminBootstrap =
     String(loggedInUser?.username || '').toLowerCase() === 'admin'
@@ -117,7 +122,7 @@ function RolePermissionAssignment({
       </div>
 
       {success && (
-        <div className="error-box" style={{ background: '#f0fdf4', color: '#166534', borderColor: '#bbf7d0' }}>
+        <div className="success-box">
           {success}
           <button className="error-close" onClick={clearSuccess} type="button">&times;</button>
         </div>
@@ -157,10 +162,10 @@ function RolePermissionAssignment({
 
           {activePermissions.length > 0 && selectedRoleId && (
             <div style={{ marginBottom: 10, display: 'flex', gap: 8 }}>
-              <button type="button" onClick={handleSelectAll} style={{ background: '#2563eb', color: '#fff', padding: '4px 10px', fontSize: 12 }}>
+              <button type="button" onClick={handleSelectAll} style={{ background: 'var(--primary)', color: 'var(--text-inverse)', padding: '4px 10px', fontSize: 12 }}>
                 Select All
               </button>
-              <button type="button" onClick={handleDeselectAll} style={{ background: '#64748b', color: '#fff', padding: '4px 10px', fontSize: 12 }}>
+              <button type="button" onClick={handleDeselectAll} className="btn-secondary btn-sm">
                 Deselect All
               </button>
             </div>
@@ -209,6 +214,13 @@ function RolePermissionAssignment({
         <p>View which permissions are assigned to each role.</p>
       </div>
 
+      <DataTableToolbar
+        filters={rolePermissionAssignmentsFilters}
+        columns={rolePermissionAssignmentsFilters.columns}
+        exportFileName="role-permission-assignment"
+        exportTitle="Role Permission Assignment"
+      />
+
       <table>
         <thead>
           <tr>
@@ -247,7 +259,7 @@ function RolePermissionAssignment({
         </tbody>
       </table>
 
-      <PaginationControls currentPage={page} totalRows={rolePermissionAssignments.length} onPageChange={setPage} />
+      <PaginationControls currentPage={page} totalRows={rolePermissionAssignmentsFilters.filteredRows.length} onPageChange={setPage} />
     </div>
   )
 }

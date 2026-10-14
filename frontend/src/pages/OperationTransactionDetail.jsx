@@ -743,7 +743,7 @@ function ReviewConfirmationModal({
             <div><strong>Seal Validation (Submit)</strong></div>
 
             {submitHasMissingTemp ? (
-              <div style={{ marginTop: 6, color: '#b91c1c', fontWeight: 800 }}>
+              <div style={{ marginTop: 6, color: 'var(--danger-text)', fontWeight: 800 }}>
                 Missing temporary AFTER seals: {multiTankSealCheck.missingTemp.join(', ')}.
                 Please go back to Operation Entry, edit the Draft ticket, and enter them.
               </div>
@@ -756,7 +756,7 @@ function ReviewConfirmationModal({
             <div style={{ marginTop: 6 }}>
               Mismatch count (Master vs Observed): <strong>{submitMismatchCount}</strong>
               {submitMismatchCount > 0 ? (
-                <span style={{ marginLeft: 8, color: '#b91c1c', fontWeight: 800 }}>
+                <span style={{ marginLeft: 8, color: 'var(--danger-text)', fontWeight: 800 }}>
                   Remarks required
                 </span>
               ) : null}
@@ -767,7 +767,7 @@ function ReviewConfirmationModal({
         {isSubmitting && hasMandatoryMissing ? (
           <div className="info-box">
             <div><strong>Mandatory Sections Missing</strong></div>
-            <div style={{ marginTop: 6, color: '#b91c1c', fontWeight: 800 }}>
+            <div style={{ marginTop: 6, color: 'var(--danger-text)', fontWeight: 800 }}>
               {mandatoryMissing.slice(0, 12).join(', ')}
               {mandatoryMissing.length > 12 ? ' ...' : ''}
             </div>

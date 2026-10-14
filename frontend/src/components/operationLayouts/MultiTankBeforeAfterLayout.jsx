@@ -1137,7 +1137,7 @@ export default function MultiTankBeforeAfterLayout({
                 <option value="STS">STS</option>
               </select>
 
-              <span style={{ color: '#64748b', fontSize: 13 }}>
+              <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>
                 This stage controls how the ticket is tracked in Barge Tracking and how
                 comparisons are generated.
               </span>
@@ -1151,7 +1151,7 @@ export default function MultiTankBeforeAfterLayout({
             Temporary seals (manifold / pumproom / others) are entered per ticket.
             {sealStats.mismatch > 0 ? (
               <div style={{ marginTop: 6 }}>
-                <strong style={{ color: '#b91c1c' }}>
+                <strong style={{ color: 'var(--danger-text)' }}>
                   Mismatch Count: {sealStats.mismatch}
                 </strong>
               </div>
@@ -1161,7 +1161,7 @@ export default function MultiTankBeforeAfterLayout({
               </div>
             )}
             {sealLoadError ? (
-              <div style={{ marginTop: 6, color: '#b91c1c', fontWeight: 800 }}>
+              <div style={{ marginTop: 6, color: 'var(--danger-text)', fontWeight: 800 }}>
                 {sealLoadError}
               </div>
             ) : null}
@@ -1199,7 +1199,7 @@ export default function MultiTankBeforeAfterLayout({
                         return (
                           <td key={`${tid}-${pos}`}>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                              <div style={{ fontSize: 11, fontWeight: 800, color: '#64748b' }}>
+                              <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--text-muted)' }}>
                                 Master: {cell.master || '-'}
                               </div>
                               <input

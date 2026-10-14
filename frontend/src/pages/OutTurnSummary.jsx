@@ -5,9 +5,10 @@ import {
   saveOutTurnSummaryConfig,
 } from '../api/outTurnSummaryApi'
 import { getCompanyReportProfiles } from '../api/companyReportProfileApi'
-import PaginationControls, {
-  paginateRows,
-} from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 
 const COLUMN_GROUPS = ['Base', 'Input', 'Calculated', 'Computed']
 
@@ -39,6 +40,7 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
   const [availableColumns, setAvailableColumns] = useState([])
   const [loading, setLoading] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
+  const pageSize = usePageSize()
   const [successMsg, setSuccessMsg] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
   const [profile, setProfile] = useState(null)
@@ -306,7 +308,8 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
     return value
   }
 
-  const visibleRows = paginateRows(rows, currentPage)
+  const rowsFilters = useDataFilters(rows, useAutoColumns(rows), { module: 'Out-Turn Summary' })
+  const visibleRows = paginateRows(rowsFilters.filteredRows, currentPage, pageSize)
 
   const escapeCsvValue = (value) => {
     if (value === null || value === undefined) {
@@ -568,6 +571,13 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
         </p>
       </div>
 
+      <DataTableToolbar
+        filters={rowsFilters}
+        columns={rowsFilters.columns}
+        exportFileName="out-turn-summary"
+        exportTitle="Out-Turn Summary"
+      />
+
       <div className="out-turn-summary-table-wrap">
         <table>
           <thead>
@@ -600,7 +610,7 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
 
       <PaginationControls
         currentPage={currentPage}
-        totalRows={rows.length}
+        totalRows={rowsFilters.filteredRows.length}
         onPageChange={setCurrentPage}
       />
 
@@ -612,7 +622,7 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
       </div>
 
       {profile && (
-        <div className="print-only" style={{ marginTop: 20, fontSize: 11, color: '#555' }}>
+        <div className="print-only print-footnote">
           <p>{profile.footerFormula}</p>
           <p>{profile.footerNote}</p>
         </div>

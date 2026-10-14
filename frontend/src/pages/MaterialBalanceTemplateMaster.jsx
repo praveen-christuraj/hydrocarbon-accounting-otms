@@ -10,7 +10,10 @@ import {
   updateMaterialBalanceTemplate,
   updateMaterialBalanceTemplateColumn,
 } from '../api/materialBalanceTemplateApi'
-import PaginationControls, { paginateRows } from '../components/common/PaginationControls'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import { useDataFilters } from '../hooks/useDataFilters'
+import { useAutoColumns } from '../hooks/useAutoColumns'
 
 const columnTypes = [
   'OPENING',
@@ -66,7 +69,9 @@ function MaterialBalanceTemplateMaster({ locations }) {
   const [confirmAddStandard, setConfirmAddStandard] = useState(false)
   const [page, setPage] = useState(1)
 
-  const visibleTemplates = paginateRows(templates, page)
+  const pageSize = usePageSize()
+  const templatesFilters = useDataFilters(templates, useAutoColumns(templates), { module: 'Material Balance Template Configuration' })
+  const visibleTemplates = paginateRows(templatesFilters.filteredRows, page, pageSize)
 
   const activeLocations = useMemo(() => {
     return (locations || []).filter((location) => location.status === 'Active')
@@ -741,6 +746,13 @@ function MaterialBalanceTemplateMaster({ locations }) {
         <p>Select a template to configure its report columns.</p>
       </div>
 
+      <DataTableToolbar
+        filters={templatesFilters}
+        columns={templatesFilters.columns}
+        exportFileName="material-balance-template-configuration"
+        exportTitle="Material Balance Template Configuration"
+      />
+
       <table>
         <thead>
           <tr>
@@ -793,7 +805,7 @@ function MaterialBalanceTemplateMaster({ locations }) {
           </tbody>
       </table>
 
-      <PaginationControls currentPage={page} totalRows={templates.length} onPageChange={setPage} />
+      <PaginationControls currentPage={page} totalRows={templatesFilters.filteredRows.length} onPageChange={setPage} />
 
       {selectedTemplate && (
         <>

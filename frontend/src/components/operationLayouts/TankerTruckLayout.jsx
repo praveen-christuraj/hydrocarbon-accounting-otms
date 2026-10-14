@@ -14,6 +14,7 @@ import {
   OBSERVED_DENSITY_LIMITS,
   validateTankGaugingInput,
 } from '../../utils/tankQuantityEngine'
+import { useConfirm } from '../common/ConfirmProvider'
 
 const LONG_TON_TO_METRIC_TON = 1.01605
 const LITRES_PER_BBL = 158.987
@@ -267,6 +268,7 @@ function TankerTruckLayout({
   senderReferenceLoading = false,
   receiverMode = false,
 }) {
+  const confirm = useConfirm()
   const existingPayload = useMemo(() => {
     return getExistingTankerPayload(entry)
   }, [entry.values])
@@ -907,14 +909,19 @@ function TankerTruckLayout({
     }))
   }
 
-  const copySenderDips = () => {
+  const copySenderDips = async () => {
     if (!senderReference) {
       return
     }
 
-    const confirmed = window.confirm(
-      'Copy sender dips into receiver entry? Receiver dips are normally measured independently. Use this only when you intentionally want to start from sender values.'
-    )
+    const confirmed = await confirm({
+      title: 'Copy sender dips',
+      message:
+        'Copy sender dips into the receiver entry? Receiver dips are normally measured independently. Use this only when you intentionally want to start from sender values.',
+      tone: 'warning',
+      confirmLabel: 'Copy dips',
+      module: 'Tanker Truck Entry',
+    })
 
     if (!confirmed) {
       return
@@ -936,14 +943,19 @@ function TankerTruckLayout({
     }))
   }
 
-  const copyAllSenderReference = () => {
+  const copyAllSenderReference = async () => {
     if (!senderReference) {
       return
     }
 
-    const confirmed = window.confirm(
-      'Copy sender dips, quality and seals into receiver entry? You can edit all copied values before saving.'
-    )
+    const confirmed = await confirm({
+      title: 'Copy sender reference',
+      message:
+        'Copy sender dips, quality and seals into the receiver entry? You can edit all copied values before saving.',
+      tone: 'warning',
+      confirmLabel: 'Copy all',
+      module: 'Tanker Truck Entry',
+    })
 
     if (!confirmed) {
       return
@@ -1608,7 +1620,7 @@ function TankerTruckLayout({
                     <div>
                       Duplicate seals:{' '}
                       {duplicateSealCount > 0 ? (
-                        <strong style={{ color: '#b91c1c' }}>
+                        <strong style={{ color: 'var(--danger-text)' }}>
                           {duplicateSealCount}
                         </strong>
                       ) : (
