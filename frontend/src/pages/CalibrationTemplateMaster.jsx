@@ -299,6 +299,92 @@ function CalibrationTemplateMaster({
     setEditTemplateId(null)
   }
 
+  /* -------------------------------------------------------- bulk upload */
+
+  const CALIBRATION_TYPES = [
+    'Tank Ullage Table',
+    'Tank Sounding Table',
+    'Tank Capacity Table',
+    'Trim Correction Table',
+    'Heel/List Correction Table',
+    'Meter Proving Table',
+    'Meter Factor Table',
+    'Temperature Correction Table',
+    'Density Correction Table',
+    'Other',
+  ]
+  const TEMPLATE_STATUSES = ['Active', 'Inactive', 'Blocked']
+
+  const importConfig = {
+    title: 'Bulk upload calibration templates',
+    description:
+      'Upload an Excel (.xlsx) or CSV file with one row per calibration template. This creates the template header; add its columns on the template itself. Existing template names are updated.',
+    templateFileName: 'calibration-template-master',
+    fields: [
+      {
+        key: 'templateName',
+        label: 'Template Name',
+        required: true,
+        example: 'Tank Strapping Table',
+        aliases: ['Name'],
+      },
+      {
+        key: 'assetTypeCode',
+        label: 'Asset Type Code',
+        required: true,
+        example: 'TANK',
+        aliases: ['Asset Type'],
+      },
+      {
+        key: 'calibrationType',
+        label: 'Calibration Type',
+        required: true,
+        options: CALIBRATION_TYPES,
+        example: 'Tank Ullage Table',
+      },
+      { key: 'description', label: 'Description', example: '' },
+      {
+        key: 'status',
+        label: 'Status',
+        options: TEMPLATE_STATUSES,
+        defaultValue: 'Active',
+        example: 'Active',
+      },
+    ],
+    validateRow: (record) => {
+      if (!activeAssetTypes.some((item) => item.assetTypeCode === String(record.assetTypeCode).trim())) {
+        return `Unknown or inactive asset type code "${record.assetTypeCode}"`
+      }
+      if (!CALIBRATION_TYPES.includes(String(record.calibrationType).trim())) {
+        return `Calibration Type must be one of ${CALIBRATION_TYPES.join(', ')}`
+      }
+      if (record.status && !TEMPLATE_STATUSES.includes(record.status)) {
+        return `Status must be one of ${TEMPLATE_STATUSES.join(', ')}`
+      }
+      return null
+    },
+    onImportRow: async (record) => {
+      const payload = {
+        ...emptyTemplate,
+        ...record,
+        status: record.status || 'Active',
+        columns: [],
+      }
+      const existing = calibrationTemplates.find(
+        (item) => String(item.templateName).toLowerCase() === String(payload.templateName).toLowerCase()
+      )
+      if (existing) {
+        // Never wipe the columns of an existing template from a bulk upload.
+        await updateCalibrationTemplate(existing.id, { ...payload, columns: existing.columns || [] })
+      } else {
+        await createCalibrationTemplate(payload)
+      }
+    },
+    onComplete: async () => {
+      await reloadCalibrationTemplates()
+    },
+  }
+
   const getAssetTypeName = (assetTypeCode) => {
     const selectedAssetType = assetTypes.find(
       (item) => item.assetTypeCode === assetTypeCode
@@ -764,6 +850,16 @@ function CalibrationTemplateMaster({
         </p>
       </div>
 
+      <DataTableToolbar
+        filters={calibrationTemplatesFilters}
+        columns={calibrationTemplatesFilters.columns}
+        exportFileName="calibration-template-master"
+        exportTitle="Calibration Template Master"
+        module="Calibration Template Master"
+        importConfig={importConfig}
+        canImport={canCreate}
+      />
+
       <table>
         <thead>
           <tr>
@@ -833,6 +929,12 @@ function CalibrationTemplateMaster({
           )}
         </tbody>
       </table>
+
+      <PaginationControls
+        currentPage={page}
+        totalRows={calibrationTemplatesFilters.filteredRows.length}
+        onPageChange={setPage}
+      />
 
       <div className="info-box">
         Rule: every template must have at least one Input X column and one Output

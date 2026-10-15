@@ -247,7 +247,7 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations, loggedInUser
 
 
   const importConfig = {
-    title: 'Import asset master rows',
+    title: 'Bulk upload assets',
     description: 'Create records from an Excel or CSV file. Existing codes are skipped.',
     fields: [
     { key: 'assetName', label: 'Asset Name', required: true, example: 'Tank 101' },

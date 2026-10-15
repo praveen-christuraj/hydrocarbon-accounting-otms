@@ -168,6 +168,81 @@ function UserLocationAssignment({
     }
   }
 
+  /* bulk upload */
+  const importConfig = {
+    title: 'Bulk upload user location assignments',
+    description:
+      'Upload an Excel (.xlsx) or CSV file with one row per user. The Locations column holds a comma-separated list of location codes and replaces the locations that user already has.',
+    templateFileName: 'user-location-assignment-upload-template',
+    fields: [
+      { key: 'username', label: 'Username', required: true, example: 'jdoe', aliases: ['User', 'Login', 'User Name'] },
+      {
+        key: 'locations',
+        label: 'Locations',
+        required: false,
+        example: 'LOC-001, LOC-002',
+        aliases: ['Location', 'Location Codes', 'Assigned Location'],
+        hint: 'Comma-separated location codes',
+      },
+      {
+        key: 'allLocationsAccess',
+        label: 'All Locations Access',
+        required: false,
+        example: 'No',
+        options: ['Yes', 'No'],
+        defaultValue: 'No',
+        aliases: ['All Locations'],
+      },
+    ],
+    validateRow: (row) => {
+      const username = String(row.username ?? '').trim()
+      if (username === '') return 'Username is required'
+      const user = activeUsers.find(
+        (item) => String(item.username ?? '').trim().toLowerCase() === username.toLowerCase()
+      )
+      if (!user) return `Unknown or inactive user "${username}"`
+
+      const flag = String(row.allLocationsAccess ?? '').trim().toLowerCase()
+      if (!['', 'yes', 'y', 'true', '1'].includes(flag)) {
+        const codes = String(row.locations ?? '')
+          .split(/[,;]/)
+          .map((item) => item.trim())
+          .filter(Boolean)
+        if (codes.length === 0) return 'Provide at least one location, or set All Locations Access to Yes'
+        const known = activeLocations.map((loc) => String(loc.locationCode ?? '').trim().toLowerCase())
+        const unknown = codes.filter((code) => !known.includes(code.toLowerCase()))
+        if (unknown.length > 0) return `Unknown or inactive location(s): ${unknown.join(', ')}`
+      }
+      return null
+    },
+    onImportRow: async (row) => {
+      if (!canEdit) {
+        throw new Error('You do not have permission to save user location assignments.')
+      }
+      const username = String(row.username ?? '').trim().toLowerCase()
+      const user = activeUsers.find((item) => String(item.username ?? '').trim().toLowerCase() === username)
+
+      const flag = String(row.allLocationsAccess ?? '').trim().toLowerCase()
+      const allAccess = ['yes', 'y', 'true', '1'].includes(flag)
+
+      const codes = String(row.locations ?? '')
+        .split(/[,;]/)
+        .map((item) => item.trim().toLowerCase())
+        .filter(Boolean)
+      const locationCodes = allAccess
+        ? activeLocations.map((loc) => loc.locationCode)
+        : activeLocations
+            .filter((loc) => codes.includes(String(loc.locationCode ?? '').trim().toLowerCase()))
+            .map((loc) => loc.locationCode)
+
+      await saveUserLocations(Number(user.id), locationCodes)
+      await updateUserAllLocationsAccess(Number(user.id), allAccess ? 'Yes' : 'No')
+    },
+    onComplete: async () => {
+      await Promise.all([reloadUserLocationSummaries(), reloadUserLocationAssignments()])
+    },
+  }
+
   // Build a lookup from userId to summary for quick access
   const summaryByUserId = {}
   userLocationSummaries.forEach((s) => {
@@ -449,6 +524,9 @@ function UserLocationAssignment({
         columns={userLocationAssignmentsFilters.columns}
         exportFileName="user-location-assignment"
         exportTitle="User Location Assignment"
+        module="user-location-assignment"
+        importConfig={importConfig}
+        canImport={canEdit}
       />
 
       <table>

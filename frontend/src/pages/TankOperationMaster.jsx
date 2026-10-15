@@ -234,6 +234,79 @@ function TankOperationMaster({ locations, loggedInUser }) {
     }
   }
 
+  /* -------------------------------------------------------- bulk upload */
+
+  const TANK_OPERATION_STATUSES = ['Active', 'Inactive', 'Blocked']
+
+  const importConfig = {
+    title: 'Bulk upload tank operations',
+    description:
+      'Upload an Excel (.xlsx) or CSV file. Location codes must already exist. Operations are matched on Location + Operation Code and updated when they already exist.',
+    templateFileName: 'tank-operation-master',
+    fields: [
+      { key: 'locationCode', label: 'Location Code', required: true, example: 'UTP', aliases: ['Location'] },
+      { key: 'operationCode', label: 'Operation Code', required: true, example: 'OPENING', aliases: ['Code'] },
+      { key: 'operationLabel', label: 'Operation Label', required: true, example: 'Opening Stock' },
+      {
+        key: 'operationCategory',
+        label: 'Operation Category',
+        required: true,
+        options: operationCategories,
+        example: 'OPENING',
+      },
+      { key: 'operationSign', label: 'Operation Sign', required: true, options: operationSigns, example: 'SET' },
+      { key: 'sortOrder', label: 'Sort Order', example: '1', hint: 'Whole number' },
+      { key: 'description', label: 'Description', example: '' },
+      { key: 'status', label: 'Status', options: TANK_OPERATION_STATUSES, defaultValue: 'Active', example: 'Active' },
+    ],
+    validateRow: (record) => {
+      const location = locations.find(
+        (item) => String(item.locationCode).toLowerCase() === String(record.locationCode).trim().toLowerCase()
+      )
+      if (!location || location.status !== 'Active') {
+        return `Unknown or inactive location code "${record.locationCode}"`
+      }
+      if (!operationCategories.includes(String(record.operationCategory).trim().toUpperCase())) {
+        return `Operation Category must be one of ${operationCategories.join(', ')}`
+      }
+      if (!operationSigns.includes(String(record.operationSign).trim().toUpperCase())) {
+        return `Operation Sign must be one of ${operationSigns.join(', ')}`
+      }
+      if (record.sortOrder && !Number.isFinite(Number(record.sortOrder))) {
+        return 'Sort Order must be a number'
+      }
+      if (record.status && !TANK_OPERATION_STATUSES.includes(record.status)) {
+        return `Status must be one of ${TANK_OPERATION_STATUSES.join(', ')}`
+      }
+      return null
+    },
+    onImportRow: async (record) => {
+      const payload = {
+        ...emptyTankOperation,
+        ...record,
+        locationCode: String(record.locationCode).trim(),
+        operationCode: String(record.operationCode).trim().toUpperCase(),
+        operationCategory: String(record.operationCategory).trim().toUpperCase(),
+        operationSign: String(record.operationSign).trim().toUpperCase(),
+        sortOrder: record.sortOrder === '' || record.sortOrder === undefined ? 1 : Number(record.sortOrder),
+        status: record.status || 'Active',
+      }
+      const existing = tankOperations.find(
+        (item) =>
+          String(item.locationCode).toLowerCase() === payload.locationCode.toLowerCase() &&
+          String(item.operationCode).toLowerCase() === payload.operationCode.toLowerCase()
+      )
+      if (existing) {
+        await updateTankOperation(existing.id, payload)
+      } else {
+        await createTankOperation(payload)
+      }
+    },
+    onComplete: async () => {
+      await reloadTankOperations('')
+    },
+  }
+
   const handleCancelEdit = () => {
     setTankOperation({
       ...emptyTankOperation,
@@ -526,6 +599,8 @@ function TankOperationMaster({ locations, loggedInUser }) {
         exportFileName="tank-operation-master"
         exportTitle="Tank Operation Master"
         module="Tank Operation Master"
+        importConfig={importConfig}
+        canImport={canCreate}
       />
 
       <table>

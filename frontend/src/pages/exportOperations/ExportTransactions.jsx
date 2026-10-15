@@ -305,7 +305,7 @@ function ExportTransactions({ loggedInUser }) {
 
   const codes = (items, key) => new Set(items.map((item) => item[key]))
   const importConfig = {
-    title: 'Import export transactions',
+    title: 'Bulk upload export transactions',
     description: 'One row per block. Rows are validated against export locations, entities, blocks and consignees.',
     fields: [
       { key: 'bl_date', label: 'BL Date (YYYY-MM-DD)', required: true, example: '2026-01-15' },

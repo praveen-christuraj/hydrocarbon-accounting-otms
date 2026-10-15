@@ -445,7 +445,10 @@ function AppContent({
                 requiredPermission="View Material Balance Template"
                 fallbackMessage="You do not have permission to view Material Balance Template Configuration."
               >
-                <MaterialBalanceTemplateMaster locations={locations} />
+                <MaterialBalanceTemplateMaster
+                  locations={locations}
+                  loggedInUser={loggedInUser}
+                />
               </PermissionGuard>
             }
           />

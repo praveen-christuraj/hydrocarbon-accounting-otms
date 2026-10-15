@@ -186,6 +186,68 @@ function FlowmeterConfigMaster({ locations = [], assets = [], assetAssignments =
     })
   }
 
+  /* -------------------------------------------------------- bulk upload */
+
+  const CONFIG_STATUSES = ['Active', 'Inactive', 'Blocked']
+
+  const importConfig = {
+    title: 'Bulk upload flowmeter configurations',
+    description:
+      'Upload an Excel (.xlsx) or CSV file. Configurations are matched on Stream Asset + Stream Name + Meter Label and updated when they already exist. The location is taken from the active assignment of the stream asset.',
+    templateFileName: 'flowmeter-config',
+    fields: [
+      { key: 'assetCode', label: 'Stream Asset Code', required: true, example: 'STREAM-01', aliases: ['Asset', 'Asset Code'] },
+      { key: 'streamName', label: 'Stream Name', required: true, example: 'Default' },
+      { key: 'meterLabel', label: 'Meter Label', required: true, example: 'Meter 1' },
+      { key: 'meterFactor', label: 'Meter Factor', required: true, example: '1', hint: 'Must be greater than 0' },
+      { key: 'meterUnit', label: 'Meter Unit', example: 'bbls' },
+      { key: 'calibrationDate', label: 'Calibration Date', example: new Date().toISOString().slice(0, 10), hint: 'YYYY-MM-DD' },
+      { key: 'remarks', label: 'Remarks', example: '' },
+      { key: 'status', label: 'Status', options: CONFIG_STATUSES, defaultValue: 'Active', example: 'Active' },
+    ],
+    validateRow: (record) => {
+      const assetCode = String(record.assetCode || '').trim()
+      if (!streamAssets.some((item) => String(item.assetCode) === assetCode)) {
+        return `Unknown stream asset code "${assetCode}"`
+      }
+      if (!assignedLocationByAssetCode[assetCode]) {
+        return `Stream asset "${assetCode}" has no active location assignment`
+      }
+      if (!(Number(record.meterFactor) > 0)) {
+        return 'Meter Factor must be greater than 0'
+      }
+      if (record.status && !CONFIG_STATUSES.includes(record.status)) {
+        return `Status must be one of ${CONFIG_STATUSES.join(', ')}`
+      }
+      return null
+    },
+    onImportRow: async (record) => {
+      const assetCode = String(record.assetCode || '').trim()
+      const payload = {
+        ...emptyForm,
+        ...record,
+        assetCode,
+        locationCode: assignedLocationByAssetCode[assetCode],
+        meterFactor: String(record.meterFactor),
+        status: record.status || 'Active',
+      }
+      const existing = rows.find(
+        (item) =>
+          String(item.assetCode) === payload.assetCode &&
+          String(item.streamName || '').toLowerCase() === String(payload.streamName).toLowerCase() &&
+          String(item.meterLabel || '').toLowerCase() === String(payload.meterLabel).toLowerCase()
+      )
+      if (existing) {
+        await updateFlowmeterConfig(existing.id, { ...payload, id: existing.id })
+      } else {
+        await createFlowmeterConfig(payload)
+      }
+    },
+    onComplete: async () => {
+      await reload()
+    },
+  }
+
   const openCreate = () => {
     setForm(emptyForm)
     setSuccessMsg('')
@@ -375,6 +437,8 @@ function FlowmeterConfigMaster({ locations = [], assets = [], assetAssignments =
             exportFileName="flowmeter-config-rows"
             exportTitle="Flowmeter Config"
             module="Flowmeter Config"
+            importConfig={importConfig}
+            canImport={canCreate}
           />
 
           <table>
@@ -438,7 +502,8 @@ function FlowmeterConfigMaster({ locations = [], assets = [], assetAssignments =
             filters={historyRowsFilters}
             columns={historyRowsFilters.columns}
             exportFileName="flowmeter-config-history-rows"
-            exportTitle="Flowmeter Config"
+            exportTitle="Flowmeter Config History"
+            module="Flowmeter Config"
           />
 
           <table>

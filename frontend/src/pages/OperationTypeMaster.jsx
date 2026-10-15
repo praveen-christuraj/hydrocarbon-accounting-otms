@@ -187,6 +187,109 @@ function OperationTypeMaster({
     }
   }
 
+  /* -------------------------------------------------------- bulk upload */
+
+  const OPERATION_CATEGORIES = [
+    'Storage',
+    'Transfer',
+    'Loading',
+    'Discharge',
+    'Movement',
+    'Metering',
+    'Reconciliation',
+    'Other',
+  ]
+  const YES_NO = ['Yes', 'No']
+  const OPERATION_TYPE_STATUSES = ['Active', 'Inactive', 'Blocked']
+
+  const importConfig = {
+    title: 'Bulk upload operation types',
+    description:
+      'Upload an Excel (.xlsx) or CSV file. Operation Type Codes that already exist are updated; new codes are created.',
+    templateFileName: 'operation-type-master',
+    fields: [
+      {
+        key: 'operationTypeName',
+        label: 'Operation Type Name',
+        required: true,
+        example: 'Tank Receipt',
+      },
+      {
+        key: 'operationTypeCode',
+        label: 'Operation Type Code',
+        required: true,
+        example: 'TANK_RECEIPT',
+        aliases: ['Code'],
+      },
+      {
+        key: 'applicableAssetTypeCode',
+        label: 'Applicable Asset Type Code',
+        required: true,
+        example: 'TANK',
+        aliases: ['Asset Type', 'Asset Type Code'],
+      },
+      {
+        key: 'operationCategory',
+        label: 'Operation Category',
+        required: true,
+        options: OPERATION_CATEGORIES,
+        example: 'Receipt',
+      },
+      { key: 'requiresSenderLocation', label: 'Requires Sender Location', options: YES_NO, defaultValue: 'No', example: 'No' },
+      { key: 'requiresReceiverLocation', label: 'Requires Receiver Location', options: YES_NO, defaultValue: 'No', example: 'No' },
+      { key: 'requiresComparison', label: 'Requires Comparison', options: YES_NO, defaultValue: 'No', example: 'No' },
+      { key: 'requiresApproval', label: 'Requires Approval', options: YES_NO, defaultValue: 'No', example: 'No' },
+      { key: 'description', label: 'Description', example: '' },
+      { key: 'status', label: 'Status', options: OPERATION_TYPE_STATUSES, defaultValue: 'Active', example: 'Active' },
+    ],
+    validateRow: (record) => {
+      const assetType = assetTypes.find(
+        (item) => String(item.assetTypeCode).toLowerCase() === String(record.applicableAssetTypeCode).trim().toLowerCase()
+      )
+      if (!assetType || assetType.status !== 'Active') {
+        return `Unknown or inactive asset type code "${record.applicableAssetTypeCode}"`
+      }
+      if (!OPERATION_CATEGORIES.includes(String(record.operationCategory).trim())) {
+        return `Operation Category must be one of ${OPERATION_CATEGORIES.join(', ')}`
+      }
+      const flagError = [
+        'requiresSenderLocation',
+        'requiresReceiverLocation',
+        'requiresComparison',
+        'requiresApproval',
+      ].find((fieldName) => record[fieldName] && !YES_NO.includes(String(record[fieldName]).trim()))
+      if (flagError) return `${flagError} must be Yes or No`
+      if (record.status && !OPERATION_TYPE_STATUSES.includes(record.status)) {
+        return `Status must be one of ${OPERATION_TYPE_STATUSES.join(', ')}`
+      }
+      return null
+    },
+    onImportRow: async (record) => {
+      const payload = {
+        ...emptyOperationType,
+        ...record,
+        requiresSenderLocation: record.requiresSenderLocation || 'No',
+        requiresReceiverLocation: record.requiresReceiverLocation || 'No',
+        requiresComparison: record.requiresComparison || 'No',
+        requiresApproval: record.requiresApproval || 'No',
+        status: record.status || 'Active',
+      }
+      const existing = operationTypes.find(
+        (item) =>
+          String(item.operationTypeCode).toLowerCase() ===
+          String(payload.operationTypeCode).trim().toLowerCase()
+      )
+      if (existing) {
+        await updateOperationType(existing.id, payload)
+      } else {
+        await createOperationType(payload)
+      }
+    },
+    onComplete: async () => {
+      await reloadOperationTypes()
+    },
+  }
+
   const handleCancelEdit = () => {
     setOperationType(emptyOperationType)
     setEditId(null)
@@ -445,6 +548,9 @@ function OperationTypeMaster({
         columns={operationTypesFilters.columns}
         exportFileName="operation-type-master"
         exportTitle="Operation Type Master"
+        module="Operation Type Master"
+        importConfig={importConfig}
+        canImport={canCreate}
       />
 
       <table>

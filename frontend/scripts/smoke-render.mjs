@@ -392,8 +392,8 @@ try {
       check('pdf export runs without error', errors.length === before && !q('.toast.tone-error'), qa('.toast').map(text).join(' | '))
 
       // Import dialog: opens from the toolbar, ignores backdrop clicks, closes on Cancel only.
-      const importButton = qa('.data-filter-bar button, .data-filter-actions button').find((b) => text(b).trim() === 'Import')
-      check('import button present', Boolean(importButton))
+      const importButton = qa('.data-filter-bar button, .data-filter-actions button').find((b) => text(b).trim() === 'Bulk Upload')
+      check('bulk upload button present', Boolean(importButton))
       if (importButton) {
         click(importButton)
         await flush()
@@ -402,10 +402,19 @@ try {
         click(q('.app-modal-backdrop'))
         await flush()
         check('import dialog ignores backdrop click', Boolean(q('.import-dialog')))
+        check('import dialog shows the layered template picker', Boolean(q('.import-dialog .import-template-bar select')), text(q('.import-dialog .import-template-select')).slice(0, 60))
+        const templateButtons = qa('.import-dialog .import-template-downloads button')
+        check('import dialog offers xlsx and csv templates', templateButtons.length === 2, templateButtons.map(text).join(' | '))
+
         before = errors.length
-        click(qa('.import-dialog button').find((b) => text(b).includes('template')))
+        click(templateButtons.find((b) => text(b).includes('XLSX')))
         await flush(600)
-        check('import template download runs without error', errors.length === before, downloads.slice(-1).join(''))
+        check('xlsx template download runs without error', errors.length === before, downloads.slice(-1).join(''))
+
+        before = errors.length
+        click(templateButtons.find((b) => text(b).includes('CSV')))
+        await flush(400)
+        check('csv template download runs without error', errors.length === before, downloads.slice(-1).join(''))
         click(qa('.import-dialog button').find((b) => text(b).trim() === 'Cancel'))
         await flush()
         check('import dialog closes on Cancel', !q('.import-dialog'))

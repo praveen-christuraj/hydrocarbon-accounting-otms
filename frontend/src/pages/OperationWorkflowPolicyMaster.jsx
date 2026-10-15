@@ -112,6 +112,115 @@ function OperationWorkflowPolicyMaster({ roles = [], operationTypes = [], operat
     }
   }
 
+  /* -------------------------------------------------------- bulk upload */
+
+  const ACTION_CODES = [
+    'CREATE_ENTRY',
+    'EDIT_DRAFT',
+    'REVIEW',
+    'SUBMIT',
+    'APPROVE',
+    'REJECT',
+    'CANCEL',
+    'RECALL',
+  ]
+  const POLICY_STATUSES = ['Active', 'Inactive']
+
+  const importConfig = {
+    title: 'Bulk upload workflow policies',
+    description:
+      'Upload an Excel (.xlsx) or CSV file. Leave a scope column blank to apply the policy to every value. Allowed Roles accepts role names separated by a semicolon.',
+    templateFileName: 'operation-workflow-policy',
+    fields: [
+      { key: 'policyName', label: 'Policy Name', required: true, example: 'Tank operations need approval' },
+      { key: 'actionCode', label: 'Action', required: true, options: ACTION_CODES, example: 'APPROVE' },
+      { key: 'operationTypeCode', label: 'Operation Type Code', example: '', hint: 'Blank = Any' },
+      { key: 'operationTemplateName', label: 'Operation Template Name', example: '', hint: 'Blank = Any' },
+      { key: 'assetTypeCode', label: 'Asset Type Code', example: '', hint: 'Blank = Any' },
+      { key: 'locationCode', label: 'Location Code', example: '', hint: 'Blank = Any' },
+      { key: 'priority', label: 'Priority', example: '100', hint: 'Whole number' },
+      { key: 'status', label: 'Status', options: POLICY_STATUSES, defaultValue: 'Active', example: 'Active' },
+      { key: 'roleNames', label: 'Allowed Roles', example: 'Operator;Supervisor', hint: 'Role names separated by ;' },
+    ],
+    validateRow: (record) => {
+      if (!ACTION_CODES.includes(String(record.actionCode).trim().toUpperCase())) {
+        return `Action must be one of ${ACTION_CODES.join(', ')}`
+      }
+      if (
+        record.operationTypeCode &&
+        !operationTypes.some((item) => String(item.operationTypeCode).toLowerCase() === String(record.operationTypeCode).trim().toLowerCase())
+      ) {
+        return `Unknown operation type code "${record.operationTypeCode}"`
+      }
+      if (
+        record.operationTemplateName &&
+        !operationTemplates.some((item) => String(item.templateName).toLowerCase() === String(record.operationTemplateName).trim().toLowerCase())
+      ) {
+        return `Unknown operation template "${record.operationTemplateName}"`
+      }
+      if (record.locationCode && !locations.some((item) => String(item.locationCode).toLowerCase() === String(record.locationCode).trim().toLowerCase())) {
+        return `Unknown location code "${record.locationCode}"`
+      }
+      if (record.priority && !Number.isFinite(Number(record.priority))) {
+        return 'Priority must be a number'
+      }
+      if (record.status && !POLICY_STATUSES.includes(record.status)) {
+        return `Status must be one of ${POLICY_STATUSES.join(', ')}`
+      }
+      const unknownRole = String(record.roleNames || '')
+        .split(';')
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .find(
+          (name) =>
+            !activeRoles.some((role) => String(role.roleName).toLowerCase() === name.toLowerCase())
+        )
+      if (unknownRole) return `Unknown role "${unknownRole}"`
+      return null
+    },
+    onImportRow: async (record) => {
+      const template = operationTemplates.find(
+        (item) =>
+          String(item.templateName).toLowerCase() === String(record.operationTemplateName || '').trim().toLowerCase()
+      )
+      const roleIds = String(record.roleNames || '')
+        .split(';')
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .map((name) => activeRoles.find((role) => String(role.roleName).toLowerCase() === name.toLowerCase())?.id)
+        .filter(Boolean)
+        .map(Number)
+
+      const payload = {
+        policy_name: String(record.policyName).trim(),
+        action_code: String(record.actionCode).trim().toUpperCase(),
+        operation_type_code: String(record.operationTypeCode || '').trim() || null,
+        operation_template_id: template ? Number(template.id) : null,
+        asset_type_code: String(record.assetTypeCode || '').trim() || null,
+        location_code: String(record.locationCode || '').trim() || null,
+        priority: Number(record.priority || 100),
+        status: record.status || 'Active',
+        role_ids: roleIds,
+      }
+
+      const existing = policies.find(
+        (item) => String(item.policyName).toLowerCase() === payload.policy_name.toLowerCase()
+      )
+      if (existing) {
+        await updateOperationWorkflowPolicy(existing.id, payload)
+        await saveOperationWorkflowPolicyRoles(existing.id, roleIds)
+      } else {
+        const created = await createOperationWorkflowPolicy(payload)
+        if (created?.id && roleIds.length) {
+          await saveOperationWorkflowPolicyRoles(created.id, roleIds)
+        }
+      }
+    },
+    onComplete: async () => {
+      await load()
+    },
+  }
+
   const toggleRole = (roleId) => {
     setForm((prev) => ({
       ...prev,
@@ -245,6 +354,8 @@ function OperationWorkflowPolicyMaster({ roles = [], operationTypes = [], operat
         exportFileName="operation-workflow-policy"
         exportTitle="Operation Workflow Policy"
         module="Operation Workflow Policy"
+        importConfig={importConfig}
+        canImport={canCreate}
       />
 
       <table>

@@ -7,9 +7,15 @@ import {
 } from '../api/table11Api'
 import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
 import DataTableToolbar from '../components/common/DataTableToolbar'
+import Icon from '../components/common/Icon'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
 import { usePermissions } from '../hooks/usePermissions'
+import { parseImportMatrix } from '../utils/importUtils'
+import { exportRows } from '../utils/exportUtils'
+import { logUiAction } from '../utils/actionLogger'
+
+const UPLOAD_EXTENSIONS = ['xlsx', 'xlsm', 'csv', 'txt']
 
 function Table11FactorMaster({ loggedInUser }) {
   const [rows, setRows] = useState([])
@@ -208,36 +214,62 @@ function Table11FactorMaster({ loggedInUser }) {
     const fileName = selectedFile.name
     const fileExtension = fileName.split('.').pop().toLowerCase()
 
-    if (fileExtension !== 'csv') {
-      setErrorMsg('XLSX upload disabled. Upload CSV.')
+    if (!UPLOAD_EXTENSIONS.includes(fileExtension)) {
+      setErrorMsg('Unsupported file type. Upload an Excel (.xlsx) or CSV (.csv) file.')
       e.target.value = ''
       return
     }
 
     try {
-      let matrixRows = []
-
-      const csvText = await selectedFile.text()
-      matrixRows = parseCsvTextToMatrix(csvText)
-
-      const validation = normalizeRowsFromMatrix(matrixRows)
+      const { matrix, format } = await parseImportMatrix(selectedFile)
+      const validation = normalizeRowsFromMatrix(matrix)
 
       setUploadFileName(fileName)
-      setUploadFileFormat(fileExtension.toUpperCase())
+      setUploadFileFormat(format === 'csv' ? 'CSV' : 'XLSX')
       setUploadedRows(validation.rows)
       setUploadValidationErrors(validation.errors)
 
       if (validation.errors.length > 0) {
-        setErrorMsg('Uploaded file has validation errors. Please review below.')
+        setErrorMsg(
+          `Uploaded file has ${validation.errors.length} validation error(s). Correct the file and upload it again – nothing has been saved yet.`
+        )
       } else {
         setRows(validation.rows)
         setSuccessMsg(`${validation.rows.length} Table 11 rows parsed successfully.`)
+        logUiAction('Table 11 Factor Master', 'Factor File Parsed', {
+          fileName,
+          rows: validation.rows.length,
+          format,
+        })
       }
     } catch (error) {
       setUploadValidationErrors([error.message])
       setErrorMsg(error.message)
     } finally {
       e.target.value = ''
+    }
+  }
+
+  /** Blank two-column upload file for the Table 11 factor table. */
+  const downloadFactorTemplate = async (format) => {
+    try {
+      await exportRows({
+        format,
+        rows: [
+          { api60: 30, ltFactor: 0.9759 },
+          { api60: 31, ltFactor: 0.9723 },
+        ],
+        columns: [
+          { key: 'api60', label: 'API @ 60F', type: 'number' },
+          { key: 'ltFactor', label: 'LT Factor', type: 'number' },
+        ],
+        fileName: 'table11-factor-upload-template',
+        title: 'Table 11 factor template',
+        subtitle: 'First column API @ 60°F, second column LT Factor. The header row is optional.',
+        module: 'Table 11 Factor Master',
+      })
+    } catch (error) {
+      setErrorMsg(error.message || 'Unable to build the template file.')
     }
   }
 
@@ -412,17 +444,38 @@ function Table11FactorMaster({ loggedInUser }) {
           <div className="section-title compact-section-title">
             <h3>Upload Table 11 File</h3>
             <p>
-              Upload CSV. Header row is optional. The first two columns
-              must be API @ 60°F and LT Factor.
+              Upload an Excel (.xlsx) or CSV file. The header row is optional.
+              The first two columns must be API @ 60°F and LT Factor.
             </p>
+
+            <div className="upload-template-downloads">
+              <button
+                type="button"
+                className="btn-ghost btn-sm"
+                onClick={() => downloadFactorTemplate('xlsx')}
+                disabled={loading}
+              >
+                <Icon name="fileSpreadsheet" size={14} />
+                Download XLSX template
+              </button>
+              <button
+                type="button"
+                className="btn-ghost btn-sm"
+                onClick={() => downloadFactorTemplate('csv')}
+                disabled={loading}
+              >
+                <Icon name="fileText" size={14} />
+                Download CSV template
+              </button>
+            </div>
           </div>
         </div>
 
         <div>
-          <label>Upload CSV</label>
+          <label>Upload Table 11 File (.xlsx or .csv)</label>
           <input
             type="file"
-            accept=".csv"
+            accept=".xlsx,.xlsm,.csv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
             onChange={handleFileUpload}
             disabled={!canEditTable11 || loading}
           />
@@ -642,6 +695,7 @@ API@60 LT_FACTOR
         columns={sortedRowsFilters.columns}
         exportFileName="table-11-factor-master"
         exportTitle="Table 11 Factor Master"
+        module="Table 11 Factor Master"
       />
 
       <table>

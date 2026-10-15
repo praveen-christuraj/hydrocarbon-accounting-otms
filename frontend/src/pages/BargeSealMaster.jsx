@@ -1,10 +1,52 @@
 import { useEffect, useMemo, useState } from 'react'
 import { bulkSaveBargeSealMaster, getBargeSealMaster } from '../api/bargeSealApi'
 import { usePermissions } from '../hooks/usePermissions'
+import { useBulkTemplates } from '../hooks/useBulkTemplates'
+import ImportDialog from '../components/common/ImportDialog'
+import ExportMenu from '../components/common/ExportMenu'
+import Icon from '../components/common/Icon'
+import { logUiAction } from '../utils/actionLogger'
 
 const TANK_POSITIONS = ['MH1', 'MH2', 'LOCK', 'DIPHATCH']
+const SEAL_STATUSES = ['Active', 'Inactive']
 
 const normalizeText = (v) => String(v || '').trim()
+
+const IMPORT_FIELDS = [
+  {
+    key: 'assetCode',
+    label: 'Asset Code',
+    required: true,
+    example: 'BRG-001',
+    hint: 'Must match an existing active asset',
+    aliases: ['Asset', 'Barge', 'Barge Code'],
+  },
+  { key: 'tankId', label: 'Tank ID', required: true, example: 'C1', aliases: ['Tank', 'Tank No'] },
+  {
+    key: 'sealPosition',
+    label: 'Seal Position',
+    required: true,
+    options: TANK_POSITIONS,
+    example: 'MH1',
+    hint: `One of ${TANK_POSITIONS.join(', ')}`,
+    aliases: ['Position'],
+  },
+  {
+    key: 'sealNumber',
+    label: 'Seal Number',
+    required: true,
+    example: 'SL-10021',
+    aliases: ['Seal No', 'Seal'],
+  },
+  { key: 'remarks', label: 'Remarks', example: '' },
+  {
+    key: 'status',
+    label: 'Status',
+    options: SEAL_STATUSES,
+    defaultValue: 'Active',
+    example: 'Active',
+  },
+]
 
 function BargeSealMaster({
   assets,
@@ -24,9 +66,14 @@ function BargeSealMaster({
   // grid: { [tankId]: { [sealPos]: sealNumber } }
   const [grid, setGrid] = useState({})
   const [dirty, setDirty] = useState(false)
+  // raw rows as stored on the server – used for the export file
+  const [sealRows, setSealRows] = useState([])
+  const [importOpen, setImportOpen] = useState(false)
 
   const { hasPermission } = usePermissions(loggedInUser)
   const canEditBargeSeal = hasPermission('Edit Barge Seal Master')
+
+  const bulkTemplates = useBulkTemplates('Barge Seal Master', IMPORT_FIELDS)
 
   const activeAssets = useMemo(() => {
     return (assets || [])
@@ -104,6 +151,7 @@ function BargeSealMaster({
       setError('')
       setMessage('')
       const rows = await getBargeSealMaster(assetCode)
+      setSealRows(rows || [])
       rebuildGrid(rows)
     } catch (e) {
       setError(e?.message || 'Failed to load barge seal master')
@@ -197,6 +245,138 @@ function BargeSealMaster({
     }
   }
 
+  /* ------------------------------------------------- bulk upload / export */
+
+  const exportColumns = useMemo(
+    () => [
+      { key: 'assetCode', label: 'Asset Code' },
+      { key: 'tankId', label: 'Tank ID' },
+      { key: 'sealPosition', label: 'Seal Position' },
+      { key: 'sealNumber', label: 'Seal Number' },
+      { key: 'status', label: 'Status' },
+      { key: 'remarks', label: 'Remarks' },
+    ],
+    []
+  )
+
+  const exportRows = useMemo(
+    () =>
+      (sealRows || [])
+        .filter((row) => !selectedAssetCode || normalizeText(row.assetCode) === selectedAssetCode)
+        .map((row) => ({
+          assetCode: row.assetCode,
+          tankId: row.tankId,
+          sealPosition: normalizeText(row.sealPosition).toUpperCase(),
+          sealNumber: row.sealNumber,
+          status: row.status,
+          remarks: row.remarks || '',
+        }))
+        .sort(
+          (a, b) =>
+            a.tankId.localeCompare(b.tankId) || a.sealPosition.localeCompare(b.sealPosition)
+        ),
+    [sealRows, selectedAssetCode]
+  )
+
+  /**
+   * The seal API replaces the whole set for an asset, so merge the uploaded
+   * rows over whatever is already stored instead of dropping the seals the
+   * file does not mention.
+   */
+  const handleImportBatch = async (items) => {
+    const overrides = []
+    const byAsset = new Map()
+    const seen = new Set()
+
+    items.forEach(({ rowNumber, record }) => {
+      const assetCode = normalizeText(record.assetCode)
+      const tankId = normalizeText(record.tankId)
+      const sealPosition = normalizeText(record.sealPosition).toUpperCase()
+      const key = `${assetCode.toUpperCase()}|${tankId.toUpperCase()}|${sealPosition}`
+
+      if (seen.has(key)) {
+        overrides.push({
+          rowNumber,
+          status: 'skipped',
+          message: `Duplicate seal for ${tankId}/${sealPosition} in this file`,
+        })
+        return
+      }
+      seen.add(key)
+
+      if (!byAsset.has(assetCode)) byAsset.set(assetCode, [])
+      byAsset.get(assetCode).push({
+        rowNumber,
+        row: {
+          tankId,
+          sealPosition,
+          sealNumber: normalizeText(record.sealNumber),
+          remarks: normalizeText(record.remarks),
+          status: record.status || 'Active',
+        },
+      })
+    })
+
+    for (const [assetCode, entries] of byAsset) {
+      try {
+        const existing = await getBargeSealMaster(assetCode)
+        const merged = new Map()
+        ;(existing || []).forEach((row) => {
+          const tankId = normalizeText(row.tankId)
+          const sealPosition = normalizeText(row.sealPosition).toUpperCase()
+          if (!tankId || !sealPosition) return
+          merged.set(`${tankId.toUpperCase()}|${sealPosition}`, {
+            tankId,
+            sealPosition,
+            sealNumber: normalizeText(row.sealNumber),
+            remarks: normalizeText(row.remarks),
+            status: row.status || 'Active',
+          })
+        })
+        entries.forEach(({ row }) => {
+          merged.set(`${row.tankId.toUpperCase()}|${row.sealPosition}`, row)
+        })
+
+        await bulkSaveBargeSealMaster({
+          assetCode,
+          effectiveDate: null,
+          rows: Array.from(merged.values()),
+        })
+      } catch (err) {
+        const failure = err?.message || 'Save failed'
+        entries.forEach(({ rowNumber }) =>
+          overrides.push({ rowNumber, status: 'failed', message: failure })
+        )
+      }
+    }
+
+    if (byAsset.has(selectedAssetCode)) {
+      await loadMaster(selectedAssetCode)
+    }
+
+    return overrides
+  }
+
+  const validateImportRow = (record) => {
+    const assetCode = normalizeText(record.assetCode)
+    const sealPosition = normalizeText(record.sealPosition).toUpperCase()
+    const match = activeAssets.find(
+      (asset) => normalizeText(asset.assetCode).toUpperCase() === assetCode.toUpperCase()
+    )
+    if (!match) return `Unknown or inactive asset code "${assetCode}"`
+    if (!TANK_POSITIONS.includes(sealPosition)) {
+      return `Seal position must be one of ${TANK_POSITIONS.join(', ')}`
+    }
+    return null
+  }
+
+  const openImport = () => {
+    setError('')
+    setMessage('')
+    setImportOpen(true)
+    logUiAction('Barge Seal Master', 'Open Bulk Upload Dialog')
+  }
+
   return (
     <div className="page">
       <div className="page-header">
@@ -206,6 +386,24 @@ function BargeSealMaster({
             Permanent tank seals only (MH1/MH2/LOCK/DIPHATCH). Temporary seals
             (manifold/pumproom) will be entered per movement ticket.
           </p>
+        </div>
+
+        <div className="page-header-actions">
+          {canEditBargeSeal && (
+            <button type="button" className="btn-secondary" onClick={openImport}>
+              <Icon name="upload" size={15} />
+              Bulk Upload
+            </button>
+          )}
+          <ExportMenu
+            rows={exportRows}
+            columns={exportColumns}
+            fileName="barge-seal-master"
+            title="Barge Seal Master"
+            subtitle={selectedAssetCode ? `Asset ${selectedAssetCode}` : undefined}
+            module="Barge Seal Master"
+            generatedBy={loggedInUser?.full_name || loggedInUser?.username}
+          />
         </div>
       </div>
 
@@ -343,6 +541,38 @@ function BargeSealMaster({
           ) : null}
         </>
       ) : null}
+
+      <ImportDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        title="Bulk upload barge seals"
+        description="Upload an Excel (.xlsx) or CSV file. Download the template, fill it in and upload it back. Uploaded seals are merged over the seals already stored for the asset."
+        module="Barge Seal Master"
+        templateFileName="barge-seal-master"
+        fields={bulkTemplates.fields}
+        templates={bulkTemplates.templates}
+        activeTemplateId={bulkTemplates.activeTemplateId}
+        onSelectTemplate={bulkTemplates.select}
+        onSaveTemplate={bulkTemplates.saveAs}
+        onDeleteTemplate={bulkTemplates.remove}
+        columns={bulkTemplates.columns}
+        onToggleColumn={bulkTemplates.toggleColumn}
+        onMoveColumn={bulkTemplates.moveColumn}
+        onResetTemplate={bulkTemplates.reset}
+        canConfigure={bulkTemplates.canConfigure}
+        validateRow={validateImportRow}
+        onImportBatch={handleImportBatch}
+        onComplete={async (summary) => {
+          if (selectedAssetCode) await loadMaster(selectedAssetCode)
+          if (summary.failed === 0 && summary.skipped === 0) {
+            setMessage(`${summary.success} seal row(s) uploaded successfully.`)
+          } else {
+            setError(
+              `Upload finished: ${summary.success} imported, ${summary.skipped} skipped, ${summary.failed} failed.`
+            )
+          }
+        }}
+      />
     </div>
   )
 }

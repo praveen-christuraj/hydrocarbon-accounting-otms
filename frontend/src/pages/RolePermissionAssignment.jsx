@@ -178,6 +178,64 @@ function RolePermissionAssignment({
 
   const dirty = matrixEditable && !sameSet(selection, initialSelection)
 
+  /* bulk upload */
+  const assignableEntries = groups.entries.filter(
+    (entry) => entry.permission && String(entry.permission.status || 'Active') === 'Active' && canAssignEntry(entry)
+  )
+
+  const importConfig = {
+    title: 'Bulk upload role permission assignments',
+    description:
+      'Upload an Excel (.xlsx) or CSV file with one row per role. The Permissions column holds a comma-separated list of permission names and replaces the permissions that role already has.',
+    templateFileName: 'role-permission-assignment-upload-template',
+    fields: [
+      { key: 'roleName', label: 'Role', required: true, example: 'Operations', aliases: ['Role Name', 'Roles'] },
+      {
+        key: 'permissions',
+        label: 'Permissions',
+        required: true,
+        example: 'View Location, Create Location',
+        aliases: ['Permission', 'Permission Names'],
+        hint: 'Comma-separated permission names from the Permission Master',
+      },
+    ],
+    validateRow: (row) => {
+      const roleName = String(row.roleName ?? '').trim()
+      if (roleName === '') return 'Role is required'
+      const role = roleRows.find((item) => nameKey(item.roleName) === nameKey(roleName))
+      if (!role) return `Unknown role "${roleName}"`
+      if (role.lockReason) return role.lockReason
+
+      const names = String(row.permissions ?? '')
+        .split(/[,;]/)
+        .map((item) => String(item).trim())
+        .filter(Boolean)
+      if (names.length === 0) return 'At least one permission is required'
+      const unknown = names.filter(
+        (name) => !assignableEntries.some((entry) => nameKey(entry.permissionName) === nameKey(name))
+      )
+      if (unknown.length > 0) return `Unknown, inactive or out-of-scope permission(s): ${unknown.join(', ')}`
+      return null
+    },
+    onImportRow: async (row) => {
+      if (!canEdit) {
+        throw new Error('You do not have permission to edit role permission assignments.')
+      }
+      const role = roleRows.find((item) => nameKey(item.roleName) === nameKey(row.roleName))
+      const names = String(row.permissions ?? '')
+        .split(/[,;]/)
+        .map((item) => nameKey(item))
+        .filter(Boolean)
+      const permissionIds = assignableEntries
+        .filter((entry) => names.includes(nameKey(entry.permissionName)))
+        .map((entry) => entry.permission.id)
+      await saveRolePermissions(role.id, permissionIds)
+    },
+    onComplete: async () => {
+      await reloadRolePermissions()
+    },
+  }
+
   return (
     <div>
       <PageHeader
@@ -206,6 +264,8 @@ function RolePermissionAssignment({
         exportTitle="Role Permission Assignment"
         module={MODULE}
         searchPlaceholder="Search roles…"
+        importConfig={importConfig}
+        canImport={canEdit}
       />
 
       <table>

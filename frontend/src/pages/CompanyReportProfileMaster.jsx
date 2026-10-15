@@ -249,6 +249,47 @@ function CompanyReportProfileMaster({ loggedInUser }) {
     }
   }
 
+  /* -------------------------------------------------------- bulk upload */
+
+  const PROFILE_STATUSES = ['Active', 'Inactive', 'Blocked']
+
+  const importConfig = {
+    title: 'Bulk upload company report profiles',
+    description:
+      'Upload an Excel (.xlsx) or CSV file. Profile Names that already exist are updated. Company logos are uploaded on the profile itself, not through the file.',
+    templateFileName: 'company-report-profile-master',
+    fields: [
+      { key: 'profileName', label: 'Profile Name', required: true, example: 'Default Report Profile' },
+      { key: 'companyName', label: 'Company Name', required: true, example: 'Acme Petroleum Ltd' },
+      { key: 'systemName', label: 'System Name', required: true, example: 'Hydrocarbon Accounting System' },
+      { key: 'reportSubtitle', label: 'Report Subtitle', required: true, example: 'Tank Gauging Quantity Report' },
+      { key: 'logoText', label: 'Logo Placeholder Text', required: true, example: 'LOGO' },
+      { key: 'footerFormula', label: 'Footer Formula', example: 'Formula: GOV = TOV - Free Water' },
+      { key: 'footerNote', label: 'Footer Note', example: 'This report is system-generated.' },
+      { key: 'status', label: 'Status', options: PROFILE_STATUSES, defaultValue: 'Active', example: 'Active' },
+    ],
+    validateRow: (record) => {
+      if (record.status && !PROFILE_STATUSES.includes(record.status)) {
+        return `Status must be one of ${PROFILE_STATUSES.join(', ')}`
+      }
+      return null
+    },
+    onImportRow: async (record) => {
+      const payload = { ...emptyProfile, ...record, status: record.status || 'Active' }
+      const existing = profiles.find(
+        (item) => String(item.profileName).toLowerCase() === String(payload.profileName).trim().toLowerCase()
+      )
+      if (existing) {
+        await updateCompanyReportProfile(existing.id, { ...payload, id: existing.id })
+      } else {
+        await createCompanyReportProfile(payload)
+      }
+    },
+    onComplete: async () => {
+      await reloadProfiles()
+    },
+  }
+
   const handleCancelEdit = () => {
     setProfile(emptyProfile)
     setEditId(null)
@@ -500,6 +541,8 @@ function CompanyReportProfileMaster({ loggedInUser }) {
         exportFileName="company-report-profile-master"
         exportTitle="Company Report Profile Master"
         module="Company Report Profile Master"
+        importConfig={importConfig}
+        canImport={canCreate}
       />
 
       <table>

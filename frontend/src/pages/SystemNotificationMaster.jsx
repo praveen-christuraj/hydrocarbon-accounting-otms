@@ -115,6 +115,124 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
     setDeliveryPage(1)
   }, [deliveryRows.length])
 
+  /* bulk upload */
+  const splitList = (value) =>
+    String(value ?? '')
+      .split(/[,;]/)
+      .map((item) => String(item).trim())
+      .filter(Boolean)
+
+  const resolveTargets = (values, rows, keys, idKey) => {
+    const found = []
+    const missing = []
+    values.forEach((value) => {
+      const needle = String(value).trim().toLowerCase()
+      const match = rows.find((row) => keys.some((key) => String(row?.[key] ?? '').trim().toLowerCase() === needle))
+      if (match) {
+        found.push(idKey === 'code' ? match.location_code || match.locationCode || match.code : match.id)
+      } else {
+        missing.push(value)
+      }
+    })
+    return { found, missing }
+  }
+
+  const parseFlag = (value, fallback) => {
+    const token = String(value ?? '').trim().toLowerCase()
+    if (!token) return fallback
+    return ['yes', 'y', 'true', '1'].includes(token)
+  }
+
+  const buildNotificationPayload = (row) => {
+    const roles = resolveTargets(splitList(row.targetRoles), activeRoles, ['role_name', 'roleName', 'name'], 'id')
+    const users = resolveTargets(
+      splitList(row.targetUsers),
+      activeUsers,
+      ['username', 'user_name', 'userName', 'email', 'full_name', 'fullName'],
+      'id'
+    )
+    const locationList = resolveTargets(
+      splitList(row.targetLocations),
+      activeLocations,
+      ['location_code', 'locationCode', 'code', 'location_name', 'locationName', 'name'],
+      'code'
+    )
+
+    return {
+      payload: {
+        title: String(row.title ?? '').trim(),
+        message: String(row.message ?? '').trim(),
+        notificationType: String(row.notificationType ?? '').trim() || 'Info',
+        priority: String(row.priority ?? '').trim() || 'Normal',
+        deliveryMode: String(row.deliveryMode ?? '').trim() || 'Banner + Inbox',
+        targetScope: String(row.targetScope ?? '').trim() || 'All Users',
+        targetRoleIds: roles.found,
+        targetUserIds: users.found,
+        targetLocationCodes: locationList.found,
+        displayFrom: String(row.displayFrom ?? '').trim(),
+        displayUntil: String(row.displayUntil ?? '').trim(),
+        requiresAcknowledgement: parseFlag(row.requiresAcknowledgement, false),
+        popupEnabled: parseFlag(row.popupEnabled, false),
+        bannerEnabled: parseFlag(row.bannerEnabled, true),
+        autoDismissSeconds: String(row.autoDismissSeconds ?? '').trim(),
+        status: String(row.status ?? '').trim() || 'Draft',
+      },
+      missing: {
+        Roles: roles.missing,
+        Users: users.missing,
+        Locations: locationList.missing,
+      },
+    }
+  }
+
+  const importConfig = {
+    title: 'Bulk upload system notifications',
+    description:
+      'Upload an Excel (.xlsx) or CSV file of notifications. Title and Message are required. Target Roles, Target Users and Target Locations accept comma-separated names or codes.',
+    templateFileName: 'system-notifications-upload-template',
+    fields: [
+      { key: 'title', label: 'Title', required: true, example: 'Server maintenance scheduled', aliases: ['Notification Title', 'Subject'] },
+      { key: 'message', label: 'Message', required: true, example: 'The application will be offline from 22:00.', aliases: ['Body', 'Text'] },
+      { key: 'notificationType', label: 'Type', required: false, example: 'Info', options: ['Info', 'Warning', 'Critical', 'Success', 'Maintenance', 'Circular'], defaultValue: 'Info' },
+      { key: 'priority', label: 'Priority', required: false, example: 'Normal', options: ['Low', 'Normal', 'High', 'Critical'], defaultValue: 'Normal' },
+      { key: 'deliveryMode', label: 'Delivery Mode', required: false, example: 'Banner + Inbox', options: ['Banner', 'Popup', 'Inbox', 'Banner + Inbox', 'Popup + Inbox'], defaultValue: 'Banner + Inbox' },
+      { key: 'targetScope', label: 'Target Scope', required: false, example: 'All Users', options: ['All Users', 'Roles', 'Specific Users', 'Locations', 'Roles + Locations'], defaultValue: 'All Users' },
+      { key: 'targetRoles', label: 'Target Roles', required: false, example: 'Operations, Admin', hint: 'Comma-separated role names', aliases: ['Roles'] },
+      { key: 'targetUsers', label: 'Target Users', required: false, example: 'jdoe, asmith', hint: 'Comma-separated usernames', aliases: ['Users'] },
+      { key: 'targetLocations', label: 'Target Locations', required: false, example: 'LOC-001, LOC-002', hint: 'Comma-separated location codes', aliases: ['Locations'] },
+      { key: 'displayFrom', label: 'Display From', required: false, example: '2026-01-15T08:00' },
+      { key: 'displayUntil', label: 'Display Until', required: false, example: '2026-01-16T08:00' },
+      { key: 'requiresAcknowledgement', label: 'Requires Acknowledgement', required: false, example: 'No', options: ['Yes', 'No'], defaultValue: 'No' },
+      { key: 'popupEnabled', label: 'Popup Enabled', required: false, example: 'No', options: ['Yes', 'No'], defaultValue: 'No' },
+      { key: 'bannerEnabled', label: 'Banner Enabled', required: false, example: 'Yes', options: ['Yes', 'No'], defaultValue: 'Yes' },
+      { key: 'autoDismissSeconds', label: 'Auto Dismiss Seconds', required: false, example: '10' },
+      { key: 'status', label: 'Status', required: false, example: 'Draft', options: ['Draft', 'Scheduled'], defaultValue: 'Draft' },
+    ],
+    validateRow: (row) => {
+      if (String(row.title ?? '').trim() === '') return 'Title is required'
+      if (String(row.message ?? '').trim() === '') return 'Message is required'
+      if (row.displayFrom && row.displayUntil && String(row.displayFrom) > String(row.displayUntil)) {
+        return 'Display From cannot be later than Display Until'
+      }
+      const { missing } = buildNotificationPayload(row)
+      const problems = Object.entries(missing)
+        .filter(([, values]) => values.length > 0)
+        .map(([label, values]) => `unknown ${label.toLowerCase()}: ${values.join(', ')}`)
+      if (problems.length > 0) return problems.join('; ')
+      return null
+    },
+    onImportRow: async (row) => {
+      if (!canCreateSystemNotification) {
+        throw new Error('You do not have permission to create system notifications.')
+      }
+      const { payload } = buildNotificationPayload(row)
+      await createSystemNotification(payload)
+    },
+    onComplete: async () => {
+      await loadNotifications()
+    },
+  }
+
   const updateField = (fieldName, value) => {
     setForm((current) => ({
       ...current,
@@ -561,6 +679,9 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
         columns={notificationsFilters.columns}
         exportFileName="system-notifications-notifications"
         exportTitle="System Notifications"
+        module="system-notifications"
+        importConfig={importConfig}
+        canImport={canCreateSystemNotification}
       />
 
       <table>

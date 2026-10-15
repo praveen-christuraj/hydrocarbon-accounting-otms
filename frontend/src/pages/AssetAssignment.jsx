@@ -222,6 +222,108 @@ function AssetAssignment({
     logUiAction('Asset Assignment', 'Open Create Dialog')
   }
 
+  /* -------------------------------------------------------- bulk upload */
+
+  const ASSIGNED_TO_TYPES = ['User', 'Department', 'Location', 'Vendor', 'Other']
+  const ASSIGNMENT_STATUSES = ['Active', 'Inactive', 'Returned', 'Blocked']
+
+  const importConfig = {
+    title: 'Bulk upload asset assignments',
+    description:
+      'Upload an Excel (.xlsx) or CSV file. Asset codes, location codes and user names must already exist. Assignment Scope is taken from the asset when it is left blank.',
+    templateFileName: 'asset-assignment',
+    fields: [
+      {
+        key: 'assetCode',
+        label: 'Asset Code',
+        required: true,
+        example: 'TK-101',
+        aliases: ['Asset'],
+      },
+      {
+        key: 'assetScope',
+        label: 'Asset Scope',
+        required: false,
+        options: ['Local', 'Global'],
+        example: 'Global',
+        hint: 'Defaults to the scope of the asset',
+      },
+      {
+        key: 'assignmentLocationCode',
+        label: 'Assignment Location Code',
+        required: true,
+        example: 'UTP',
+        aliases: ['Location', 'Location Code'],
+      },
+      {
+        key: 'assignedToType',
+        label: 'Assigned To Type',
+        required: true,
+        options: ASSIGNED_TO_TYPES,
+        example: 'User',
+      },
+      {
+        key: 'assignedTo',
+        label: 'Assigned To',
+        required: true,
+        example: 'Operations',
+        hint: 'User name, department, location code or vendor',
+      },
+      {
+        key: 'assignmentDate',
+        label: 'Assignment Date',
+        required: true,
+        example: new Date().toISOString().slice(0, 10),
+        hint: 'YYYY-MM-DD',
+      },
+      { key: 'returnDate', label: 'Return Date', example: '', hint: 'YYYY-MM-DD' },
+      { key: 'remarks', label: 'Remarks', example: '' },
+      {
+        key: 'status',
+        label: 'Status',
+        options: ASSIGNMENT_STATUSES,
+        defaultValue: 'Active',
+        example: 'Active',
+      },
+    ],
+    validateRow: (record) => {
+      const asset = assets.find((item) => String(item.assetCode) === String(record.assetCode).trim())
+      if (!asset) return `Unknown asset code "${record.assetCode}"`
+      if (!activeLocations.some((item) => item.locationCode === String(record.assignmentLocationCode).trim())) {
+        return `Unknown or inactive location code "${record.assignmentLocationCode}"`
+      }
+      if (!ASSIGNED_TO_TYPES.includes(String(record.assignedToType).trim())) {
+        return `Assigned To Type must be one of ${ASSIGNED_TO_TYPES.join(', ')}`
+      }
+      if (
+        record.assignedToType === 'User' &&
+        !activeUsers.some((item) => String(item.full_name) === String(record.assignedTo).trim())
+      ) {
+        return `Unknown user "${record.assignedTo}"`
+      }
+      if (record.returnDate && String(record.returnDate) < String(record.assignmentDate)) {
+        return 'Return Date cannot be earlier than Assignment Date'
+      }
+      if (record.status && !ASSIGNMENT_STATUSES.includes(record.status)) {
+        return `Status must be one of ${ASSIGNMENT_STATUSES.join(', ')}`
+      }
+      return null
+    },
+    onImportRow: async (record) => {
+      const asset = assets.find((item) => String(item.assetCode) === String(record.assetCode).trim())
+      const payload = {
+        ...emptyAssignment,
+        ...record,
+        assetScope: String(record.assetScope || '').trim() || asset?.assetScope || 'Local',
+        status: record.status || 'Active',
+      }
+      await createAssetAssignment(payload)
+    },
+    onComplete: async () => {
+      await reloadAssetAssignments()
+    },
+  }
+
   const activeAssignments = assetAssignments.filter(
     (item) => item.status === 'Active'
   )
@@ -483,6 +585,9 @@ function AssetAssignment({
         columns={activeAssignmentsFilters.columns}
         exportFileName="asset-assignment-active-assignments"
         exportTitle="Asset Assignment"
+        module="Asset Assignment"
+        importConfig={importConfig}
+        canImport={canCreate}
       />
 
       <table>

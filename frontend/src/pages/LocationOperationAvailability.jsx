@@ -200,6 +200,61 @@ function LocationOperationAvailability({
     }
   }
 
+  /* -------------------------------------------------------- bulk upload */
+
+  const AVAILABILITY_STATUSES = ['Active', 'Inactive', 'Blocked']
+
+  const importConfig = {
+    title: 'Bulk upload location operation availability',
+    description:
+      'Upload an Excel (.xlsx) or CSV file. Availability is matched on Location + Operation Type and updated when it already exists.',
+    templateFileName: 'location-operation-availability',
+    fields: [
+      { key: 'locationCode', label: 'Location Code', required: true, example: 'UTP', aliases: ['Location'] },
+      {
+        key: 'operationTypeCode',
+        label: 'Operation Type Code',
+        required: true,
+        example: 'TANK_GAUGING',
+        aliases: ['Operation Type'],
+      },
+      { key: 'status', label: 'Status', options: AVAILABILITY_STATUSES, defaultValue: 'Active', example: 'Active' },
+      { key: 'remarks', label: 'Remarks', example: '' },
+    ],
+    validateRow: (record) => {
+      if (!activeLocations.some((item) => String(item.locationCode).toLowerCase() === String(record.locationCode).trim().toLowerCase())) {
+        return `Unknown or inactive location code "${record.locationCode}"`
+      }
+      if (!activeOperationTypes.some((item) => String(item.operationTypeCode).toLowerCase() === String(record.operationTypeCode).trim().toLowerCase())) {
+        return `Unknown or inactive operation type code "${record.operationTypeCode}"`
+      }
+      if (record.status && !AVAILABILITY_STATUSES.includes(record.status)) {
+        return `Status must be one of ${AVAILABILITY_STATUSES.join(', ')}`
+      }
+      return null
+    },
+    onImportRow: async (record) => {
+      const payload = {
+        ...emptyForm,
+        ...record,
+        status: record.status || 'Active',
+      }
+      const existing = locationOperationAvailability.find(
+        (item) =>
+          String(item.locationCode).toLowerCase() === String(payload.locationCode).trim().toLowerCase() &&
+          String(item.operationTypeCode).toLowerCase() === String(payload.operationTypeCode).trim().toLowerCase()
+      )
+      if (existing) {
+        await updateLocationOperationAvailability(existing.id, payload)
+      } else {
+        await createLocationOperationAvailability(payload)
+      }
+    },
+    onComplete: async () => {
+      await reloadLocationOperationAvailability()
+    },
+  }
+
   const handleCancelEdit = () => {
     setFormData(emptyForm)
     setEditId(null)
@@ -370,6 +425,9 @@ function LocationOperationAvailability({
         columns={locationOperationAvailabilityFilters.columns}
         exportFileName="location-operation-availability"
         exportTitle="Location Operation Availability"
+        module="Location Operation Availability"
+        importConfig={importConfig}
+        canImport={canCreate}
       />
 
       <table>
