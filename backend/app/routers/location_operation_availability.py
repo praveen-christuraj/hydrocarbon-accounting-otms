@@ -23,26 +23,41 @@ from app.utils.helpers import clean_optional_text
 
 router = APIRouter(prefix="/location-operation-availability", tags=["Location Operation Availability"])
 
+# NOTE: routes are registered with "" (not "/"). A "/" route makes Starlette
+# answer the canonical no-trailing-slash URL the frontend calls with a
+# 307 Temporary Redirect on every request (extra round trip, and the redirect
+# can drop the request behind proxies). Keep "" here and in every router.
+
+
+def _code_key(code) -> str:
+    return str(code or "").strip().lower()
+
 
 def build_location_operation_availability_response(
     availability: LocationOperationAvailability,
     db: Session,
+    location: Location | None = None,
+    operation_type: OperationType | None = None,
 ):
-    location = (
-        db.query(Location)
-        .filter(Location.location_code.ilike(availability.location_code))
-        .first()
-    )
-
-    operation_type = (
-        db.query(OperationType)
-        .filter(
-            OperationType.operation_type_code.ilike(
-                availability.operation_type_code
-            )
+    # ``location`` / ``operation_type`` may be prefetched by list endpoints so
+    # rendering a page of records costs two bulk queries instead of 2 per row.
+    if location is None:
+        location = (
+            db.query(Location)
+            .filter(Location.location_code.ilike(availability.location_code))
+            .first()
         )
-        .first()
-    )
+
+    if operation_type is None:
+        operation_type = (
+            db.query(OperationType)
+            .filter(
+                OperationType.operation_type_code.ilike(
+                    availability.operation_type_code
+                )
+            )
+            .first()
+        )
 
     return {
         "id": availability.id,
@@ -151,7 +166,7 @@ def validate_location_operation_availability(
 
 
 @router.get(
-    "/",
+    "",
     response_model=list[LocationOperationAvailabilityResponse],
 )
 def get_location_operation_availability(
@@ -170,14 +185,32 @@ def get_location_operation_availability(
         .all()
     )
 
+    # Batch the name lookups: one query for all locations and one for all
+    # operation types, instead of two queries per availability record.
+    locations_by_code = {
+        _code_key(location.location_code): location
+        for location in db.query(Location).all()
+    }
+    operation_types_by_code = {
+        _code_key(operation_type.operation_type_code): operation_type
+        for operation_type in db.query(OperationType).all()
+    }
+
     return [
-        build_location_operation_availability_response(record, db)
+        build_location_operation_availability_response(
+            record,
+            db,
+            location=locations_by_code.get(_code_key(record.location_code)),
+            operation_type=operation_types_by_code.get(
+                _code_key(record.operation_type_code)
+            ),
+        )
         for record in availability_records
     ]
 
 
 @router.post(
-    "/",
+    "",
     response_model=LocationOperationAvailabilityResponse,
 )
 def create_location_operation_availability(

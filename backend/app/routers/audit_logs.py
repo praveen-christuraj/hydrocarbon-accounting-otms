@@ -12,7 +12,7 @@ from app.services.audit_service import build_audit_log_response
 router = APIRouter(prefix="/audit-logs", tags=["Audit Logs"])
 
 
-@router.get("/", response_model=list[AuditLogResponse])
+@router.get("", response_model=list[AuditLogResponse])
 def get_audit_logs(
     module_name: str | None = None,
     action: str | None = None,

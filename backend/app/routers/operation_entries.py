@@ -41,6 +41,7 @@ from app.routers.operation_transactions import (
     get_or_create_shuttle_voyage,
 )
 from app.routers.reports import normalize_jsonb_value
+from app.utils.pagination import clamp_limit
 
 router = APIRouter(prefix="/operation-entries", tags=["Operation Entries"])
 
@@ -48,26 +49,33 @@ router = APIRouter(prefix="/operation-entries", tags=["Operation Entries"])
 def build_operation_entry_response(
     transaction: OperationTransaction,
     db: Session,
+    template=None,
+    values=None,
+    transaction_response=None,
 ):
-    template = None
-
-    if transaction.operation_template_id:
+    # ``template`` / ``values`` / ``transaction_response`` may be prefetched
+    # by the list endpoint so a page of entries costs a few bulk queries
+    # instead of ~8 queries per entry. Single-record callers omit them.
+    if template is None and transaction.operation_template_id:
         template = db.query(OperationTemplate).filter(
             OperationTemplate.id == transaction.operation_template_id
         ).first()
 
-    values = (
-        db.query(OperationTransactionValue)
-        .filter(OperationTransactionValue.transaction_id == transaction.id)
-        .order_by(
-            OperationTransactionValue.sort_order,
-            OperationTransactionValue.id,
+    if values is None:
+        values = (
+            db.query(OperationTransactionValue)
+            .filter(OperationTransactionValue.transaction_id == transaction.id)
+            .order_by(
+                OperationTransactionValue.sort_order,
+                OperationTransactionValue.id,
+            )
+            .all()
         )
-        .all()
-    )
 
     return {
-        "transaction": build_operation_transaction_response(transaction, db),
+        "transaction": transaction_response
+        if transaction_response is not None
+        else build_operation_transaction_response(transaction, db),
         "operation_template_id": transaction.operation_template_id,
         "operation_template_name": template.template_name if template else "",
         "values": [
@@ -304,10 +312,11 @@ def ensure_operation_entry_locations_in_scope(
 
 
 @router.get(
-    "/",
+    "",
     response_model=list[OperationEntryResponse],
 )
 def get_operation_entries(
+    limit: int | None = None,
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
@@ -321,22 +330,77 @@ def get_operation_entries(
     query = apply_location_filter(
         query, OperationTransaction, current_user, db, column_name="origin_location_code"
     )
+    # Bounded: the Operation Entry page works on recent Draft/Rejected
+    # tickets. Older entries remain reachable through the Transaction
+    # Register. Without this cap the login-time prefetch streamed every
+    # draft ever created (plus ~8 lookup queries each).
     transactions = (
         query
         .filter(OperationTransaction.operation_template_id.isnot(None))
         .filter(OperationTransaction.status.in_(["Draft", "Rejected"]))
         .order_by(OperationTransaction.id.desc())
+        .limit(clamp_limit(limit))
         .all()
     )
 
+    if not transactions:
+        return []
+
+    # --- bulk lookups for the returned page -------------------------------
+    def _key(code):
+        return str(code or "").strip().lower()
+
+    templates_by_id = {
+        template.id: template for template in db.query(OperationTemplate).all()
+    }
+    operation_types_by_code = {
+        _key(row.operation_type_code): row for row in db.query(OperationType).all()
+    }
+    assets_by_code = {
+        _key(row.asset_code): row for row in db.query(Asset).all()
+    }
+    location_names = {
+        _key(row.location_code): row.location_name for row in db.query(Location).all()
+    }
+
+    values_by_transaction: dict[int, list] = {}
+    for value in (
+        db.query(OperationTransactionValue)
+        .filter(
+            OperationTransactionValue.transaction_id.in_(
+                [tx.id for tx in transactions]
+            )
+        )
+        .order_by(
+            OperationTransactionValue.sort_order,
+            OperationTransactionValue.id,
+        )
+        .all()
+    ):
+        values_by_transaction.setdefault(value.transaction_id, []).append(value)
+
     return [
-        build_operation_entry_response(transaction, db)
+        build_operation_entry_response(
+            transaction,
+            db,
+            template=templates_by_id.get(transaction.operation_template_id),
+            values=values_by_transaction.get(transaction.id, []),
+            transaction_response=build_operation_transaction_response(
+                transaction,
+                db,
+                operation_type=operation_types_by_code.get(
+                    _key(transaction.operation_type_code)
+                ),
+                asset=assets_by_code.get(_key(transaction.primary_asset_code)),
+                location_names=location_names,
+            ),
+        )
         for transaction in transactions
     ]
 
 
 @router.post(
-    "/",
+    "",
     response_model=OperationEntryResponse,
 )
 def create_operation_entry(

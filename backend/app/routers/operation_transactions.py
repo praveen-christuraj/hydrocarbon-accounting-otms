@@ -57,6 +57,7 @@ from app.routers.operation_tasks import (
     close_operation_approval_tasks_for_transaction,
 )
 from app.config import APPROVED_TRANSACTION_STATUS
+from app.utils.pagination import clamp_limit
 from app.services.transaction_helpers import (
     get_operation_type_by_code,
     get_transaction_value_text,
@@ -125,14 +126,31 @@ def generate_operation_ticket_number(db, location_code, asset_code, operation_da
     return f"{ticket_prefix}-{next_serial_number:03d}"
 
 
+_UNSET = object()
+
+
 def build_operation_transaction_response(
     transaction: OperationTransaction,
     db: Session,
+    operation_type=_UNSET,
+    asset=_UNSET,
+    location_names: dict | None = None,
 ):
-    operation_type = get_operation_type_by_code(
-        transaction.operation_type_code, db
-    )
-    asset = get_asset_by_code(transaction.primary_asset_code, db)
+    # ``operation_type`` / ``asset`` / ``location_names`` may be prefetched by
+    # list endpoints so rendering many transactions costs a few bulk queries
+    # instead of five queries per row. Single-record callers omit them; an
+    # explicit None means "prefetched and not found" (no per-row query).
+    if operation_type is _UNSET:
+        operation_type = get_operation_type_by_code(
+            transaction.operation_type_code, db
+        )
+    if asset is _UNSET:
+        asset = get_asset_by_code(transaction.primary_asset_code, db)
+
+    def _location_name(code):
+        if location_names is not None:
+            return location_names.get(str(code or "").strip().lower()) or None
+        return get_location_name_by_code(code, db)
 
     return {
         "id": transaction.id,
@@ -149,20 +167,20 @@ def build_operation_transaction_response(
         "primary_asset_type_code": transaction.primary_asset_type_code,
         "convoy_number": transaction.convoy_number,
         "origin_location_code": transaction.origin_location_code,
-        "origin_location_name": get_location_name_by_code(
-            transaction.origin_location_code, db
+        "origin_location_name": _location_name(
+            transaction.origin_location_code
         ),
         "destination_location_code": transaction.destination_location_code,
-        "destination_location_name": get_location_name_by_code(
-            transaction.destination_location_code, db
+        "destination_location_name": _location_name(
+            transaction.destination_location_code
         ),
         "sender_location_code": transaction.sender_location_code,
-        "sender_location_name": get_location_name_by_code(
-            transaction.sender_location_code, db
+        "sender_location_name": _location_name(
+            transaction.sender_location_code
         ),
         "receiver_location_code": transaction.receiver_location_code,
-        "receiver_location_name": get_location_name_by_code(
-            transaction.receiver_location_code, db
+        "receiver_location_name": _location_name(
+            transaction.receiver_location_code
         ),
         "operation_date": transaction.operation_date,
         "operation_start_datetime": transaction.operation_start_datetime,
@@ -344,8 +362,28 @@ def get_filtered_operation_transaction_rows(
     status: str | None = None,
     search: str | None = None,
     current_user: User | None = None,
+    limit: int | None = None,
 ):
-    query = db.query(OperationTransaction)
+    """Register rows for the given filters, newest first.
+
+    Filtering (including the free-text search) happens in SQL and the
+    operation-type / location / asset names plus field counts are loaded
+    with three bulk queries for the returned page. Previously this loaded
+    every matching transaction and then ran four extra queries per row,
+    which made the register (and the CSV export) slower with every ticket
+    ever saved. ``limit=None`` means "no row cap" and is reserved for the
+    CSV export; HTTP list callers always pass a bounded limit.
+    """
+    OT = aliased(OperationType)
+    LOC = aliased(Location)
+    AST = aliased(Asset)
+
+    query = (
+        db.query(OperationTransaction)
+        .outerjoin(OT, OT.operation_type_code == OperationTransaction.operation_type_code)
+        .outerjoin(LOC, LOC.location_code == OperationTransaction.origin_location_code)
+        .outerjoin(AST, AST.asset_code == OperationTransaction.primary_asset_code)
+    )
 
     if current_user is not None:
         query = apply_location_filter(
@@ -415,33 +453,100 @@ def get_filtered_operation_transaction_rows(
     if status:
         query = query.filter(OperationTransaction.status == status)
 
-    transactions = query.order_by(OperationTransaction.id.desc()).all()
+    cleaned_search = clean_optional_text(search)
+    if cleaned_search:
+        s = f"%{cleaned_search.lower()}%"
+        query = query.filter(
+            or_(
+                func.lower(func.coalesce(OperationTransaction.operation_ticket_number, "")).ilike(s),
+                func.lower(func.coalesce(OperationTransaction.operation_number, "")).ilike(s),
+                func.lower(func.coalesce(OperationTransaction.operation_type_code, "")).ilike(s),
+                func.lower(func.coalesce(OT.operation_type_name, "")).ilike(s),
+                func.lower(func.coalesce(OperationTransaction.origin_location_code, "")).ilike(s),
+                func.lower(func.coalesce(LOC.location_name, "")).ilike(s),
+                func.lower(func.coalesce(OperationTransaction.primary_asset_code, "")).ilike(s),
+                func.lower(func.coalesce(AST.asset_name, "")).ilike(s),
+                func.lower(func.coalesce(OperationTransaction.status, "")).ilike(s),
+            )
+        )
+
+    query = query.order_by(OperationTransaction.id.desc())
+
+    if limit is not None:
+        query = query.limit(limit)
+
+    transactions = query.all()
+
+    if not transactions:
+        return []
+
+    transaction_ids = [tx.id for tx in transactions]
+
+    # Bulk lookups for just the returned rows (was: 4 queries per row).
+    operation_types_by_code = {
+        str(row.operation_type_code or "").strip().lower(): row
+        for row in db.query(OperationType).all()
+    }
+    locations_by_code = {
+        str(row.location_code or "").strip().lower(): row
+        for row in db.query(Location).all()
+    }
+    assets_by_code = {
+        str(row.asset_code or "").strip().lower(): row
+        for row in db.query(Asset).all()
+    }
+    field_counts = {
+        tx_id: int(count)
+        for tx_id, count in (
+            db.query(
+                OperationTransactionValue.transaction_id,
+                func.count(OperationTransactionValue.id),
+            )
+            .filter(OperationTransactionValue.transaction_id.in_(transaction_ids))
+            .group_by(OperationTransactionValue.transaction_id)
+            .all()
+        )
+    }
 
     result = []
 
     for transaction in transactions:
-        row = build_operation_transaction_register_row(transaction, db)
+        operation_type = operation_types_by_code.get(
+            str(transaction.operation_type_code or "").strip().lower()
+        )
+        location = locations_by_code.get(
+            str(transaction.origin_location_code or "").strip().lower()
+        )
+        primary_asset = assets_by_code.get(
+            str(transaction.primary_asset_code or "").strip().lower()
+        )
 
-        if search:
-            search_value = search.lower().strip()
-            searchable_text = " ".join(
-                [
-                    str(row["ticket_number"] or ""),
-                    str(row["operation_number"] or ""),
-                    str(row["operation_type_code"] or ""),
-                    str(row["operation_type_name"] or ""),
-                    str(row["location_name"] or ""),
-                    str(row["location_code"] or ""),
-                    str(row["primary_asset_name"] or ""),
-                    str(row["primary_asset_code"] or ""),
-                    str(row["status"] or ""),
-                ]
-            ).lower()
-
-            if search_value not in searchable_text:
-                continue
-
-        result.append(row)
+        result.append(
+            {
+                "id": transaction.id,
+                "operation_number": transaction.operation_number,
+                "operation_ticket_number": get_transaction_ticket_number(transaction),
+                "ticket_number": get_transaction_ticket_number(transaction),
+                "operation_date": transaction.operation_date,
+                "operation_type_id": operation_type.id if operation_type else None,
+                "operation_type_code": transaction.operation_type_code,
+                "operation_type_name": operation_type.operation_type_name
+                if operation_type
+                else "",
+                "location_id": location.id if location else None,
+                "location_name": location.location_name if location else "",
+                "location_code": transaction.origin_location_code,
+                "primary_asset_id": primary_asset.id if primary_asset else None,
+                "primary_asset_name": primary_asset.asset_name
+                if primary_asset
+                else "",
+                "primary_asset_code": transaction.primary_asset_code,
+                "convoy_number": transaction.convoy_number,
+                "status": transaction.status,
+                "field_count": field_counts.get(transaction.id, 0),
+                "created_at": transaction.created_at,
+            }
+        )
 
     return result
 
@@ -903,6 +1008,7 @@ def get_operation_transactions(
     asset_code: str | None = None,
     status: str | None = None,
     search: str | None = None,
+    limit: int | None = None,
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
@@ -912,6 +1018,10 @@ def get_operation_transactions(
         db,
     )
 
+    # Bounded by default: callers that need older/more rows pass an explicit
+    # ``limit`` (max MAX_LIST_LIMIT) or a date range. The register page uses
+    # /operation-transactions/paged; this list endpoint only feeds pickers
+    # and post-mutation refreshes, so it must never stream the full history.
     return get_filtered_operation_transaction_rows(
         db=db,
         date_from=date_from,
@@ -925,6 +1035,7 @@ def get_operation_transactions(
         status=status,
         search=search,
         current_user=current_user,
+        limit=clamp_limit(limit),
     )
 
 
@@ -983,15 +1094,10 @@ def get_operation_transactions_paged(
     LOC = aliased(Location)
     AST = aliased(Asset)
 
-    value_count_subq = (
-        db.query(
-            OperationTransactionValue.transaction_id.label("tx_id"),
-            func.count(OperationTransactionValue.id).label("field_count"),
-        )
-        .group_by(OperationTransactionValue.transaction_id)
-        .subquery()
-    )
-
+    # NOTE: the per-transaction field count is fetched separately for the
+    # single returned page (see below). Joining a GROUP BY over the whole
+    # operation_transaction_values table into every page request made the
+    # register slower as history grew, even though only ~20 rows are shown.
     base_query = (
         db.query(
             OperationTransaction.id.label("id"),
@@ -1010,12 +1116,10 @@ def get_operation_transactions_paged(
             LOC.location_name.label("location_name"),
             AST.id.label("asset_id"),
             AST.asset_name.label("asset_name"),
-            func.coalesce(value_count_subq.c.field_count, 0).label("field_count"),
         )
         .outerjoin(OT, OT.operation_type_code == OperationTransaction.operation_type_code)
         .outerjoin(LOC, LOC.location_code == OperationTransaction.origin_location_code)
         .outerjoin(AST, AST.asset_code == OperationTransaction.primary_asset_code)
-        .outerjoin(value_count_subq, value_count_subq.c.tx_id == OperationTransaction.id)
     )
 
     allowed = get_user_location_codes(current_user, db)
@@ -1126,6 +1230,23 @@ def get_operation_transactions_paged(
     has_more = len(rows_raw) > page_size
     rows_raw = rows_raw[:page_size]
 
+    # Field counts for this page only (one grouped query over <= page_size ids).
+    page_ids = [r.id for r in rows_raw]
+    field_counts = {}
+    if page_ids:
+        field_counts = {
+            tx_id: int(count)
+            for tx_id, count in (
+                db.query(
+                    OperationTransactionValue.transaction_id,
+                    func.count(OperationTransactionValue.id),
+                )
+                .filter(OperationTransactionValue.transaction_id.in_(page_ids))
+                .group_by(OperationTransactionValue.transaction_id)
+                .all()
+            )
+        }
+
     rows = []
     for r in rows_raw:
         ticket_number = r.operation_ticket_number or r.operation_number or ""
@@ -1146,7 +1267,7 @@ def get_operation_transactions_paged(
                 "primary_asset_code": r.primary_asset_code,
                 "primary_asset_name": r.asset_name or "",
                 "status": r.status or "",
-                "field_count": int(r.field_count or 0),
+                "field_count": field_counts.get(r.id, 0),
                 "created_at": r.created_at,
             }
         )
@@ -1195,6 +1316,8 @@ def export_operation_transactions_csv(
         status=status,
         search=search,
         current_user=current_user,
+        # Export is an explicit user request for the full filtered set.
+        limit=None,
     )
 
     output = io.StringIO()

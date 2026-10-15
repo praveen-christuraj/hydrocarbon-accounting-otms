@@ -21,6 +21,7 @@ function TankOperationSummary({ locations, assets, loggedInUser }) {
   const [filters, setFilters] = useState(emptyFilters)
   const [rows, setRows] = useState([])
   const [columns, setColumns] = useState([])
+  const [reportMeta, setReportMeta] = useState(null)
   const [loading, setLoading] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
   const pageSize = usePageSize()
@@ -105,6 +106,7 @@ function TankOperationSummary({ locations, assets, loggedInUser }) {
 
       setRows(reportData.rows || [])
       setColumns(reportData.columns || reportColumns)
+      setReportMeta(reportData)
       setCurrentPage(1)
     } catch (error) {
       setErrorMsg(error.message)
@@ -312,7 +314,11 @@ function TankOperationSummary({ locations, assets, loggedInUser }) {
         </div>
 
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <span className="record-count">{rows.length} Ledger Rows</span>
+          <span className="record-count">
+            {reportMeta && reportMeta.totalRows !== rows.length
+              ? `${rows.length} of ${reportMeta.totalRows} Ledger Rows`
+              : `${rows.length} Ledger Rows`}
+          </span>
           <button type="button" onClick={() => window.print()}>
             Print
           </button>
@@ -408,6 +414,25 @@ function TankOperationSummary({ locations, assets, loggedInUser }) {
           </button>
         </div>
       </form>
+
+      {reportMeta?.defaultWindowApplied && (
+        <div className="info-box">
+          Showing the most recent 90 days of data
+          {reportMeta.appliedDateFrom
+            ? ` (${reportMeta.appliedDateFrom} to ${reportMeta.appliedDateTo || 'latest'})`
+            : ''}
+          . To load older records, set Operation Date From / To above and
+          click Apply.
+        </div>
+      )}
+
+      {reportMeta?.hasMore && (
+        <div className="info-box">
+          Only the first {rows.length} of {reportMeta.totalRows} matching
+          rows were loaded. Narrow the location, tank or date range to see
+          the rest.
+        </div>
+      )}
 
       <div className="section-title">
         <h3>Tank Operation Summary</h3>

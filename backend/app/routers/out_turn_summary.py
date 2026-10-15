@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import (
+    Asset,
+    Location,
     OperationTransaction,
     OperationTransactionValue,
     OperationTemplate,
@@ -19,6 +21,14 @@ from app.dependencies.permissions import (
 from app.routers.tank_operation_summary import (
     extract_tank_gauging_columns,
     get_tank_gauging_payload_for_transaction,
+    get_tank_gauging_payload_map,
+)
+from app.utils.pagination import (
+    DEFAULT_REPORT_PAGE_SIZE,
+    MAX_REPORT_PAGE_SIZE,
+    clamp_limit,
+    clamp_page,
+    default_window_start,
 )
 from app.schemas import OutTurnSummaryConfigUpdate
 from app.services.audit_service import create_audit_log
@@ -336,11 +346,13 @@ def _build_all_column_definitions(
     )
     transactions = query.limit(100).all()
 
+    payload_map = get_tank_gauging_payload_map(db, [tx.id for tx in transactions])
+
     input_keys = set()
     calc_keys = set()
 
     for tx in transactions:
-        payload = get_tank_gauging_payload_for_transaction(db, tx.id)
+        payload = payload_map.get(tx.id)
         if not payload:
             continue
 
@@ -471,15 +483,24 @@ def _standard_available_definitions(db: Session, current_user: User | None):
     return _build_all_column_definitions(db, None, current_user=current_user)
 
 
+_UNSET = object()
+
+
 def _build_row(
     db: Session,
     transaction: OperationTransaction,
     payload: dict,
     sequence: int,
     previous: dict,
+    location=_UNSET,
+    asset=_UNSET,
 ):
-    location = get_location_by_code(transaction.origin_location_code, db)
-    asset = get_asset_by_code(transaction.primary_asset_code, db)
+    # ``location`` / ``asset`` may be prefetched (bulk) by the list builder;
+    # an explicit None means "prefetched and not found" (no per-row query).
+    if location is _UNSET:
+        location = get_location_by_code(transaction.origin_location_code, db)
+    if asset is _UNSET:
+        asset = get_asset_by_code(transaction.primary_asset_code, db)
 
     extracted = _extract_payload_columns(payload)
 
@@ -542,6 +563,45 @@ def _build_row(
     return row
 
 
+def resolve_out_turn_date_window(
+    db: Session,
+    location_code: str | None = None,
+    tank_asset_code: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    current_user: User | None = None,
+):
+    """Resolve the effective ``date_from`` for a summary request.
+
+    An explicit ``date_from`` is returned unchanged. Otherwise the report
+    is limited to the most recent ``DEFAULT_REPORT_WINDOW_DAYS`` relative
+    to the newest matching ticket, so opening the page does not replay the
+    whole history; older rows load when the user picks a date range.
+    Returns ``(effective_date_from_iso, default_window_applied)``.
+    """
+    explicit = parse_date_filter(date_from, "Date From")
+
+    if explicit is not None:
+        return explicit.isoformat(), False
+
+    history_query = _get_transaction_query(
+        db,
+        location_code=location_code,
+        tank_asset_code=tank_asset_code,
+        date_to=date_to,
+        current_user=current_user,
+    )
+    latest_date = history_query.with_entities(
+        func.max(OperationTransaction.operation_date)
+    ).scalar()
+    window_start = default_window_start(latest_date)
+
+    if window_start is None:
+        return None, False
+
+    return window_start.isoformat(), True
+
+
 def get_out_turn_summary_rows(
     db: Session,
     location_code: str | None = None,
@@ -551,49 +611,131 @@ def get_out_turn_summary_rows(
     date_to: str | None = None,
     current_user: User | None = None,
 ):
-    query = _get_transaction_query(
+    """Out-turn rows for the (bounded) visible window.
+
+    Previously this replayed every approved Tank Gauging ticket since the
+    beginning of time and ran one payload query plus two name lookups per
+    ticket. Now only the visible window is loaded (see
+    ``resolve_out_turn_date_window``); each tank's chain is seeded from the
+    single snapshot that precedes the window, which keeps ``previous_*``
+    and net receipt/dispatch values identical to the full-history result.
+    Product and the lower date bound still only select output rows, never
+    the history used to find the preceding snapshot.
+    """
+    effective_date_from, _window_applied = resolve_out_turn_date_window(
         db,
         location_code=location_code,
         tank_asset_code=tank_asset_code,
-        # Product and lower date bound select output rows, never the history
-        # used to find the preceding snapshot for this location/tank.
+        date_from=date_from,
         date_to=date_to,
         current_user=current_user,
     )
-    visible_ids = {
-        tx.id for tx in _get_transaction_query(
-            db, location_code=location_code, tank_asset_code=tank_asset_code,
-            product_name=product_name, date_from=date_from, date_to=date_to,
+
+    visible_transactions = (
+        _get_transaction_query(
+            db,
+            location_code=location_code,
+            tank_asset_code=tank_asset_code,
+            product_name=product_name,
+            date_from=effective_date_from,
+            date_to=date_to,
             current_user=current_user,
-        ).all()
-    }
+        )
+        .order_by(
+            OperationTransaction.operation_date.asc(),
+            OperationTransaction.id.asc(),
+        )
+        .all()
+    )
 
-    transactions = query.order_by(
-        OperationTransaction.operation_date.asc(),
-        OperationTransaction.id.asc(),
-    ).all()
+    if not visible_transactions:
+        return []
 
-    grouped = {}
+    grouped: dict[tuple[str, str], list] = {}
 
-    for tx in transactions:
+    for tx in visible_transactions:
         key = (
             tx.origin_location_code or "",
             tx.primary_asset_code or "",
         )
+        grouped.setdefault(key, []).append(tx)
 
-        if key not in grouped:
-            grouped[key] = []
+    payload_map = get_tank_gauging_payload_map(
+        db, [tx.id for tx in visible_transactions]
+    )
 
-        grouped[key].append(tx)
+    def _key(code):
+        return str(code or "").strip().lower()
+
+    locations_by_code = {
+        _key(row.location_code): row for row in db.query(Location).all()
+    }
+    assets_by_code = {
+        _key(row.asset_code): row for row in db.query(Asset).all()
+    }
 
     rows = []
 
     for group_key in sorted(grouped.keys()):
-        previous = {"nsv": 0.0, "gsv": 0.0, "lt": 0.0, "mt": 0.0}
-        sequence = 0
+        group_transactions = grouped[group_key]
+        first_tx = group_transactions[0]
 
-        for tx in grouped[group_key]:
-            payload = get_tank_gauging_payload_for_transaction(db, tx.id)
+        # --- seed the chain from history before the visible window -------
+        history_query = _get_transaction_query(
+            db,
+            location_code=location_code,
+            tank_asset_code=tank_asset_code,
+            date_to=date_to,
+            current_user=current_user,
+        ).filter(
+            OperationTransaction.origin_location_code.ilike(group_key[0] or "%"),
+            OperationTransaction.primary_asset_code.ilike(group_key[1] or "%"),
+            (
+                (OperationTransaction.operation_date < first_tx.operation_date)
+                | (
+                    (OperationTransaction.operation_date == first_tx.operation_date)
+                    & (OperationTransaction.id < first_tx.id)
+                )
+            ),
+        )
+
+        previous = {"nsv": 0.0, "gsv": 0.0, "lt": 0.0, "mt": 0.0}
+
+        # Latest payload-bearing snapshot before the window (1 row).
+        predecessor = (
+            history_query.join(
+                OperationTransactionValue,
+                (OperationTransactionValue.transaction_id == OperationTransaction.id)
+                & (OperationTransactionValue.field_code == "tank_gauging_payload")
+                & (OperationTransactionValue.field_value.isnot(None)),
+            )
+            .order_by(
+                OperationTransaction.operation_date.desc(),
+                OperationTransaction.id.desc(),
+            )
+            .first()
+        )
+
+        if predecessor is not None:
+            payload = get_tank_gauging_payload_map(db, [predecessor.id]).get(
+                predecessor.id
+            )
+            if payload:
+                extracted = _extract_payload_columns(payload)
+                previous = {
+                    "nsv": safe_float(extracted.get("calc_nsvBbl")),
+                    "gsv": safe_float(extracted.get("calc_gsvBbl")),
+                    "lt": safe_float(extracted.get("calc_lt")),
+                    "mt": safe_float(extracted.get("calc_mt")),
+                }
+
+        # Sequence numbers continue from the count of earlier tickets for
+        # this tank (payload-bearing in practice; gauging tickets without a
+        # payload are skipped below without consuming a sequence number).
+        sequence = history_query.count()
+
+        for tx in group_transactions:
+            payload = payload_map.get(tx.id)
 
             if not payload:
                 continue
@@ -604,10 +746,11 @@ def get_out_turn_summary_rows(
                 payload,
                 sequence=sequence,
                 previous=previous,
+                location=locations_by_code.get(_key(tx.origin_location_code)),
+                asset=assets_by_code.get(_key(tx.primary_asset_code)),
             )
 
-            if tx.id in visible_ids:
-                rows.append(row)
+            rows.append(row)
 
             extracted = _extract_payload_columns(payload)
 
@@ -744,6 +887,8 @@ def get_out_turn_summary(
     product_name: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
+    page: int = 1,
+    page_size: int | None = None,
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
@@ -753,7 +898,16 @@ def get_out_turn_summary(
         db,
     )
 
-    rows = get_out_turn_summary_rows(
+    effective_date_from, default_window_applied = resolve_out_turn_date_window(
+        db,
+        location_code=location_code,
+        tank_asset_code=tank_asset_code,
+        date_from=date_from,
+        date_to=date_to,
+        current_user=current_user,
+    )
+
+    all_rows = get_out_turn_summary_rows(
         db,
         location_code=location_code,
         tank_asset_code=tank_asset_code,
@@ -762,6 +916,16 @@ def get_out_turn_summary(
         date_to=date_to,
         current_user=current_user,
     )
+
+    # The row computation is already bounded to the visible window; this
+    # page slice only bounds the payload sent to the browser.
+    safe_page = clamp_page(page)
+    safe_page_size = clamp_limit(
+        page_size, DEFAULT_REPORT_PAGE_SIZE, MAX_REPORT_PAGE_SIZE
+    )
+    total_rows = len(all_rows)
+    start = (safe_page - 1) * safe_page_size
+    rows = all_rows[start : start + safe_page_size]
 
     column_response = build_available_columns_response(
         db,
@@ -773,5 +937,11 @@ def get_out_turn_summary(
         "columns": column_response["columns"],
         "available_columns": column_response["available_columns"],
         "rows": rows,
-        "total_rows": len(rows),
+        "total_rows": total_rows,
+        "page": safe_page,
+        "page_size": safe_page_size,
+        "has_more": (safe_page * safe_page_size) < total_rows,
+        "default_window_applied": default_window_applied,
+        "date_from": effective_date_from,
+        "date_to": date_to,
     }

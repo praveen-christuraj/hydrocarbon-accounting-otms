@@ -5,7 +5,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
 from app.database import get_db
-from app.models import TankStockLedger, LocationAccountingDaySetting, MaterialBalanceTemplate, MaterialBalanceTemplateColumn, User
+from app.models import Location, TankStockLedger, LocationAccountingDaySetting, MaterialBalanceTemplate, MaterialBalanceTemplateColumn, User
+from app.utils.pagination import clamp_limit
 from app.schemas import TankStockLedgerResponse, TankStockLedgerSummaryResponse, TankStockLedgerDailySummaryResponse, MaterialBalanceDynamicReportResponse
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
@@ -33,11 +34,18 @@ from app.services.transaction_helpers import parse_date_filter
 router = APIRouter(prefix="/tank-stock-ledger", tags=["Tank Stock Ledger"])
 
 
+_UNSET = object()
+
+
 def build_tank_stock_ledger_response(
     ledger: TankStockLedger,
     db: Session,
+    location=_UNSET,
 ):
-    location = get_location_by_code(ledger.location_code, db)
+    # ``location`` may be prefetched (bulk) by list endpoints; an explicit
+    # None means "prefetched and not found" (no per-row query).
+    if location is _UNSET:
+        location = get_location_by_code(ledger.location_code, db)
 
     return {
         "id": ledger.id,
@@ -1019,6 +1027,7 @@ def get_tank_stock_ledger(
     date_from: str | None = None,
     date_to: str | None = None,
     status: str | None = "Active",
+    limit: int | None = None,
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
@@ -1039,8 +1048,23 @@ def get_tank_stock_ledger(
         current_user=current_user,
     )
 
+    if limit is not None:
+        ledger_rows = ledger_rows[: clamp_limit(limit)]
+
+    # One bulk location lookup for the page instead of one query per row.
+    locations_by_code = {
+        str(row.location_code or "").strip().lower(): row
+        for row in db.query(Location).all()
+    }
+
     return [
-        build_tank_stock_ledger_response(row, db)
+        build_tank_stock_ledger_response(
+            row,
+            db,
+            location=locations_by_code.get(
+                str(row.location_code or "").strip().lower()
+            ),
+        )
         for row in ledger_rows
     ]
 

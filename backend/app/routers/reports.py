@@ -10,6 +10,7 @@ from openpyxl.utils import get_column_letter
 
 from app.database import get_db
 from app.models import (
+    Asset, Location,
     TankStockLedger, LocationAccountingDaySetting, MaterialBalanceTemplate,
     MaterialBalanceTemplateColumn, OperationTransaction, OperationTransactionValue,
     MovementMapping, MovementMappingItem, MovementMappingComparison, User,
@@ -34,6 +35,12 @@ from app.utils.helpers import (
     normalize_code, normalize_entry_layout_type,
 )
 from app.config import APPROVED_TRANSACTION_STATUS
+from app.utils.pagination import (
+    DEFAULT_REPORT_PAGE_SIZE,
+    MAX_REPORT_PAGE_SIZE,
+    clamp_limit,
+    default_window_start,
+)
 from app.routers.tank_stock_ledger import (
     get_filtered_tank_stock_ledger_rows,
     build_tank_stock_ledger_response,
@@ -378,44 +385,117 @@ def get_out_turn_report_rows_from_transactions(
         OperationTransaction.id.asc(),
     ).all()
 
-    tx_ids = [tx.id for tx in transactions]
+    # Bounded loading: without an explicit ``date_from`` only the most
+    # recent DEFAULT_REPORT_WINDOW_DAYS (relative to the newest matching
+    # ticket) are reported. Each tank's previous-stock chain is seeded
+    # from its latest pre-window ticket so values match a full-history
+    # run; older rows load by passing an explicit date range.
+    window_start = None
+    if date_from_value is None and transactions:
+        window_start = default_window_start(
+            max(tx.operation_date for tx in transactions)
+        )
+
+    if window_start is not None:
+        visible_transactions = [
+            tx for tx in transactions if tx.operation_date >= window_start
+        ]
+        predecessor_candidates = [
+            tx for tx in transactions if tx.operation_date < window_start
+        ]
+    else:
+        visible_transactions = transactions
+        predecessor_candidates = []
+
+    # Latest pre-window ticket per (location, tank) seeds the chain.
+    latest_predecessor_by_group: dict[tuple[str, str], OperationTransaction] = {}
+    predecessor_tx_count_by_group: dict[tuple[str, str], int] = {}
+    for tx in predecessor_candidates:
+        group = (tx.origin_location_code or "", tx.primary_asset_code or "")
+        predecessor_tx_count_by_group[group] = (
+            predecessor_tx_count_by_group.get(group, 0) + 1
+        )
+        current = latest_predecessor_by_group.get(group)
+        if current is None or (tx.operation_date, tx.id) > (
+            current.operation_date,
+            current.id,
+        ):
+            latest_predecessor_by_group[group] = tx
+
+    tx_ids = [tx.id for tx in visible_transactions] + [
+        tx.id for tx in latest_predecessor_by_group.values()
+    ]
     payload_map = _build_out_turn_transaction_payload_map(db, tx_ids)
 
     template_cache = {}
 
-    extracted_rows = []
+    def _extract_rows(tx_list):
+        rows_for_tx = []
 
-    for tx in transactions:
-        if tx.operation_template_id is None:
+        for tx in tx_list:
+            if tx.operation_template_id is None:
+                continue
+
+            if tx.operation_template_id not in template_cache:
+                template_cache[tx.operation_template_id] = (
+                    db.query(OperationTemplate)
+                    .filter(OperationTemplate.id == tx.operation_template_id)
+                    .first()
+                )
+
+            template = template_cache[tx.operation_template_id]
+
+            if not template:
+                continue
+
+            payloads = payload_map.get(tx.id, {})
+            entry_layout = normalize_entry_layout_type(template.entry_layout_type)
+
+            if entry_layout == "tank gauging":
+                rows_for_tx.extend(
+                    _extract_tank_gauging_out_turn(tx, payloads.get("tank_gauging_payload") or {})
+                )
+            elif entry_layout == "multi-tank before/after":
+                rows_for_tx.extend(
+                    _extract_multi_tank_out_turn(tx, payloads.get("multi_tank_payload") or {})
+                )
+            elif entry_layout in ("stock movement", "vessel cycle"):
+                rows_for_tx.extend(
+                    _extract_stock_movement_out_turn(tx, payloads.get("net_nsv"))
+                )
+
+        return rows_for_tx
+
+    extracted_rows = _extract_rows(visible_transactions)
+
+    # Seed previous-stock values (and approximate sequence offsets, counted
+    # in pre-window tickets) from the latest pre-window ticket per tank.
+    seed_previous_by_group: dict[tuple[str, str], dict] = {}
+    seed_sequence_by_group: dict[tuple[str, str], int] = {}
+
+    for group, predecessor_tx in latest_predecessor_by_group.items():
+        predecessor_rows = _extract_rows([predecessor_tx])
+        if not predecessor_rows:
             continue
 
-        if tx.operation_template_id not in template_cache:
-            template_cache[tx.operation_template_id] = (
-                db.query(OperationTemplate)
-                .filter(OperationTemplate.id == tx.operation_template_id)
-                .first()
+        predecessor_rows.sort(
+            key=lambda item: (
+                item["accounting_date"] or date.min,
+                item["operation_datetime"] or datetime.min,
+                item["transaction_id"],
             )
-
-        template = template_cache[tx.operation_template_id]
-
-        if not template:
-            continue
-
-        payloads = payload_map.get(tx.id, {})
-        entry_layout = normalize_entry_layout_type(template.entry_layout_type)
-
-        if entry_layout == "tank gauging":
-            extracted_rows.extend(
-                _extract_tank_gauging_out_turn(tx, payloads.get("tank_gauging_payload") or {})
-            )
-        elif entry_layout == "multi-tank before/after":
-            extracted_rows.extend(
-                _extract_multi_tank_out_turn(tx, payloads.get("multi_tank_payload") or {})
-            )
-        elif entry_layout in ("stock movement", "vessel cycle"):
-            extracted_rows.extend(
-                _extract_stock_movement_out_turn(tx, payloads.get("net_nsv"))
-            )
+        )
+        last_row = predecessor_rows[-1]
+        seed_key = (last_row["location_code"], last_row["tank_asset_code"])
+        seed_previous_by_group[seed_key] = {
+            "gsv": safe_float(last_row["gsv"]),
+            "nsv": safe_float(last_row["nsv"]),
+            "lt": safe_float(last_row["lt"]),
+            "mt": safe_float(last_row["mt"]),
+        }
+        seed_sequence_by_group[seed_key] = predecessor_tx_count_by_group.get(
+            group, 0
+        )
 
     grouped_rows = {}
 
@@ -442,11 +522,12 @@ def get_out_turn_report_rows_from_transactions(
             ),
         )
 
-        previous_gsv = 0
-        previous_nsv = 0
-        previous_lt = 0
-        previous_mt = 0
-        sequence = 0
+        seed = seed_previous_by_group.get(key, {})
+        previous_gsv = seed.get("gsv", 0)
+        previous_nsv = seed.get("nsv", 0)
+        previous_lt = seed.get("lt", 0)
+        previous_mt = seed.get("mt", 0)
+        sequence = seed_sequence_by_group.get(key, 0)
 
         for item in sorted_group:
             current_gsv = safe_float(item["gsv"])
@@ -504,7 +585,15 @@ def get_out_turn_report_rows_from_transactions(
     return per_tank_rows
 
 
-def build_out_turn_report_response_from_transaction(row: dict, db: Session):
+_UNSET = object()
+
+
+def build_out_turn_report_response_from_transaction(
+    row: dict,
+    db: Session,
+    tank_asset_name=_UNSET,
+    location_name=_UNSET,
+):
     from app.services.stock_ledger_helpers import build_out_turn_report_response_from_values
 
     return build_out_turn_report_response_from_values(
@@ -516,8 +605,13 @@ def build_out_turn_report_response_from_transaction(row: dict, db: Session):
             "accounting_date": row.get("accounting_date"),
             "operation_datetime": row.get("operation_datetime"),
             "location_code": row.get("location_code") or "",
+            # Explicit None = prefetched-but-missing (pass "" so the shared
+            # builder uses it verbatim); omitted = look the name up there.
+            "location_name": None if location_name is _UNSET else (location_name or ""),
             "tank_asset_code": row.get("tank_asset_code") or "",
-            "tank_asset_name": getattr(get_asset_by_code(row.get("tank_asset_code") or "", db), "asset_name", ""),
+            "tank_asset_name": getattr(get_asset_by_code(row.get("tank_asset_code") or "", db), "asset_name", "")
+            if tank_asset_name is _UNSET
+            else (tank_asset_name or ""),
             "product_name": row.get("product_name") or "",
             "tank_operation_code": row.get("tank_operation_code") or "",
             "tank_operation_label": row.get("tank_operation_label") or "",
@@ -1570,6 +1664,7 @@ def get_out_turn_report(
     product_name: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
+    limit: int | None = None,
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
@@ -1589,8 +1684,28 @@ def get_out_turn_report(
         current_user=current_user,
     )
 
+    # Bounded payload (rows are already limited to the recent window when
+    # no date range is given); explicit exports pass their own handling.
+    rows = rows[: clamp_limit(limit, DEFAULT_REPORT_PAGE_SIZE, MAX_REPORT_PAGE_SIZE)]
+
+    def _key(code):
+        return str(code or "").strip().lower()
+
+    asset_names = {
+        _key(row.asset_code): row.asset_name for row in db.query(Asset).all()
+    }
+    location_names = {
+        _key(row.location_code): row.location_name
+        for row in db.query(Location).all()
+    }
+
     return [
-        build_out_turn_report_response_from_transaction(row, db)
+        build_out_turn_report_response_from_transaction(
+            row,
+            db,
+            tank_asset_name=asset_names.get(_key(row.get("tank_asset_code"))),
+            location_name=location_names.get(_key(row.get("location_code"))),
+        )
         for row in rows
     ]
 

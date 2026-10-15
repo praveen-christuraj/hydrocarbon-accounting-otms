@@ -1066,26 +1066,26 @@ class OperationTransaction(Base):
     id = Column(Integer, primary_key=True, index=True)
     operation_ticket_number = Column(String(100), unique=True, nullable=True, index=True)
     operation_number = Column(String(80), nullable=False, unique=True, index=True)
-    operation_type_code = Column(String(80), nullable=False)
+    operation_type_code = Column(String(80), nullable=False, index=True)
     operation_template_id = Column(
         Integer,
         ForeignKey("operation_templates.id", ondelete="RESTRICT"),
         nullable=True,
     )
-    primary_asset_code = Column(String(80), nullable=False)
+    primary_asset_code = Column(String(80), nullable=False, index=True)
     primary_asset_type_code = Column(String(50), nullable=False)
     convoy_number = Column(String(50), nullable=True, index=True)
-    origin_location_code = Column(String(50), nullable=False)
+    origin_location_code = Column(String(50), nullable=False, index=True)
     destination_location_code = Column(String(50), nullable=True)
     sender_location_code = Column(String(50), nullable=True)
     receiver_location_code = Column(String(50), nullable=True)
-    operation_date = Column(Date, nullable=False)
+    operation_date = Column(Date, nullable=False, index=True)
     operation_start_datetime = Column(DateTime, nullable=True)
     operation_end_datetime = Column(DateTime, nullable=True)
     product_name = Column(String(150), nullable=True)
     created_by = Column(String(80), nullable=True)
     remarks = Column(Text, nullable=True)
-    status = Column(String(50), nullable=False, default="Draft")
+    status = Column(String(50), nullable=False, default="Draft", index=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now())
 
