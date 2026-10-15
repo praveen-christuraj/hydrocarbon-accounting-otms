@@ -683,7 +683,7 @@ function DashboardBuilder({
     }
 
     if (key === 'limit') {
-      return <input type="number" value={value || ''} onChange={(e) => onChange(e.target.value)} />
+      return <input type="number" onWheel={(e) => e.target.blur()} value={value || ''} onChange={(e) => onChange(e.target.value)} />
     }
 
     return <input value={value || ''} onChange={(e) => onChange(e.target.value)} />
@@ -1109,7 +1109,7 @@ function DashboardBuilder({
                       <div style={{ marginTop: 10 }}>
                         <label>Cards Per Row</label>
                         <input
-                          type="number"
+                          type="number" onWheel={(e) => e.target.blur()}
                           min="1"
                           max="8"
                           value={selectedWidget.config?.columns ?? 4}
@@ -1122,7 +1122,7 @@ function DashboardBuilder({
                       <div style={{ marginTop: 10 }}>
                         <label>Card Height (px)</label>
                         <input
-                          type="number"
+                          type="number" onWheel={(e) => e.target.blur()}
                           min="160"
                           max="500"
                           value={selectedWidget.config?.cardHeight ?? 220}
@@ -1174,7 +1174,7 @@ function DashboardBuilder({
                         <div>
                           <label>Low Threshold (%)</label>
                           <input
-                            type="number"
+                            type="number" onWheel={(e) => e.target.blur()}
                             min="0"
                             max="100"
                             value={selectedWidget.config?.thresholds?.low ?? 20}
@@ -1192,7 +1192,7 @@ function DashboardBuilder({
                         <div>
                           <label>High Threshold (%)</label>
                           <input
-                            type="number"
+                            type="number" onWheel={(e) => e.target.blur()}
                             min="0"
                             max="100"
                             value={selectedWidget.config?.thresholds?.high ?? 80}

@@ -1572,7 +1572,7 @@ function ShuttleTracking({
                           <div>
                             <label>Opening Stock (BBL)</label>
                             <input
-                              type="number"
+                              type="number" onWheel={(e) => e.target.blur()}
                               name="openingStockBbl"
                               value={createForm.openingStockBbl}
                               onChange={onCreateChange}
@@ -1582,7 +1582,7 @@ function ShuttleTracking({
                           <div>
                             <label>Opening Water (BBL)</label>
                             <input
-                              type="number"
+                              type="number" onWheel={(e) => e.target.blur()}
                               name="openingWaterBbl"
                               value={createForm.openingWaterBbl}
                               onChange={onCreateChange}
@@ -1592,7 +1592,7 @@ function ShuttleTracking({
                           <div>
                             <label>Closing Stock (BBL)</label>
                             <input
-                              type="number"
+                              type="number" onWheel={(e) => e.target.blur()}
                               name="closingStockBbl"
                               value={createForm.closingStockBbl}
                               onChange={onCreateChange}
@@ -1603,7 +1603,7 @@ function ShuttleTracking({
                           <div>
                             <label>Closing Water (BBL)</label>
                             <input
-                              type="number"
+                              type="number" onWheel={(e) => e.target.blur()}
                               name="closingWaterBbl"
                               value={createForm.closingWaterBbl}
                               onChange={onCreateChange}

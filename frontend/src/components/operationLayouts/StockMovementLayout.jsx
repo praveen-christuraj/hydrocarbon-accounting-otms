@@ -236,7 +236,7 @@ function StockMovementLayout({
           <div>
             <label>Opening Stock</label>
             <input
-              type="number"
+              type="number" onWheel={(e) => e.target.blur()}
               value={local.opening_stock}
               onChange={(e) => onChange('opening_stock', e.target.value)}
               disabled={!openingStockField}
@@ -247,7 +247,7 @@ function StockMovementLayout({
           <div>
             <label>Opening Water</label>
             <input
-              type="number"
+              type="number" onWheel={(e) => e.target.blur()}
               value={local.opening_water}
               onChange={(e) => onChange('opening_water', e.target.value)}
               disabled={!openingWaterField}
@@ -258,7 +258,7 @@ function StockMovementLayout({
           <div>
             <label>Closing Stock</label>
             <input
-              type="number"
+              type="number" onWheel={(e) => e.target.blur()}
               value={local.closing_stock}
               onChange={(e) => onChange('closing_stock', e.target.value)}
               disabled={!closingStockField}
@@ -269,7 +269,7 @@ function StockMovementLayout({
           <div>
             <label>Closing Water</label>
             <input
-              type="number"
+              type="number" onWheel={(e) => e.target.blur()}
               value={local.closing_water}
               onChange={(e) => onChange('closing_water', e.target.value)}
               disabled={!closingWaterField}
@@ -279,17 +279,17 @@ function StockMovementLayout({
 
           <div>
             <label>Net Stock (auto)</label>
-            <input type="number" value={String(netStock)} readOnly />
+            <input type="number" onWheel={(e) => e.target.blur()} value={String(netStock)} readOnly />
           </div>
 
           <div>
             <label>Net Water (auto)</label>
-            <input type="number" value={String(netWater)} readOnly />
+            <input type="number" onWheel={(e) => e.target.blur()} value={String(netWater)} readOnly />
           </div>
 
           <div>
             <label>Net NSV (auto)</label>
-            <input type="number" value={String(netNsv)} readOnly />
+            <input type="number" onWheel={(e) => e.target.blur()} value={String(netNsv)} readOnly />
           </div>
         </div>
 

@@ -799,7 +799,7 @@ export default function MultiTankBeforeAfterLayout({
           <div>
             <label>CCF</label>
             <input
-              type="number"
+              type="number" onWheel={(e) => e.target.blur()}
               step="0.0001"
               value={stage.ccf}
               onChange={(e) => setStage((s) => ({ ...s, ccf: e.target.value }))}
@@ -809,7 +809,7 @@ export default function MultiTankBeforeAfterLayout({
           <div>
             <label>BS&W (%)</label>
             <input
-              type="number"
+              type="number" onWheel={(e) => e.target.blur()}
               step="0.01"
               value={stage.bswPct}
               onChange={(e) => setStage((s) => ({ ...s, bswPct: e.target.value }))}
@@ -842,7 +842,7 @@ export default function MultiTankBeforeAfterLayout({
             <div>
               <label>Obs API</label>
               <input
-                type="number"
+                type="number" onWheel={(e) => e.target.blur()}
                 step="0.01"
                 value={stage.obsApi}
                 onChange={(e) => setStage((s) => ({ ...s, obsApi: e.target.value }))}
@@ -852,7 +852,7 @@ export default function MultiTankBeforeAfterLayout({
             <div>
               <label>Obs Density</label>
               <input
-                type="number"
+                type="number" onWheel={(e) => e.target.blur()}
                 step="0.1"
                 value={stage.obsDensity}
                 onChange={(e) => setStage((s) => ({ ...s, obsDensity: e.target.value }))}
@@ -863,7 +863,7 @@ export default function MultiTankBeforeAfterLayout({
           <div>
             <label>Sample Temp</label>
             <input
-              type="number"
+              type="number" onWheel={(e) => e.target.blur()}
               step="0.1"
               value={stage.sampleTemp}
               onChange={(e) => setStage((s) => ({ ...s, sampleTemp: e.target.value }))}
@@ -884,7 +884,7 @@ export default function MultiTankBeforeAfterLayout({
           <div>
             <label>Tank Temp</label>
             <input
-              type="number"
+              type="number" onWheel={(e) => e.target.blur()}
               step="0.1"
               value={stage.tankTemp}
               onChange={(e) => setStage((s) => ({ ...s, tankTemp: e.target.value }))}
@@ -930,7 +930,7 @@ export default function MultiTankBeforeAfterLayout({
                   <td>
                     <input
                       className={`table-input ${errorMsg ? 'danger-input' : ''}`}
-                      type="number"
+                      type="number" onWheel={(e) => e.target.blur()}
                       step="0.01"
                       max={tMax || undefined}
                       value={d.total ?? ''}
@@ -989,7 +989,7 @@ export default function MultiTankBeforeAfterLayout({
                   <td>
                     <input
                       className="table-input"
-                      type="number"
+                      type="number" onWheel={(e) => e.target.blur()}
                       step="0.01"
                       value={d.water ?? ''}
                       onChange={(e) =>

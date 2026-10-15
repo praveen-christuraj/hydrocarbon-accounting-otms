@@ -137,6 +137,7 @@ function OperationTemplateFields({
 
             <input
               type={getInputType(value.dataType)}
+              onWheel={(e) => e.target.blur()}
               value={
                 typeof value.fieldValue === 'object'
                   ? JSON.stringify(value.fieldValue)
@@ -249,6 +250,7 @@ function OperationTemplateStructuredFields({
                           </label>
                           <input
                             type={getInputType(value.dataType)}
+                            onWheel={(e) => e.target.blur()}
                             value={
                               typeof value.fieldValue === 'object'
                                 ? JSON.stringify(value.fieldValue)
@@ -1382,6 +1384,21 @@ function OperationEntry({
     if (isShuttleTracking && entry.convoyNumber.trim() === '') {
       notifyError('Shuttle Number is required for Shuttle Tracking')
       return
+    }
+
+    // Shuttle Number must be unique across all tickets and must not be repeated.
+    if (isShuttleTracking) {
+      const shuttleNo = entry.convoyNumber.trim().toLowerCase()
+      const duplicateShuttleNumber = (operationEntries || []).some((item) => {
+        if (editId !== null && Number(item?.id) === Number(editId)) {
+          return false
+        }
+        return String(item?.convoyNumber || '').trim().toLowerCase() === shuttleNo
+      })
+      if (duplicateShuttleNumber) {
+        notifyError('Shuttle Number must be unique and cannot be repeated across tickets')
+        return
+      }
     }
     if (entry.originLocationCode.trim() === '') {
       notifyError('Origin Location is required')

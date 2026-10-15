@@ -338,7 +338,7 @@ function FSOTrackingLayout({ entry, selectedAsset, handleValueChange, setEntryFi
             <label>Vessel Quantity (BBL)</label>
             <input
               name="vessel_quantity_bbl"
-              type="number"
+              type="number" onWheel={(e) => e.target.blur()}
               value={form.vessel_quantity_bbl}
               onChange={onChange}
             />
@@ -350,7 +350,7 @@ function FSOTrackingLayout({ entry, selectedAsset, handleValueChange, setEntryFi
           <label>Opening Stock (BBL)</label>
           <input
             name="opening_stock_bbl"
-            type="number"
+            type="number" onWheel={(e) => e.target.blur()}
             value={form.opening_stock_bbl}
             onChange={onChange}
           />
@@ -360,7 +360,7 @@ function FSOTrackingLayout({ entry, selectedAsset, handleValueChange, setEntryFi
           <label>Opening Water (BBL)</label>
           <input
             name="opening_water_bbl"
-            type="number"
+            type="number" onWheel={(e) => e.target.blur()}
             value={form.opening_water_bbl}
             onChange={onChange}
           />
@@ -371,7 +371,7 @@ function FSOTrackingLayout({ entry, selectedAsset, handleValueChange, setEntryFi
           <label>Closing Stock (BBL)</label>
           <input
             name="closing_stock_bbl"
-            type="number"
+            type="number" onWheel={(e) => e.target.blur()}
             value={form.closing_stock_bbl}
             onChange={onChange}
           />
@@ -381,7 +381,7 @@ function FSOTrackingLayout({ entry, selectedAsset, handleValueChange, setEntryFi
           <label>Closing Water (BBL)</label>
           <input
             name="closing_water_bbl"
-            type="number"
+            type="number" onWheel={(e) => e.target.blur()}
             value={form.closing_water_bbl}
             onChange={onChange}
           />

@@ -390,7 +390,7 @@ function FlowmeterConfigMaster({ locations = [], assets = [], assetAssignments =
 
         <div>
           <label>Meter Factor *</label>
-          <input type="number" min="0.0001" step="0.0001" value={form.meterFactor} onChange={(e) => { setForm((p) => ({ ...p, meterFactor: e.target.value })); setValidationErrors({ ...validationErrors, meterFactor: '' }) }} className={validationErrors.meterFactor ? 'input-error' : ''} />
+          <input type="number" onWheel={(e) => e.target.blur()} min="0.0001" step="0.0001" value={form.meterFactor} onChange={(e) => { setForm((p) => ({ ...p, meterFactor: e.target.value })); setValidationErrors({ ...validationErrors, meterFactor: '' }) }} className={validationErrors.meterFactor ? 'input-error' : ''} />
           {validationErrors.meterFactor && (
             <span className="field-error">{validationErrors.meterFactor}</span>
           )}

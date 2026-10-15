@@ -184,7 +184,7 @@ function PaginationControls({
             <label>
               <span>Page</span>
               <input
-                type="number"
+                type="number" onWheel={(e) => e.target.blur()}
                 min="1"
                 max={totalPages}
                 value={jumpPage}

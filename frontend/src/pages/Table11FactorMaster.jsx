@@ -649,7 +649,7 @@ API@60 LT_FACTOR
         <div>
           <label>API @ 60°F</label>
           <input
-            type="number"
+            type="number" onWheel={(e) => e.target.blur()}
             step="0.001"
             value={lookupApi60}
             onChange={(e) => setLookupApi60(e.target.value)}

@@ -217,7 +217,7 @@ function DatabaseBrowser() {
               <label htmlFor="jump-page" className="jump-label">Jump to:</label>
               <input
                 id="jump-page"
-                type="number"
+                type="number" onWheel={(e) => e.target.blur()}
                 className="jump-input"
                 min={1}
                 max={totalPages}

@@ -1313,7 +1313,7 @@ function OperationTemplateMaster({
           <label>Sort Order</label>
           <input
             name="sortOrder"
-            type="number"
+            type="number" onWheel={(e) => e.target.blur()}
             value={field.sortOrder}
             onChange={handleFieldChange}
             placeholder="Example: 1"
@@ -1603,7 +1603,7 @@ function OperationTemplateMaster({
                   <label>Version No</label>
                   <input
                     name="versionNo"
-                    type="number"
+                    type="number" onWheel={(e) => e.target.blur()}
                     value={layoutDraft.versionNo}
                     onChange={handleLayoutHeaderChange}
                     disabled={Boolean(selectedLayoutId) || !canWriteTemplate}
@@ -1699,7 +1699,7 @@ function OperationTemplateMaster({
                       </td>
                       <td>
                         <input
-                          type="number"
+                          type="number" onWheel={(e) => e.target.blur()}
                           value={section.sortOrder}
                           onChange={(e) =>
                             handleSectionChange(
@@ -1838,7 +1838,7 @@ function OperationTemplateMaster({
                       </td>
                       <td>
                         <input
-                          type="number"
+                          type="number" onWheel={(e) => e.target.blur()}
                           min="1"
                           value={item.rowNo}
                           onChange={(e) =>
@@ -1849,7 +1849,7 @@ function OperationTemplateMaster({
                       </td>
                       <td>
                         <input
-                          type="number"
+                          type="number" onWheel={(e) => e.target.blur()}
                           min="1"
                           max="3"
                           value={item.colStart}
@@ -1865,7 +1865,7 @@ function OperationTemplateMaster({
                       </td>
                       <td>
                         <input
-                          type="number"
+                          type="number" onWheel={(e) => e.target.blur()}
                           min="1"
                           max="3"
                           value={item.colSpan}
@@ -1877,7 +1877,7 @@ function OperationTemplateMaster({
                       </td>
                       <td>
                         <input
-                          type="number"
+                          type="number" onWheel={(e) => e.target.blur()}
                           min="1"
                           value={item.sortOrder}
                           onChange={(e) =>

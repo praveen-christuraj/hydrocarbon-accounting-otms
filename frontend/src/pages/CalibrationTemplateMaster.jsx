@@ -753,7 +753,7 @@ function CalibrationTemplateMaster({
             <label>Sort Order</label>
             <input
               name="sortOrder"
-              type="number"
+              type="number" onWheel={(e) => e.target.blur()}
               value={column.sortOrder}
               onChange={handleColumnChange}
               placeholder="Example: 1"

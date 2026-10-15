@@ -217,7 +217,7 @@ function ShuttleTrackingLayout({ entry, selectedAsset, handleValueChange }) {
           <label>Opening Stock (BBL)</label>
           <input
             name="opening_stock_bbl"
-            type="number"
+            type="number" onWheel={(e) => e.target.blur()}
             value={form.opening_stock_bbl}
             onChange={onChange}
           />
@@ -227,7 +227,7 @@ function ShuttleTrackingLayout({ entry, selectedAsset, handleValueChange }) {
           <label>Opening Water (BBL)</label>
           <input
             name="opening_water_bbl"
-            type="number"
+            type="number" onWheel={(e) => e.target.blur()}
             value={form.opening_water_bbl}
             onChange={onChange}
           />
@@ -237,7 +237,7 @@ function ShuttleTrackingLayout({ entry, selectedAsset, handleValueChange }) {
           <label>Closing Stock (BBL)</label>
           <input
             name="closing_stock_bbl"
-            type="number"
+            type="number" onWheel={(e) => e.target.blur()}
             value={form.closing_stock_bbl}
             onChange={onChange}
           />
@@ -247,7 +247,7 @@ function ShuttleTrackingLayout({ entry, selectedAsset, handleValueChange }) {
           <label>Closing Water (BBL)</label>
           <input
             name="closing_water_bbl"
-            type="number"
+            type="number" onWheel={(e) => e.target.blur()}
             value={form.closing_water_bbl}
             onChange={onChange}
           />

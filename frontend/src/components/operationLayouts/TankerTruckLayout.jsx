@@ -244,6 +244,7 @@ const Field = ({
       <input
         name={name}
         type={type}
+        onWheel={(e) => e.target.blur()}
         value={value}
         onChange={onChange}
         placeholder={placeholder}
@@ -1441,7 +1442,7 @@ function TankerTruckLayout({
                 <Field
                   label="Total Dip"
                   name="totalDipCm"
-                  type="number"
+                  type="number" onWheel={(e) => e.target.blur()}
                   value={tankerInput.totalDipCm}
                   onChange={handleTankerInputChange}
                   required
@@ -1459,7 +1460,7 @@ function TankerTruckLayout({
                 <Field
                   label="Water Dip"
                   name="waterDipCm"
-                  type="number"
+                  type="number" onWheel={(e) => e.target.blur()}
                   value={tankerInput.waterDipCm}
                   onChange={handleTankerInputChange}
                   required
@@ -1472,7 +1473,7 @@ function TankerTruckLayout({
                 <Field
                   label="BS&W"
                   name="bswPercent"
-                  type="number"
+                  type="number" onWheel={(e) => e.target.blur()}
                   value={tankerInput.bswPercent}
                   onChange={handleTankerInputChange}
                   required
@@ -1503,7 +1504,7 @@ function TankerTruckLayout({
                 <Field
                   label="Tank Temp"
                   name="tankTemperature"
-                  type="number"
+                  type="number" onWheel={(e) => e.target.blur()}
                   value={tankerInput.tankTemperature}
                   onChange={handleTankerInputChange}
                   required
@@ -1529,7 +1530,7 @@ function TankerTruckLayout({
                   <Field
                     label="Observed API"
                     name="observedApi"
-                    type="number"
+                    type="number" onWheel={(e) => e.target.blur()}
                     value={tankerInput.observedApi}
                     onChange={handleTankerInputChange}
                     required
@@ -1541,7 +1542,7 @@ function TankerTruckLayout({
                   <Field
                     label="Observed Density"
                     name="observedDensity"
-                    type="number"
+                    type="number" onWheel={(e) => e.target.blur()}
                     value={tankerInput.observedDensity}
                     onChange={handleTankerInputChange}
                     required
@@ -1567,7 +1568,7 @@ function TankerTruckLayout({
                 <Field
                   label="Sample Temp"
                   name="sampleTemperature"
-                  type="number"
+                  type="number" onWheel={(e) => e.target.blur()}
                   value={tankerInput.sampleTemperature}
                   onChange={handleTankerInputChange}
                   required
