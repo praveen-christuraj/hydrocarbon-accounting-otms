@@ -2,6 +2,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func
+import sqlalchemy
 from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
 
@@ -29,6 +30,7 @@ from app.dependencies.permissions import (
     get_user_location_codes,
     require_user_permission,
     require_any_user_permission,
+    user_has_location_access,
 )
 from app.services.audit_service import create_audit_log
 from app.utils.helpers import (
@@ -73,21 +75,55 @@ class TripStatusUpdateRequest(BaseModel):
 
 
 def ensure_barge_transaction_location_scope(transaction: OperationTransaction, current_user: User, db: Session):
-    for field_name in (
-        "origin_location_code",
-        "destination_location_code",
-        "sender_location_code",
-        "receiver_location_code",
-    ):
-        ensure_location_in_user_scope(
-            current_user,
-            db,
-            getattr(transaction, field_name, None),
-            field_name.replace("_", " ").title(),
+    """
+    A barge movement connects a sender end and a receiver end. A
+    location-scoped user may view / act on the ticket when they are a party
+    to the movement: at least one end (origin, destination, sender or
+    receiver location) is inside their assigned scope. Unrestricted users
+    (admin / all-locations) are never blocked.
+
+    Requiring every end to be in scope hid approved cross-location barge
+    tickets from the receiving terminal, which is exactly the side that must
+    acknowledge the receipt and unload the barge.
+    """
+    location_codes = [
+        clean_optional_text(getattr(transaction, field_name, None))
+        for field_name in (
+            "origin_location_code",
+            "destination_location_code",
+            "sender_location_code",
+            "receiver_location_code",
         )
+    ]
+
+    if all(code is None for code in location_codes):
+        # No location context at all - nothing to scope against (same as the
+        # previous behaviour, which only checked non-empty locations).
+        return
+
+    for location_code in location_codes:
+        if location_code is not None and user_has_location_access(
+            current_user, db, location_code
+        ):
+            return
+
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            "This barge ticket does not involve any location in your assigned "
+            "scope (origin, destination, sender or receiver)."
+        ),
+    )
 
 
 def ensure_trip_location_scope(trip: Trip, current_user: User, db: Session):
+    """
+    A user may view / act on a trip when they are a party to at least one
+    location of the voyage: any trip-event location or any end (origin,
+    destination, sender, receiver) of a linked ticket inside their assigned
+    scope. Legs that call at terminals outside the user's scope do not block
+    access - a barge voyage is cross-location by definition.
+    """
     if get_user_location_codes(current_user, db) is None:
         return
 
@@ -112,22 +148,43 @@ def ensure_trip_location_scope(trip: Trip, current_user: User, db: Session):
         })
 
     has_location_context = False
+    has_any_location_in_scope = False
+
     for event in events:
-        if clean_optional_text(event.location_code):
-            has_location_context = True
-            ensure_location_in_user_scope(
-                current_user, db, event.location_code, "Trip event location"
-            )
+        location_code = clean_optional_text(event.location_code)
+        if location_code is None:
+            continue
+        has_location_context = True
+        if user_has_location_access(current_user, db, location_code):
+            has_any_location_in_scope = True
 
     for transaction in transactions.values():
-        if clean_optional_text(transaction.origin_location_code):
+        for field_name in (
+            "origin_location_code",
+            "destination_location_code",
+            "sender_location_code",
+            "receiver_location_code",
+        ):
+            location_code = clean_optional_text(getattr(transaction, field_name, None))
+            if location_code is None:
+                continue
             has_location_context = True
-        ensure_barge_transaction_location_scope(transaction, current_user, db)
+            if user_has_location_access(current_user, db, location_code):
+                has_any_location_in_scope = True
 
     if not has_location_context:
         raise HTTPException(
             status_code=403,
             detail="This trip has no location context in your assigned scope",
+        )
+
+    if not has_any_location_in_scope:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "This barge movement does not call at any location in your "
+                "assigned scope."
+            ),
         )
 
 
@@ -226,13 +283,31 @@ def get_barge_voyages(
         OperationTransaction.convoy_number.isnot(None),
         OperationTransaction.status == APPROVED_TRANSACTION_STATUS,
     )
-    base_query = apply_location_filter(
-        base_query,
-        OperationTransaction,
-        current_user,
-        db,
-        column_name="origin_location_code",
-    )
+
+    # A barge voyage connects two terminals (origin -> destination). A
+    # location-scoped user must see the voyage when EITHER end is inside
+    # their scope: the sender tracks the loading leg from the loading
+    # terminal, the receiver tracks the incoming barge from the discharge
+    # terminal. Filtering on the origin alone hid approved barge tickets
+    # from the receiving side until their own unload ticket was approved.
+    allowed_codes = get_user_location_codes(current_user, db)
+    if allowed_codes is not None:
+        if not allowed_codes:
+            base_query = base_query.filter(sqlalchemy.literal(False))
+        else:
+            normalized_codes = [
+                str(code).strip().lower() for code in allowed_codes
+            ]
+
+            def _scoped_column(column):
+                return func.lower(func.trim(column)).in_(normalized_codes)
+
+            base_query = base_query.filter(
+                _scoped_column(OperationTransaction.origin_location_code)
+                | _scoped_column(OperationTransaction.destination_location_code)
+                | _scoped_column(OperationTransaction.sender_location_code)
+                | _scoped_column(OperationTransaction.receiver_location_code)
+            )
     transactions = base_query.order_by(
         OperationTransaction.operation_date.asc(),
         OperationTransaction.id.asc(),

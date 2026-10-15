@@ -14,6 +14,8 @@ import { usePermissions } from '../hooks/usePermissions'
 import CompanyPrintHeader from '../components/reports/CompanyPrintHeader'
 import CompanyPrintFooter from '../components/reports/CompanyPrintFooter'
 import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import AlertMessage from '../components/common/AlertMessage'
+import useActionFeedback from '../hooks/useActionFeedback'
 
 const defaultFilters = {
   date_from: '',
@@ -54,8 +56,10 @@ function ShuttleTracking({
   const [filters, setFilters] = useState(defaultFilters)
   const [report, setReport] = useState({ rows: [], totalGroups: 0 })
   const [loading, setLoading] = useState(false)
-  const [successMsg, setSuccessMsg] = useState('')
-  const [errorMsg, setErrorMsg] = useState('')
+  // Action feedback: little pop-up (toast) + inline message near the
+  // action area (owner rule 8) - never at the bottom of the page.
+  const feedback = useActionFeedback()
+  const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
   const [validationErrors, setValidationErrors] = useState({})
   const [promptModal, setPromptModal] = useState(null) // { action: 'close'|'reopen', message, value }
 
@@ -340,7 +344,7 @@ function ShuttleTracking({
         })
         setVesselOps(Array.isArray(data) ? data : [])
       } catch (e) {
-        setErrorMsg(e.message || 'Unable to load Vessel Operations')
+        notifyError(e.message || 'Unable to load Vessel Operations')
       }
     }
 
@@ -504,7 +508,7 @@ function ShuttleTracking({
         setSelectedGroupKey(still ? still.groupKey : '')
       }
     } catch (e) {
-      setErrorMsg(e.message || 'Unable to load Shuttle Tracking')
+      notifyError(e.message || 'Unable to load Shuttle Tracking')
     } finally {
       setLoading(false)
     }
@@ -532,7 +536,7 @@ function ShuttleTracking({
   // ----------------------------
   const closeVoyage = async () => {
     if (!canCloseVoyage) {
-      setErrorMsg('You do not have permission to close shuttle voyage')
+      notifyError('You do not have permission to close shuttle voyage')
       return
     }
     if (!selectedGroup) return
@@ -551,10 +555,10 @@ function ShuttleTracking({
         shuttleAssetCode: selectedGroup.shuttleAssetCode,
         closureRemarks,
       })
-      setSuccessMsg('Voyage closed.')
+      notifySuccess('Voyage closed.')
       await loadTracking()
     } catch (e) {
-      setErrorMsg(e.message || 'Unable to close voyage')
+      notifyError(e.message || 'Unable to close voyage')
     } finally {
       setLoading(false)
     }
@@ -562,7 +566,7 @@ function ShuttleTracking({
 
   const reopenVoyage = async () => {
     if (!canReopenVoyage) {
-      setErrorMsg('You do not have permission to reopen shuttle voyage')
+      notifyError('You do not have permission to reopen shuttle voyage')
       return
     }
     if (!selectedGroup) return
@@ -574,7 +578,7 @@ function ShuttleTracking({
     if (!selectedGroup || !promptModal) return
     const { confirmText, value, remarks } = promptModal
     if (String(value || '').trim() !== confirmText) {
-      setErrorMsg('Reopen cancelled (confirmation text did not match).')
+      notifyError('Reopen cancelled (confirmation text did not match).')
       setPromptModal(null)
       return
     }
@@ -588,10 +592,10 @@ function ShuttleTracking({
         shuttleAssetCode: selectedGroup.shuttleAssetCode,
         remarks: finalRemarks,
       })
-      setSuccessMsg('Voyage reopened.')
+      notifySuccess('Voyage reopened.')
       await loadTracking()
     } catch (e) {
-      setErrorMsg(e.message || 'Unable to reopen voyage')
+      notifyError(e.message || 'Unable to reopen voyage')
     } finally {
       setLoading(false)
     }
@@ -602,7 +606,7 @@ function ShuttleTracking({
   // ----------------------------
   const downloadCsvForSelected = () => {
     if (!selectedGroup) {
-      setErrorMsg('Select a voyage first')
+      notifyError('Select a voyage first')
       return
     }
 
@@ -663,7 +667,7 @@ function ShuttleTracking({
 
   const exportExcelForSelected = async () => {
     if (!selectedGroup) {
-      setErrorMsg('Select a voyage first')
+      notifyError('Select a voyage first')
       return
     }
 
@@ -671,7 +675,7 @@ function ShuttleTracking({
       setLoading(true)
       await downloadShuttleVoyageXlsx({ group_key: selectedGroup.groupKey })
     } catch (e) {
-      setErrorMsg(e.message || 'Unable to export excel')
+      notifyError(e.message || 'Unable to export excel')
     } finally {
       setLoading(false)
     }
@@ -702,16 +706,16 @@ function ShuttleTracking({
 
   const createTicket = async () => {
     if (!canCreateOperationEntry) {
-      setErrorMsg('You do not have permission to create operation entry')
+      notifyError('You do not have permission to create operation entry')
       return
     }
     if (!selectedGroup) {
-      setErrorMsg('Select a voyage first')
+      notifyError('Select a voyage first')
       return
     }
 
     if (isVoyageClosed) {
-      setErrorMsg('This voyage is CLOSED. Reopen voyage to create new tickets.')
+      notifyError('This voyage is CLOSED. Reopen voyage to create new tickets.')
       return
     }
 
@@ -729,7 +733,7 @@ function ShuttleTracking({
       (t) => String(t.id) === String(createForm.operationTemplateId)
     )
     if (!template) {
-      setErrorMsg('Selected template not found')
+      notifyError('Selected template not found')
       return
     }
 
@@ -813,7 +817,7 @@ function ShuttleTracking({
       const created = await createOperationEntry(entry)
       const createdId = created?.id
 
-      setSuccessMsg('Draft ticket created. Submit & Approve from OTR to appear in tracking.')
+      notifySuccess('Draft ticket created. Submit & Approve from OTR to appear in tracking.')
 
       if (createdId) {
         navigate(`/operation-transactions/${createdId}`)
@@ -822,7 +826,7 @@ function ShuttleTracking({
 
       await loadTracking()
     } catch (e) {
-      setErrorMsg(e.message || 'Unable to create ticket')
+      notifyError(e.message || 'Unable to create ticket')
     } finally {
       setLoading(false)
     }
@@ -857,7 +861,7 @@ function ShuttleTracking({
           }))
         }
       } catch (e) {
-        setErrorMsg(e.message || 'Unable to load voyage tickets')
+        notifyError(e.message || 'Unable to load voyage tickets')
       } finally {
         setLoading(false)
       }
@@ -1006,6 +1010,10 @@ function ShuttleTracking({
         </div>
         <span className="record-count">{report.totalGroups} Voyages</span>
       </div>
+      {/* Action feedback: right next to the page actions + a little pop-up
+          toast - never at the bottom of the page (owner rule 8). */}
+      <AlertMessage tone="success" message={feedback.successMsg} onDismiss={clearSuccess} />
+      <AlertMessage tone="error" message={feedback.errorMsg} onDismiss={clearError} />
 
       <div className="info-box">
         Shuttle Tracking shows only <strong>Approved</strong> tickets.
@@ -1653,16 +1661,6 @@ function ShuttleTracking({
       </div>
       </div>
 
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
     </>
   )
 }

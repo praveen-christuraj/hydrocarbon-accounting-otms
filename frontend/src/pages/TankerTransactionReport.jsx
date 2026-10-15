@@ -5,6 +5,8 @@ import PaginationControls, { paginateRows, usePageSize } from '../components/com
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
+import AlertMessage from '../components/common/AlertMessage'
+import useActionFeedback from '../hooks/useActionFeedback'
 
 const formatNumber = (value, decimals = 3) => {
   const numericValue = Number(value || 0)
@@ -89,8 +91,10 @@ function TankerTransactionReport({ locations = [], assets = [] }) {
   const [loading, setLoading] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
   const pageSize = usePageSize()
-  const [successMsg, setSuccessMsg] = useState('')
-  const [errorMsg, setErrorMsg] = useState('')
+  // Action feedback: little pop-up (toast) + inline message near the
+  // action area (owner rule 8) - never at the bottom of the page.
+  const feedback = useActionFeedback()
+  const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
 
   const activeLocations = locations.filter((item) => item.status === 'Active')
   const activeAssets = assets.filter((item) => item.status === 'Active')
@@ -135,7 +139,7 @@ function TankerTransactionReport({ locations = [], assets = [] }) {
       setCurrentPage(1)
     } catch (error) {
       console.error(error)
-      setErrorMsg(error.message || 'Unable to load Tanker Transaction Report')
+      notifyError(error.message || 'Unable to load Tanker Transaction Report')
     } finally {
       setLoading(false)
     }
@@ -284,6 +288,10 @@ function TankerTransactionReport({ locations = [], assets = [] }) {
           {totals ? totals.rowsCount : rows.length} Rows
         </span>
       </div>
+      {/* Action feedback: right next to the page actions + a little pop-up
+          toast - never at the bottom of the page (owner rule 8). */}
+      <AlertMessage tone="success" message={feedback.successMsg} onDismiss={clearSuccess} />
+      <AlertMessage tone="error" message={feedback.errorMsg} onDismiss={clearError} />
 
       <div className="report-filter-panel no-print">
         <div>
@@ -612,16 +620,6 @@ function TankerTransactionReport({ locations = [], assets = [] }) {
         </div>
       )}
 
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
     </div>
   )
 }

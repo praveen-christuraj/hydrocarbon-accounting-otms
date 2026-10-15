@@ -9,6 +9,8 @@ import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
 import { usePermissions } from '../hooks/usePermissions'
+import AlertMessage from '../components/common/AlertMessage'
+import useActionFeedback from '../hooks/useActionFeedback'
 
 function UserLocationAssignment({
   users,
@@ -23,8 +25,17 @@ function UserLocationAssignment({
   const [selectedLocationCodes, setSelectedLocationCodes] = useState([])
   const [allLocationsAccess, setAllLocationsAccess] = useState('No')
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const [success, setSuccess] = useState('')
+  // Action feedback: little pop-up (toast) + inline message near the action
+  // area (owner rule 8). Aliased to the page's existing variable names.
+  const feedback = useActionFeedback()
+  const {
+    successMsg: success,
+    errorMsg: error,
+    notifySuccess: setSuccess,
+    notifyError: setError,
+    clearSuccess,
+    clearError,
+  } = feedback
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [fieldErrors, setFieldErrors] = useState({})
   const [page, setPage] = useState(1)
@@ -44,8 +55,6 @@ function UserLocationAssignment({
     setPage(1)
   }, [userLocationAssignments.length])
 
-  const clearError = () => setError('')
-  const clearSuccess = () => setSuccess('')
 
   const validateAssignment = () => {
     const errors = {}
@@ -295,30 +304,8 @@ function UserLocationAssignment({
         </span>
       </div>
 
-      {success && (
-        <div
-          className="error-box"
-          style={{
-            background: 'var(--success-soft)',
-            color: 'var(--success-text)',
-            borderColor: 'var(--success-border)',
-          }}
-        >
-          {success}
-          <button className="error-close" onClick={clearSuccess} type="button">
-            &times;
-          </button>
-        </div>
-      )}
-
-      {error && (
-        <div className="error-box">
-          {error}
-          <button className="error-close" onClick={clearError} type="button">
-            &times;
-          </button>
-        </div>
-      )}
+      <AlertMessage tone="success" message={success} onDismiss={clearSuccess} />
+      <AlertMessage tone="error" message={error} onDismiss={clearError} />
 
       {!canEdit && !canDelete && canView && (
         <div className="info-box">

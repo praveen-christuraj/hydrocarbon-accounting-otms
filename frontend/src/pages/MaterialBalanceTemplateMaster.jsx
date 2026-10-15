@@ -15,6 +15,8 @@ import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
 import { usePermissions } from '../hooks/usePermissions'
+import AlertMessage from '../components/common/AlertMessage'
+import useActionFeedback from '../hooks/useActionFeedback'
 
 const columnTypes = [
   'OPENING',
@@ -66,8 +68,10 @@ function MaterialBalanceTemplateMaster({ locations, loggedInUser }) {
   const [loading, setLoading] = useState(false)
   const [savingTemplate, setSavingTemplate] = useState(false)
   const [savingColumn, setSavingColumn] = useState(false)
-  const [successMsg, setSuccessMsg] = useState('')
-  const [errorMsg, setErrorMsg] = useState('')
+  // Action feedback: little pop-up (toast) + inline message near the
+  // action area (owner rule 8) - never at the bottom of the page.
+  const feedback = useActionFeedback()
+  const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
   const [validationErrors, setValidationErrors] = useState({})
   const [confirmDeleteTemplateItem, setConfirmDeleteTemplateItem] = useState(null)
   const [confirmDeleteColumnItem, setConfirmDeleteColumnItem] = useState(null)
@@ -109,8 +113,8 @@ function MaterialBalanceTemplateMaster({ locations, loggedInUser }) {
   const loadTemplates = async (locationCode = templateForm.locationCode) => {
     try {
       setLoading(true)
-      setSuccessMsg('')
-      setErrorMsg('')
+      clearSuccess()
+      clearError()
 
       const data = await getMaterialBalanceTemplates({
         locationCode,
@@ -118,7 +122,7 @@ function MaterialBalanceTemplateMaster({ locations, loggedInUser }) {
 
       setTemplates(data)
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
@@ -138,15 +142,15 @@ function MaterialBalanceTemplateMaster({ locations, loggedInUser }) {
 
       setTankOperations(data)
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     }
   }
 
   const loadTemplateDetail = async (templateId) => {
     try {
       setLoading(true)
-      setSuccessMsg('')
-      setErrorMsg('')
+      clearSuccess()
+      clearError()
 
       const data = await getMaterialBalanceTemplateDetail(templateId)
       setSelectedTemplate(data)
@@ -160,7 +164,7 @@ function MaterialBalanceTemplateMaster({ locations, loggedInUser }) {
       setColumnForm(emptyColumnForm)
       await loadTankOperations(data.locationCode)
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
@@ -462,8 +466,8 @@ function MaterialBalanceTemplateMaster({ locations, loggedInUser }) {
 
   const handleSaveTemplate = async (e) => {
     e.preventDefault()
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
     setValidationErrors({})
 
     const errors = {}
@@ -498,9 +502,9 @@ function MaterialBalanceTemplateMaster({ locations, loggedInUser }) {
 
       await loadTemplates(templateForm.locationCode)
       await loadTemplateDetail(savedTemplate.id)
-      setSuccessMsg('Material Balance Template saved successfully')
+      notifySuccess('Material Balance Template saved successfully')
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setSavingTemplate(false)
     }
@@ -516,8 +520,8 @@ function MaterialBalanceTemplateMaster({ locations, loggedInUser }) {
   }
 
   const confirmDeleteTemplate = async () => {
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
 
     try {
       await deleteMaterialBalanceTemplate(confirmDeleteTemplateItem.id)
@@ -529,9 +533,9 @@ function MaterialBalanceTemplateMaster({ locations, loggedInUser }) {
       setColumnForm(emptyColumnForm)
       setConfirmDeleteTemplateItem(null)
       await loadTemplates(confirmDeleteTemplateItem.locationCode)
-      setSuccessMsg('Material Balance Template deleted successfully')
+      notifySuccess('Material Balance Template deleted successfully')
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     }
   }
 
@@ -539,7 +543,7 @@ function MaterialBalanceTemplateMaster({ locations, loggedInUser }) {
     const errors = {}
 
     if (!selectedTemplate?.id) {
-      setErrorMsg('Please select or save a template first')
+      notifyError('Please select or save a template first')
       return false
     }
 
@@ -567,8 +571,8 @@ function MaterialBalanceTemplateMaster({ locations, loggedInUser }) {
 
   const handleSaveColumn = async (e) => {
     e.preventDefault()
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
     setValidationErrors({})
 
     if (!validateColumnBeforeSave()) {
@@ -589,9 +593,9 @@ function MaterialBalanceTemplateMaster({ locations, loggedInUser }) {
 
       await loadTemplateDetail(selectedTemplate.id)
       setColumnForm(emptyColumnForm)
-      setSuccessMsg('Material Balance column saved successfully')
+      notifySuccess('Material Balance column saved successfully')
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setSavingColumn(false)
     }
@@ -607,22 +611,22 @@ function MaterialBalanceTemplateMaster({ locations, loggedInUser }) {
   }
 
   const confirmDeleteColumn = async () => {
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
 
     try {
       await deleteMaterialBalanceTemplateColumn(confirmDeleteColumnItem.id)
       setConfirmDeleteColumnItem(null)
       await loadTemplateDetail(selectedTemplate.id)
-      setSuccessMsg('Material Balance column deleted successfully')
+      notifySuccess('Material Balance column deleted successfully')
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     }
   }
 
   const executeAddStandardColumns = async () => {
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
 
     const standardColumns = [
       {
@@ -694,9 +698,9 @@ function MaterialBalanceTemplateMaster({ locations, loggedInUser }) {
 
       setConfirmAddStandard(false)
       await loadTemplateDetail(selectedTemplate.id)
-      setSuccessMsg('Standard columns added successfully')
+      notifySuccess('Standard columns added successfully')
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     }
   }
 
@@ -798,6 +802,10 @@ function MaterialBalanceTemplateMaster({ locations, loggedInUser }) {
 
         <span className="record-count">{templates.length} Templates</span>
       </div>
+      {/* Action feedback: right next to the page actions + a little pop-up
+          toast - never at the bottom of the page (owner rule 8). */}
+      <AlertMessage tone="success" message={feedback.successMsg} onDismiss={clearSuccess} />
+      <AlertMessage tone="error" message={feedback.errorMsg} onDismiss={clearError} />
 
       <div className="info-box">
         Material Balance columns are configured from Tank Operations. IN
@@ -974,7 +982,7 @@ function MaterialBalanceTemplateMaster({ locations, loggedInUser }) {
 
                   <button
                     type="button"
-                    onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteTemplateItem(template) }}
+                    onClick={() => { clearSuccess(); clearError(); setConfirmDeleteTemplateItem(template) }}
                   >
                     Delete
                   </button>
@@ -1003,7 +1011,7 @@ function MaterialBalanceTemplateMaster({ locations, loggedInUser }) {
               {selectedTemplate.locationCode})
             </strong>
 
-            <button type="button" onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmAddStandard(true) }}>
+            <button type="button" onClick={() => { clearSuccess(); clearError(); setConfirmAddStandard(true) }}>
               Add Standard Columns
             </button>
           </div>
@@ -1242,7 +1250,7 @@ function MaterialBalanceTemplateMaster({ locations, loggedInUser }) {
 
                       <button
                         type="button"
-                        onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteColumnItem(column) }}
+                        onClick={() => { clearSuccess(); clearError(); setConfirmDeleteColumnItem(column) }}
                       >
                         Delete
                       </button>
@@ -1262,12 +1270,6 @@ function MaterialBalanceTemplateMaster({ locations, loggedInUser }) {
         </>
       )}
 
-      {successMsg && (
-        <div className="success-box">{successMsg}</div>
-      )}
-      {errorMsg && (
-        <div className="error-box">{errorMsg}</div>
-      )}
     </div>
   )
 }

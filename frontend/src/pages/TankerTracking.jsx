@@ -12,6 +12,8 @@ import {
   revokeTankerAcknowledgement,
 } from '../api/tankerTrackingApi'
 import TankerMtrComparisonReport from '../components/reports/TankerMtrComparisonReport'
+import AlertMessage from '../components/common/AlertMessage'
+import useActionFeedback from '../hooks/useActionFeedback'
 
 const today = new Date().toISOString().slice(0, 10)
 
@@ -155,8 +157,10 @@ function TankerTracking({
   const [loading, setLoading] = useState(false)
   const [closeGroup, setCloseGroup] = useState(null)
   const [closureRemarks, setClosureRemarks] = useState('')
-  const [successMsg, setSuccessMsg] = useState('')
-  const [errorMsg, setErrorMsg] = useState('')
+  // Action feedback: little pop-up (toast) + inline message near the
+  // action area (owner rule 8) - never at the bottom of the page.
+  const feedback = useActionFeedback()
+  const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
   const [confirmRevokeGroup, setConfirmRevokeGroup] = useState(null)
   const [confirmCloseGroup, setConfirmCloseGroup] = useState(null)
   const [page, setPage] = useState(1)
@@ -291,7 +295,7 @@ function TankerTracking({
         setSelectedGroup(refreshedSelectedGroup || null)
       }
     } catch (error) {
-      setErrorMsg(error.message || 'Unable to load Tanker Tracking')
+      notifyError(error.message || 'Unable to load Tanker Tracking')
     } finally {
       setLoading(false)
     }
@@ -317,7 +321,7 @@ function TankerTracking({
 
   const openAcknowledgePanel = (row) => {
     if (!row.senderTicket?.transactionId) {
-      setErrorMsg('Sender ticket is missing. Cannot acknowledge this tanker.')
+      notifyError('Sender ticket is missing. Cannot acknowledge this tanker.')
       return
     }
 
@@ -350,16 +354,16 @@ function TankerTracking({
 
   const handleAcknowledge = async () => {
     if (!canManage) {
-      setErrorMsg('You do not have permission to acknowledge tanker receipt')
+      notifyError('You do not have permission to acknowledge tanker receipt')
       return
     }
     if (!ackGroup?.senderTicket?.transactionId) {
-      setErrorMsg('Sender transaction is missing')
+      notifyError('Sender transaction is missing')
       return
     }
 
     if (ackForm.receiverLocationCode.trim() === '') {
-      setErrorMsg('Receiver Location is required for acknowledgement')
+      notifyError('Receiver Location is required for acknowledgement')
       return
     }
 
@@ -372,12 +376,12 @@ function TankerTracking({
         remarks: ackForm.remarks,
       })
 
-      setSuccessMsg('Tanker receipt acknowledged successfully')
+      notifySuccess('Tanker receipt acknowledged successfully')
 
       closeAcknowledgePanel()
       await loadTracking()
     } catch (error) {
-      setErrorMsg(error.message || 'Unable to acknowledge tanker receipt')
+      notifyError(error.message || 'Unable to acknowledge tanker receipt')
     } finally {
       setLoading(false)
     }
@@ -385,7 +389,7 @@ function TankerTracking({
 
   const openRevokePanel = (row) => {
     if (!row.acknowledgementId) {
-      setErrorMsg('Acknowledgement ID is missing.')
+      notifyError('Acknowledgement ID is missing.')
       return
     }
 
@@ -400,7 +404,7 @@ function TankerTracking({
 
   const handleRevokeAcknowledgement = async () => {
     if (!revokeGroup?.acknowledgementId) {
-      setErrorMsg('Acknowledgement ID is missing.')
+      notifyError('Acknowledgement ID is missing.')
       return
     }
 
@@ -411,7 +415,7 @@ function TankerTracking({
     const group = confirmRevokeGroup
     setConfirmRevokeGroup(null)
     if (!canManage) {
-      setErrorMsg('You do not have permission to revoke acknowledgement')
+      notifyError('You do not have permission to revoke acknowledgement')
       return
     }
     if (!group?.acknowledgementId) return
@@ -424,12 +428,12 @@ function TankerTracking({
         remarks: revokeRemarks,
       })
 
-      setSuccessMsg('Acknowledgement revoked successfully')
+      notifySuccess('Acknowledgement revoked successfully')
 
       closeRevokePanel()
       await loadTracking()
     } catch (error) {
-      setErrorMsg(error.message || 'Unable to revoke acknowledgement')
+      notifyError(error.message || 'Unable to revoke acknowledgement')
     } finally {
       setLoading(false)
     }
@@ -437,12 +441,12 @@ function TankerTracking({
 
   const openClosePanel = (row) => {
     if (!row.acknowledgementId) {
-      setErrorMsg('Acknowledgement ID is missing. Cannot close this movement.')
+      notifyError('Acknowledgement ID is missing. Cannot close this movement.')
       return
     }
 
     if (!row.latestReceiverTicket || !row.quantityComparison) {
-      setErrorMsg(
+      notifyError(
         'Movement can be closed only after receiver ticket is Approved and comparison is available.'
       )
       return
@@ -459,7 +463,7 @@ function TankerTracking({
 
   const handleCloseMovement = async () => {
     if (!closeGroup?.acknowledgementId) {
-      setErrorMsg('Acknowledgement ID is missing.')
+      notifyError('Acknowledgement ID is missing.')
       return
     }
 
@@ -470,7 +474,7 @@ function TankerTracking({
     const group = confirmCloseGroup
     setConfirmCloseGroup(null)
     if (!canManage) {
-      setErrorMsg('You do not have permission to close tanker movement')
+      notifyError('You do not have permission to close tanker movement')
       return
     }
     if (!group?.acknowledgementId) return
@@ -483,12 +487,12 @@ function TankerTracking({
         closureRemarks,
       })
 
-      setSuccessMsg('Tanker movement closed successfully')
+      notifySuccess('Tanker movement closed successfully')
 
       closeClosePanel()
       await loadTracking()
     } catch (error) {
-      setErrorMsg(error.message || 'Unable to close tanker movement')
+      notifyError(error.message || 'Unable to close tanker movement')
     } finally {
       setLoading(false)
     }
@@ -496,14 +500,14 @@ function TankerTracking({
 
   const handleCreateReceiverEntry = (row) => {
     if (!row.senderTicket) {
-      setErrorMsg('Sender ticket is missing. Cannot create receiver entry.')
+      notifyError('Sender ticket is missing. Cannot create receiver entry.')
       return
     }
 
     const receiverOperationTypeCode = getDefaultReceiverOperationTypeCode()
 
     if (!receiverOperationTypeCode) {
-      setErrorMsg(
+      notifyError(
         'No active Tanker Receipt/Unloading operation type found. Please create an operation type such as TANKER_RECEIPT or TANKER_UNLOADING first.'
       )
       return
@@ -514,7 +518,7 @@ function TankerTracking({
     )
 
     if (!receiverTemplateId) {
-      setErrorMsg(
+      notifyError(
         'No active Tanker Receiver template found for the selected receipt operation type. Please create an Operation Template with Entry Layout Type = Tanker Loading and Calculation Engine = Tanker Quantity.'
       )
       return
@@ -577,7 +581,7 @@ function TankerTracking({
 
   const openOperationTicket = (transactionId) => {
     if (!transactionId) {
-      setErrorMsg('Transaction ID is missing.')
+      notifyError('Transaction ID is missing.')
       return
     }
 
@@ -586,12 +590,12 @@ function TankerTracking({
 
   const handlePrintMtrReport = (row) => {
     if (!row.senderTicket) {
-      setErrorMsg('Sender ticket is missing. Cannot print report.')
+      notifyError('Sender ticket is missing. Cannot print report.')
       return
     }
 
     if (!row.latestReceiverTicket || !row.quantityComparison) {
-      setErrorMsg(
+      notifyError(
         'MTR comparison report is available only after the receiver ticket is Approved and compared.'
       )
       return
@@ -835,6 +839,10 @@ function TankerTracking({
 
         <span className="record-count">{report.totalGroups} Groups</span>
       </div>
+      {/* Action feedback: right next to the page actions + a little pop-up
+          toast - never at the bottom of the page (owner rule 8). */}
+      <AlertMessage tone="success" message={feedback.successMsg} onDismiss={clearSuccess} />
+      <AlertMessage tone="error" message={feedback.errorMsg} onDismiss={clearError} />
 
       <div className="report-summary-grid no-print">
         <div className="report-summary-card">
@@ -1834,18 +1842,6 @@ function TankerTracking({
         </div>
       )}
 
-      <div className="screen-only">
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
-      </div>
     </div>
   )
 }

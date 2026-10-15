@@ -4,6 +4,8 @@ import PaginationControls, { paginateRows, usePageSize } from '../components/com
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
+import AlertMessage from '../components/common/AlertMessage'
+import useActionFeedback from '../hooks/useActionFeedback'
 
 function AuditLog() {
   const [auditLogs, setAuditLogs] = useState([])
@@ -11,7 +13,10 @@ function AuditLog() {
   const [expandedLogId, setExpandedLogId] = useState(null)
   const [currentPage, setCurrentPage] = useState(1)
   const pageSize = usePageSize()
-  const [errorMsg, setErrorMsg] = useState('')
+  // Action feedback: little pop-up (toast) + inline message near the
+  // action area (owner rule 8) - never at the bottom of the page.
+  const feedback = useActionFeedback()
+  const { notifyError, clearError } = feedback
 
   const [filters, setFilters] = useState({
     moduleName: '',
@@ -33,7 +38,7 @@ function AuditLog() {
       setCurrentPage(1)
       setExpandedLogId(null)
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
@@ -105,6 +110,9 @@ function AuditLog() {
 
         <span className="record-count">{auditLogs.length} Logs</span>
       </div>
+      {/* Action feedback: right next to the page actions + a little pop-up
+          toast - never at the bottom of the page (owner rule 8). */}
+      <AlertMessage tone="error" message={feedback.errorMsg} onDismiss={clearError} />
 
       <form onSubmit={handleApplyFilters}>
         <div>
@@ -227,9 +235,6 @@ function AuditLog() {
         </div>
       </form>
 
-      {errorMsg && (
-        <div className="error-box">{errorMsg}</div>
-      )}
 
       <div className="section-title">
         <h3>Audit Trail</h3>

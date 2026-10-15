@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   createTripEvent,
   getBargeTracking,
@@ -10,6 +10,7 @@ import {
 } from '../api/bargeTrackingApi'
 import { useCompanyPrintProfile } from '../hooks/useCompanyPrintProfile'
 import { useDataFilters } from '../hooks/useDataFilters'
+import useActionFeedback from '../hooks/useActionFeedback'
 import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import AlertMessage from '../components/common/AlertMessage'
@@ -45,8 +46,10 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
   const [tracker, setTracker] = useState(null)
   const [timeline, setTimeline] = useState(null)
 
-  const [successMsg, setSuccessMsg] = useState('')
-  const [errorMsg, setErrorMsg] = useState('')
+  // Action feedback: little pop-up (toast) + inline message rendered next to
+  // the action buttons inside the voyage detail (owner rule 8).
+  const feedback = useActionFeedback()
+  const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
   const [timelineWarning, setTimelineWarning] = useState('')
 
   // Voyage list (Open / Closed tabs)
@@ -109,6 +112,7 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
   })
 
   const navigate = useNavigate()
+  const location = useLocation()
 
   const canManage = (loggedInUser?.permissions || []).some(
     (p) => p.permissionName === 'Create Operation Entry'
@@ -252,13 +256,13 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
     setTracker(null)
     setTimeline(null)
     setTimelineWarning('')
-    setErrorMsg('')
+    feedback.clear()
   }
 
   const loadAll = async (cn) => {
     const clean = String(cn || '').trim()
     if (!clean) {
-      setErrorMsg('Convoy Number is required')
+      notifyError('Convoy Number is required')
       return
     }
 
@@ -270,7 +274,7 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
     } catch (e) {
       setTracker(null)
       setTimeline(null)
-      setErrorMsg(e.message || 'Failed to load convoy')
+      notifyError(e.message || 'Failed to load convoy')
       setLoading(false)
       return
     }
@@ -288,7 +292,7 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
       }
     } catch (e) {
       setTimeline(null)
-      setErrorMsg(
+      notifyError(
         e.message ||
           'Trip timeline could not be loaded. Approved tickets are still shown below.'
       )
@@ -303,6 +307,20 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
     e.preventDefault()
     setDetailOpen(true)
     await loadAll(convoyNumber)
+  }
+
+  // Auto-open the voyage detail when arriving with ?convoy_number=... (the
+  // Operation Entry page navigates back here after saving a barge ticket).
+  // Derived during render - same pattern as the page-reset above - so a URL
+  // change while mounted opens the new convoy without an extra effect.
+  const convoyFromUrl = useMemo(() => {
+    const params = new URLSearchParams(location.search)
+    return String(params.get('convoy_number') || '').trim()
+  }, [location.search])
+  const [autoOpenedConvoy, setAutoOpenedConvoy] = useState('')
+  if (convoyFromUrl && autoOpenedConvoy !== convoyFromUrl) {
+    setAutoOpenedConvoy(convoyFromUrl)
+    openVoyage(convoyFromUrl)
   }
 
   // Group events & comparisons per barge
@@ -393,11 +411,11 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
 
   const acknowledgeReceipt = async (assetCode) => {
     if (!canManage) {
-      setErrorMsg('You do not have permission to acknowledge receipt')
+      notifyError('You do not have permission to acknowledge receipt')
       return
     }
     if (isTripClosed) {
-      setErrorMsg('Barge Movement is CLOSED. Reopen it to continue.')
+      notifyError('Barge Movement is CLOSED. Reopen it to continue.')
       return
     }
     if (!tracker?.convoy_number) return
@@ -406,7 +424,7 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
     if (!assetKey) return
 
     if (isAcknowledged(assetKey)) {
-      setErrorMsg('Already acknowledged for this asset.')
+      notifyError('Already acknowledged for this asset.')
       return
     }
 
@@ -418,7 +436,7 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
       ''
 
     if (!receiptLocation) {
-      setErrorMsg('Could not determine receipt location (destination). Please ensure the load ticket has destination.')
+      notifyError('Could not determine receipt location (destination). Please ensure the load ticket has destination.')
       return
     }
 
@@ -443,10 +461,10 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
         operationTransactionId: null,
         remarks: 'Receiver acknowledged receipt',
       })
-      setSuccessMsg('Receipt acknowledged.')
+      notifySuccess('Receipt acknowledged.')
       await loadAll(tracker.convoy_number)
     } catch (e) {
-      setErrorMsg(e.message || 'Failed to acknowledge receipt')
+      notifyError(e.message || 'Failed to acknowledge receipt')
     } finally {
       setLoading(false)
     }
@@ -454,11 +472,11 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
 
   const revokeReceipt = async (assetCode) => {
     if (!canManage) {
-      setErrorMsg('You do not have permission to revoke receipt')
+      notifyError('You do not have permission to revoke receipt')
       return
     }
     if (isTripClosed) {
-      setErrorMsg('Barge Movement is CLOSED. Reopen it to continue.')
+      notifyError('Barge Movement is CLOSED. Reopen it to continue.')
       return
     }
     if (!tracker?.convoy_number) return
@@ -467,7 +485,7 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
     if (!assetKey) return
 
     if (!isAcknowledged(assetKey)) {
-      setErrorMsg('This barge is not acknowledged yet.')
+      notifyError('This barge is not acknowledged yet.')
       return
     }
 
@@ -493,10 +511,10 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
         operationTransactionId: null,
         remarks: 'Receipt acknowledgement revoked',
       })
-      setSuccessMsg('Receipt acknowledgement revoked.')
+      notifySuccess('Receipt acknowledgement revoked.')
       await loadAll(tracker.convoy_number)
     } catch (e) {
-      setErrorMsg(e.message || 'Failed to revoke receipt acknowledgement')
+      notifyError(e.message || 'Failed to revoke receipt acknowledgement')
     } finally {
       setLoading(false)
     }
@@ -504,13 +522,13 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
 
   const handleCloseBargeMovement = async () => {
     if (!canManage) {
-      setErrorMsg('You do not have permission to close barge movement')
+      notifyError('You do not have permission to close barge movement')
       return
     }
     if (!timeline?.trip?.id) return
 
     if (!hasApprovedBargeComparison()) {
-      setErrorMsg(
+      notifyError(
         'Barge movement can be closed only after comparison is available for every barge in this convoy.\n\n' +
           `Pending barge(s): ${getPendingComparisonAssetCodes().join(', ')}`
       )
@@ -532,11 +550,11 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
     setLoading(true)
     try {
       await closeTrip(timeline.trip.id, remarks)
-      setSuccessMsg('Barge movement closed.')
+      notifySuccess('Barge movement closed.')
       await loadAll(timeline.trip.convoy_number)
       switchVoyageTab('CLOSED')
     } catch (e) {
-      setErrorMsg(e.message || 'Failed to close barge movement')
+      notifyError(e.message || 'Failed to close barge movement')
     } finally {
       setLoading(false)
     }
@@ -544,7 +562,7 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
 
   const handleReopenBargeMovement = async () => {
     if (!canManage) {
-      setErrorMsg('You do not have permission to reopen barge movement')
+      notifyError('You do not have permission to reopen barge movement')
       return
     }
     if (!timeline?.trip?.id) return
@@ -564,11 +582,11 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
     setLoading(true)
     try {
       await reopenTrip(timeline.trip.id, remarks)
-      setSuccessMsg('Barge movement reopened.')
+      notifySuccess('Barge movement reopened.')
       await loadAll(timeline.trip.convoy_number)
       switchVoyageTab('OPEN')
     } catch (e) {
-      setErrorMsg(e.message || 'Failed to reopen barge movement')
+      notifyError(e.message || 'Failed to reopen barge movement')
     } finally {
       setLoading(false)
     }
@@ -576,12 +594,12 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
 
   const openFixPanel = (assetCode) => {
     if (isTripClosed) {
-      setErrorMsg('Barge Movement is CLOSED. Reopen it to continue.')
+      notifyError('Barge Movement is CLOSED. Reopen it to continue.')
       return
     }
     const convoy = tracker?.convoy_number || String(convoyNumber || '').trim()
     if (!convoy) {
-      setErrorMsg('Please search convoy first.')
+      notifyError('Please search convoy first.')
       return
     }
 
@@ -610,7 +628,7 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
 
   const saveFixPanel = async () => {
     if (isTripClosed) {
-      setErrorMsg('Barge Movement is CLOSED. Reopen it to continue.')
+      notifyError('Barge Movement is CLOSED. Reopen it to continue.')
       return
     }
 
@@ -619,7 +637,7 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
     const txIdRaw = String(fixPanel.transactionId || '').trim()
 
     if (!convoy || !assetCode || !txIdRaw) {
-      setErrorMsg('Please select a ticket to add to timeline.')
+      notifyError('Please select a ticket to add to timeline.')
       return
     }
 
@@ -646,10 +664,10 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
         remarks: fixPanel.remarks || 'Manual timeline fix',
       })
       closeFixPanel()
-      setSuccessMsg('Timeline updated.')
+      notifySuccess('Timeline updated.')
       await loadAll(convoy)
     } catch (e) {
-      setErrorMsg(e.message || 'Failed to tag ticket')
+      notifyError(e.message || 'Failed to tag ticket')
     } finally {
       setLoading(false)
     }
@@ -1262,6 +1280,20 @@ return (
               </div>
             )}
 
+            {/* Action feedback for voyage actions (close / reopen /
+                acknowledge / fix timeline) lives right next to the action
+                buttons, and also pops up as a toast (owner rule 8). */}
+            <AlertMessage
+              tone="success"
+              message={feedback.successMsg}
+              onDismiss={clearSuccess}
+            />
+            <AlertMessage
+              tone="error"
+              message={feedback.errorMsg}
+              onDismiss={clearError}
+            />
+
             {timeline?.trip?.id && (
               <div className="form-actions" style={{ marginTop: 10 }}>
                 <button
@@ -1376,7 +1408,8 @@ return (
 
                         const url =
                           `/operation-entry?` +
-                          `convoy_number=${encodeURIComponent(convoy)}` +
+                          `source=barge-tracking` +
+                          `&convoy_number=${encodeURIComponent(convoy)}` +
                           `&primary_asset_code=${encodeURIComponent(assetCode)}` +
                           `&origin_location_code=${encodeURIComponent(origin)}` +
                           `&barge_event_type=${encodeURIComponent(stage)}` +
@@ -1618,17 +1651,6 @@ return (
         </>
       )}
       </Modal>
-
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
       </div>
     </div>
   )

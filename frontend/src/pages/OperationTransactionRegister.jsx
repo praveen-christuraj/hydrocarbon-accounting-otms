@@ -5,6 +5,8 @@ import {
   exportOperationTransactionsCsv,
 } from '../api/operationTransactionApi'
 import { getCompanyReportProfiles } from '../api/companyReportProfileApi'
+import AlertMessage from '../components/common/AlertMessage'
+import useActionFeedback from '../hooks/useActionFeedback'
 
 function OperationTransactionRegister({
   operationTypes = [],
@@ -20,8 +22,10 @@ function OperationTransactionRegister({
   const [hasMore, setHasMore] = useState(false)
 
   const [loading, setLoading] = useState(false)
-  const [successMsg, setSuccessMsg] = useState('')
-  const [errorMsg, setErrorMsg] = useState('')
+  // Action feedback: little pop-up (toast) + inline message near the
+  // action area (owner rule 8) - never at the bottom of the page.
+  const feedback = useActionFeedback()
+  const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
 
   const [profile, setProfile] = useState(null)
 
@@ -83,9 +87,9 @@ function OperationTransactionRegister({
       setTotalRows(Number(data?.total_rows || 0))
       setHasMore(Boolean(data?.has_more))
       setStatusCounts(Array.isArray(data?.status_counts) ? data.status_counts : [])
-      setErrorMsg('')
+      clearError()
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
@@ -153,7 +157,7 @@ function OperationTransactionRegister({
       setLoading(true)
       await exportOperationTransactionsCsv(filters)
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
@@ -224,6 +228,10 @@ function OperationTransactionRegister({
           </button>
         </div>
       </div>
+      {/* Action feedback: right next to the page actions + a little pop-up
+          toast - never at the bottom of the page (owner rule 8). */}
+      <AlertMessage tone="success" message={feedback.successMsg} onDismiss={clearSuccess} />
+      <AlertMessage tone="error" message={feedback.errorMsg} onDismiss={clearError} />
 
       <div className="info-box no-print">
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -472,16 +480,6 @@ function OperationTransactionRegister({
         This register uses server-side paging and status counts. Export CSV downloads directly from the backend using the selected filters.
       </div>
 
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
 
       {profile && (
         <div className="print-only print-footnote">

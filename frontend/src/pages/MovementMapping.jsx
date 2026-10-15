@@ -11,6 +11,8 @@ import {
 import { getTripTimelineByConvoy } from '../api/bargeTrackingApi'
 import { getOperationTransactions } from '../api/operationTransactionApi'
 import { usePermissions } from '../hooks/usePermissions'
+import AlertMessage from '../components/common/AlertMessage'
+import useActionFeedback from '../hooks/useActionFeedback'
 
 const formatNumber = (v, d = 3) => {
   const n = Number(v || 0)
@@ -37,8 +39,10 @@ function MovementMapping({ locations = [], loggedInUser }) {
   }
 
   const [loading, setLoading] = useState(false)
-  const [successMsg, setSuccessMsg] = useState('')
-  const [errorMsg, setErrorMsg] = useState('')
+  // Action feedback: little pop-up (toast) + inline message near the
+  // action area (owner rule 8) - never at the bottom of the page.
+  const feedback = useActionFeedback()
+  const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
   const [confirmRemoveItem, setConfirmRemoveItem] = useState(null)
   const [confirmCloseMap, setConfirmCloseMap] = useState(false)
 
@@ -79,7 +83,7 @@ function MovementMapping({ locations = [], loggedInUser }) {
       const data = await getMovementMappings(filters)
       setMappings(Array.isArray(data) ? data : [])
     } catch (e) {
-      setErrorMsg(e.message || 'Unable to load movement mappings')
+      notifyError(e.message || 'Unable to load movement mappings')
     } finally {
       setLoading(false)
     }
@@ -92,7 +96,7 @@ function MovementMapping({ locations = [], loggedInUser }) {
       setSelectedMapping(data)
       setSelectedMappingId(id)
     } catch (e) {
-      setErrorMsg(e.message || 'Unable to load mapping')
+      notifyError(e.message || 'Unable to load mapping')
     } finally {
       setLoading(false)
     }
@@ -149,7 +153,7 @@ function MovementMapping({ locations = [], loggedInUser }) {
         })
         setMappings(Array.isArray(data) ? data : [])
       } catch (e) {
-        setErrorMsg(e.message || 'Unable to load movement mappings')
+        notifyError(e.message || 'Unable to load movement mappings')
       } finally {
         setLoading(false)
       }
@@ -183,18 +187,18 @@ function MovementMapping({ locations = [], loggedInUser }) {
   const onFilterChange = (e) => {
     const { name, value } = e.target
     setFilters((c) => ({ ...c, [name]: value }))
-    if (errorMsg) setErrorMsg('')
+    if (feedback.errorMsg) clearError()
   }
 
   const onCreateFormChange = (e) => {
     const { name, value } = e.target
     setCreateForm((c) => ({ ...c, [name]: value }))
-    if (errorMsg) setErrorMsg('')
+    if (feedback.errorMsg) clearError()
   }
 
   const createNew = async () => {
     if (!canCreate) {
-      setErrorMsg('You do not have permission to create movement mappings')
+      notifyError('You do not have permission to create movement mappings')
       return
     }
     try {
@@ -202,9 +206,9 @@ function MovementMapping({ locations = [], loggedInUser }) {
       const created = await createMovementMapping(createForm)
       await loadList()
       await loadMapping(created.id)
-      setSuccessMsg('Mapping created')
+      notifySuccess('Mapping created')
     } catch (e) {
-      setErrorMsg(e.message || 'Unable to create mapping')
+      notifyError(e.message || 'Unable to create mapping')
     } finally {
       setLoading(false)
     }
@@ -213,7 +217,7 @@ function MovementMapping({ locations = [], loggedInUser }) {
   const loadBargeUnloads = async (convoyOverride) => {
     const convoy = String(convoyOverride ?? convoyNumber ?? '').trim()
     if (!convoy) {
-      setErrorMsg('Enter Convoy Number')
+      notifyError('Enter Convoy Number')
       return
     }
 
@@ -237,7 +241,7 @@ function MovementMapping({ locations = [], loggedInUser }) {
       setBargeUnloadCandidates(rows)
       setSelectedSourceTxIds([])
     } catch (e) {
-      setErrorMsg(e.message || 'Unable to load barge UNLOAD candidates')
+      notifyError(e.message || 'Unable to load barge UNLOAD candidates')
     } finally {
       setLoading(false)
     }
@@ -250,7 +254,7 @@ function MovementMapping({ locations = [], loggedInUser }) {
       setTxCandidates(results)
       setSelectedTargetTxIds([])
     } catch (e) {
-      setErrorMsg(e.message || 'Unable to search approved transactions')
+      notifyError(e.message || 'Unable to search approved transactions')
     } finally {
       setLoading(false)
     }
@@ -258,16 +262,16 @@ function MovementMapping({ locations = [], loggedInUser }) {
 
   const addItems = async (role, ids) => {
     if (!canEdit) {
-      setErrorMsg('You do not have permission to edit movement mappings')
+      notifyError('You do not have permission to edit movement mappings')
       return
     }
     if (!selectedMappingId) {
-      setErrorMsg('Select a mapping first')
+      notifyError('Select a mapping first')
       return
     }
 
     if (!ids || ids.length === 0) {
-      setErrorMsg('Select at least one ticket')
+      notifyError('Select at least one ticket')
       return
     }
 
@@ -280,7 +284,7 @@ function MovementMapping({ locations = [], loggedInUser }) {
       setSelectedMapping(updated)
       await loadList()
     } catch (e) {
-      setErrorMsg(e.message || 'Unable to add items')
+      notifyError(e.message || 'Unable to add items')
     } finally {
       setLoading(false)
     }
@@ -293,7 +297,7 @@ function MovementMapping({ locations = [], loggedInUser }) {
 
   const confirmRemoveMappingItem = async () => {
     if (!canEdit) {
-      setErrorMsg('You do not have permission to edit movement mappings')
+      notifyError('You do not have permission to edit movement mappings')
       setConfirmRemoveItem(null)
       return
     }
@@ -307,7 +311,7 @@ function MovementMapping({ locations = [], loggedInUser }) {
       setConfirmRemoveItem(null)
       await loadList()
     } catch (e) {
-      setErrorMsg(e.message || 'Unable to remove item')
+      notifyError(e.message || 'Unable to remove item')
       setConfirmRemoveItem(null)
     } finally {
       setLoading(false)
@@ -321,7 +325,7 @@ function MovementMapping({ locations = [], loggedInUser }) {
 
   const confirmCloseMapping = async () => {
     if (!canClose) {
-      setErrorMsg('You do not have permission to close movement mappings')
+      notifyError('You do not have permission to close movement mappings')
       setConfirmCloseMap(false)
       return
     }
@@ -333,9 +337,9 @@ function MovementMapping({ locations = [], loggedInUser }) {
       setSelectedMapping(updated)
       setConfirmCloseMap(false)
       await loadList()
-      setSuccessMsg('Mapping closed.')
+      notifySuccess('Mapping closed.')
     } catch (e) {
-      setErrorMsg(e.message || 'Unable to close mapping')
+      notifyError(e.message || 'Unable to close mapping')
       setConfirmCloseMap(false)
     } finally {
       setLoading(false)
@@ -387,6 +391,10 @@ function MovementMapping({ locations = [], loggedInUser }) {
         </div>
         <span className="record-count">{mappings.length} Mappings</span>
       </div>
+      {/* Action feedback: right next to the page actions + a little pop-up
+          toast - never at the bottom of the page (owner rule 8). */}
+      <AlertMessage tone="success" message={feedback.successMsg} onDismiss={clearSuccess} />
+      <AlertMessage tone="error" message={feedback.errorMsg} onDismiss={clearError} />
 
       {!canCreate && !canEdit && !canClose && (
         <div className="info-box">
@@ -647,7 +655,7 @@ function MovementMapping({ locations = [], loggedInUser }) {
                 <div className="operation-entry-subgrid" style={{ marginTop: 10 }}>
                   <div>
                     <label>Convoy Number</label>
-                    <input value={convoyNumber} onChange={(e) => { setConvoyNumber(e.target.value); setErrorMsg(''); }} />
+                    <input value={convoyNumber} onChange={(e) => { setConvoyNumber(e.target.value); clearError(); }} />
                   </div>
                   <div className="report-filter-actions">
                     <button type="button" onClick={loadBargeUnloads} disabled={loading || selectedMapping.status === 'CLOSED'}>
@@ -726,7 +734,7 @@ function MovementMapping({ locations = [], loggedInUser }) {
                     <label>Location</label>
                     <input
                       value={txSearch.locationCode}
-                      onChange={(e) => { setTxSearch((c) => ({ ...c, locationCode: e.target.value })); if (errorMsg) setErrorMsg(''); }}
+                      onChange={(e) => { setTxSearch((c) => ({ ...c, locationCode: e.target.value })); if (feedback.errorMsg) clearError(); }}
                       placeholder="UTP"
                     />
                   </div>
@@ -821,16 +829,6 @@ function MovementMapping({ locations = [], loggedInUser }) {
         </div>
       </div>
 
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
     </div>
   )
 }

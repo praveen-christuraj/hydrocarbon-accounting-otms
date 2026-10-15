@@ -11,6 +11,8 @@ import PaginationControls, { paginateRows, usePageSize } from '../components/com
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
+import AlertMessage from '../components/common/AlertMessage'
+import useActionFeedback from '../hooks/useActionFeedback'
 
 const emptyForm = {
   title: '',
@@ -46,8 +48,10 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
   const [selectedNotification, setSelectedNotification] = useState(null)
   const [statusFilter, setStatusFilter] = useState('ALL')
   const [loading, setLoading] = useState(false)
-  const [successMsg, setSuccessMsg] = useState('')
-  const [errorMsg, setErrorMsg] = useState('')
+  // Action feedback: little pop-up (toast) + inline message near the
+  // action area (owner rule 8) - never at the bottom of the page.
+  const feedback = useActionFeedback()
+  const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
   const [validationErrors, setValidationErrors] = useState({})
   const [confirmPublishItem, setConfirmPublishItem] = useState(null)
   const [deactivateItem, setDeactivateItem] = useState(null)
@@ -97,7 +101,7 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
       })
       setNotifications(data)
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
@@ -261,14 +265,14 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
     event.preventDefault()
 
     if (!(editId ? canEditSystemNotification : canCreateSystemNotification)) {
-      setErrorMsg(
+      notifyError(
         `You do not have permission to ${editId ? 'edit' : 'create'} system notifications.`
       )
       return
     }
 
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
     setValidationErrors({})
 
     const errors = {}
@@ -289,29 +293,29 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
       setLoading(true)
       if (editId) {
         await updateSystemNotification(editId, form)
-        setSuccessMsg('Notification updated')
+        notifySuccess('Notification updated')
       } else {
         await createSystemNotification(form)
-        setSuccessMsg('Notification created')
+        notifySuccess('Notification created')
       }
       resetForm()
       await loadNotifications()
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
   }
 
   const handleEdit = (notification) => {
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
     if (!canEditSystemNotification) {
-      setErrorMsg('You do not have permission to edit system notifications.')
+      notifyError('You do not have permission to edit system notifications.')
       return
     }
     if (notification.status === 'Published') {
-      setErrorMsg('Published notifications cannot be edited. Deactivate and create a new circular if needed.')
+      notifyError('Published notifications cannot be edited. Deactivate and create a new circular if needed.')
       return
     }
     setEditId(notification.id)
@@ -336,10 +340,10 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
   }
 
   const handlePublish = async () => {
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
     if (!canPublishSystemNotification) {
-      setErrorMsg('You do not have permission to publish system notifications.')
+      notifyError('You do not have permission to publish system notifications.')
       return
     }
     try {
@@ -347,19 +351,19 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
       await publishSystemNotification(confirmPublishItem.id, 'Published from System Notification Manager')
       setConfirmPublishItem(null)
       await loadNotifications()
-      setSuccessMsg('Notification published')
+      notifySuccess('Notification published')
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
   }
 
   const handleDeactivate = async () => {
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
     if (!canDeactivateSystemNotification) {
-      setErrorMsg('You do not have permission to deactivate system notifications.')
+      notifyError('You do not have permission to deactivate system notifications.')
       return
     }
     const reason = deactivateReason || 'Notification deactivated by admin'
@@ -369,9 +373,9 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
       setDeactivateItem(null)
       setDeactivateReason('')
       await loadNotifications()
-      setSuccessMsg('Notification deactivated')
+      notifySuccess('Notification deactivated')
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
@@ -383,7 +387,7 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
       const data = await getSystemNotificationDeliveryReport(notification.id)
       setDeliveryRows(data || [])
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     }
   }
 
@@ -400,6 +404,10 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
         </div>
         <span className="record-count">{notifications.length} Notifications</span>
       </div>
+      {/* Action feedback: right next to the page actions + a little pop-up
+          toast - never at the bottom of the page (owner rule 8). */}
+      <AlertMessage tone="success" message={feedback.successMsg} onDismiss={clearSuccess} />
+      <AlertMessage tone="error" message={feedback.errorMsg} onDismiss={clearError} />
 
       {confirmPublishItem && (
         <div className="confirm-overlay">
@@ -641,12 +649,6 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
         </div>
       </form>
 
-      {successMsg && (
-        <div className="success-box">{successMsg}</div>
-      )}
-      {errorMsg && (
-        <div className="error-box">{errorMsg}</div>
-      )}
       </>
       )}
 
@@ -733,12 +735,12 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
                       </button>
                     )}
                     {canPublishSystemNotification && (
-                      <button type="button" onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmPublishItem(notification) }} disabled={loading || ['Published', 'Deactivated'].includes(notification.status)}>
+                      <button type="button" onClick={() => { clearSuccess(); clearError(); setConfirmPublishItem(notification) }} disabled={loading || ['Published', 'Deactivated'].includes(notification.status)}>
                         Publish
                       </button>
                     )}
                     {canDeactivateSystemNotification && (
-                      <button type="button" onClick={() => { setSuccessMsg(''); setErrorMsg(''); setDeactivateItem(notification); setDeactivateReason('Notification deactivated by admin') }} disabled={loading || notification.status === 'Deactivated'}>
+                      <button type="button" onClick={() => { clearSuccess(); clearError(); setDeactivateItem(notification); setDeactivateReason('Notification deactivated by admin') }} disabled={loading || notification.status === 'Deactivated'}>
                         Deactivate
                       </button>
                     )}

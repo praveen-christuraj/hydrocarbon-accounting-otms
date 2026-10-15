@@ -103,6 +103,18 @@ Rules:
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
 
+## Recent Fixes (2026-10-15) - Action Feedback UX + Barge Tracking OR-Scope
+
+### Save / Submit / Review / Approve Action Audit
+- All operation-entry save-draft and submit flows, workflow review/approve actions (OperationTransactionDetail, OperationTaskManager, OperationEntry) and every master-data/configuration/report page now report success AND failure through the shared `useActionFeedback` hook — a small pop-up toast (top-right, auto-dismiss) plus an inline `AlertMessage` right next to the action area. System-validation failures (API `detail` messages) surface verbatim in both channels; no silent failures and no `window.alert`.
+- ~30 pages converted (operation tracking reports, masters, admin pages, user/role admin, profile security, database browser, barge seal master, movement mapping). Page-bottom success/error boxes removed; only contextual inline validation boxes remain (AssetCalibrationTable rows, BackupRecovery run-time, CalibrationTemplateMaster interpolation roles, TankerTruckLayout live preview).
+- Standard pattern: `const feedback = useActionFeedback()` → destructure aliases matching the page's old variable names (`successMsg`, `errorMsg`, `notifySuccess`/`notifyError`, `clearSuccess`/`clearError`); render `<AlertMessage tone=... message={...} onDismiss={...}/>` near the page-title / action buttons (never at the bottom of the page — owner rule 8).
+
+### Barge Tracking — Approved Barge Transactions Now Listed in Open Voyages
+- **Root cause was location scoping, not the approval flow.** `ensure_barge_transaction_location_scope` (backend/app/routers/barge_trip_tracking.py) required ALL four location fields (origin, destination, sender, receiver) to be inside the user's assigned scope. A barge movement is cross-location by definition, so the receiving terminal — the side that must acknowledge receipt — got a 403 and the approved ticket never appeared in their Open Voyages.
+- Fix (backend, minimal and targeted): a location-scoped user may view/act on a barge ticket when ANY end (origin, destination, sender or receiver) is inside their assigned scope; unrestricted users (admin / all-locations) are never blocked. Same OR-scope logic applied to `ensure_trip_location_scope` (trip events + linked-ticket ends) so voyages with out-of-scope legs don't hide.
+- New regression test `backend/tests/test_barge_end_to_end_approval.py` (sender creates barge ticket → submits → approver approves → receiver sees the approved ticket in Open Voyages and can acknowledge). All 119 backend tests green.
+
 ## Recent Fixes (2026-08-11) - RBAC Flow Hardening
 
 ### Approve Blocked Despite Full Permissions (root cause found 2026-08-11)

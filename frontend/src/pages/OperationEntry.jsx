@@ -18,6 +18,8 @@ import ShuttleTrackingLayout from '../components/operationLayouts/ShuttleTrackin
 import FSOTrackingLayout from '../components/operationLayouts/FSOTrackingLayout.jsx'
 import FlowmeterReadingLayout from '../components/operationLayouts/FlowmeterReadingLayout'
 import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import AlertMessage from '../components/common/AlertMessage'
+import useActionFeedback from '../hooks/useActionFeedback'
 
 function LayoutSummaryPanel({ selectedTemplate }) {
   if (!selectedTemplate) {
@@ -677,8 +679,8 @@ function OperationEntry({
 
   const [editId, setEditId] = useState(null)
   const [loading, setLoading] = useState(false)
-  const [successMsg, setSuccessMsg] = useState('')
-  const [errorMsg, setErrorMsg] = useState('')
+  const feedback = useActionFeedback()
+  const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
   const [confirmAction, setConfirmAction] = useState(null)
   const [tankerSenderReference, setTankerSenderReference] = useState(null)
   const [tankerSenderReferenceLoading, setTankerSenderReferenceLoading] =
@@ -736,7 +738,9 @@ function OperationEntry({
     const productName = String(params.get('product_name') || '').trim()
     const remarks = String(params.get('remarks') || '').trim()
 
-    const autoEventType = String(params.get('auto_event_type') || '').trim()
+    const autoEventType = String(
+      params.get('barge_event_type') || params.get('auto_event_type') || ''
+    ).trim()
     const leftTicketIdRaw = String(params.get('left_ticket_id') || '').trim()
     const leftTicketId = leftTicketIdRaw ? Number(leftTicketIdRaw) : null
 
@@ -755,6 +759,8 @@ function OperationEntry({
       productName,
       remarks,
       autoEventType,
+      fromBargeTracking:
+        Boolean(autoEventType) || String(source || '').trim() === 'barge-tracking',
       leftTicketId,
     }
   }, [location.search])
@@ -777,6 +783,7 @@ function OperationEntry({
       prefill.productName ||
       prefill.remarks ||
       prefill.autoEventType ||
+      prefill.fromBargeTracking ||
       prefill.leftTicketId
 
     if (!hasAny) return
@@ -830,7 +837,7 @@ function OperationEntry({
       } catch (error) {
         if (!isCancelled) {
           setTankerSenderReference(null)
-          setErrorMsg(error.message || 'Unable to load sender tanker reference')
+          notifyError(error.message || 'Unable to load sender tanker reference')
         }
       } finally {
         if (!isCancelled) {
@@ -1072,6 +1079,28 @@ function OperationEntry({
       }))
   }
 
+  // Apply a barge stage passed from Barge Tracking ("Create Ticket" passes
+  // ?barge_event_type=UNLOAD / LOAD_2_TOPUP / STS) to the ticket's
+  // barge_event_type value, so the timeline event gets the correct type on
+  // approval. Applied both when the template is prefilled from the URL and
+  // when the user selects the template manually.
+  const applyPrefilledBargeStage = (values) => {
+    if (!prefill.autoEventType) {
+      return values
+    }
+
+    return values.map((value) => {
+      if (
+        value.fieldCode === 'barge_event_type' &&
+        String(value.fieldValue ?? '').trim() === ''
+      ) {
+        return { ...value, fieldValue: prefill.autoEventType }
+      }
+
+      return value
+    })
+  }
+
   useEffect(() => {
     if (!prefillApplied) {
       return
@@ -1087,9 +1116,11 @@ function OperationEntry({
 
     setEntry((current) => ({
       ...current,
-      values: initializeValuesFromTemplate(prefill.operationTemplateId),
+      values: applyPrefilledBargeStage(
+        initializeValuesFromTemplate(prefill.operationTemplateId)
+      ),
     }))
-  }, [prefillApplied, prefill.operationTemplateId])
+  }, [prefillApplied, prefill.operationTemplateId, prefill.autoEventType])
 
   const handleChange = (e) => {
     const { name, value } = e.target
@@ -1116,7 +1147,7 @@ function OperationEntry({
       setEntry({
         ...entry,
         operationTemplateId: value,
-        values: initializeValuesFromTemplate(value),
+        values: applyPrefilledBargeStage(initializeValuesFromTemplate(value)),
       })
       return
     }
@@ -1318,22 +1349,22 @@ function OperationEntry({
     e.preventDefault()
 
     if (!canCreateOperationEntry) {
-      setErrorMsg('You do not have permission to create operation entries')
+      notifyError('You do not have permission to create operation entries')
       return
     }
 
     if (entry.operationTypeCode.trim() === '') {
-      setErrorMsg('Operation Type is required')
+      notifyError('Operation Type is required')
       return
     }
 
     if (String(entry.operationTemplateId).trim() === '') {
-      setErrorMsg('Operation Template is required')
+      notifyError('Operation Template is required')
       return
     }
 
     if (entry.primaryAssetCode.trim() === '') {
-      setErrorMsg('Primary Asset is required')
+      notifyError('Primary Asset is required')
       return
     }
     const selectedLayoutType = String(selectedTemplate?.entryLayoutType || '')
@@ -1344,21 +1375,21 @@ function OperationEntry({
     const isShuttleTracking = selectedLayoutType.includes('shuttle tracking')
 
     if ((isMultiTank || isTanker) && entry.convoyNumber.trim() === '') {
-      setErrorMsg('Convoy Number is required for Multi-Tank / Tanker operations')
+      notifyError('Convoy Number is required for Multi-Tank / Tanker operations')
       return
     }
 
     if (isShuttleTracking && entry.convoyNumber.trim() === '') {
-      setErrorMsg('Shuttle Number is required for Shuttle Tracking')
+      notifyError('Shuttle Number is required for Shuttle Tracking')
       return
     }
     if (entry.originLocationCode.trim() === '') {
-      setErrorMsg('Origin Location is required')
+      notifyError('Origin Location is required')
       return
     }
 
     if (entry.operationDate.trim() === '') {
-      setErrorMsg('Operation Date is required')
+      notifyError('Operation Date is required')
       return
     }
 
@@ -1370,7 +1401,7 @@ function OperationEntry({
       selectedOperationType?.requiresSenderLocation === 'Yes' &&
       entry.senderLocationCode.trim() === ''
     ) {
-      setErrorMsg('Sender Location is required for this operation type')
+      notifyError('Sender Location is required for this operation type')
       return
     }
 
@@ -1379,7 +1410,7 @@ function OperationEntry({
       selectedOperationType?.requiresReceiverLocation === 'Yes' &&
       entry.receiverLocationCode.trim() === ''
     ) {
-      setErrorMsg('Receiver Location is required for this operation type')
+      notifyError('Receiver Location is required for this operation type')
       return
     }
 
@@ -1393,7 +1424,7 @@ function OperationEntry({
         templateField?.inputMode === 'Manual' &&
         String(value.fieldValue ?? '').trim() === ''
       ) {
-        setErrorMsg(`${value.fieldName} is required`)
+        notifyError(`${value.fieldName} is required`)
         return
       }
     }
@@ -1403,7 +1434,7 @@ function OperationEntry({
     if (layoutType === 'Tank Gauging') {
       const hasTankPayload = (entry.values || []).some((v) => v.fieldCode === 'tank_gauging_payload')
       if (!hasTankPayload) {
-        setErrorMsg('Template setup required: Add System field "tank_gauging_payload" in Operation Template.')
+        notifyError('Template setup required: Add System field "tank_gauging_payload" in Operation Template.')
         return
       }
     }
@@ -1411,7 +1442,7 @@ function OperationEntry({
     if (layoutType === 'Multi-Tank Before/After') {
       const hasMultiTankPayload = (entry.values || []).some((v) => v.fieldCode === 'multi_tank_payload')
       if (!hasMultiTankPayload) {
-        setErrorMsg('Template setup required: Add System field "multi_tank_payload" in Operation Template.')
+        notifyError('Template setup required: Add System field "multi_tank_payload" in Operation Template.')
         return
       }
     }
@@ -1419,7 +1450,7 @@ function OperationEntry({
     if (layoutType === 'Tanker Loading') {
       const hasTankerPayload = (entry.values || []).some((v) => v.fieldCode === 'tanker_payload')
       if (!hasTankerPayload) {
-        setErrorMsg('Template setup required: Add System field "tanker_payload" in Operation Template.')
+        notifyError('Template setup required: Add System field "tanker_payload" in Operation Template.')
         return
       }
     }
@@ -1427,7 +1458,7 @@ function OperationEntry({
     if (layoutType === 'Meter Reading') {
       const hasFlowmeterPayload = (entry.values || []).some((v) => v.fieldCode === 'flowmeter_payload')
       if (!hasFlowmeterPayload) {
-        setErrorMsg('Template setup required: Add System field "flowmeter_payload" in Operation Template.')
+        notifyError('Template setup required: Add System field "flowmeter_payload" in Operation Template.')
         return
       }
 
@@ -1453,12 +1484,12 @@ function OperationEntry({
       const observedDensity = Number(inputs.observed_density ?? NaN)
 
       if (!inputs.reading_date) {
-        setErrorMsg('Flowmeter Date is required.')
+        notifyError('Flowmeter Date is required.')
         return
       }
       if (meters.length > 0) {
         if (!inputs.stream_name) {
-          setErrorMsg('Flowmeter Stream is required.')
+          notifyError('Flowmeter Stream is required.')
           return
         }
         for (const meter of meters) {
@@ -1466,46 +1497,46 @@ function OperationEntry({
           const closing = Number(meter.closing_reading ?? NaN)
           const label = String(meter.meter_label || 'Meter')
           if (!Number.isFinite(opening) || opening < 0) {
-            setErrorMsg(`${label}: Opening Reading cannot be negative.`)
+            notifyError(`${label}: Opening Reading cannot be negative.`)
             return
           }
           if (!Number.isFinite(closing) || closing < 0) {
-            setErrorMsg(`${label}: Closing Reading cannot be negative.`)
+            notifyError(`${label}: Closing Reading cannot be negative.`)
             return
           }
           if (closing < opening) {
-            setErrorMsg(`${label}: Closing Reading cannot be less than Opening Reading.`)
+            notifyError(`${label}: Closing Reading cannot be less than Opening Reading.`)
             return
           }
         }
       } else if (!inputs.meter_label) {
-        setErrorMsg('Flowmeter Meter Label is required.')
+        notifyError('Flowmeter Meter Label is required.')
         return
       }
       if (!Number.isFinite(tankTemp)) {
-        setErrorMsg('Tank Temperature is required.')
+        notifyError('Tank Temperature is required.')
         return
       }
       if (!Number.isFinite(sampleTemp)) {
-        setErrorMsg('Sample Temperature is required.')
+        notifyError('Sample Temperature is required.')
         return
       }
       if (!Number.isFinite(bsw) || bsw < 0 || bsw > 100) {
-        setErrorMsg('BS & W must be between 0 and 100.')
+        notifyError('BS & W must be between 0 and 100.')
         return
       }
       if (observedType === 'Observed API') {
         if (!Number.isFinite(observedApi)) {
-          setErrorMsg('Observed API is required.')
+          notifyError('Observed API is required.')
           return
         }
       } else if (observedType === 'Observed Density') {
         if (!Number.isFinite(observedDensity)) {
-          setErrorMsg('Observed Density is required.')
+          notifyError('Observed Density is required.')
           return
         }
       } else {
-        setErrorMsg('Observed Input Type is required.')
+        notifyError('Observed Input Type is required.')
         return
       }
     }
@@ -1513,14 +1544,14 @@ function OperationEntry({
     if (layoutType === 'Shuttle Tracking') {
       const hasShuttlePayload = (entry.values || []).some((v) => v.fieldCode === 'shuttle_payload')
       if (!hasShuttlePayload) {
-        setErrorMsg('Template setup required: Add System field "shuttle_payload" in Operation Template.')
+        notifyError('Template setup required: Add System field "shuttle_payload" in Operation Template.')
         return
       }
     }
 
     const mandatoryError = validateAssetSpecificMandatory(entry.values || [])
     if (mandatoryError) {
-      setErrorMsg(mandatoryError)
+      notifyError(mandatoryError)
       return
     }
 
@@ -1541,13 +1572,13 @@ function OperationEntry({
 
       if (editId === null) {
         saved = await createOperationEntry({ ...entry, status: 'Draft' })
-        setSuccessMsg('Operation Entry saved successfully')
+        notifySuccess('Operation Entry saved successfully')
       } else {
         saved = await updateOperationEntry(editId, {
           ...entry,
           status: entry.status || 'Draft',
         })
-        setSuccessMsg('Operation Entry updated successfully')
+        notifySuccess('Operation Entry updated successfully')
       }
 
       await reloadOperationEntries()
@@ -1556,10 +1587,12 @@ function OperationEntry({
       }
 
       // ✅ Auto navigation back to Barge Tracking only (events/comparisons are created on APPROVAL in backend)
-      if (saved && prefill.autoEventType) {
+      if (saved && prefill.fromBargeTracking) {
         const convoy = String(entry.convoyNumber || '').trim()
         if (!convoy) {
-          setErrorMsg(`Auto navigation skipped: Convoy Number is required for ${prefill.autoEventType}`)
+          notifyError(
+            `Auto navigation skipped: Convoy Number is required for ${prefill.autoEventType || 'this barge stage'}`
+          )
           setLoading(false)
           return
         }
@@ -1571,7 +1604,7 @@ function OperationEntry({
       setEntry(emptyEntry)
       setEditId(null)
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
@@ -1579,11 +1612,11 @@ function OperationEntry({
 
   const handleEdit = (entryToEdit) => {
     if (!canCreateOperationEntry) {
-      setErrorMsg('You do not have permission to create operation entries')
+      notifyError('You do not have permission to create operation entries')
       return
     }
     if (entryToEdit.status !== 'Draft' && entryToEdit.status !== 'Rejected') {
-      setErrorMsg('Only Draft or Rejected operation entries can be edited.')
+      notifyError('Only Draft or Rejected operation entries can be edited.')
       return
     }
     setConfirmAction({ type: 'edit', data: entryToEdit, message: 'Open this ticket for editing?\n\nAny current form changes will be replaced.' })
@@ -1647,7 +1680,7 @@ function OperationEntry({
     const entryId = confirmAction?.data
     setConfirmAction(null)
     if (!canCancelOperationTransaction) {
-      setErrorMsg('You do not have permission to cancel operation transactions')
+      notifyError('You do not have permission to cancel operation transactions')
       return
     }
     if (!entryId) return
@@ -1667,9 +1700,9 @@ function OperationEntry({
         setEditId(null)
       }
 
-      setSuccessMsg('Operation Entry cancelled successfully')
+      notifySuccess('Operation Entry cancelled successfully')
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
@@ -2031,6 +2064,19 @@ function OperationEntry({
           templateLayout={selectedTemplateLayout}
         />
 
+        {/* Action feedback lives right next to the Save / Update button
+            (owner rule 8) - never at the bottom of the page. */}
+        <AlertMessage
+          tone="success"
+          message={feedback.successMsg}
+          onDismiss={clearSuccess}
+        />
+        <AlertMessage
+          tone="error"
+          message={feedback.errorMsg}
+          onDismiss={clearError}
+        />
+
         <div className="form-actions">
           <button type="submit" disabled={loading || !canCreateOperationEntry}>
             {loading ? 'Saving...' : editId === null ? 'Save Draft' : 'Update Draft'}
@@ -2162,17 +2208,6 @@ function OperationEntry({
         tickets. The official full ticket list remains Operation Transaction
         Register.
       </div>
-
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
     </div>
   )
 }

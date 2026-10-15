@@ -5,6 +5,8 @@ import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
 import { isAdminUser, usePermissions } from '../hooks/usePermissions'
+import AlertMessage from '../components/common/AlertMessage'
+import useActionFeedback from '../hooks/useActionFeedback'
 
 function UserRoleAssignment({
   users,
@@ -16,8 +18,17 @@ function UserRoleAssignment({
   const [selectedUserId, setSelectedUserId] = useState('')
   const [selectedRoleIds, setSelectedRoleIds] = useState([])
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const [success, setSuccess] = useState('')
+  // Action feedback: little pop-up (toast) + inline message near the action
+  // area (owner rule 8). Aliased to the page's existing variable names.
+  const feedback = useActionFeedback()
+  const {
+    successMsg: success,
+    errorMsg: error,
+    notifySuccess: setSuccess,
+    notifyError: setError,
+    clearSuccess,
+    clearError,
+  } = feedback
   const [confirmDelete, setConfirmDelete] = useState(null)
   const [page, setPage] = useState(1)
 
@@ -42,8 +53,8 @@ function UserRoleAssignment({
   )
 
   const clearMessages = () => {
-    setError('')
-    setSuccess('')
+    clearError()
+    clearSuccess()
   }
 
   const handleUserChange = (userId) => {
@@ -173,18 +184,8 @@ function UserRoleAssignment({
         <span className="record-count">{userRoleAssignments.length} Assignments</span>
       </div>
 
-      {success && (
-        <div className="success-box">
-          {success}
-          <button className="error-close" onClick={() => setSuccess('')} type="button">&times;</button>
-        </div>
-      )}
-      {error && (
-        <div className="error-box">
-          {error}
-          <button className="error-close" onClick={() => setError('')} type="button">&times;</button>
-        </div>
-      )}
+      <AlertMessage tone="success" message={success} onDismiss={clearSuccess} />
+      <AlertMessage tone="error" message={error} onDismiss={clearError} />
 
       {!canWrite && (
         <div className="info-box">
