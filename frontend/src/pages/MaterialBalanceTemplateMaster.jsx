@@ -1021,7 +1021,7 @@ function MaterialBalanceTemplateMaster({ locations, loggedInUser }) {
               <label>Column Order</label>
               <input
                 name="columnOrder"
-                type="number"
+                type="number" onWheel={(e) => e.target.blur()}
                 value={columnForm.columnOrder}
                 onChange={handleColumnChange}
                 disabled={savingColumn}

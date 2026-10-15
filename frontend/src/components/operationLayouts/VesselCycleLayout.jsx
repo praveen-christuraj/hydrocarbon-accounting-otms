@@ -246,7 +246,7 @@ function VesselCycleLayout({
           <div>
             <label>Quantity (bbl)</label>
             <input
-              type="number"
+              type="number" onWheel={(e) => e.target.blur()}
               value={local.quantity_bbl}
               onChange={(e) => onChange('quantity_bbl', e.target.value)}
               disabled={!qtyField}
@@ -257,7 +257,7 @@ function VesselCycleLayout({
           <div>
             <label>Water (bbl)</label>
             <input
-              type="number"
+              type="number" onWheel={(e) => e.target.blur()}
               value={local.water_bbl}
               onChange={(e) => onChange('water_bbl', e.target.value)}
               disabled={!waterField}
@@ -267,7 +267,7 @@ function VesselCycleLayout({
 
           <div>
             <label>NSV (auto)</label>
-            <input type="number" value={String(nsv)} readOnly />
+            <input type="number" onWheel={(e) => e.target.blur()} value={String(nsv)} readOnly />
           </div>
         </div>
 

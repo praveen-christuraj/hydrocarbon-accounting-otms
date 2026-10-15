@@ -392,7 +392,7 @@ function FlowmeterReadingLayout({
           <label>Tank Temperature *</label>
           <input
             name="tank_temperature"
-            type="number"
+            type="number" onWheel={(e) => e.target.blur()}
             min={tankTempLimits.min}
             max={tankTempLimits.max}
             step="0.1"
@@ -413,7 +413,7 @@ function FlowmeterReadingLayout({
             <label>Observed API *</label>
             <input
               name="observed_api"
-              type="number"
+              type="number" onWheel={(e) => e.target.blur()}
               min={OBSERVED_API_LIMITS.min}
               max={OBSERVED_API_LIMITS.max}
               step="0.01"
@@ -426,7 +426,7 @@ function FlowmeterReadingLayout({
             <label>Observed Density (kg/m3) *</label>
             <input
               name="observed_density"
-              type="number"
+              type="number" onWheel={(e) => e.target.blur()}
               min={OBSERVED_DENSITY_LIMITS.min}
               max={OBSERVED_DENSITY_LIMITS.max}
               step="0.1"
@@ -447,7 +447,7 @@ function FlowmeterReadingLayout({
           <label>Sample Temperature *</label>
           <input
             name="sample_temperature"
-            type="number"
+            type="number" onWheel={(e) => e.target.blur()}
             min={sampleTempLimits.min}
             max={sampleTempLimits.max}
             step="0.1"
@@ -459,7 +459,7 @@ function FlowmeterReadingLayout({
           <label>BS & W (%) *</label>
           <input
             name="bsw_percent"
-            type="number"
+            type="number" onWheel={(e) => e.target.blur()}
             min={BSW_LIMITS.min}
             max={BSW_LIMITS.max}
             step="0.01"
@@ -499,10 +499,10 @@ function FlowmeterReadingLayout({
                 <td>{m.meterFactor}</td>
                 <td>{m.meterUnit}</td>
                 <td>
-                  <input type="number" step="0.001" value={(meterInputs[key] || {}).opening_reading ?? ''} onChange={(e) => onMeterChange(m.id, 'opening_reading', e.target.value)} />
+                  <input type="number" onWheel={(e) => e.target.blur()} step="0.001" value={(meterInputs[key] || {}).opening_reading ?? ''} onChange={(e) => onMeterChange(m.id, 'opening_reading', e.target.value)} />
                 </td>
                 <td>
-                  <input type="number" step="0.001" value={(meterInputs[key] || {}).closing_reading ?? ''} onChange={(e) => onMeterChange(m.id, 'closing_reading', e.target.value)} />
+                  <input type="number" onWheel={(e) => e.target.blur()} step="0.001" value={(meterInputs[key] || {}).closing_reading ?? ''} onChange={(e) => onMeterChange(m.id, 'closing_reading', e.target.value)} />
                 </td>
                 <td>{roundTo(meter.gross_observed, 3)}</td>
                 <td>{roundTo(meter.gross_observed_bbl, 3)}</td>

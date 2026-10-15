@@ -540,7 +540,7 @@ function ExportTransactions({ loggedInUser }) {
               <label htmlFor="xt-volume">Volume *</label>
               <input
                 id="xt-volume"
-                type="number"
+                type="number" onWheel={(e) => e.target.blur()}
                 step="0.01"
                 min="0"
                 value={form.volume}
@@ -570,7 +570,7 @@ function ExportTransactions({ loggedInUser }) {
                     </td>
                     <td className="numeric">
                       <input
-                        type="number"
+                        type="number" onWheel={(e) => e.target.blur()}
                         step="0.01"
                         min="0"
                         value={entry.volume}

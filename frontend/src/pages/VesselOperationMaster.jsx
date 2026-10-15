@@ -456,7 +456,7 @@ function VesselOperationMaster({ locations = [], assetTypes = [], loggedInUser }
         <div>
           <label>Sort Order</label>
           <input
-            type="number"
+            type="number" onWheel={(e) => e.target.blur()}
             name="sort_order"
             value={form.sort_order}
             onChange={onFormChange}

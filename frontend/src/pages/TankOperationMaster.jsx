@@ -550,7 +550,7 @@ function TankOperationMaster({ locations, loggedInUser }) {
           <label>Sort Order</label>
           <input
             name="sortOrder"
-            type="number"
+            type="number" onWheel={(e) => e.target.blur()}
             value={tankOperation.sortOrder}
             onChange={handleChange}
             min="1"

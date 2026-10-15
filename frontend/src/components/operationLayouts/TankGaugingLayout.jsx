@@ -627,7 +627,7 @@ function TankGaugingLayout({
             <label>Dip (cm) *</label>
             <input
               name="dipCm"
-              type="number"
+              type="number" onWheel={(e) => e.target.blur()}
               min="0"
               max={maxCalibrationDipCm || undefined}
               step="0.1"
@@ -644,7 +644,7 @@ function TankGaugingLayout({
             <label>Water Level (cm) *</label>
             <input
               name="waterLevelCm"
-              type="number"
+              type="number" onWheel={(e) => e.target.blur()}
               min="0"
               max={maxCalibrationDipCm || undefined}
               step="0.1"
@@ -679,7 +679,7 @@ function TankGaugingLayout({
             <label>Tank Temperature *</label>
             <input
               name="tankTemperature"
-              type="number"
+              type="number" onWheel={(e) => e.target.blur()}
               min={tankTempLimits.min}
               max={tankTempLimits.max}
               step="0.1"
@@ -710,7 +710,7 @@ function TankGaugingLayout({
               <label>Observed API *</label>
               <input
                 name="observedApi"
-                type="number"
+                type="number" onWheel={(e) => e.target.blur()}
                 min={OBSERVED_API_LIMITS.min}
                 max={OBSERVED_API_LIMITS.max}
                 step="0.01"
@@ -728,7 +728,7 @@ function TankGaugingLayout({
               <label>Observed Density (kg/m³) *</label>
               <input
                 name="observedDensity"
-                type="number"
+                type="number" onWheel={(e) => e.target.blur()}
                 min={OBSERVED_DENSITY_LIMITS.min}
                 max={OBSERVED_DENSITY_LIMITS.max}
                 step="0.1"
@@ -759,7 +759,7 @@ function TankGaugingLayout({
             <label>Sample Temperature *</label>
             <input
               name="sampleTemperature"
-              type="number"
+              type="number" onWheel={(e) => e.target.blur()}
               min={sampleTempLimits.min}
               max={sampleTempLimits.max}
               step="0.1"
@@ -777,7 +777,7 @@ function TankGaugingLayout({
             <label>BS&W (%) *</label>
             <input
               name="bswPercent"
-              type="number"
+              type="number" onWheel={(e) => e.target.blur()}
               min="0"
               max="100"
               step="0.01"

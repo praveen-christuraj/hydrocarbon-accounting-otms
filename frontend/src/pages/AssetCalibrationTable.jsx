@@ -1336,6 +1336,7 @@ function AssetCalibrationTable({
                 </label>
                 <input
                   type={column.dataType === 'Number' ? 'number' : 'text'}
+                  onWheel={(e) => e.target.blur()}
                   value={rowData[column.columnName] || ''}
                   onChange={(e) =>
                     handleRowChange(column.columnName, e.target.value)

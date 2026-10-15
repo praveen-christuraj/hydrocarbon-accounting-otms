@@ -574,7 +574,7 @@ function SystemNotificationMaster({ roles = [], users = [], locations = [], logg
         <div>
           <label>Auto Dismiss Seconds</label>
           <input
-            type="number"
+            type="number" onWheel={(e) => e.target.blur()}
             min="0"
             value={form.autoDismissSeconds}
             onChange={(event) => updateField('autoDismissSeconds', event.target.value)}

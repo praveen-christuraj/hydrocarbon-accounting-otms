@@ -1161,6 +1161,17 @@ function App() {
   const [loggedInUser, setLoggedInUser] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
 
+  useEffect(() => {
+    const handleWheel = (event) => {
+      const target = event.target
+      if (target && target.tagName === 'INPUT' && target.type === 'number') {
+        target.blur()
+      }
+    }
+    document.addEventListener('wheel', handleWheel, true)
+    return () => document.removeEventListener('wheel', handleWheel, true)
+  }, [])
+
   const hasPermission = (permissionName) => userHasPermission(loggedInUser, permissionName)
 
   const restoreLoggedInUser = async () => {

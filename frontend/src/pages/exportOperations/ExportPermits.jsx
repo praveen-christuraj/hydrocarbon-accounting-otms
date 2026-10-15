@@ -432,7 +432,7 @@ function ExportPermits({ loggedInUser }) {
           <label htmlFor="xp-volume">Permit Volume *</label>
           <input
             id="xp-volume"
-            type="number"
+            type="number" onWheel={(e) => e.target.blur()}
             step="0.01"
             min="0"
             value={form.permit_volume}

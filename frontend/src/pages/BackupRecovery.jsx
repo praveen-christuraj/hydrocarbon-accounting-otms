@@ -694,7 +694,7 @@ function BackupRecovery({ loggedInUser }) {
         <div>
           <label>Interval Value</label>
           <input
-            type="number"
+            type="number" onWheel={(e) => e.target.blur()}
             min="1"
             value={settings.intervalValue}
             onChange={(event) => updateField('intervalValue', event.target.value)}
@@ -713,7 +713,7 @@ function BackupRecovery({ loggedInUser }) {
         <div>
           <label>Retention Days</label>
           <input
-            type="number"
+            type="number" onWheel={(e) => e.target.blur()}
             min="1"
             value={settings.retentionDays}
             onChange={(event) => updateField('retentionDays', event.target.value)}
@@ -723,7 +723,7 @@ function BackupRecovery({ loggedInUser }) {
         <div>
           <label>Keep Minimum Backups</label>
           <input
-            type="number"
+            type="number" onWheel={(e) => e.target.blur()}
             min="1"
             value={settings.keepMinimum}
             onChange={(event) => updateField('keepMinimum', event.target.value)}
