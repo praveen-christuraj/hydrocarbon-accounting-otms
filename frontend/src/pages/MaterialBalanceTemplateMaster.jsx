@@ -14,6 +14,7 @@ import PaginationControls, { paginateRows, usePageSize } from '../components/com
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
+import { usePermissions } from '../hooks/usePermissions'
 
 const columnTypes = [
   'OPENING',
@@ -27,7 +28,11 @@ const columnTypes = [
 
 const movementDirections = ['IN', 'OUT', 'NEUTRAL']
 
-function MaterialBalanceTemplateMaster({ locations }) {
+function MaterialBalanceTemplateMaster({ locations, loggedInUser }) {
+  const { hasPermission } = usePermissions(loggedInUser)
+  const canCreate = hasPermission('Create Material Balance Template')
+  const canEdit = hasPermission('Edit Material Balance Template')
+
   const emptyTemplateForm = {
     id: null,
     locationCode: '',
@@ -281,6 +286,178 @@ function MaterialBalanceTemplateMaster({ locations }) {
         ? columnForm.excludedOperationCodes.filter((code) => code !== operationCode)
         : [...columnForm.excludedOperationCodes, operationCode],
     })
+  }
+
+  /* -------------------------------------------------------- bulk upload */
+
+  const TEMPLATE_STATUSES = ['Active', 'Inactive', 'Blocked']
+  const YES_NO = ['Yes', 'No']
+
+  const importConfig = {
+    title: 'Bulk upload material balance templates',
+    description:
+      'Upload an Excel (.xlsx) or CSV file with ONE ROW PER TEMPLATE COLUMN. Rows that share the same Location + Template Name are grouped into one template; the template columns only need a value on the first row of each group. Operation codes accept a semicolon separated list.',
+    templateFileName: 'material-balance-template',
+    fields: [
+      { key: 'locationCode', label: 'Location Code', required: true, example: 'UTP', aliases: ['Location'] },
+      { key: 'templateName', label: 'Template Name', required: true, example: 'Daily Tank Balance', aliases: ['Template'] },
+      { key: 'description', label: 'Template Description', example: '' },
+      { key: 'columnLabel', label: 'Column Label', required: true, example: 'Receipts' },
+      { key: 'columnKey', label: 'Column Key', required: true, example: 'receipts', aliases: ['Key'] },
+      { key: 'columnOrder', label: 'Column Order', example: '1', hint: 'Whole number' },
+      { key: 'columnType', label: 'Column Type', required: true, options: columnTypes, defaultValue: 'MOVEMENT', example: 'MOVEMENT' },
+      { key: 'movementDirection', label: 'Movement Direction', options: movementDirections, defaultValue: 'IN', example: 'IN' },
+      { key: 'mappedOperationCodes', label: 'Mapped Operation Codes', example: 'RECEIPT', hint: 'Semicolon separated' },
+      { key: 'excludedOperationCodes', label: 'Excluded Operation Codes', example: '', hint: 'Semicolon separated' },
+      { key: 'includeInMaterialBalance', label: 'Include In Material Balance', options: YES_NO, defaultValue: 'Yes', example: 'Yes' },
+      { key: 'includeInBookClosing', label: 'Include In Book Closing', options: YES_NO, defaultValue: 'Yes', example: 'Yes' },
+      { key: 'isInternalTransfer', label: 'Is Internal Transfer', options: YES_NO, defaultValue: 'No', example: 'No' },
+      { key: 'remarks', label: 'Column Remarks', example: '' },
+      { key: 'status', label: 'Status', options: TEMPLATE_STATUSES, defaultValue: 'Active', example: 'Active' },
+    ],
+    validateRow: (record) => {
+      const location = activeLocations.find(
+        (item) => String(item.locationCode).toLowerCase() === String(record.locationCode).trim().toLowerCase()
+      )
+      if (!location) return `Unknown or inactive location code "${record.locationCode}"`
+      if (!columnTypes.includes(String(record.columnType).trim().toUpperCase())) {
+        return `Column Type must be one of ${columnTypes.join(', ')}`
+      }
+      if (record.columnType === 'MOVEMENT' && !movementDirections.includes(String(record.movementDirection || 'IN').trim().toUpperCase())) {
+        return `Movement Direction must be one of ${movementDirections.join(', ')}`
+      }
+      const yesNoFields = ['includeInMaterialBalance', 'includeInBookClosing', 'isInternalTransfer']
+      const badFlag = yesNoFields.find(
+        (fieldName) => record[fieldName] && !YES_NO.includes(String(record[fieldName]).trim())
+      )
+      if (badFlag) return `${badFlag} must be Yes or No`
+      if (record.columnOrder && !Number.isFinite(Number(record.columnOrder))) {
+        return 'Column Order must be a number'
+      }
+      if (record.status && !TEMPLATE_STATUSES.includes(record.status)) {
+        return `Status must be one of ${TEMPLATE_STATUSES.join(', ')}`
+      }
+      return null
+    },
+    onImportBatch: async (items) => {
+      const overrides = []
+      const groups = new Map()
+      const splitCodes = (value) =>
+        String(value || '')
+          .split(';')
+          .map((part) => part.trim())
+          .filter(Boolean)
+
+      items.forEach(({ rowNumber, record }) => {
+        const locationCode = String(record.locationCode || '').trim()
+        const templateName = String(record.templateName || '').trim()
+        const key = `${locationCode.toLowerCase()}|${templateName.toLowerCase()}`
+        if (!groups.has(key)) {
+          groups.set(key, {
+            locationCode,
+            templateName,
+            description: String(record.description || '').trim(),
+            status: record.status || 'Active',
+            columns: [],
+            rowNumbers: [],
+          })
+        }
+        const group = groups.get(key)
+        if (!group.description) group.description = String(record.description || '').trim()
+
+        const columnKey = String(record.columnKey || '').trim()
+        if (group.columns.some((item) => String(item.columnKey).toLowerCase() === columnKey.toLowerCase())) {
+          overrides.push({
+            rowNumber,
+            status: 'skipped',
+            message: `Duplicate column key "${columnKey}" in template "${templateName}"`,
+          })
+          return
+        }
+
+        group.columns.push({
+          columnLabel: String(record.columnLabel || '').trim(),
+          columnKey,
+          columnOrder:
+            record.columnOrder === '' || record.columnOrder === undefined
+              ? group.columns.length + 1
+              : Number(record.columnOrder),
+          columnType: String(record.columnType || 'MOVEMENT').trim().toUpperCase(),
+          movementDirection: String(record.movementDirection || 'IN').trim().toUpperCase(),
+          mappedOperationCodes: splitCodes(record.mappedOperationCodes),
+          excludedOperationCodes: splitCodes(record.excludedOperationCodes),
+          includeInMaterialBalance: String(record.includeInMaterialBalance || 'Yes').trim(),
+          includeInBookClosing: String(record.includeInBookClosing || 'Yes').trim(),
+          isInternalTransfer: String(record.isInternalTransfer || 'No').trim(),
+          formulaJson: null,
+          remarks: String(record.remarks || '').trim(),
+          status: 'Active',
+        })
+        group.rowNumbers.push(rowNumber)
+      })
+
+      for (const group of groups.values()) {
+        try {
+          let template = templates.find(
+            (item) =>
+              String(item.locationCode).toLowerCase() === group.locationCode.toLowerCase() &&
+              String(item.templateName).toLowerCase() === group.templateName.toLowerCase()
+          )
+
+          if (!template) {
+            if (!canCreate) {
+              overrides.push(
+                ...group.rowNumbers.map((rowNumber) => ({
+                  rowNumber,
+                  status: 'skipped',
+                  message: 'You do not have Create Material Balance Template',
+                }))
+              )
+              continue
+            }
+            template = await createMaterialBalanceTemplate({
+              locationCode: group.locationCode,
+              templateName: group.templateName,
+              description: group.description,
+              status: group.status,
+            })
+          } else if (!canEdit) {
+            overrides.push(
+              ...group.rowNumbers.map((rowNumber) => ({
+                rowNumber,
+                status: 'skipped',
+                message: `"${group.templateName}" already exists and you do not have Edit Material Balance Template`,
+              }))
+            )
+            continue
+          }
+
+          const existingColumns = template.columns || []
+          for (const column of group.columns) {
+            const existing = existingColumns.find(
+              (item) => String(item.columnKey).toLowerCase() === column.columnKey.toLowerCase()
+            )
+            if (existing) {
+              await updateMaterialBalanceTemplateColumn(existing.id, { ...column, id: existing.id })
+            } else {
+              await createMaterialBalanceTemplateColumn(template.id, column)
+            }
+          }
+        } catch (error) {
+          const message = error?.message || 'Save failed'
+          overrides.push(
+            ...group.rowNumbers.map((rowNumber) => ({ rowNumber, status: 'failed', message }))
+          )
+        }
+      }
+
+      await loadTemplates('')
+      return overrides
+    },
+    onComplete: async () => {
+      await loadTemplates('')
+      if (selectedTemplate?.id) await loadTemplateDetail(selectedTemplate.id)
+    },
   }
 
   const handleSaveTemplate = async (e) => {
@@ -751,6 +928,9 @@ function MaterialBalanceTemplateMaster({ locations }) {
         columns={templatesFilters.columns}
         exportFileName="material-balance-template-configuration"
         exportTitle="Material Balance Template Configuration"
+        module="Material Balance Template"
+        importConfig={importConfig}
+        canImport={canCreate || canEdit}
       />
 
       <table>

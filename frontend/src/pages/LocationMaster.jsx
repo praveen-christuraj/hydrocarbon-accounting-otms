@@ -192,7 +192,7 @@ function LocationMaster({ locations, reloadLocations, loggedInUser }) {
 
 
   const importConfig = {
-    title: 'Import location master rows',
+    title: 'Bulk upload locations',
     description: 'Create records from an Excel or CSV file. Existing codes are skipped.',
     fields: [
     { key: 'locationName', label: 'Location Name', required: true, example: 'Utapate Terminal' },

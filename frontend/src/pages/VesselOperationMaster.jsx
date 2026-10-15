@@ -160,6 +160,96 @@ function VesselOperationMaster({ locations = [], assetTypes = [], loggedInUser }
     }
   }
 
+  /* -------------------------------------------------------- bulk upload */
+
+  const VESSEL_SIGNS = ['IN', 'OUT', 'NEUTRAL', 'SET']
+  const SHOW_IN_OPTIONS = ['Both', 'Entry', 'Tracking']
+  const VESSEL_STATUSES = ['Active', 'Inactive', 'Blocked']
+
+  const importConfig = {
+    title: 'Bulk upload vessel operations',
+    description:
+      'Upload an Excel (.xlsx) or CSV file. Operations are matched on Location + Asset Type + Operation Code and updated when they already exist.',
+    templateFileName: 'vessel-operation-master',
+    fields: [
+      { key: 'location_code', label: 'Location Code', required: true, example: 'UTP', aliases: ['Location'] },
+      {
+        key: 'applicable_asset_type_code',
+        label: 'Applicable Asset Type Code',
+        required: true,
+        example: 'VESSEL',
+        aliases: ['Asset Type', 'Asset Type Code'],
+      },
+      { key: 'operation_code', label: 'Operation Code', required: true, example: 'LOADING', aliases: ['Code'] },
+      { key: 'operation_label', label: 'Operation Label', required: true, example: 'Vessel Loading' },
+      { key: 'operation_category', label: 'Category', required: true, example: 'LOADING' },
+      { key: 'operation_sign', label: 'Sign', required: true, options: VESSEL_SIGNS, defaultValue: 'IN', example: 'IN' },
+      { key: 'show_in', label: 'Show In', options: SHOW_IN_OPTIONS, defaultValue: 'Both', example: 'Both' },
+      { key: 'sort_order', label: 'Sort Order', example: '1' },
+      { key: 'description', label: 'Description', example: '' },
+      { key: 'status', label: 'Status', options: VESSEL_STATUSES, defaultValue: 'Active', example: 'Active' },
+    ],
+    validateRow: (record) => {
+      const location = locations.find(
+        (item) => String(item.locationCode).toLowerCase() === String(record.location_code).trim().toLowerCase()
+      )
+      if (!location || location.status !== 'Active') {
+        return `Unknown or inactive location code "${record.location_code}"`
+      }
+      const assetType = assetTypes.find(
+        (item) =>
+          String(item.assetTypeCode).toLowerCase() ===
+          String(record.applicable_asset_type_code).trim().toLowerCase()
+      )
+      if (!assetType || assetType.status !== 'Active') {
+        return `Unknown or inactive asset type code "${record.applicable_asset_type_code}"`
+      }
+      if (!VESSEL_SIGNS.includes(String(record.operation_sign).trim().toUpperCase())) {
+        return `Sign must be one of ${VESSEL_SIGNS.join(', ')}`
+      }
+      if (record.show_in && !SHOW_IN_OPTIONS.includes(String(record.show_in).trim())) {
+        return `Show In must be one of ${SHOW_IN_OPTIONS.join(', ')}`
+      }
+      if (record.sort_order && !Number.isFinite(Number(record.sort_order))) {
+        return 'Sort Order must be a number'
+      }
+      if (record.status && !VESSEL_STATUSES.includes(record.status)) {
+        return `Status must be one of ${VESSEL_STATUSES.join(', ')}`
+      }
+      return null
+    },
+    onImportRow: async (record) => {
+      const payload = {
+        location_code: String(record.location_code).trim(),
+        applicable_asset_type_code: String(record.applicable_asset_type_code).trim(),
+        operation_code: String(record.operation_code).trim().toUpperCase(),
+        operation_label: String(record.operation_label).trim(),
+        operation_category: String(record.operation_category).trim().toUpperCase(),
+        operation_sign: String(record.operation_sign || 'IN').trim().toUpperCase(),
+        show_in: record.show_in || 'Both',
+        sort_order:
+          record.sort_order === '' || record.sort_order === undefined ? 1 : Number(record.sort_order),
+        description: String(record.description || '').trim(),
+        status: record.status || 'Active',
+      }
+      const existing = rows.find(
+        (item) =>
+          String(item.location_code).toLowerCase() === payload.location_code.toLowerCase() &&
+          String(item.applicable_asset_type_code).toLowerCase() ===
+            payload.applicable_asset_type_code.toLowerCase() &&
+          String(item.operation_code).toLowerCase() === payload.operation_code.toLowerCase()
+      )
+      if (existing) {
+        await updateVesselOperation(existing.id, payload)
+      } else {
+        await createVesselOperation(payload)
+      }
+    },
+    onComplete: async () => {
+      await load()
+    },
+  }
+
   const remove = async (row) => {
     setSuccessMsg('')
     setErrorMsg('')
@@ -400,6 +490,8 @@ function VesselOperationMaster({ locations = [], assetTypes = [], loggedInUser }
         exportFileName="vessel-operation-master"
         exportTitle="Vessel Operation Master"
         module="Vessel Operation Master"
+        importConfig={importConfig}
+        canImport={canCreate}
       />
 
       <table>

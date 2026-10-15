@@ -183,7 +183,7 @@ function AssetTypeMaster({ assetTypes, reloadAssetTypes, loggedInUser }) {
 
 
   const importConfig = {
-    title: 'Import asset type master rows',
+    title: 'Bulk upload asset types',
     description: 'Create records from an Excel or CSV file. Existing codes are skipped.',
     fields: [
     { key: 'assetTypeName', label: 'Asset Type Name', required: true, example: 'Storage Tank' },

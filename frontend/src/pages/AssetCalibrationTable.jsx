@@ -6,9 +6,22 @@ import {
 } from '../api/assetCalibrationApi'
 import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
 import DataTableToolbar from '../components/common/DataTableToolbar'
+import ExportMenu from '../components/common/ExportMenu'
+import Icon from '../components/common/Icon'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
 import { usePermissions } from '../hooks/usePermissions'
+import { useBulkTemplates } from '../hooks/useBulkTemplates'
+import { parseImportFile } from '../utils/importUtils'
+import { exportRows } from '../utils/exportUtils'
+import { logUiAction } from '../utils/actionLogger'
+
+const UPLOAD_EXTENSIONS = ['xlsx', 'xlsm', 'csv', 'txt']
+const MAX_UPLOAD_ERRORS = 100
+const CALIBRATION_STATUSES = ['Active', 'Inactive', 'Blocked']
+
+/** Prefix that keeps dynamic template columns apart from the fixed ones. */
+const DYNAMIC_PREFIX = 'col_'
 
 function AssetCalibrationTable({
   assets,
@@ -221,57 +234,6 @@ function AssetCalibrationTable({
     setConfirmRemoveRowIndex(null)
   }
 
-  const parseCsvText = (csvText) => {
-    const lines = csvText
-      .replace(/\r\n/g, '\n')
-      .replace(/\r/g, '\n')
-      .split('\n')
-      .filter((line) => line.trim() !== '')
-
-    if (lines.length === 0) {
-      return []
-    }
-
-    const parseCsvLine = (line) => {
-      const values = []
-      let currentValue = ''
-      let insideQuotes = false
-
-      for (let i = 0; i < line.length; i += 1) {
-        const character = line[i]
-        const nextCharacter = line[i + 1]
-
-        if (character === '"' && insideQuotes && nextCharacter === '"') {
-          currentValue += '"'
-          i += 1
-        } else if (character === '"') {
-          insideQuotes = !insideQuotes
-        } else if (character === ',' && !insideQuotes) {
-          values.push(currentValue.trim())
-          currentValue = ''
-        } else {
-          currentValue += character
-        }
-      }
-
-      values.push(currentValue.trim())
-      return values
-    }
-
-    const headers = parseCsvLine(lines[0]).map((header) => header.trim())
-
-    return lines.slice(1).map((line) => {
-      const values = parseCsvLine(line)
-      const row = {}
-
-      headers.forEach((header, index) => {
-        row[header] = values[index] === undefined ? '' : values[index]
-      })
-
-      return row
-    })
-  }
-
   const validateAndNormalizeUploadedRows = (rawRows) => {
     const errors = []
 
@@ -371,9 +333,15 @@ function AssetCalibrationTable({
       })
     })
 
+    const visibleErrors =
+      errors.length > MAX_UPLOAD_ERRORS
+        ? [...errors.slice(0, MAX_UPLOAD_ERRORS), `… and ${errors.length - MAX_UPLOAD_ERRORS} more error(s)`]
+        : errors
+
     return {
       rows: errors.length === 0 ? normalizedRows : [],
-      errors,
+      errors: visibleErrors,
+      errorCount: errors.length,
     }
   }
 
@@ -397,35 +365,65 @@ function AssetCalibrationTable({
     const fileName = selectedFile.name
     const fileExtension = fileName.split('.').pop().toLowerCase()
 
-    if (fileExtension !== 'csv') {
-      setErrorMsg('XLSX upload disabled. Upload CSV.')
+    if (!UPLOAD_EXTENSIONS.includes(fileExtension)) {
+      setErrorMsg('Unsupported file type. Upload an Excel (.xlsx) or CSV (.csv) file.')
       e.target.value = ''
       return
     }
 
     try {
-      let rawRows = []
-
-      const csvText = await selectedFile.text()
-      rawRows = parseCsvText(csvText)
-
-      const validationResult = validateAndNormalizeUploadedRows(rawRows)
+      const parsed = await parseImportFile(selectedFile)
+      const validationResult = validateAndNormalizeUploadedRows(parsed.rows)
 
       setUploadFileName(fileName)
-      setUploadFileFormat(fileExtension.toUpperCase())
+      setUploadFileFormat(fileExtension === 'csv' || fileExtension === 'txt' ? 'CSV' : 'XLSX')
       setUploadedRows(validationResult.rows)
       setUploadValidationErrors(validationResult.errors)
 
-      if (validationResult.errors.length > 0) {
-        setErrorMsg('Uploaded file has validation errors. Please review below.')
+      if (validationResult.errorCount > 0) {
+        setErrorMsg(
+          `Uploaded file has ${validationResult.errorCount} validation error(s). Correct the file and upload it again – nothing has been saved yet.`
+        )
       } else {
-        setSuccessMsg(`${validationResult.rows.length} rows parsed successfully`)
+        setSuccessMsg(
+          `${validationResult.rows.length} rows parsed successfully from ${fileName}. Review them, then use Replace Rows or Append Rows.`
+        )
+        logUiAction('Asset Calibration Table', 'Calibration Data File Parsed', {
+          fileName,
+          rows: validationResult.rows.length,
+          template: selectedTemplate.templateName,
+        })
       }
     } catch (error) {
       setUploadValidationErrors([error.message])
       setErrorMsg(error.message)
     } finally {
       e.target.value = ''
+    }
+  }
+
+  /** Blank upload file generated from the selected Calibration Template Master. */
+  const downloadCalibrationTemplate = async (format) => {
+    if (!selectedTemplate) {
+      setErrorMsg('Please select Asset and Calibration Template before downloading the template')
+      return
+    }
+    try {
+      await exportRows({
+        format,
+        rows: [],
+        columns: sortedTemplateColumns.map((column) => ({
+          key: column.columnName,
+          label: column.columnName,
+        })),
+        fileName: `asset-calibration-${String(selectedTemplate.templateName || 'template').replace(/\s+/g, '-').toLowerCase()}`,
+        title: `Calibration data template – ${selectedTemplate.templateName}`,
+        subtitle: 'Fill one row per calibration point. Column names must stay unchanged.',
+        module: 'Asset Calibration Table',
+      })
+      setSuccessMsg(`Calibration template (${format.toUpperCase()}) downloaded.`)
+    } catch (error) {
+      setErrorMsg(error.message || 'Unable to build the template file.')
     }
   }
 
@@ -590,6 +588,287 @@ function AssetCalibrationTable({
     resetUploadState()
   }
 
+  /* ------------------------------------------------ bulk upload of tables */
+
+  const today = useMemo(() => new Date().toISOString().slice(0, 10), [])
+
+  const CALIBRATION_STATIC_FIELDS = useMemo(
+    () => [
+      {
+        key: 'calibrationName',
+        label: 'Calibration Name',
+        required: true,
+        example: 'Tank 1 Strapping 2026',
+        aliases: ['Name', 'Table Name'],
+        hint: 'Rows with the same name, asset and template go into one table',
+      },
+      {
+        key: 'assetCode',
+        label: 'Asset Code',
+        required: true,
+        example: 'TK-101',
+        aliases: ['Asset'],
+      },
+      {
+        key: 'templateName',
+        label: 'Calibration Template',
+        required: false,
+        example: '',
+        aliases: ['Template', 'Template Name'],
+        hint: 'Leave blank to use the template selected above',
+        defaultValue: activeTemplates[0]?.templateName || '',
+      },
+      {
+        key: 'effectiveDate',
+        label: 'Effective Date',
+        required: false,
+        example: today,
+        hint: 'YYYY-MM-DD',
+      },
+      {
+        key: 'status',
+        label: 'Status',
+        required: false,
+        options: CALIBRATION_STATUSES,
+        defaultValue: 'Active',
+        example: 'Active',
+      },
+      { key: 'remarks', label: 'Remarks', required: false, example: '' },
+    ],
+    [activeTemplates, today]
+  )
+
+  const sortTemplateColumns = (template) =>
+    [...(template?.columns || [])].sort(
+      (a, b) => Number(a.sortOrder) - Number(b.sortOrder)
+    )
+
+  /** One entry per Calibration Template Master record – the template master. */
+  const bulkTemplateOptions = useMemo(
+    () =>
+      activeTemplates.map((template) => ({
+        id: String(template.id),
+        name: `${template.templateName} (${template.assetTypeCode || 'any type'})`,
+        system: false,
+        columns: [
+          ...CALIBRATION_STATIC_FIELDS.map((field) => ({
+            key: field.key,
+            label: field.label,
+            included: true,
+            aliases: field.aliases || [],
+          })),
+          ...sortTemplateColumns(template).map((column) => ({
+            key: `${DYNAMIC_PREFIX}${column.columnName}`,
+            label: column.columnName,
+            included: true,
+            aliases: [column.columnName],
+          })),
+        ],
+      })),
+    [activeTemplates, CALIBRATION_STATIC_FIELDS]
+  )
+
+  const [activeBulkTemplateId, setActiveBulkTemplateId] = useState('')
+
+  const activeBulkTemplateRecord = useMemo(() => {
+    const match = activeTemplates.find((item) => String(item.id) === String(activeBulkTemplateId))
+    return match || activeTemplates[0] || null
+  }, [activeTemplates, activeBulkTemplateId])
+
+  const bulkBaseFields = useMemo(() => {
+    const dynamic = sortTemplateColumns(activeBulkTemplateRecord).map((column) => ({
+      key: `${DYNAMIC_PREFIX}${column.columnName}`,
+      label: column.columnName,
+      required: false,
+      example: '',
+      hint: `${column.dataType || 'Text'}${column.unit ? ` (${column.unit})` : ''}${
+        column.isRequired === 'Yes' ? ' – required' : ''
+      }`,
+      aliases: [column.columnName],
+    }))
+    return [...CALIBRATION_STATIC_FIELDS, ...dynamic]
+  }, [activeBulkTemplateRecord, CALIBRATION_STATIC_FIELDS])
+
+  const bulkTemplates = useBulkTemplates('Asset Calibration Table', bulkBaseFields, {
+    templates: bulkTemplateOptions,
+    activeTemplateId: activeBulkTemplateRecord ? String(activeBulkTemplateRecord.id) : '',
+    onSelectTemplate: setActiveBulkTemplateId,
+  })
+
+  const resolveTemplateForRow = (record) => {
+    const requested = String(record.templateName || '').trim()
+    if (requested) {
+      const byName = activeTemplates.find(
+        (item) => String(item.templateName).toLowerCase() === requested.toLowerCase()
+      )
+      if (byName) return byName
+      return null
+    }
+    return activeBulkTemplateRecord
+  }
+
+  const handleCalibrationImportBatch = async (items) => {
+    const overrides = []
+    const groups = new Map()
+
+    items.forEach(({ rowNumber, record }) => {
+      const calibrationName = String(record.calibrationName || '').trim()
+      const assetCode = String(record.assetCode || '').trim()
+      const template = resolveTemplateForRow(record)
+
+      if (!template) {
+        overrides.push({
+          rowNumber,
+          status: 'skipped',
+          message: `Unknown calibration template "${record.templateName}". Create it in Calibration Template Master first.`,
+        })
+        return
+      }
+
+      if (!activeAssets.some((asset) => String(asset.assetCode) === assetCode)) {
+        overrides.push({
+          rowNumber,
+          status: 'skipped',
+          message: `Unknown or inactive asset code "${assetCode}"`,
+        })
+        return
+      }
+
+      const rowData = {}
+      let rowError = null
+
+      for (const column of sortTemplateColumns(template)) {
+        const rawValue = record[`${DYNAMIC_PREFIX}${column.columnName}`]
+        const value = convertValueByDataType(rawValue, column.dataType)
+
+        if (column.isRequired === 'Yes' && String(value ?? '').trim() === '') {
+          rowError = `${column.columnName} is required`
+          break
+        }
+
+        if (
+          column.dataType === 'Number' &&
+          String(value ?? '').trim() !== '' &&
+          typeof value !== 'number'
+        ) {
+          rowError = `${column.columnName} must be a number (received "${rawValue}")`
+          break
+        }
+
+        rowData[column.columnName] = value
+      }
+
+      if (rowError) {
+        overrides.push({ rowNumber, status: 'skipped', message: rowError })
+        return
+      }
+
+      const key = `${calibrationName.toLowerCase()}|${assetCode.toLowerCase()}|${template.id}`
+      if (!groups.has(key)) {
+        groups.set(key, {
+          calibrationName,
+          assetCode,
+          template,
+          effectiveDate: String(record.effectiveDate || '').trim(),
+          status: record.status || 'Active',
+          remarks: String(record.remarks || '').trim(),
+          rows: [],
+          rowNumbers: [],
+        })
+      }
+      const group = groups.get(key)
+      group.rows.push(rowData)
+      group.rowNumbers.push(rowNumber)
+
+      // First non-empty value for the header fields wins.
+      if (!group.effectiveDate) group.effectiveDate = String(record.effectiveDate || '').trim()
+      if (!group.remarks) group.remarks = String(record.remarks || '').trim()
+    })
+
+    for (const group of groups.values()) {
+      const existing = (calibrationTables || []).find(
+        (table) =>
+          String(table.calibrationName).toLowerCase() === group.calibrationName.toLowerCase() &&
+          String(table.assetCode).toLowerCase() === group.assetCode.toLowerCase()
+      )
+
+      const payload = {
+        calibrationName: group.calibrationName,
+        assetCode: group.assetCode,
+        templateId: group.template.id,
+        effectiveDate: group.effectiveDate || existing?.effectiveDate || '',
+        remarks: group.remarks,
+        status: group.status,
+        rows: group.rows,
+      }
+
+      try {
+        if (existing) {
+          if (!canEdit) {
+            overrides.push(
+              ...group.rowNumbers.map((rowNumber) => ({
+                rowNumber,
+                status: 'skipped',
+                message: `"${group.calibrationName}" already exists and you do not have Edit Asset Calibration`,
+              }))
+            )
+            continue
+          }
+          await updateAssetCalibrationTable(existing.id, payload)
+        } else {
+          if (!canCreate) {
+            overrides.push(
+              ...group.rowNumbers.map((rowNumber) => ({
+                rowNumber,
+                status: 'skipped',
+                message: 'You do not have Create Asset Calibration',
+              }))
+            )
+            continue
+          }
+          await createAssetCalibrationTable(payload)
+        }
+      } catch (error) {
+        const message = error?.message || 'Save failed'
+        overrides.push(
+          ...group.rowNumbers.map((rowNumber) => ({ rowNumber, status: 'failed', message }))
+        )
+      }
+    }
+
+    await reloadAssetCalibrationTables()
+    return overrides
+  }
+
+  const calibrationImportConfig = {
+    title: 'Bulk upload calibration data',
+    description:
+      'Upload an Excel (.xlsx) or CSV file. The column names must match the Calibration Template Master you configured. Rows are grouped by Calibration Name + Asset Code into one calibration table.',
+    templateFileName: 'asset-calibration-table',
+    fields: bulkTemplates.fields,
+    templates: bulkTemplates.templates,
+    activeTemplateId: bulkTemplates.activeTemplateId,
+    onSelectTemplate: bulkTemplates.select,
+    validateRow: (record) => {
+      const template = resolveTemplateForRow(record)
+      if (!template) {
+        return `Unknown calibration template "${record.templateName}". Create it in Calibration Template Master first.`
+      }
+      return null
+    },
+    onImportBatch: handleCalibrationImportBatch,
+    onComplete: async (summary) => {
+      await reloadAssetCalibrationTables()
+      if (summary.failed === 0 && summary.skipped === 0) {
+        setSuccessMsg(`${summary.success} calibration row(s) uploaded successfully.`)
+      } else {
+        setErrorMsg(
+          `Upload finished: ${summary.success} imported, ${summary.skipped} skipped, ${summary.failed} failed.`
+        )
+      }
+    },
+  }
+
   return (
     <div>
       <div className="page-title">
@@ -610,7 +889,7 @@ function AssetCalibrationTable({
         <div className="help-modal-overlay">
           <div className="help-modal">
             <div className="help-modal-header">
-              <h3>CSV Upload Help</h3>
+              <h3>Calibration Data Upload Help</h3>
 
               <button
                 type="button"
@@ -669,7 +948,7 @@ function AssetCalibrationTable({
               </div>
 
               <div className="help-section">
-                <h4>Example CSV</h4>
+                <h4>Example file</h4>
 
                 <pre>
 {`Ullage,Volume
@@ -677,13 +956,18 @@ function AssetCalibrationTable({
 2,2000
 3,3000`}
                 </pre>
+
+                <p>
+                  The same layout works as an Excel workbook (.xlsx) – put the
+                  column names in the first row of the first sheet.
+                </p>
               </div>
 
               <div className="help-section">
                 <h4>Validations Applied</h4>
 
                 <ul>
-                  <li>Only .csv files are allowed.</li>
+                  <li>Excel (.xlsx) and CSV (.csv) files are both accepted.</li>
                   <li>Asset and Calibration Template must be selected first.</li>
                   <li>All template columns must exist in the uploaded file.</li>
                   <li>Required columns cannot be blank.</li>
@@ -882,7 +1166,7 @@ function AssetCalibrationTable({
             <div className="full-width-field">
               <div className="section-title compact-section-title">
                 <div className="title-with-help">
-                  <h3>Upload CSV</h3>
+                  <h3>Upload Calibration Data</h3>
 
                   <button
                     type="button"
@@ -895,17 +1179,39 @@ function AssetCalibrationTable({
                 </div>
 
                 <p>
-                  Uploaded file headers must match the selected template columns.
-                  Click ? to view the required structure.
+                  Upload an Excel (.xlsx) or CSV file. Its headers must match the
+                  columns of the selected Calibration Template. Click ? to view the
+                  required structure.
                 </p>
+
+                <div className="upload-template-downloads">
+                  <button
+                    type="button"
+                    className="btn-ghost btn-sm"
+                    onClick={() => downloadCalibrationTemplate('xlsx')}
+                    disabled={loading}
+                  >
+                    <Icon name="fileSpreadsheet" size={14} />
+                    Download XLSX template
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost btn-sm"
+                    onClick={() => downloadCalibrationTemplate('csv')}
+                    disabled={loading}
+                  >
+                    <Icon name="fileText" size={14} />
+                    Download CSV template
+                  </button>
+                </div>
               </div>
             </div>
 
             <div>
-              <label>Upload Calibration File</label>
+              <label>Upload Calibration File (.xlsx or .csv)</label>
               <input
                 type="file"
-                accept=".csv"
+                accept=".xlsx,.xlsm,.csv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
                 onChange={handleFileUpload}
                 disabled={loading}
               />
@@ -1102,6 +1408,22 @@ function AssetCalibrationTable({
         </div>
 
         <div className="form-actions">
+          <ExportMenu
+            rows={formData.rows}
+            columns={sortedTemplateColumns.map((column) => ({
+              key: column.columnName,
+              label: column.columnName,
+              type: column.dataType === 'Number' ? 'number' : undefined,
+            }))}
+            fileName={`asset-calibration-${String(formData.calibrationName || 'rows').replace(/\s+/g, '-').toLowerCase()}`}
+            title={
+              formData.calibrationName
+                ? `Calibration rows – ${formData.calibrationName}`
+                : 'Calibration rows'
+            }
+            module="Asset Calibration Table"
+          />
+
           <button type="submit" disabled={loading}>
             {loading
               ? 'Please wait...'
@@ -1137,6 +1459,8 @@ function AssetCalibrationTable({
         columns={calibrationTablesFilters.columns}
         exportFileName="asset-calibration-table"
         exportTitle="Asset Calibration Table"
+        importConfig={calibrationImportConfig}
+        canImport={canWrite}
       />
 
       <table>

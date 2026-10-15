@@ -359,6 +359,203 @@ function OperationTemplateMaster({
     }
   }
 
+  /* -------------------------------------------------------- bulk upload */
+
+  const ENTRY_LAYOUT_TYPES = [
+    'Standard Form',
+    'Tank Gauging',
+    'Multi-Tank Before/After',
+    'Tanker Loading',
+    'Vessel Cycle',
+    'Shuttle Tracking',
+    'FSO Tracking',
+    'Stock Movement',
+    'Meter Reading',
+  ]
+  const CALCULATION_ENGINES = [
+    'None',
+    'Tank Quantity',
+    'Barge Before/After Quantity',
+    'Tanker Quantity',
+    'Vessel Cycle Quantity',
+    'Stock Movement Net/Variance',
+    'Meter Reading Quantity',
+  ]
+  const FIELD_DATA_TYPES = ['Text', 'Number', 'Date', 'DateTime', 'Boolean', 'JSON']
+  const INPUT_MODES = ['Manual', 'Calculated', 'Lookup', 'System']
+  const CALCULATION_ROLES = ['Input', 'Output', 'Correction', 'Comparison', 'Reference', 'Approval']
+  const FIELD_GROUPS = ['General', 'Sender', 'Receiver', 'Calculation', 'Comparison', 'Approval']
+  const TEMPLATE_STATUSES = ['Active', 'Inactive', 'Blocked']
+
+  const importConfig = {
+    title: 'Bulk upload operation templates',
+    description:
+      'Upload an Excel (.xlsx) or CSV file with ONE ROW PER TEMPLATE FIELD. Rows that share the same Template Name are grouped into a single operation template; the template columns only need a value on the first row of each group (they are carried down).',
+    templateFileName: 'operation-template-master',
+    fields: [
+      { key: 'templateName', label: 'Template Name', required: true, example: 'Tank Gauging', aliases: ['Template'] },
+      {
+        key: 'operationTypeCode',
+        label: 'Operation Type Code',
+        required: true,
+        example: 'TANK_GAUGING',
+        aliases: ['Operation Type'],
+      },
+      { key: 'entryLayoutType', label: 'Entry Layout Type', options: ENTRY_LAYOUT_TYPES, defaultValue: 'Standard Form', example: 'Tank Gauging' },
+      { key: 'calculationEngine', label: 'Calculation Engine', options: CALCULATION_ENGINES, defaultValue: 'None', example: 'Tank Quantity' },
+      { key: 'description', label: 'Description', example: '' },
+      { key: 'fieldName', label: 'Field Name', required: true, example: 'Opening Ullage', aliases: ['Field'] },
+      { key: 'fieldCode', label: 'Field Code', required: true, example: 'opening_ullage', aliases: ['Code'] },
+      { key: 'fieldGroup', label: 'Field Group', options: FIELD_GROUPS, defaultValue: 'General', example: 'General' },
+      { key: 'dataType', label: 'Data Type', required: true, options: FIELD_DATA_TYPES, example: 'Number' },
+      { key: 'unit', label: 'Unit', example: 'mm' },
+      { key: 'isRequired', label: 'Is Required', options: ['Yes', 'No'], defaultValue: 'Yes', example: 'Yes' },
+      { key: 'inputMode', label: 'Input Mode', options: INPUT_MODES, defaultValue: 'Manual', example: 'Manual' },
+      { key: 'calculationRole', label: 'Calculation Role', options: CALCULATION_ROLES, defaultValue: 'Input', example: 'Input' },
+      { key: 'sortOrder', label: 'Sort Order', example: '1' },
+      { key: 'status', label: 'Status', options: TEMPLATE_STATUSES, defaultValue: 'Active', example: 'Active' },
+    ],
+    validateRow: (record) => {
+      if (!activeOperationTypes.some((item) => String(item.operationTypeCode).toLowerCase() === String(record.operationTypeCode).trim().toLowerCase())) {
+        return `Unknown or inactive operation type code "${record.operationTypeCode}"`
+      }
+      if (!FIELD_DATA_TYPES.includes(String(record.dataType).trim())) {
+        return `Data Type must be one of ${FIELD_DATA_TYPES.join(', ')}`
+      }
+      if (record.entryLayoutType && !ENTRY_LAYOUT_TYPES.includes(String(record.entryLayoutType).trim())) {
+        return `Entry Layout Type must be one of ${ENTRY_LAYOUT_TYPES.join(', ')}`
+      }
+      if (record.calculationEngine && !CALCULATION_ENGINES.includes(String(record.calculationEngine).trim())) {
+        return `Calculation Engine must be one of ${CALCULATION_ENGINES.join(', ')}`
+      }
+      if (record.fieldGroup && !FIELD_GROUPS.includes(String(record.fieldGroup).trim())) {
+        return `Field Group must be one of ${FIELD_GROUPS.join(', ')}`
+      }
+      if (record.inputMode && !INPUT_MODES.includes(String(record.inputMode).trim())) {
+        return `Input Mode must be one of ${INPUT_MODES.join(', ')}`
+      }
+      if (record.calculationRole && !CALCULATION_ROLES.includes(String(record.calculationRole).trim())) {
+        return `Calculation Role must be one of ${CALCULATION_ROLES.join(', ')}`
+      }
+      if (record.isRequired && !['Yes', 'No'].includes(String(record.isRequired).trim())) {
+        return 'Is Required must be Yes or No'
+      }
+      if (record.sortOrder && !Number.isFinite(Number(record.sortOrder))) {
+        return 'Sort Order must be a number'
+      }
+      if (record.status && !TEMPLATE_STATUSES.includes(record.status)) {
+        return `Status must be one of ${TEMPLATE_STATUSES.join(', ')}`
+      }
+      return null
+    },
+    onImportBatch: async (items) => {
+      const overrides = []
+      const groups = new Map()
+
+      items.forEach(({ rowNumber, record }) => {
+        const templateName = String(record.templateName || '').trim()
+        const key = templateName.toLowerCase()
+        if (!groups.has(key)) {
+          groups.set(key, {
+            templateName,
+            operationTypeCode: String(record.operationTypeCode || '').trim(),
+            entryLayoutType: String(record.entryLayoutType || '').trim() || 'Standard Form',
+            calculationEngine: String(record.calculationEngine || '').trim() || 'None',
+            description: String(record.description || '').trim(),
+            status: record.status || 'Active',
+            fields: [],
+            rowNumbers: [],
+          })
+        }
+        const group = groups.get(key)
+
+        // Template level values are carried down from the first row that has one.
+        if (!group.operationTypeCode) group.operationTypeCode = String(record.operationTypeCode || '').trim()
+        if (!group.description) group.description = String(record.description || '').trim()
+
+        const fieldCode = String(record.fieldCode || '').trim()
+        if (group.fields.some((item) => String(item.fieldCode).toLowerCase() === fieldCode.toLowerCase())) {
+          overrides.push({
+            rowNumber,
+            status: 'skipped',
+            message: `Duplicate field code "${fieldCode}" in template "${templateName}"`,
+          })
+          return
+        }
+
+        group.fields.push({
+          fieldName: String(record.fieldName || '').trim(),
+          fieldCode,
+          fieldGroup: String(record.fieldGroup || '').trim() || 'General',
+          dataType: String(record.dataType || '').trim(),
+          unit: String(record.unit || '').trim(),
+          isRequired: String(record.isRequired || 'Yes').trim(),
+          inputMode: String(record.inputMode || 'Manual').trim(),
+          calculationRole: String(record.calculationRole || 'Input').trim(),
+          sortOrder:
+            record.sortOrder === '' || record.sortOrder === undefined
+              ? group.fields.length + 1
+              : Number(record.sortOrder),
+          status: 'Active',
+        })
+        group.rowNumbers.push(rowNumber)
+      })
+
+      for (const group of groups.values()) {
+        const payload = {
+          templateName: group.templateName,
+          operationTypeCode: group.operationTypeCode,
+          entryLayoutType: group.entryLayoutType,
+          calculationEngine: group.calculationEngine,
+          description: group.description,
+          status: group.status,
+          fields: group.fields,
+        }
+        const existing = operationTemplates.find(
+          (item) => String(item.templateName).toLowerCase() === group.templateName.toLowerCase()
+        )
+        try {
+          if (existing) {
+            if (!canEdit) {
+              overrides.push(
+                ...group.rowNumbers.map((rowNumber) => ({
+                  rowNumber,
+                  status: 'skipped',
+                  message: `"${group.templateName}" already exists and you do not have Edit Operation Template`,
+                }))
+              )
+              continue
+            }
+            await updateOperationTemplate(existing.id, payload)
+          } else {
+            if (!canCreate) {
+              overrides.push(
+                ...group.rowNumbers.map((rowNumber) => ({
+                  rowNumber,
+                  status: 'skipped',
+                  message: 'You do not have Create Operation Template',
+                }))
+              )
+              continue
+            }
+            await createOperationTemplate(payload)
+          }
+        } catch (error) {
+          const message = error?.message || 'Save failed'
+          overrides.push(
+            ...group.rowNumbers.map((rowNumber) => ({ rowNumber, status: 'failed', message }))
+          )
+        }
+      }
+
+      await reloadOperationTemplates()
+      return overrides
+    },
+    onComplete: async () => {
+      await reloadOperationTemplates()
+    },
+  }
+
   const handleCancelEdit = () => {
     setTemplate(emptyTemplate)
     setField(emptyField)
@@ -1221,6 +1418,9 @@ function OperationTemplateMaster({
         columns={operationTemplatesFilters.columns}
         exportFileName="operation-template-master"
         exportTitle="Operation Template Master"
+        module="Operation Template Master"
+        importConfig={importConfig}
+        canImport={canCreate || canEdit}
       />
 
       <table>

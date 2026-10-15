@@ -210,7 +210,7 @@ function ExportPermits({ loggedInUser }) {
   }
 
   const importConfig = {
-    title: 'Import export permits',
+    title: 'Bulk upload export permits',
     description: 'One row per permit and block. Quarter is Q1–Q4 and Year is four digits.',
     fields: [
       { key: 'permit_number', label: 'Permit Number', required: true, example: 'PERMIT-001' },

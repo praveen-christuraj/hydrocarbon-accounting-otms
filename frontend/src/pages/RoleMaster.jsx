@@ -166,7 +166,7 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
 
 
   const importConfig = {
-    title: 'Import role master rows',
+    title: 'Bulk upload roles',
     description: 'Create records from an Excel or CSV file. Existing codes are skipped.',
     fields: [
     { key: 'roleName', label: 'Role Name', required: true, example: 'Terminal Supervisor' },

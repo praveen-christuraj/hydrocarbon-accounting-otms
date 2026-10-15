@@ -3,9 +3,11 @@ import DataFilterBar from './DataFilterBar'
 import ExportMenu from './ExportMenu'
 import ImportDialog from './ImportDialog'
 import Icon from './Icon'
+import { useBulkTemplates } from '../../hooks/useBulkTemplates'
 
 /**
- * One-line integration for list pages: filter bar + export + (optional) import.
+ * One-line integration for list pages: filter bar + bulk export (xlsx / csv /
+ * pdf) + bulk upload (xlsx / csv) with layered templates.
  *
  *   const filters = useDataFilters(rows, columns, { module: 'Location Master' })
  *   <DataTableToolbar
@@ -17,6 +19,11 @@ import Icon from './Icon'
  *     canImport={canManage}
  *     extraActions={<button type="button">…</button>}       // optional
  *   />
+ *
+ * `importConfig` may also carry a module whose templates come from a real
+ * template master instead of the built-in column set – pass
+ * `{ templates, activeTemplateId, onSelectTemplate, onSaveTemplate,
+ *    onDeleteTemplate }` and they will drive the upload dialog directly.
  */
 function DataTableToolbar({
   filters,
@@ -35,6 +42,23 @@ function DataTableToolbar({
   const [importOpen, setImportOpen] = useState(false)
   const exportColumns = (columns || []).filter((column) => column.export !== false)
 
+  const importFields = importConfig?.fields || []
+  const externalTemplates = Array.isArray(importConfig?.templates)
+    ? {
+        templates: importConfig.templates,
+        activeTemplateId: importConfig.activeTemplateId,
+        onSelectTemplate: importConfig.onSelectTemplate,
+        onSaveTemplate: importConfig.onSaveTemplate,
+        onDeleteTemplate: importConfig.onDeleteTemplate,
+      }
+    : null
+
+  const bulkTemplates = useBulkTemplates(
+    importConfig?.templateKey || module || exportTitle,
+    importFields,
+    externalTemplates
+  )
+
   const actions = (
     <>
       {extraActions}
@@ -45,7 +69,7 @@ function DataTableToolbar({
           onClick={() => setImportOpen(true)}
         >
           <Icon name="upload" size={15} />
-          Import
+          Bulk Upload
         </button>
       )}
       {canExport && (
@@ -74,14 +98,26 @@ function DataTableToolbar({
         <ImportDialog
           open={importOpen}
           onClose={() => setImportOpen(false)}
-          title={importConfig.title || `Import ${exportTitle || 'data'}`}
+          title={importConfig.title || `Bulk upload ${exportTitle || 'data'}`}
           module={module || exportTitle}
-          fields={importConfig.fields}
+          fields={bulkTemplates.fields}
           onImportRow={importConfig.onImportRow}
+          onImportBatch={importConfig.onImportBatch}
           onComplete={importConfig.onComplete}
           validateRow={importConfig.validateRow}
           templateFileName={importConfig.templateFileName || exportFileName}
           description={importConfig.description}
+          maxRows={importConfig.maxRows}
+          templates={bulkTemplates.templates}
+          activeTemplateId={bulkTemplates.activeTemplateId}
+          onSelectTemplate={bulkTemplates.select}
+          onSaveTemplate={bulkTemplates.saveAs}
+          onDeleteTemplate={bulkTemplates.remove}
+          columns={bulkTemplates.columns}
+          onToggleColumn={bulkTemplates.toggleColumn}
+          onMoveColumn={bulkTemplates.moveColumn}
+          onResetTemplate={bulkTemplates.reset}
+          canConfigure={bulkTemplates.canConfigure}
         />
       )}
     </>

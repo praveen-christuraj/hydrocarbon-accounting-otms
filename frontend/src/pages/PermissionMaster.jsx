@@ -234,7 +234,7 @@ function PermissionMaster({ permissions, reloadPermissions, loggedInUser }) {
   }
 
   const importConfig = {
-    title: 'Import custom permissions',
+    title: 'Bulk upload custom permissions',
     description:
       'Create custom permissions from an Excel or CSV file. Names that already exist (including standard permissions) are skipped.',
     fields: [

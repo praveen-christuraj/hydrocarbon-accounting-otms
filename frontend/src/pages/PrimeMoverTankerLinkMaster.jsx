@@ -10,6 +10,7 @@ import PaginationControls, { paginateRows, usePageSize } from '../components/com
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
+import { usePermissions } from '../hooks/usePermissions'
 
 const today = new Date().toISOString().slice(0, 10)
 
@@ -69,6 +70,11 @@ function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
 
   const linksFilters = useDataFilters(links, useAutoColumns(links), { module: 'Prime Mover - Tanker Link' })
   const visibleLinks = paginateRows(linksFilters.filteredRows, page, pageSize)
+
+  const { hasPermission } = usePermissions(loggedInUser)
+  const canCreate = hasPermission('Create Prime Mover Tanker Link')
+  const canEdit = hasPermission('Edit Prime Mover Tanker Link')
+  const canDelete = hasPermission('Delete Prime Mover Tanker Link')
 
   const activeAssets = useMemo(() => {
     return assets.filter((asset) => asset.status === 'Active')
@@ -165,6 +171,13 @@ function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
       return
     }
 
+    if (!(editId === null ? canCreate : canEdit)) {
+      setErrorMsg(
+        `You do not have permission to ${editId === null ? 'create' : 'edit'} prime mover - tanker links.`
+      )
+      return
+    }
+
     try {
       setLoading(true)
 
@@ -204,9 +217,87 @@ function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
     setEditId(null)
   }
 
+  /* -------------------------------------------------------- bulk upload */
+
+  const LINK_STATUSES = ['Active', 'Inactive', 'Closed']
+
+  const importConfig = {
+    title: 'Bulk upload prime mover - tanker links',
+    description:
+      'Upload an Excel (.xlsx) or CSV file. Asset codes must already exist. Links are matched on Prime Mover + Tanker + Linked From and updated when they already exist.',
+    templateFileName: 'prime-mover-tanker-link',
+    fields: [
+      {
+        key: 'primeMoverAssetCode',
+        label: 'Prime Mover Asset Code',
+        required: true,
+        example: 'PM-001',
+        aliases: ['Prime Mover', 'Prime Mover Code'],
+      },
+      {
+        key: 'tankerAssetCode',
+        label: 'Tanker Trailer Asset Code',
+        required: true,
+        example: 'TK-TRL-001',
+        aliases: ['Tanker', 'Trailer', 'Tanker Code'],
+      },
+      { key: 'linkedFrom', label: 'Linked From', required: true, example: today, hint: 'YYYY-MM-DD' },
+      { key: 'linkedTo', label: 'Linked To', example: '', hint: 'YYYY-MM-DD, leave blank while active' },
+      { key: 'remarks', label: 'Remarks', example: '' },
+      { key: 'status', label: 'Status', options: LINK_STATUSES, defaultValue: 'Active', example: 'Active' },
+    ],
+    validateRow: (record) => {
+      if (!primeMoverAssets.some((asset) => asset.assetCode === String(record.primeMoverAssetCode).trim())) {
+        return 'Prime Mover code is not a known prime mover asset'
+      }
+      if (!tankerTrailerAssets.some((asset) => asset.assetCode === String(record.tankerAssetCode).trim())) {
+        return 'Tanker code is not a known tanker / trailer asset'
+      }
+      if (String(record.primeMoverAssetCode).trim() === String(record.tankerAssetCode).trim()) {
+        return 'Prime Mover and Tanker Trailer cannot be the same asset'
+      }
+      if (record.linkedTo && String(record.linkedTo) < String(record.linkedFrom)) {
+        return 'Linked To cannot be earlier than Linked From'
+      }
+      if (record.status && !LINK_STATUSES.includes(record.status)) {
+        return `Status must be one of ${LINK_STATUSES.join(', ')}`
+      }
+      return null
+    },
+    onImportRow: async (record) => {
+      const payload = {
+        ...emptyLink,
+        ...record,
+        linkedFrom: String(record.linkedFrom || '').trim(),
+        linkedTo: String(record.linkedTo || '').trim(),
+        status: record.status || 'Active',
+      }
+      const existing = links.find(
+        (item) =>
+          String(item.primeMoverAssetCode) === payload.primeMoverAssetCode &&
+          String(item.tankerAssetCode) === payload.tankerAssetCode &&
+          String(item.linkedFrom) === payload.linkedFrom
+      )
+      if (existing) {
+        await updatePrimeMoverTankerLink(existing.id, payload)
+      } else {
+        await createPrimeMoverTankerLink(payload)
+      }
+    },
+    onComplete: async () => {
+      await loadLinks()
+    },
+  }
+
   const handleDelete = async () => {
     setSuccessMsg('')
     setErrorMsg('')
+
+    if (!canDelete) {
+      setErrorMsg('You do not have permission to delete prime mover - tanker links.')
+      setConfirmDeleteItem(null)
+      return
+    }
 
     try {
       setLoading(true)
@@ -547,6 +638,9 @@ function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
         columns={linksFilters.columns}
         exportFileName="prime-mover-tanker-link"
         exportTitle="Prime Mover - Tanker Link"
+        module="Prime Mover - Tanker Link"
+        importConfig={importConfig}
+        canImport={canCreate}
       />
 
       <table>

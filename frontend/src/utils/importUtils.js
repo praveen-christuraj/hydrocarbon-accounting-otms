@@ -127,6 +127,35 @@ const matrixToRows = (matrix) => {
   return { headers, rows }
 }
 
+/**
+ * Read a file into a raw cell matrix (no header handling).
+ * Used by uploads whose layout is positional rather than named – for example
+ * the Table 11 factor table, whose first two columns are API @ 60°F and LT
+ * Factor and whose header row is optional.
+ */
+export const parseImportMatrix = async (file) => {
+  if (!file) throw new Error('Please choose a file to import.')
+  const name = String(file.name || '').toLowerCase()
+
+  if (name.endsWith('.csv') || name.endsWith('.txt')) {
+    const text = await file.text()
+    return { matrix: parseCsvText(text), sheetName: file.name, format: 'csv' }
+  }
+
+  if (name.endsWith('.xlsx') || name.endsWith('.xlsm')) {
+    const { matrix, sheetName } = await parseXlsxFile(file)
+    return { matrix, sheetName, format: 'xlsx' }
+  }
+
+  if (name.endsWith('.xls')) {
+    throw new Error(
+      'Legacy .xls files are not supported. Save the workbook as .xlsx or .csv and try again.'
+    )
+  }
+
+  throw new Error('Unsupported file type. Choose an .xlsx or .csv file.')
+}
+
 export const parseImportFile = async (file) => {
   if (!file) throw new Error('Please choose a file to import.')
   const name = String(file.name || '').toLowerCase()

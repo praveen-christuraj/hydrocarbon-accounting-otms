@@ -5,11 +5,15 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "mock-api": "node scripts/mock-api.mjs",
+    "dev:mock": "MOCK_API=1 VITE_API_BASE_URL=/api vite",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
     "smoke": "node scripts/smoke-render.mjs",
-    "lint:src": "eslint src"
+    "lint:src": "eslint src",
+    "test:bulk": "node scripts/test-bulk-io.mjs",
+    "test:bulk:ui": "node scripts/test-bulk-ui.mjs"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",

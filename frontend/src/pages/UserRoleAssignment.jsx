@@ -115,6 +115,54 @@ function UserRoleAssignment({
     clearMessages()
   }
 
+  /* bulk upload */
+  const importConfig = {
+    title: 'Bulk upload user role assignments',
+    description:
+      'Upload an Excel (.xlsx) or CSV file with one row per user. The Roles column holds a comma-separated list of role names and replaces the roles that user already has.',
+    templateFileName: 'user-role-assignment-upload-template',
+    fields: [
+      { key: 'username', label: 'Username', required: true, example: 'jdoe', aliases: ['User', 'Login', 'User Name'] },
+      { key: 'roles', label: 'Roles', required: true, example: 'Operations, Supervisor', aliases: ['Role', 'Role Names', 'Assigned Role'] },
+    ],
+    validateRow: (row) => {
+      const username = String(row.username ?? '').trim()
+      if (username === '') return 'Username is required'
+      const user = activeUsers.find(
+        (item) => String(item.username ?? '').trim().toLowerCase() === username.toLowerCase()
+      )
+      if (!user) return `Unknown or inactive user "${username}"`
+      const names = String(row.roles ?? '')
+        .split(/[,;]/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+      if (names.length === 0) return 'At least one role is required'
+      const unknown = names.filter(
+        (name) => !activeRoles.some((role) => String(role.roleName ?? '').trim().toLowerCase() === name.toLowerCase())
+      )
+      if (unknown.length > 0) return `Unknown or inactive role(s): ${unknown.join(', ')}`
+      return null
+    },
+    onImportRow: async (row) => {
+      if (!canEdit) {
+        throw new Error('You do not have permission to edit user role assignments.')
+      }
+      const username = String(row.username ?? '').trim().toLowerCase()
+      const user = activeUsers.find((item) => String(item.username ?? '').trim().toLowerCase() === username)
+      const names = String(row.roles ?? '')
+        .split(/[,;]/)
+        .map((item) => item.trim().toLowerCase())
+        .filter(Boolean)
+      const roleIds = activeRoles
+        .filter((role) => names.includes(String(role.roleName ?? '').trim().toLowerCase()))
+        .map((role) => Number(role.id))
+      await replaceUserRoles(user.id, roleIds)
+    },
+    onComplete: async () => {
+      await reloadUserRoleAssignments()
+    },
+  }
+
   return (
     <div>
       <div className="page-title">
@@ -218,6 +266,9 @@ function UserRoleAssignment({
         columns={filters.columns}
         exportFileName="user-role-assignment"
         exportTitle="User Role Assignment"
+        module="user-role-assignment"
+        importConfig={importConfig}
+        canImport={canEdit}
       />
 
       <table>

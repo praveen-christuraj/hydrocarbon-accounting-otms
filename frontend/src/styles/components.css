@@ -2205,6 +2205,143 @@ tbody tr.matrix-category-row:hover {
   max-height: 320px;
 }
 
+/* ------------------------------------------- layered template controls */
+
+.import-template-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface-2);
+}
+
+.import-template-select {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 240px;
+  flex: 1 1 240px;
+}
+
+.import-template-select label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.import-template-select select {
+  height: 34px;
+}
+
+.import-template-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.import-template-downloads,
+.upload-template-downloads {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.upload-template-downloads {
+  margin-top: 8px;
+}
+
+.import-template-save {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface-2);
+}
+
+.import-template-save-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.import-template-save-row input {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.import-column-config {
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface-2);
+}
+
+.import-column-config-head {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.import-column-config ul {
+  display: grid;
+  gap: 2px;
+  max-height: 260px;
+  overflow: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.import-column-config li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--divider);
+}
+
+.import-column-config li:last-child {
+  border-bottom: 0;
+}
+
+.import-column-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.import-column-toggle em {
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--danger-text);
+}
+
+.import-column-move {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.import-column-move button {
+  min-width: 28px;
+  padding: 0 6px;
+}
+
 /* ----------------------------------------------------------- home tiles */
 .home-page-header {
   display: flex;

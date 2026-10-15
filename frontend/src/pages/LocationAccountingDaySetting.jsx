@@ -241,6 +241,68 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
     }
   }
 
+  /* -------------------------------------------------------- bulk upload */
+
+  const SETTING_STATUSES = ['Active', 'Inactive', 'Blocked']
+
+  const importConfig = {
+    title: 'Bulk upload accounting day settings',
+    description:
+      'Upload an Excel (.xlsx) or CSV file. Settings are matched on Location + Effective From and updated when they already exist. Times use the 24-hour HH:MM format.',
+    templateFileName: 'location-accounting-day-settings',
+    fields: [
+      { key: 'locationCode', label: 'Location Code', required: true, example: 'UTP', aliases: ['Location'] },
+      { key: 'dayStartTime', label: 'Day Start Time', required: true, example: '06:01', hint: 'HH:MM' },
+      { key: 'dayEndTime', label: 'Day End Time', required: true, example: '06:00', hint: 'HH:MM' },
+      { key: 'effectiveFrom', label: 'Effective From', example: '2026-01-01', hint: 'YYYY-MM-DD' },
+      { key: 'effectiveTo', label: 'Effective To', example: '', hint: 'YYYY-MM-DD, blank = open ended' },
+      { key: 'timezoneName', label: 'Timezone Name', example: 'Africa/Lagos' },
+      { key: 'description', label: 'Description', example: '' },
+      { key: 'status', label: 'Status', options: SETTING_STATUSES, defaultValue: 'Active', example: 'Active' },
+    ],
+    validateRow: (record) => {
+      if (!activeLocations.some((item) => String(item.locationCode).toLowerCase() === String(record.locationCode).trim().toLowerCase())) {
+        return `Unknown or inactive location code "${record.locationCode}"`
+      }
+      const timePattern = /^([01]\d|2[0-3]):[0-5]\d$/
+      if (!timePattern.test(String(record.dayStartTime).trim())) {
+        return 'Day Start Time must use the HH:MM format'
+      }
+      if (!timePattern.test(String(record.dayEndTime).trim())) {
+        return 'Day End Time must use the HH:MM format'
+      }
+      if (record.effectiveTo && String(record.effectiveTo) < String(record.effectiveFrom)) {
+        return 'Effective To cannot be earlier than Effective From'
+      }
+      if (record.status && !SETTING_STATUSES.includes(record.status)) {
+        return `Status must be one of ${SETTING_STATUSES.join(', ')}`
+      }
+      return null
+    },
+    onImportRow: async (record) => {
+      const payload = {
+        ...emptySetting,
+        ...record,
+        effectiveTo: String(record.effectiveTo || '').trim(),
+        timezoneName: String(record.timezoneName || '').trim() || 'Africa/Lagos',
+        status: record.status || 'Active',
+      }
+      const existing = settings.find(
+        (item) =>
+          String(item.locationCode).toLowerCase() === String(payload.locationCode).trim().toLowerCase() &&
+          String(item.effectiveFrom || '') === String(payload.effectiveFrom || '')
+      )
+      if (existing) {
+        await updateLocationAccountingDaySetting(existing.id, payload)
+      } else {
+        await createLocationAccountingDaySetting(payload)
+      }
+    },
+    onComplete: async () => {
+      await reloadSettings('')
+    },
+  }
+
   const handleCancelEdit = () => {
     setSetting({
       ...emptySetting,
@@ -496,6 +558,8 @@ function LocationAccountingDaySetting({ locations, loggedInUser }) {
         exportFileName="location-accounting-day-settings"
         exportTitle="Location Accounting Day Settings"
         module="Location Accounting Day Settings"
+        importConfig={importConfig}
+        canImport={canCreate}
       />
 
       <table>

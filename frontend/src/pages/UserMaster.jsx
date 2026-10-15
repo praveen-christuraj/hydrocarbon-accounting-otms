@@ -282,7 +282,7 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
   }
 
   const importConfig = {
-    title: 'Import users',
+    title: 'Bulk upload users',
     description: 'Create users from an Excel or CSV file. Existing usernames are skipped.',
     fields: importFields,
     validateRow: validateImportRow,
