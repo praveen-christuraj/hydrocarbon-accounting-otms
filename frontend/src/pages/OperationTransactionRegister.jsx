@@ -83,6 +83,7 @@ function OperationTransactionRegister({
       setTotalRows(Number(data?.total_rows || 0))
       setHasMore(Boolean(data?.has_more))
       setStatusCounts(Array.isArray(data?.status_counts) ? data.status_counts : [])
+      setErrorMsg('')
     } catch (error) {
       setErrorMsg(error.message)
     } finally {

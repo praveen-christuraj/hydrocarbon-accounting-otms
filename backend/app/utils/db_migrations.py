@@ -1254,3 +1254,56 @@ def ensure_tank_stock_ledger_multi_entry_constraint():
         connection.execute(text(
             "ALTER TABLE tank_stock_ledger ADD CONSTRAINT unique_tank_stock_ledger_transaction_tank UNIQUE (transaction_id, tank_asset_code);"
         ))
+
+
+def ensure_operation_transaction_indexes():
+    """Indexes for the register / summary filter columns.
+
+    ``Base.metadata.create_all`` only creates indexes on fresh databases,
+    so existing deployments need them added explicitly. The transaction
+    register and the tank/out-turn summaries filter and sort by these
+    columns on every page load; without indexes PostgreSQL sequentially
+    scans ``operation_transactions`` (and the payload join scans
+    ``operation_transaction_values``), which is what made those pages take
+    longer and longer as history grew.
+    """
+    inspector = inspect(engine)
+    table_names = inspector.get_table_names()
+
+    statements = []
+
+    if "operation_transactions" in table_names:
+        statements += [
+            "CREATE INDEX IF NOT EXISTS ix_operation_transactions_operation_date "
+            "ON operation_transactions (operation_date);",
+            "CREATE INDEX IF NOT EXISTS ix_operation_transactions_status "
+            "ON operation_transactions (status);",
+            "CREATE INDEX IF NOT EXISTS ix_operation_transactions_origin_location_code "
+            "ON operation_transactions (origin_location_code);",
+            "CREATE INDEX IF NOT EXISTS ix_operation_transactions_operation_type_code "
+            "ON operation_transactions (operation_type_code);",
+            "CREATE INDEX IF NOT EXISTS ix_operation_transactions_primary_asset_code "
+            "ON operation_transactions (primary_asset_code);",
+            # Summary reports: approved gauging tickets per location/tank in date order.
+            "CREATE INDEX IF NOT EXISTS ix_operation_transactions_status_location_asset_date "
+            "ON operation_transactions (status, origin_location_code, primary_asset_code, operation_date, id);",
+        ]
+
+    if "operation_transaction_values" in table_names:
+        statements += [
+            "CREATE INDEX IF NOT EXISTS ix_operation_transaction_values_transaction_field "
+            "ON operation_transaction_values (transaction_id, field_code);",
+        ]
+
+    if "tank_stock_ledger" in table_names:
+        statements += [
+            "CREATE INDEX IF NOT EXISTS ix_tank_stock_ledger_location_asset_date "
+            "ON tank_stock_ledger (location_code, tank_asset_code, accounting_date, id);",
+        ]
+
+    if not statements:
+        return
+
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))

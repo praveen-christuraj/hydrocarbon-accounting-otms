@@ -2,12 +2,13 @@ from datetime import datetime, date
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import and_, func
 import io
 import csv
 
 from app.database import get_db
 from app.models import (
+    Location,
     OperationTransaction,
     OperationTransactionValue,
     OperationTemplate,
@@ -31,6 +32,13 @@ from app.utils.helpers import (
 )
 from app.services.transaction_helpers import parse_date_filter
 from app.config import APPROVED_TRANSACTION_STATUS
+from app.utils.pagination import (
+    DEFAULT_REPORT_PAGE_SIZE,
+    MAX_REPORT_PAGE_SIZE,
+    clamp_limit,
+    clamp_page,
+    default_window_start,
+)
 
 router = APIRouter(prefix="/tank-operation-summary", tags=["Tank Operation Summary"])
 
@@ -55,6 +63,36 @@ def get_tank_gauging_payload_for_transaction(
         return None
 
     return payload_row.field_value
+
+
+def get_tank_gauging_payload_map(
+    db: Session,
+    transaction_ids,
+) -> dict[int, dict]:
+    """Batch version of ``get_tank_gauging_payload_for_transaction``.
+
+    Loads every ``tank_gauging_payload`` for the given transactions in one
+    query (the summary builders used to run one query per transaction).
+    """
+    ids = [tx_id for tx_id in dict.fromkeys(transaction_ids or []) if tx_id is not None]
+
+    if not ids:
+        return {}
+
+    payload_map: dict[int, dict] = {}
+
+    for row in (
+        db.query(OperationTransactionValue)
+        .filter(
+            OperationTransactionValue.transaction_id.in_(ids),
+            OperationTransactionValue.field_code == "tank_gauging_payload",
+        )
+        .all()
+    ):
+        if isinstance(row.field_value, dict):
+            payload_map[row.transaction_id] = row.field_value
+
+    return payload_map
 
 
 def extract_tank_gauging_columns(payload: dict):
@@ -106,10 +144,12 @@ def get_all_possible_columns(
 
     transactions = query.limit(100).all()
 
+    payload_map = get_tank_gauging_payload_map(db, [tx.id for tx in transactions])
+
     all_columns = set()
 
     for tx in transactions:
-        payload = get_tank_gauging_payload_for_transaction(db, tx.id)
+        payload = payload_map.get(tx.id)
         if payload:
             columns = extract_tank_gauging_columns(payload)
             all_columns.update(columns.keys())
@@ -135,14 +175,23 @@ def get_all_possible_columns(
     return base_columns + sorted_extra
 
 
+_UNSET = object()
+
+
 def build_tank_operation_summary_row(
     transaction: OperationTransaction,
     payload: dict,
     db: Session,
     all_columns: list[str],
+    location=_UNSET,
+    asset=_UNSET,
 ):
-    location = get_location_by_code(transaction.origin_location_code, db)
-    asset = get_asset_by_code(transaction.primary_asset_code, db)
+    # ``location`` / ``asset`` may be prefetched (bulk) by the list builder;
+    # an explicit None means "prefetched and not found" (no per-row query).
+    if location is _UNSET:
+        location = get_location_by_code(transaction.origin_location_code, db)
+    if asset is _UNSET:
+        asset = get_asset_by_code(transaction.primary_asset_code, db)
 
     extracted = extract_tank_gauging_columns(payload)
 
@@ -177,7 +226,19 @@ def get_filtered_tank_operation_summary_rows(
     date_from: str | None = None,
     date_to: str | None = None,
     current_user: User | None = None,
+    page: int | None = None,
+    page_size: int | None = None,
+    unbounded: bool = False,
 ):
+    """Summary rows + column list + pagination/window metadata.
+
+    Bounded loading: when the caller does not supply ``date_from`` only the
+    most recent ``DEFAULT_REPORT_WINDOW_DAYS`` (relative to the newest
+    matching ticket) are loaded; older data is fetched by passing an
+    explicit date range. Rows are paginated in SQL (default page size
+    ``DEFAULT_REPORT_PAGE_SIZE``) -- pass ``unbounded=True`` only from the
+    CSV export, which is an explicit request for the full filtered set.
+    """
     query = (
         db.query(OperationTransaction)
         .join(OperationTemplate, OperationTransaction.operation_template_id == OperationTemplate.id)
@@ -218,16 +279,56 @@ def get_filtered_tank_operation_summary_rows(
     date_from_value = parse_date_filter(date_from, "Date From")
     date_to_value = parse_date_filter(date_to, "Date To")
 
+    default_window_applied = False
+    if date_from_value is None:
+        latest_date = query.with_entities(
+            func.max(OperationTransaction.operation_date)
+        ).scalar()
+        window_start = default_window_start(latest_date)
+        if window_start is not None:
+            date_from_value = window_start
+            default_window_applied = True
+
     if date_from_value:
         query = query.filter(OperationTransaction.operation_date >= date_from_value)
 
     if date_to_value:
         query = query.filter(OperationTransaction.operation_date <= date_to_value)
 
-    transactions = query.order_by(
+    # Only transactions that actually carry a gauging payload produce rows,
+    # so paginate over exactly those (keeps total_rows honest).
+    payload_query = query.join(
+        OperationTransactionValue,
+        and_(
+            OperationTransactionValue.transaction_id == OperationTransaction.id,
+            OperationTransactionValue.field_code == "tank_gauging_payload",
+            OperationTransactionValue.field_value.isnot(None),
+        ),
+    )
+
+    total_rows = payload_query.count()
+
+    ordered_query = payload_query.order_by(
         OperationTransaction.operation_date.asc(),
         OperationTransaction.id.asc(),
-    ).all()
+    )
+
+    safe_page = clamp_page(page) if page is not None else 1
+    safe_page_size = clamp_limit(
+        page_size, DEFAULT_REPORT_PAGE_SIZE, MAX_REPORT_PAGE_SIZE
+    )
+
+    if unbounded:
+        transactions = ordered_query.all()
+        safe_page = 1
+        safe_page_size = total_rows
+    else:
+        transactions = (
+            ordered_query
+            .offset((safe_page - 1) * safe_page_size)
+            .limit(safe_page_size)
+            .all()
+        )
 
     all_columns = get_all_possible_columns(
         db,
@@ -235,14 +336,44 @@ def get_filtered_tank_operation_summary_rows(
         current_user=current_user,
     )
 
+    payload_map = get_tank_gauging_payload_map(db, [tx.id for tx in transactions])
+
+    def _key(code):
+        return str(code or "").strip().lower()
+
+    locations_by_code = {
+        _key(row.location_code): row for row in db.query(Location).all()
+    }
+    assets_by_code = {
+        _key(row.asset_code): row for row in db.query(Asset).all()
+    }
+
     results = []
     for tx in transactions:
-        payload = get_tank_gauging_payload_for_transaction(db, tx.id)
+        payload = payload_map.get(tx.id)
         if payload:
-            row = build_tank_operation_summary_row(tx, payload, db, all_columns)
-            results.append(row)
+            results.append(
+                build_tank_operation_summary_row(
+                    tx,
+                    payload,
+                    db,
+                    all_columns,
+                    location=locations_by_code.get(_key(tx.origin_location_code)),
+                    asset=assets_by_code.get(_key(tx.primary_asset_code)),
+                )
+            )
 
-    return results, all_columns
+    meta = {
+        "total_rows": total_rows,
+        "page": safe_page,
+        "page_size": safe_page_size,
+        "has_more": (safe_page * safe_page_size) < total_rows,
+        "default_window_applied": default_window_applied,
+        "date_from": date_from_value.isoformat() if date_from_value else None,
+        "date_to": date_to_value.isoformat() if date_to_value else None,
+    }
+
+    return results, all_columns, meta
 
 
 @router.get("/columns")
@@ -268,6 +399,8 @@ def get_tank_operation_summary(
     product_name: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
+    page: int = 1,
+    page_size: int | None = None,
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
@@ -277,7 +410,7 @@ def get_tank_operation_summary(
         db,
     )
 
-    rows, columns = get_filtered_tank_operation_summary_rows(
+    rows, columns, meta = get_filtered_tank_operation_summary_rows(
         db=db,
         location_code=location_code,
         tank_asset_code=tank_asset_code,
@@ -285,12 +418,14 @@ def get_tank_operation_summary(
         date_from=date_from,
         date_to=date_to,
         current_user=current_user,
+        page=page,
+        page_size=page_size,
     )
 
     return {
         "columns": columns,
         "rows": rows,
-        "total_rows": len(rows),
+        **meta,
     }
 
 
@@ -310,7 +445,7 @@ def export_tank_operation_summary_csv(
         db,
     )
 
-    rows, columns = get_filtered_tank_operation_summary_rows(
+    rows, columns, _meta = get_filtered_tank_operation_summary_rows(
         db=db,
         location_code=location_code,
         tank_asset_code=tank_asset_code,
@@ -318,6 +453,7 @@ def export_tank_operation_summary_csv(
         date_from=date_from,
         date_to=date_to,
         current_user=current_user,
+        unbounded=True,
     )
 
     output = io.StringIO()

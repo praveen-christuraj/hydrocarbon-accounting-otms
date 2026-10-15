@@ -1344,7 +1344,11 @@ function App() {
 
   const reloadOperationTransactions = async () => {
     try {
-      const transactionsFromApi = await getOperationTransactions()
+      // Bounded refresh only (recent tickets). This used to download the
+      // entire transaction history on every login -- the main reason pages
+      // were slow and "Unable to load operation transactions" appeared.
+      // The Transaction Register loads its own server-paged data.
+      const transactionsFromApi = await getOperationTransactions({ limit: 200 })
       setOperationTransactions(transactionsFromApi)
     } catch (error) {
       console.error(error)
@@ -1440,7 +1444,12 @@ useEffect(() => {
 
   if (hasPermission('View Operation Transaction')) {
     reloadOperationEntries()
-    reloadOperationTransactions()
+    // NOTE: operation transactions are deliberately NOT preloaded here.
+    // No page consumes the full list -- the Register fetches server-paged
+    // rows itself -- and the old eager download of every ticket ever saved
+    // blocked first paint and produced "Unable to load operation
+    // transactions" toasts whenever it timed out. Pages that mutate
+    // transactions still call reloadOperationTransactions() explicitly.
   }
 }, [loggedInUser])
 

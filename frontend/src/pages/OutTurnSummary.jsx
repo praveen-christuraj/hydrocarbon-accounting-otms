@@ -41,6 +41,7 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
 
   const [filters, setFilters] = useState(emptyFilters)
   const [rows, setRows] = useState([])
+  const [reportMeta, setReportMeta] = useState(null)
   const [configuredColumns, setConfiguredColumns] = useState([])
   const [availableColumns, setAvailableColumns] = useState([])
   const [loading, setLoading] = useState(false)
@@ -152,6 +153,7 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
       setRows(reportData.rows || [])
       setConfiguredColumns(reportData.columns || [])
       setAvailableColumns(reportData.availableColumns || [])
+      setReportMeta(reportData)
       setCurrentPage(1)
     } catch (error) {
       setErrorMsg(error.message)
@@ -467,7 +469,11 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
         </div>
 
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <span className="record-count">{rows.length} Summary Rows</span>
+          <span className="record-count">
+            {reportMeta && reportMeta.totalRows !== rows.length
+              ? `${rows.length} of ${reportMeta.totalRows} Summary Rows`
+              : `${rows.length} Summary Rows`}
+          </span>
           {canManageColumns && (
             <button type="button" onClick={openConfigModal} disabled={loading}>
               Configure Columns
@@ -571,6 +577,25 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
           </button>
         </div>
       </form>
+
+      {reportMeta?.defaultWindowApplied && (
+        <div className="info-box">
+          Showing the most recent 90 days of data
+          {reportMeta.appliedDateFrom
+            ? ` (${reportMeta.appliedDateFrom} to ${reportMeta.appliedDateTo || 'latest'})`
+            : ''}
+          . To load older records, set Operation Date From / To above and
+          click Apply.
+        </div>
+      )}
+
+      {reportMeta?.hasMore && (
+        <div className="info-box">
+          Only the first {rows.length} of {reportMeta.totalRows} matching
+          rows were loaded. Narrow the location, tank or date range to see
+          the rest.
+        </div>
+      )}
 
       <div className="section-title">
         <h3>Out-Turn Summary</h3>

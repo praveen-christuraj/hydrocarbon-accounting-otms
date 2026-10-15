@@ -144,8 +144,14 @@ const convertOperationEntryToApi = (entry) => {
   }
 }
 
-export const getOperationEntries = async () => {
-  const data = await apiGet('/operation-entries')
+export const getOperationEntries = async (filters = {}) => {
+  const queryParams = new URLSearchParams()
+  if (filters.limit) queryParams.append('limit', String(filters.limit))
+
+  const queryString = queryParams.toString()
+  const path = queryString ? `/operation-entries?${queryString}` : '/operation-entries'
+
+  const data = await apiGet(path)
   return data.map(convertOperationEntryFromApi)
 }
 

@@ -40,7 +40,14 @@ def build_out_turn_report_response_from_values(
         ledger_id  (defaults to transaction_id if not provided)
         remarks
     """
-    location = get_location_by_code(params["location_code"], db)
+    # List endpoints may prefetch the location name in bulk (one query for
+    # the whole page instead of one query per row).
+    if params.get("location_name") is not None:
+        location = None
+        prefetched_location_name = params["location_name"]
+    else:
+        location = get_location_by_code(params["location_code"], db)
+        prefetched_location_name = None
 
     previous_gsv = safe_float(params.get("previous_gsv", 0))
     previous_nsv = safe_float(params.get("previous_nsv", 0))
@@ -189,7 +196,9 @@ def build_out_turn_report_response_from_values(
         "accounting_date": params.get("accounting_date"),
         "operation_datetime": params.get("operation_datetime"),
         "location_code": params.get("location_code") or "",
-        "location_name": location.location_name if location else "",
+        "location_name": prefetched_location_name
+        if prefetched_location_name is not None
+        else (location.location_name if location else ""),
         "tank_asset_code": params.get("tank_asset_code") or "",
         "tank_asset_name": params.get("tank_asset_name") or "",
         "product_name": params.get("product_name") or "",

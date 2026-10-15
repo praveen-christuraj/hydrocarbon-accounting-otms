@@ -97,6 +97,9 @@ export const getOperationTransactions = async (filters = {}) => {
   if (filters.assetCode) queryParams.append('asset_code', filters.assetCode)
   if (filters.status) queryParams.append('status', filters.status)
   if (filters.searchText) queryParams.append('search', filters.searchText)
+  // Bounded list: the backend caps this endpoint (default 200, max 1000);
+  // the Register page uses getOperationTransactionsPaged for full history.
+  if (filters.limit) queryParams.append('limit', String(filters.limit))
 
   const queryString = queryParams.toString()
   const path = queryString ? `/operation-transactions?${queryString}` : '/operation-transactions'

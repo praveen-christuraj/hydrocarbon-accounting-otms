@@ -23,6 +23,14 @@ const buildQueryString = (filters = {}) => {
     params.append('date_to', filters.dateTo)
   }
 
+  if (filters.page) {
+    params.append('page', String(filters.page))
+  }
+
+  if (filters.pageSize) {
+    params.append('page_size', String(filters.pageSize))
+  }
+
   return params.toString()
 }
 
@@ -39,6 +47,14 @@ export const getOutTurnSummary = async (filters = {}) => {
     columns: data.columns || [],
     availableColumns: data.available_columns || [],
     totalRows: data.total_rows || 0,
+    // Window/pagination metadata: without a date filter the backend only
+    // loads the most recent 90 days; date_from/dateTo say what was applied.
+    page: data.page || 1,
+    pageSize: data.page_size || 0,
+    hasMore: Boolean(data.has_more),
+    defaultWindowApplied: Boolean(data.default_window_applied),
+    appliedDateFrom: data.date_from || '',
+    appliedDateTo: data.date_to || '',
   }
 }
 
