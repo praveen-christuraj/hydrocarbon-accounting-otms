@@ -5,6 +5,8 @@ import PaginationControls, { paginateRows, usePageSize } from '../components/com
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
+import AlertMessage from '../components/common/AlertMessage'
+import useActionFeedback from '../hooks/useActionFeedback'
 
 function MaterialBalanceReport({ locations, assets }) {
   const emptyFilters = {
@@ -24,8 +26,10 @@ function MaterialBalanceReport({ locations, assets }) {
   const [loading, setLoading] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
   const pageSize = usePageSize()
-  const [successMsg, setSuccessMsg] = useState('')
-  const [errorMsg, setErrorMsg] = useState('')
+  // Action feedback: little pop-up (toast) + inline message near the
+  // action area (owner rule 8) - never at the bottom of the page.
+  const feedback = useActionFeedback()
+  const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
 
   const activeLocations = useMemo(() => {
     return (locations || []).filter((location) => location.status === 'Active')
@@ -133,12 +137,12 @@ function MaterialBalanceReport({ locations, assets }) {
 
   const loadReport = async (activeFilters = filters) => {
     if (!activeFilters.locationCode) {
-      setErrorMsg('Location is required')
+      notifyError('Location is required')
       return
     }
 
     if (!activeFilters.dateFrom || !activeFilters.dateTo) {
-      setErrorMsg('Date From and Date To are required')
+      notifyError('Date From and Date To are required')
       return
     }
 
@@ -152,7 +156,7 @@ function MaterialBalanceReport({ locations, assets }) {
       setRows(data.rows)
       setCurrentPage(1)
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
@@ -170,7 +174,7 @@ function MaterialBalanceReport({ locations, assets }) {
       setTemplate(null)
       setColumns([])
       setRows([])
-      setErrorMsg('')
+      clearError()
       setCurrentPage(1)
       return
     }
@@ -179,7 +183,7 @@ function MaterialBalanceReport({ locations, assets }) {
       ...filters,
       [name]: value,
     })
-    setErrorMsg('')
+    clearError()
     setCurrentPage(1)
   }
 
@@ -308,7 +312,7 @@ function MaterialBalanceReport({ locations, assets }) {
 
   const handleExportCsv = () => {
     if (rows.length === 0) {
-      setErrorMsg('No Material Balance rows available to export')
+      notifyError('No Material Balance rows available to export')
       return
     }
 
@@ -321,7 +325,7 @@ function MaterialBalanceReport({ locations, assets }) {
 
   const handlePrintReport = () => {
     if (rows.length === 0) {
-      setErrorMsg('No Material Balance rows available to print')
+      notifyError('No Material Balance rows available to print')
       return
     }
 
@@ -341,6 +345,10 @@ function MaterialBalanceReport({ locations, assets }) {
 
         <span className="record-count">{rows.length} Rows</span>
       </div>
+      {/* Action feedback: right next to the page actions + a little pop-up
+          toast - never at the bottom of the page (owner rule 8). */}
+      <AlertMessage tone="success" message={feedback.successMsg} onDismiss={clearSuccess} />
+      <AlertMessage tone="error" message={feedback.errorMsg} onDismiss={clearError} />
 
       <form onSubmit={handleApplyFilters} className="filter-panel">
         <div>
@@ -685,16 +693,6 @@ function MaterialBalanceReport({ locations, assets }) {
         </div>
       )}
 
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
     </div>
   )
 }

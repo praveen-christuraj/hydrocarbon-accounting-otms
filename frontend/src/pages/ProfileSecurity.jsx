@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react'
 import Icon from '../components/common/Icon'
+import AlertMessage from '../components/common/AlertMessage'
+import useActionFeedback from '../hooks/useActionFeedback'
 import {
   adminResetUserPassword,
   changeOwnPassword,
@@ -41,8 +43,17 @@ function ProfileSecurity({ loggedInUser, users = [] }) {
     remarks: '',
   })
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const [success, setSuccess] = useState('')
+  // Action feedback: little pop-up (toast) + inline message near the action
+  // area (owner rule 8). Aliased to the page's existing variable names.
+  const feedback = useActionFeedback()
+  const {
+    successMsg: success,
+    errorMsg: error,
+    notifySuccess: setSuccess,
+    notifyError: setError,
+    clearSuccess,
+    clearError,
+  } = feedback
   const [confirmAction, setConfirmAction] = useState(null)
   const [showPassword, setShowPassword] = useState({})
   const [fieldErrors, setFieldErrors] = useState({})
@@ -64,7 +75,7 @@ function ProfileSecurity({ loggedInUser, users = [] }) {
   const security = loggedInUser?.security || {}
   const pwStrength = useMemo(() => calcPasswordStrength(passwordForm.newPassword), [passwordForm.newPassword])
 
-  const clearMessages = () => { setError(''); setSuccess('') }
+  const clearMessages = () => { clearError(); clearSuccess() }
   const clearConfirm = () => setConfirmAction(null)
 
   const submitPasswordChange = async (e) => {
@@ -197,19 +208,8 @@ function ProfileSecurity({ loggedInUser, users = [] }) {
         </div>
       </div>
 
-      {success && (
-        <div className="success-box">
-          {success}
-          <button className="error-close" onClick={() => setSuccess('')} type="button">&times;</button>
-        </div>
-      )}
-
-      {error && (
-        <div className="error-box">
-          {error}
-          <button className="error-close" onClick={() => setError('')} type="button">&times;</button>
-        </div>
-      )}
+      <AlertMessage tone="success" message={success} onDismiss={clearSuccess} />
+      <AlertMessage tone="error" message={error} onDismiss={clearError} />
 
       <div className="info-box">
         User: {loggedInUser?.fullName} ({loggedInUser?.username}) | 2FA:{' '}
@@ -364,12 +364,7 @@ function ProfileSecurity({ loggedInUser, users = [] }) {
           <div className="section-title">
             <h3>Admin Password Reset</h3>
           </div>
-          {error && (
-            <div className="error-box">
-              {error}
-              <button className="error-close" onClick={() => setError('')} type="button">&times;</button>
-            </div>
-          )}
+          <AlertMessage tone="error" message={error} onDismiss={clearError} />
           <form onSubmit={submitAdminReset}>
             <div>
               <label>User</label>

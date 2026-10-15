@@ -13,6 +13,8 @@ import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
 import { usePermissions } from '../hooks/usePermissions'
+import AlertMessage from '../components/common/AlertMessage'
+import useActionFeedback from '../hooks/useActionFeedback'
 
 function OperationTemplateMaster({
   operationTypes,
@@ -58,8 +60,10 @@ function OperationTemplateMaster({
   const [layoutLoading, setLayoutLoading] = useState(false)
   const [layouts, setLayouts] = useState([])
   const [selectedLayoutId, setSelectedLayoutId] = useState('')
-  const [successMsg, setSuccessMsg] = useState('')
-  const [errorMsg, setErrorMsg] = useState('')
+  // Action feedback: little pop-up (toast) + inline message near the
+  // action area (owner rule 8) - never at the bottom of the page.
+  const feedback = useActionFeedback()
+  const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
   const [confirmRemoveField, setConfirmRemoveField] = useState(null)
   const [confirmDeleteTemplate, setConfirmDeleteTemplate] = useState(null)
   const [draggingSectionId, setDraggingSectionId] = useState('')
@@ -167,23 +171,23 @@ function OperationTemplateMaster({
 
   const handleAddField = () => {
     if (!canWriteTemplate) {
-      setErrorMsg(
+      notifyError(
         `You do not have permission to ${editId === null ? 'create' : 'edit'} operation templates`
       )
       return
     }
     if (field.fieldName.trim() === '') {
-      setErrorMsg('Field Name is required')
+      notifyError('Field Name is required')
       return
     }
 
     if (field.fieldCode.trim() === '') {
-      setErrorMsg('Field Code is required')
+      notifyError('Field Code is required')
       return
     }
 
     if (field.dataType.trim() === '') {
-      setErrorMsg('Data Type is required')
+      notifyError('Data Type is required')
       return
     }
 
@@ -192,7 +196,7 @@ function OperationTemplateMaster({
     })
 
     if (duplicateFieldCode) {
-      setErrorMsg('Field Code already exists in this template.')
+      notifyError('Field Code already exists in this template.')
       return
     }
 
@@ -201,7 +205,7 @@ function OperationTemplateMaster({
     })
 
     if (duplicateFieldName) {
-      setErrorMsg('Field Name already exists in this template.')
+      notifyError('Field Name already exists in this template.')
       return
     }
 
@@ -227,7 +231,7 @@ function OperationTemplateMaster({
 
   const confirmRemoveFieldAction = () => {
     if (!canWriteTemplate) {
-      setErrorMsg(
+      notifyError(
         `You do not have permission to ${editId === null ? 'create' : 'edit'} operation templates`
       )
       setConfirmRemoveField(null)
@@ -245,24 +249,24 @@ function OperationTemplateMaster({
     e.preventDefault()
 
     if (!canWriteTemplate) {
-      setErrorMsg(
+      notifyError(
         `You do not have permission to ${editId === null ? 'create' : 'edit'} operation templates`
       )
       return
     }
 
     if (template.templateName.trim() === '') {
-      setErrorMsg('Template Name is required')
+      notifyError('Template Name is required')
       return
     }
 
     if (template.operationTypeCode.trim() === '') {
-      setErrorMsg('Operation Type is required')
+      notifyError('Operation Type is required')
       return
     }
 
     if (template.fields.length === 0) {
-      setErrorMsg('Please add at least one operation template field')
+      notifyError('Please add at least one operation template field')
       return
     }
 
@@ -274,7 +278,7 @@ function OperationTemplateMaster({
     })
 
     if (duplicateTemplate) {
-      setErrorMsg('Operation Template Name already exists.')
+      notifyError('Operation Template Name already exists.')
       return
     }
 
@@ -283,10 +287,10 @@ function OperationTemplateMaster({
 
       if (editId === null) {
         await createOperationTemplate(template)
-        setSuccessMsg('Operation Template saved successfully')
+        notifySuccess('Operation Template saved successfully')
       } else {
         await updateOperationTemplate(editId, template)
-        setSuccessMsg('Operation Template updated successfully')
+        notifySuccess('Operation Template updated successfully')
       }
 
       await reloadOperationTemplates()
@@ -294,7 +298,7 @@ function OperationTemplateMaster({
       setField(emptyField)
       setEditId(null)
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
@@ -302,7 +306,7 @@ function OperationTemplateMaster({
 
   const handleEdit = (templateToEdit) => {
     if (!canEdit) {
-      setErrorMsg('You do not have permission to edit operation templates')
+      notifyError('You do not have permission to edit operation templates')
       return
     }
 
@@ -322,7 +326,7 @@ function OperationTemplateMaster({
 
   const handleDelete = async (templateId) => {
     if (!canDelete) {
-      setErrorMsg('You do not have permission to delete operation templates')
+      notifyError('You do not have permission to delete operation templates')
       return
     }
     setConfirmDeleteTemplate(templateId)
@@ -332,7 +336,7 @@ function OperationTemplateMaster({
     const templateId = confirmDeleteTemplate
     setConfirmDeleteTemplate(null)
     if (!canDelete) {
-      setErrorMsg('You do not have permission to delete operation templates')
+      notifyError('You do not have permission to delete operation templates')
       return
     }
     if (!templateId) return
@@ -351,9 +355,9 @@ function OperationTemplateMaster({
         setSelectedLayoutId('')
       }
 
-      setSuccessMsg('Operation Template deleted successfully')
+      notifySuccess('Operation Template deleted successfully')
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
@@ -615,7 +619,7 @@ function OperationTemplateMaster({
       const data = await getOperationTemplateLayouts(templateId)
       setLayouts(data)
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLayoutLoading(false)
     }
@@ -629,7 +633,7 @@ function OperationTemplateMaster({
 
   const handleInitializeLayoutDraft = () => {
     if (fieldOptions.length === 0) {
-      setErrorMsg('Please add fields before configuring layout.')
+      notifyError('Please add fields before configuring layout.')
       return
     }
     setSelectedLayoutId('')
@@ -679,7 +683,7 @@ function OperationTemplateMaster({
         items,
       })
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLayoutLoading(false)
     }
@@ -719,7 +723,7 @@ function OperationTemplateMaster({
   const handleRemoveSection = (localId) => {
     const inUse = layoutDraft.items.some((item) => item.sectionRef === localId)
     if (inUse) {
-      setErrorMsg('Cannot remove a section that still contains fields.')
+      notifyError('Cannot remove a section that still contains fields.')
       return
     }
     setLayoutDraft((prev) => ({
@@ -787,23 +791,23 @@ function OperationTemplateMaster({
 
   const handleLayoutSave = async () => {
     if (!canEdit) {
-      setErrorMsg('You do not have permission to edit operation templates')
+      notifyError('You do not have permission to edit operation templates')
       return
     }
     if (!editId) {
-      setErrorMsg('Save the template first, then configure layout.')
+      notifyError('Save the template first, then configure layout.')
       return
     }
     if (String(layoutDraft.layoutName || '').trim() === '') {
-      setErrorMsg('Layout Name is required.')
+      notifyError('Layout Name is required.')
       return
     }
     if (layoutDraft.sections.length === 0) {
-      setErrorMsg('At least one section is required.')
+      notifyError('At least one section is required.')
       return
     }
     if (layoutDraft.items.length === 0) {
-      setErrorMsg('At least one layout item is required.')
+      notifyError('At least one layout item is required.')
       return
     }
 
@@ -832,11 +836,11 @@ function OperationTemplateMaster({
     }))
 
     if (itemPayload.some((item) => Number.isNaN(item.fieldId))) {
-      setErrorMsg('All layout items must have a valid field.')
+      notifyError('All layout items must have a valid field.')
       return
     }
     if (itemPayload.some((item) => !item.sectionId)) {
-      setErrorMsg('Each layout item must be mapped to a valid section.')
+      notifyError('Each layout item must be mapped to a valid section.')
       return
     }
 
@@ -844,24 +848,24 @@ function OperationTemplateMaster({
     const occupied = new Set()
     for (const item of itemPayload) {
       if (seenFields.has(item.fieldId)) {
-        setErrorMsg('Each field can be placed only once in a layout.')
+        notifyError('Each field can be placed only once in a layout.')
         return
       }
       seenFields.add(item.fieldId)
 
       if (item.colStart <= 0 || item.colSpan <= 0 || item.rowNo <= 0) {
-        setErrorMsg('Row, column and span values must be greater than 0.')
+        notifyError('Row, column and span values must be greater than 0.')
         return
       }
       if (item.colStart + item.colSpan - 1 > 3) {
-        setErrorMsg('Layout grid supports maximum 3 columns.')
+        notifyError('Layout grid supports maximum 3 columns.')
         return
       }
 
       for (let col = item.colStart; col < item.colStart + item.colSpan; col += 1) {
         const key = `${item.sectionId}|${item.rowNo}|${col}`
         if (occupied.has(key)) {
-          setErrorMsg('Overlapping cells detected in the same section row.')
+          notifyError('Overlapping cells detected in the same section row.')
           return
         }
         occupied.add(key)
@@ -878,7 +882,7 @@ function OperationTemplateMaster({
           sections: sectionPayload,
           items: itemPayload,
         })
-        setSuccessMsg('Layout updated successfully')
+        notifySuccess('Layout updated successfully')
       } else {
         await createOperationTemplateLayout(editId, {
           layoutName: layoutDraft.layoutName,
@@ -888,12 +892,12 @@ function OperationTemplateMaster({
           sections: sectionPayload,
           items: itemPayload,
         })
-        setSuccessMsg('Layout created successfully')
+        notifySuccess('Layout created successfully')
       }
 
       await loadTemplateLayouts(editId)
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLayoutLoading(false)
     }
@@ -960,6 +964,10 @@ function OperationTemplateMaster({
           {operationTemplates.length} Templates
         </span>
       </div>
+      {/* Action feedback: right next to the page actions + a little pop-up
+          toast - never at the bottom of the page (owner rule 8). */}
+      <AlertMessage tone="success" message={feedback.successMsg} onDismiss={clearSuccess} />
+      <AlertMessage tone="error" message={feedback.errorMsg} onDismiss={clearError} />
 
       {showHelp && (
         <div className="help-modal-overlay">
@@ -1995,16 +2003,6 @@ function OperationTemplateMaster({
         </div>
       )}
 
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
     </div>
   )
 }

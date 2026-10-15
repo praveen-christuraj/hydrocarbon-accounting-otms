@@ -12,6 +12,8 @@ import { checkOperationWorkflowPolicy } from '../api/operationWorkflowPolicyApi'
 
 import { getCompanyReportProfiles } from '../api/companyReportProfileApi'
 import TankerPayloadPreview from '../components/operationLayouts/TankerPayloadPreview'
+import AlertMessage from '../components/common/AlertMessage'
+import useActionFeedback from '../hooks/useActionFeedback'
 
 const SELECTED_REPORT_PROFILE_KEY = 'tank_gauging_selected_report_profile'
 
@@ -641,6 +643,8 @@ function ReviewConfirmationModal({
   statusLoading,
   pendingReviewConfirmed,
   setPendingReviewConfirmed,
+  error,
+  onDismissError,
 }) {
   if (!transaction || !nextStatus) {
     return null
@@ -844,6 +848,11 @@ function ReviewConfirmationModal({
             </div>
           </div>
         ) : null}
+
+        {/* Server-side validation / permission failures for this action are
+            shown right here, next to the Confirm button - never behind the
+            modal at the bottom of the page. */}
+        <AlertMessage tone="error" message={error} onDismiss={onDismissError} />
 
         <div className="form-actions">
           <button type="button" onClick={onConfirm} disabled={statusLoading || !canConfirm}>
@@ -1601,8 +1610,10 @@ function OperationTransactionDetail({ loggedInUser }) {
   )
   const [reportSettings, setReportSettings] = useState(defaultReportSettings)
   const [reportProfilesLoading, setReportProfilesLoading] = useState(false)
-  const [successMsg, setSuccessMsg] = useState('')
-  const [errorMsg, setErrorMsg] = useState('')
+  // Status-action feedback: little pop-up (toast) + inline message next to
+  // the status action buttons and inside the review modal (owner rule 8).
+  const feedback = useActionFeedback()
+  const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
   const reloadReportProfiles = async (preferredProfileName = '') => {
     try {
       setReportProfilesLoading(true)
@@ -1633,7 +1644,7 @@ function OperationTransactionDetail({ loggedInUser }) {
 
       return activeProfiles
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
       setReportProfiles([])
       setSelectedReportProfileName(defaultReportSettings.profileName)
       setReportSettings(defaultReportSettings)
@@ -1675,6 +1686,10 @@ function OperationTransactionDetail({ loggedInUser }) {
   const canViewTransaction = hasPermission('View Operation Transaction')
   const canSubmitTransactionBase = hasPermission('Submit Operation Transaction')
   const canApproveTransactionBase = hasPermission('Approve Operation Transaction')
+  // The backend enforces the Review permission on every Submit / Approve
+  // confirmation (review_confirmed). Gate the buttons the same way so users
+  // get a clear explanation instead of a hidden 403 after clicking Confirm.
+  const canReviewTransaction = hasPermission('Review Operation Transaction')
   const canRejectTransactionBase = hasPermission('Reject Operation Transaction')
   const canCancelTransactionBase = hasPermission('Cancel Operation Transaction')
   const canRequestApprovedCorrection =
@@ -1682,9 +1697,13 @@ function OperationTransactionDetail({ loggedInUser }) {
     canApproveTransactionBase
 
   const canSubmitTransaction =
-    canSubmitTransactionBase && (workflowActionAllow.SUBMIT ?? true)
+    canSubmitTransactionBase &&
+    canReviewTransaction &&
+    (workflowActionAllow.SUBMIT ?? true)
   const canApproveTransaction =
-    canApproveTransactionBase && (workflowActionAllow.APPROVE ?? true)
+    canApproveTransactionBase &&
+    canReviewTransaction &&
+    (workflowActionAllow.APPROVE ?? true)
   const canRejectTransaction =
     canRejectTransactionBase && (workflowActionAllow.REJECT ?? true)
   const canCancelTransaction =
@@ -1720,7 +1739,7 @@ function OperationTransactionDetail({ loggedInUser }) {
       const data = await getOperationTransactionDetail(transactionId)
       setTransaction(data)
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
@@ -1731,7 +1750,7 @@ function OperationTransactionDetail({ loggedInUser }) {
       const data = await getOperationTransactionStatusHistory(transactionId)
       setStatusHistory(data)
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     }
   }
 
@@ -1795,7 +1814,7 @@ function OperationTransactionDetail({ loggedInUser }) {
 
   const openReviewModal = (nextStatus) => {
     if (!loggedInUser) {
-      setErrorMsg('Please login before changing status.')
+      notifyError('Please login before changing status.')
       return
     }
 
@@ -1813,37 +1832,47 @@ function OperationTransactionDetail({ loggedInUser }) {
       (nextStatus === 'Submitted' || nextStatus === 'Draft') &&
       !((nextStatus === 'Draft' ? canRecallTransaction : canSubmitTransaction))
     ) {
-      if (canSubmitTransactionBase) {
-        setErrorMsg(policyBlockedMessage(nextStatus === 'Draft' ? 'RECALL' : 'SUBMIT', nextStatus === 'Draft' ? 'recall' : 'submit'))
+      if (!canSubmitTransactionBase) {
+        notifyError('You do not have permission to submit or recall operation transactions.')
+      } else if (!canReviewTransaction) {
+        notifyError(
+          'Submit confirmation requires the Review Operation Transaction permission. ' +
+          'Ask an administrator to assign it to your role before submitting.'
+        )
       } else {
-        setErrorMsg('You do not have permission to submit or recall operation transactions.')
+        notifyError(policyBlockedMessage(nextStatus === 'Draft' ? 'RECALL' : 'SUBMIT', nextStatus === 'Draft' ? 'recall' : 'submit'))
       }
       return
     }
 
     if (nextStatus === 'Approved' && !canApproveTransaction) {
-      if (canApproveTransactionBase) {
-        setErrorMsg(policyBlockedMessage('APPROVE', 'approve'))
+      if (!canApproveTransactionBase) {
+        notifyError('You do not have permission to approve operation transactions.')
+      } else if (!canReviewTransaction) {
+        notifyError(
+          'Approve confirmation requires the Review Operation Transaction permission. ' +
+          'Ask an administrator to assign it to your role before approving.'
+        )
       } else {
-        setErrorMsg('You do not have permission to approve operation transactions.')
+        notifyError(policyBlockedMessage('APPROVE', 'approve'))
       }
       return
     }
 
     if (nextStatus === 'Rejected' && !canRejectTransaction) {
       if (canRejectTransactionBase) {
-        setErrorMsg(policyBlockedMessage('REJECT', 'reject'))
+        notifyError(policyBlockedMessage('REJECT', 'reject'))
       } else {
-        setErrorMsg('You do not have permission to reject operation transactions.')
+        notifyError('You do not have permission to reject operation transactions.')
       }
       return
     }
 
     if (nextStatus === 'Cancelled' && !canCancelTransaction) {
       if (canCancelTransactionBase) {
-        setErrorMsg(policyBlockedMessage('CANCEL', 'cancel'))
+        notifyError(policyBlockedMessage('CANCEL', 'cancel'))
       } else {
-        setErrorMsg('You do not have permission to cancel operation transactions.')
+        notifyError('You do not have permission to cancel operation transactions.')
       }
       return
     }
@@ -1880,7 +1909,7 @@ function OperationTransactionDetail({ loggedInUser }) {
 
   const handleExportTankGaugingCsv = () => {
     if (!transaction || !tankPayload) {
-      setErrorMsg('No Tank Gauging data available to export.')
+      notifyError('No Tank Gauging data available to export.')
       return
     }
 
@@ -2039,7 +2068,7 @@ function OperationTransactionDetail({ loggedInUser }) {
       })
 
     if (pendingStatus === 'Approved' && isTankerTicket && !hasTankerPayload) {
-      setErrorMsg(
+      notifyError(
         'Cannot approve this tanker ticket because tanker_payload is missing. Please return it to Draft and complete the tanker entry.'
       )
       return
@@ -2051,7 +2080,7 @@ function OperationTransactionDetail({ loggedInUser }) {
       pendingStatus === 'Draft'
 
     if (reasonRequired && pendingRemarks.trim() === '') {
-      setErrorMsg('Reason / remarks is required for this action.')
+      notifyError('Reason / remarks is required for this action.')
       return
     }
 
@@ -2068,10 +2097,10 @@ function OperationTransactionDetail({ loggedInUser }) {
       await loadTransactionDetail()
       await loadStatusHistory()
 
-      setSuccessMsg(`Transaction status changed to ${pendingStatus}`)
+      notifySuccess(`Transaction status changed to ${pendingStatus}`)
       closeReviewModal()
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setStatusLoading(false)
     }
@@ -2101,27 +2130,27 @@ function OperationTransactionDetail({ loggedInUser }) {
       ...current,
       [fieldName]: value,
     }))
-    if (errorMsg) setErrorMsg('')
+    if (feedback.errorMsg) clearError()
   }
 
   const submitCorrectionRequest = async () => {
     if (!transaction || transaction.status !== 'Approved') {
-      setErrorMsg('Only approved tickets can be marked for correction.')
+      notifyError('Only approved tickets can be marked for correction.')
       return
     }
 
     if (!canRequestApprovedCorrection) {
-      setErrorMsg('You need approval access to request approved transaction correction.')
+      notifyError('You need approval access to request approved transaction correction.')
       return
     }
 
     if (approvedCorrectionExpired) {
-      setErrorMsg('Approved transaction correction window expired after 24 hours.')
+      notifyError('Approved transaction correction window expired after 24 hours.')
       return
     }
 
     if (correctionForm.reason.trim() === '') {
-      setErrorMsg('Reason / justification is required.')
+      notifyError('Reason / justification is required.')
       return
     }
 
@@ -2135,9 +2164,9 @@ function OperationTransactionDetail({ loggedInUser }) {
         suggestedAction: 'Reopen for Edit',
         reason: '',
       })
-      setSuccessMsg('Approved transaction correction request sent to admin.')
+      notifySuccess('Approved transaction correction request sent to admin.')
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setCorrectionLoading(false)
     }
@@ -2150,6 +2179,9 @@ function OperationTransactionDetail({ loggedInUser }) {
   const actionBlockedMessage = (actionCode, hasBasePermission, permissionLabel) => {
     if (!hasBasePermission) {
       return `No ${permissionLabel} permission.`
+    }
+    if ((actionCode === 'SUBMIT' || actionCode === 'APPROVE') && !canReviewTransaction) {
+      return `${permissionLabel} confirmation requires the Review Operation Transaction permission.`
     }
     const info = workflowActionReason[actionCode] || {}
     const policyLabel = info.policyName ? ` '${info.policyName}'` : ''
@@ -2418,6 +2450,8 @@ function OperationTransactionDetail({ loggedInUser }) {
         remarks={pendingRemarks}
         onRemarksChange={setPendingRemarks}
         onClose={closeReviewModal}
+        error={feedback.errorMsg}
+        onDismissError={clearError}
         onConfirm={confirmStatusChange}
         statusLoading={statusLoading}
         pendingReviewConfirmed={pendingReviewConfirmed}
@@ -2643,6 +2677,19 @@ function OperationTransactionDetail({ loggedInUser }) {
       </div>
 
       <div className="info-box">
+        {/* Action feedback lives right next to the status action buttons
+            (owner rule 8) - never at the bottom of the page. */}
+        <AlertMessage
+          tone="success"
+          message={feedback.successMsg}
+          onDismiss={clearSuccess}
+        />
+        <AlertMessage
+          tone="error"
+          message={feedback.errorMsg}
+          onDismiss={clearError}
+        />
+
         <div className="form-actions" style={{ marginTop: 0 }}>
           {renderStatusActions()}
           {statusLoading && <span className="warning-text">Updating...</span>}
@@ -2975,17 +3022,6 @@ function OperationTransactionDetail({ loggedInUser }) {
         Status actions are protected by JWT, role permissions, backend workflow
         validation, and visible data review before confirmation.
       </div>
-
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
     </div>
   )
 }

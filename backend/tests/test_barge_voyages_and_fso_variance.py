@@ -219,6 +219,50 @@ def test_barge_voyages_respects_location_scope(client, db):
     assert "CNV-OPEN-1" in convoys
 
 
+def test_barge_voyages_visible_to_destination_side_user(client, db):
+    """
+    A barge voyage is cross-location: the receiving terminal must see the
+    voyage in Open Voyages as soon as the (approved) load ticket names it as
+    the destination - not only after its own unload ticket is approved.
+    """
+    headers, user = _make_user(
+        db, client, "barge_receiver", ["View Barge Tracking"], all_locations=False
+    )
+    _seed_barge_voyages(db)
+    # Receiver is scoped to LEKKI - the destination of CNV-OPEN-1 / CNV-OPEN-2.
+    db.add(UserLocation(user_id=user.id, location_code="LEKKI"))
+    db.commit()
+
+    data = client.get("/barge-trip/voyages?tab=OPEN", headers=headers).json()
+    convoys = {row["convoy_number"] for row in data["rows"]}
+    assert "CNV-OPEN-1" in convoys
+    assert "CNV-OPEN-2" in convoys
+    # AGGE -> LEKKI closed voyage stays visible on the CLOSED tab for the
+    # receiver as well.
+    closed = client.get("/barge-trip/voyages?tab=CLOSED", headers=headers).json()
+    closed_convoys = {row["convoy_number"] for row in closed["rows"]}
+    assert "CNV-CLOSED-1" in closed_convoys
+
+
+def test_convoy_tracker_readable_by_destination_side_user(client, db):
+    """
+    The receiver must be able to open the convoy tracker for an approved
+    load ticket whose origin is the other terminal.
+    """
+    headers, user = _make_user(
+        db, client, "barge_tracker_receiver", ["View Barge Tracking"], all_locations=False
+    )
+    _seed_barge_voyages(db)
+    db.add(UserLocation(user_id=user.id, location_code="LEKKI"))
+    db.commit()
+
+    resp = client.get(
+        "/barge-trip/convoy-tracker?convoy_number=CNV-OPEN-1", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["total_tickets"] == 1
+
+
 def test_barge_voyages_listing_is_read_only(client, db):
     headers, _ = _make_user(db, client, "barge_readonly", ["View Barge Tracking"])
     _seed_barge_voyages(db)

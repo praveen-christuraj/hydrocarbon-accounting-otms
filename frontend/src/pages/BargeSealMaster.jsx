@@ -6,6 +6,8 @@ import ImportDialog from '../components/common/ImportDialog'
 import ExportMenu from '../components/common/ExportMenu'
 import Icon from '../components/common/Icon'
 import { logUiAction } from '../utils/actionLogger'
+import AlertMessage from '../components/common/AlertMessage'
+import useActionFeedback from '../hooks/useActionFeedback'
 
 const TANK_POSITIONS = ['MH1', 'MH2', 'LOCK', 'DIPHATCH']
 const SEAL_STATUSES = ['Active', 'Inactive']
@@ -60,8 +62,17 @@ function BargeSealMaster({
 
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState('')
-  const [error, setError] = useState('')
+  // Action feedback: little pop-up (toast) + inline message next to the
+  // Save action (owner rule 8).
+  const feedback = useActionFeedback()
+  const {
+    successMsg: message,
+    errorMsg: error,
+    notifySuccess: setMessage,
+    notifyError: setError,
+    clearSuccess,
+    clearError,
+  } = feedback
 
   // grid: { [tankId]: { [sealPos]: sealNumber } }
   const [grid, setGrid] = useState({})
@@ -148,8 +159,8 @@ function BargeSealMaster({
     if (!assetCode) return
     try {
       setLoading(true)
-      setError('')
-      setMessage('')
+      clearError()
+      clearSuccess()
       const rows = await getBargeSealMaster(assetCode)
       setSealRows(rows || [])
       rebuildGrid(rows)
@@ -215,8 +226,8 @@ function BargeSealMaster({
 
     try {
       setSaving(true)
-      setError('')
-      setMessage('')
+      clearError()
+      clearSuccess()
 
       const rows = []
       for (const tid of tankIds) {
@@ -371,8 +382,8 @@ function BargeSealMaster({
   }
 
   const openImport = () => {
-    setError('')
-    setMessage('')
+    clearError()
+    clearSuccess()
     setImportOpen(true)
     logUiAction('Barge Seal Master', 'Open Bulk Upload Dialog')
   }
@@ -419,8 +430,8 @@ function BargeSealMaster({
             value={selectedAssetCode}
             onChange={(e) => {
               setSelectedAssetCode(e.target.value)
-              setMessage('')
-              setError('')
+              clearSuccess()
+              clearError()
             }}
           >
             <option value="">-- Select Asset --</option>
@@ -477,8 +488,6 @@ function BargeSealMaster({
       ) : null}
 
       {loading ? <div className="info-box">Loading seal master...</div> : null}
-      {error ? <div className="error-box">{error}</div> : null}
-      {message ? <div className="success-box">{message}</div> : null}
 
       {selectedAssetCode && tankIds.length > 0 ? (
         <>
@@ -515,6 +524,10 @@ function BargeSealMaster({
               ))}
             </tbody>
           </table>
+
+          {/* Action feedback lives right next to the Save / Reload buttons. */}
+          <AlertMessage tone="success" message={message} onDismiss={clearSuccess} />
+          <AlertMessage tone="error" message={error} onDismiss={clearError} />
 
           <div className="form-actions" style={{ marginTop: 16 }}>
             <button

@@ -20,6 +20,8 @@ import PaginationControls, { paginateRows, usePageSize } from '../components/com
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
+import AlertMessage from '../components/common/AlertMessage'
+import useActionFeedback from '../hooks/useActionFeedback'
 
 const emptySettings = {
   enabled: false,
@@ -64,8 +66,10 @@ function BackupRecovery({ loggedInUser }) {
   const pageSize = usePageSize()
   const [restoreCurrentPage, setRestoreCurrentPage] = useState(1)
   const [loading, setLoading] = useState(false)
-  const [successMsg, setSuccessMsg] = useState('')
-  const [errorMsg, setErrorMsg] = useState('')
+  // Action feedback: little pop-up (toast) + inline message near the
+  // action area (owner rule 8) - never at the bottom of the page.
+  const feedback = useActionFeedback()
+  const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
   const [validationErrors, setValidationErrors] = useState({})
 
   // Confirm / Prompt overlays
@@ -122,7 +126,7 @@ function BackupRecovery({ loggedInUser }) {
       setCurrentPage(1)
       setRestoreCurrentPage(1)
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
@@ -158,11 +162,11 @@ function BackupRecovery({ loggedInUser }) {
   const saveSettings = async (event) => {
     event.preventDefault()
     if (!hasPermission('Edit Backup Settings')) {
-      setErrorMsg('You do not have permission to manage backup settings')
+      notifyError('You do not have permission to manage backup settings')
       return
     }
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
     setValidationErrors({})
     if (settings.scheduleMode === 'Daily' && !settings.runTime) {
       setValidationErrors({ runTime: 'Run time is required for daily schedule' })
@@ -173,10 +177,10 @@ function BackupRecovery({ loggedInUser }) {
       setLoading(true)
       const updated = await updateBackupSettings(settings)
       setSettings(updated)
-      setSuccessMsg('Backup settings saved')
+      notifySuccess('Backup settings saved')
       await loadData()
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
@@ -185,17 +189,17 @@ function BackupRecovery({ loggedInUser }) {
   const runManualBackup = async (event) => {
     event.preventDefault()
     if (!hasPermission('Create Manual Backup')) {
-      setErrorMsg('You do not have permission to create manual backups')
+      notifyError('You do not have permission to create manual backups')
       return
     }
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
     setConfirmManualBackup(true)
   }
 
   const executeManualBackup = async () => {
     if (!hasPermission('Create Manual Backup')) {
-      setErrorMsg('You do not have permission to create manual backups')
+      notifyError('You do not have permission to create manual backups')
       return
     }
     setConfirmManualBackup(false)
@@ -204,48 +208,48 @@ function BackupRecovery({ loggedInUser }) {
       await createManualBackup(description || 'Manual backup')
       setDescription('')
       await loadData()
-      setSuccessMsg('Manual backup completed')
+      notifySuccess('Manual backup completed')
     } catch (error) {
       await loadData()
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
   }
 
   const runVerifyChecksum = async (job) => {
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
     try {
       setLoading(true)
       const result = await verifyBackupChecksum(job.id)
       await loadData()
-      setSuccessMsg(result.matched ? 'Checksum verified successfully' : 'Checksum mismatch detected')
+      notifySuccess(result.matched ? 'Checksum verified successfully' : 'Checksum mismatch detected')
     } catch (error) {
       await loadData()
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
   }
 
   const runDownloadBackup = async (job) => {
-    setErrorMsg('')
+    clearError()
     try {
       setLoading(true)
       await downloadBackup(job.id, job.fileName || `${job.backupNumber}.dump`)
       await loadData()
     } catch (error) {
       await loadData()
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
   }
 
   const runDeleteBackup = async (job) => {
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
     setDeleteBackupText('')
     setConfirmDeleteBackup(job)
   }
@@ -253,7 +257,7 @@ function BackupRecovery({ loggedInUser }) {
   const executeDeleteBackup = async () => {
     const job = confirmDeleteBackup
     if (deleteBackupText.trim() !== job.backupNumber) {
-      setErrorMsg('Confirmation text does not match the backup number')
+      notifyError('Confirmation text does not match the backup number')
       return
     }
 
@@ -263,18 +267,18 @@ function BackupRecovery({ loggedInUser }) {
       setLoading(true)
       await deleteBackup(job.id)
       await loadData()
-      setSuccessMsg('Backup file deleted. Job history retained.')
+      notifySuccess('Backup file deleted. Job history retained.')
     } catch (error) {
       await loadData()
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
   }
 
   const runCleanup = async () => {
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
     setConfirmCleanup(true)
   }
 
@@ -284,10 +288,10 @@ function BackupRecovery({ loggedInUser }) {
       setLoading(true)
       const result = await cleanupBackups()
       await loadData()
-      setSuccessMsg(`Cleanup complete. Deleted: ${result.deleted_count}, Skipped: ${result.skipped_count}`)
+      notifySuccess(`Cleanup complete. Deleted: ${result.deleted_count}, Skipped: ${result.skipped_count}`)
     } catch (error) {
       await loadData()
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
@@ -302,8 +306,8 @@ function BackupRecovery({ loggedInUser }) {
 
   const runCreateRestoreRequest = async (event) => {
     event.preventDefault()
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
     setValidationErrors({})
 
     const errors = {}
@@ -334,18 +338,18 @@ function BackupRecovery({ loggedInUser }) {
         businessImpact: '',
       })
       await loadData()
-      setSuccessMsg('Restore approval request created')
+      notifySuccess('Restore approval request created')
     } catch (error) {
       await loadData()
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
   }
 
   const runRestoreRequestAction = async (request, action) => {
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
     setApprovalRemarks('')
     setActionRequest({ request, action })
   }
@@ -355,7 +359,7 @@ function BackupRecovery({ loggedInUser }) {
     const remarks = approvalRemarks
 
     if (action === 'reject' && remarks.trim() === '') {
-      setErrorMsg('Rejection remarks are required')
+      notifyError('Rejection remarks are required')
       return
     }
 
@@ -378,18 +382,18 @@ function BackupRecovery({ loggedInUser }) {
         await cancelBackupRestoreRequest(request.id, remarks)
       }
       await loadData()
-      setSuccessMsg(`Restore request ${action} action completed`)
+      notifySuccess(`Restore request ${action} action completed`)
     } catch (error) {
       await loadData()
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
   }
 
   const runValidateRestoreRequest = async (request) => {
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
     setConfirmValidateRequest(request)
   }
 
@@ -400,18 +404,18 @@ function BackupRecovery({ loggedInUser }) {
       setLoading(true)
       await validateBackupRestoreRequest(request.id)
       await loadData()
-      setSuccessMsg('Restore validation completed')
+      notifySuccess('Restore validation completed')
     } catch (error) {
       await loadData()
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
   }
 
   const runExecuteRestoreRequest = async (request) => {
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
     setExecuteConfirmText('')
     setExecuteRemarks('')
     setConfirmExecuteRestore(request)
@@ -421,7 +425,7 @@ function BackupRecovery({ loggedInUser }) {
     const request = confirmExecuteRestore
     const expectedConfirmation = `EXECUTE RESTORE ${request.requestNumber}`
     if (executeConfirmText.trim() !== expectedConfirmation) {
-      setErrorMsg('Confirmation text does not match')
+      notifyError('Confirmation text does not match')
       return
     }
 
@@ -430,10 +434,10 @@ function BackupRecovery({ loggedInUser }) {
       setLoading(true)
       await executeBackupRestoreRequest(request.id, executeConfirmText.trim(), executeRemarks)
       await loadData()
-      setSuccessMsg('Production restore completed')
+      notifySuccess('Production restore completed')
     } catch (error) {
       await loadData()
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
@@ -448,6 +452,10 @@ function BackupRecovery({ loggedInUser }) {
         </div>
         <span className="record-count">{jobs.length} Jobs</span>
       </div>
+      {/* Action feedback: right next to the page actions + a little pop-up
+          toast - never at the bottom of the page (owner rule 8). */}
+      <AlertMessage tone="success" message={feedback.successMsg} onDismiss={clearSuccess} />
+      <AlertMessage tone="error" message={feedback.errorMsg} onDismiss={clearError} />
 
       {validationErrors.runTime && (
         <div className="error-box">{validationErrors.runTime}</div>
@@ -1105,12 +1113,6 @@ function BackupRecovery({ loggedInUser }) {
         onPageChange={setRestoreCurrentPage}
       />
 
-      {successMsg && (
-        <div className="success-box">{successMsg}</div>
-      )}
-      {errorMsg && (
-        <div className="error-box">{errorMsg}</div>
-      )}
     </div>
   )
 }

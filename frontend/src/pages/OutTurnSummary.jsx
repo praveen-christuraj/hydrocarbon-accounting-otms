@@ -10,6 +10,8 @@ import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
 import Modal from '../components/common/Modal'
+import AlertMessage from '../components/common/AlertMessage'
+import useActionFeedback from '../hooks/useActionFeedback'
 
 const COLUMN_GROUPS = ['Base', 'Input', 'Calculated', 'Computed']
 
@@ -47,8 +49,10 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
   const [loading, setLoading] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
   const pageSize = usePageSize()
-  const [successMsg, setSuccessMsg] = useState('')
-  const [errorMsg, setErrorMsg] = useState('')
+  // Action feedback: little pop-up (toast) + inline message near the
+  // action area (owner rule 8) - never at the bottom of the page.
+  const feedback = useActionFeedback()
+  const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
   const [profile, setProfile] = useState(null)
 
   const [showConfigModal, setShowConfigModal] = useState(false)
@@ -156,7 +160,7 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
       setReportMeta(reportData)
       setCurrentPage(1)
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
@@ -189,7 +193,7 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
       setConfigDraft(draft)
       setShowConfigModal(true)
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     }
   }
 
@@ -244,9 +248,9 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
       setConfiguredColumns(saved)
 
       setShowConfigModal(false)
-      setSuccessMsg('Out-Turn Summary column configuration saved for all users.')
+      notifySuccess('Out-Turn Summary column configuration saved for all users.')
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setSavingConfig(false)
     }
@@ -367,12 +371,12 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
 
   const handleExportCsv = () => {
     if (rows.length === 0) {
-      setErrorMsg('No Out-Turn Summary rows available to export')
+      notifyError('No Out-Turn Summary rows available to export')
       return
     }
 
     if (enabledColumns.length === 0) {
-      setErrorMsg('No columns are enabled for export. Enable at least one column.')
+      notifyError('No columns are enabled for export. Enable at least one column.')
       return
     }
 
@@ -386,7 +390,7 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
 
   const handlePrintReport = () => {
     if (rows.length === 0) {
-      setErrorMsg('No Out-Turn Summary rows available to print')
+      notifyError('No Out-Turn Summary rows available to print')
       return
     }
 
@@ -481,6 +485,10 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
           )}
         </div>
       </div>
+      {/* Action feedback: right next to the page actions + a little pop-up
+          toast - never at the bottom of the page (owner rule 8). */}
+      <AlertMessage tone="success" message={feedback.successMsg} onDismiss={clearSuccess} />
+      <AlertMessage tone="error" message={feedback.errorMsg} onDismiss={clearError} />
 
       <form onSubmit={handleApplyFilters} className="filter-panel">
         <div>
@@ -664,16 +672,6 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
         </div>
       )}
 
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>{
-          errorMsg
-        }</div>
-      )}
 
       <Modal
         open={showConfigModal}

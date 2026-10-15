@@ -10,6 +10,8 @@ import {
   releaseOperationTask,
   takeOperationTaskOwnership,
 } from '../api/operationTaskApi'
+import AlertMessage from '../components/common/AlertMessage'
+import useActionFeedback from '../hooks/useActionFeedback'
 
 function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
   const isAdminBootstrap =
@@ -45,8 +47,10 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
   const [dateTo, setDateTo] = useState('')
   const [remarks, setRemarks] = useState('')
   const [loading, setLoading] = useState(false)
-  const [successMsg, setSuccessMsg] = useState('')
-  const [errorMsg, setErrorMsg] = useState('')
+  // Action feedback: little pop-up (toast) + inline message near the
+  // action area (owner rule 8) - never at the bottom of the page.
+  const feedback = useActionFeedback()
+  const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
   const [confirmAction, setConfirmAction] = useState(null)
 
   const counts = useMemo(() => {
@@ -85,7 +89,7 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
         setSelectedTask(refreshed || null)
       }
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
@@ -97,7 +101,7 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
       setEvents(data)
     } catch (error) {
       setEvents([])
-      setErrorMsg(error.message)
+      notifyError(error.message)
     }
   }
 
@@ -155,11 +159,11 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
     if (!selectedTask) return
 
     if (['take', 'release', 'approve', 'reject'].includes(action) && !canActOnOperationTask) {
-      setErrorMsg('You do not have permission to act on operation tasks')
+      notifyError('You do not have permission to act on operation tasks')
       return
     }
     if (['admin-revoke-approved', 'admin-reject-revoke'].includes(action) && !canAdminRevokeApprovedTransaction) {
-      setErrorMsg('You do not have permission to admin revoke approved transactions')
+      notifyError('You do not have permission to admin revoke approved transactions')
       return
     }
 
@@ -171,22 +175,22 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
         await releaseOperationTask(selectedTask.id, remarks)
       } else if (action === 'approve') {
         await approveOperationTask(selectedTask.id, remarks || 'Approved from Task Manager')
-        setSuccessMsg('Operation ticket approved.')
+        notifySuccess('Operation ticket approved.')
       } else if (action === 'reject') {
         await rejectOperationTask(selectedTask.id, remarks || 'Rejected from Task Manager')
-        setSuccessMsg('Operation ticket rejected.')
+        notifySuccess('Operation ticket rejected.')
       } else if (action === 'admin-revoke-approved') {
         await adminRevokeApprovedTransactionTask(
           selectedTask.id,
           remarks || 'Admin revoked approved transaction for correction'
         )
-        setSuccessMsg('Approved transaction revoked.')
+        notifySuccess('Approved transaction revoked.')
       } else if (action === 'admin-reject-revoke') {
         await adminRejectApprovedRevokeTask(
           selectedTask.id,
           remarks || 'Admin rejected approved transaction revoke request'
         )
-        setSuccessMsg('Revoke request rejected.')
+        notifySuccess('Revoke request rejected.')
       }
 
       await loadTasks()
@@ -198,7 +202,7 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
       }
       setRemarks('')
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
@@ -239,6 +243,10 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
         </div>
         <span className="record-count">{counts.ALL || 0} Tasks</span>
       </div>
+      {/* Action feedback: right next to the page actions + a little pop-up
+          toast - never at the bottom of the page (owner rule 8). */}
+      <AlertMessage tone="success" message={feedback.successMsg} onDismiss={clearSuccess} />
+      <AlertMessage tone="error" message={feedback.errorMsg} onDismiss={clearError} />
 
       {!canActOnOperationTask && !canAdminRevokeApprovedTransaction && (
         <div className="info-box">
@@ -520,16 +528,6 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
         </div>
       )}
 
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
     </div>
   )
 }

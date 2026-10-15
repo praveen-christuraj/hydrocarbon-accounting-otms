@@ -11,6 +11,8 @@ import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
 import { usePermissions } from '../hooks/usePermissions'
+import AlertMessage from '../components/common/AlertMessage'
+import useActionFeedback from '../hooks/useActionFeedback'
 
 const today = new Date().toISOString().slice(0, 10)
 
@@ -56,8 +58,10 @@ function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
   const [editId, setEditId] = useState(null)
   const [loading, setLoading] = useState(false)
   const [filterStatus, setFilterStatus] = useState('Active')
-  const [successMsg, setSuccessMsg] = useState('')
-  const [errorMsg, setErrorMsg] = useState('')
+  // Action feedback: little pop-up (toast) + inline message near the
+  // action area (owner rule 8) - never at the bottom of the page.
+  const feedback = useActionFeedback()
+  const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
   const [validationErrors, setValidationErrors] = useState({})
   const [confirmDeleteItem, setConfirmDeleteItem] = useState(null)
   const [page, setPage] = useState(1)
@@ -99,8 +103,8 @@ function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
   const loadLinks = async () => {
     try {
       setLoading(true)
-      setSuccessMsg('')
-      setErrorMsg('')
+      clearSuccess()
+      clearError()
 
       const filters = {}
 
@@ -111,7 +115,7 @@ function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
       const data = await getPrimeMoverTankerLinks(filters)
       setLinks(data)
     } catch (error) {
-      setErrorMsg(error.message || 'Unable to load Prime Mover - Tanker links')
+      notifyError(error.message || 'Unable to load Prime Mover - Tanker links')
     } finally {
       setLoading(false)
     }
@@ -163,8 +167,8 @@ function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
     setValidationErrors({})
 
     if (!validateForm()) {
@@ -172,7 +176,7 @@ function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
     }
 
     if (!(editId === null ? canCreate : canEdit)) {
-      setErrorMsg(
+      notifyError(
         `You do not have permission to ${editId === null ? 'create' : 'edit'} prime mover - tanker links.`
       )
       return
@@ -183,17 +187,17 @@ function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
 
       if (editId === null) {
         await createPrimeMoverTankerLink(link)
-        setSuccessMsg('Prime Mover - Tanker link saved successfully')
+        notifySuccess('Prime Mover - Tanker link saved successfully')
       } else {
         await updatePrimeMoverTankerLink(editId, link)
-        setSuccessMsg('Prime Mover - Tanker link updated successfully')
+        notifySuccess('Prime Mover - Tanker link updated successfully')
       }
 
       setLink(emptyLink)
       setEditId(null)
       await loadLinks()
     } catch (error) {
-      setErrorMsg(error.message || 'Unable to save Prime Mover - Tanker link')
+      notifyError(error.message || 'Unable to save Prime Mover - Tanker link')
     } finally {
       setLoading(false)
     }
@@ -290,11 +294,11 @@ function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
   }
 
   const handleDelete = async () => {
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
 
     if (!canDelete) {
-      setErrorMsg('You do not have permission to delete prime mover - tanker links.')
+      notifyError('You do not have permission to delete prime mover - tanker links.')
       setConfirmDeleteItem(null)
       return
     }
@@ -304,9 +308,9 @@ function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
       await deletePrimeMoverTankerLink(confirmDeleteItem.id)
       setConfirmDeleteItem(null)
       await loadLinks()
-      setSuccessMsg('Prime Mover - Tanker link deleted successfully')
+      notifySuccess('Prime Mover - Tanker link deleted successfully')
     } catch (error) {
-      setErrorMsg(error.message || 'Unable to delete link')
+      notifyError(error.message || 'Unable to delete link')
     } finally {
       setLoading(false)
     }
@@ -330,15 +334,15 @@ function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
   }
 
   const handleCloseLink = async () => {
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
 
     if (!closeForm.linkId) {
       return
     }
 
     if (closeForm.linkedTo.trim() === '') {
-      setErrorMsg('Close date is required')
+      notifyError('Close date is required')
       return
     }
 
@@ -358,9 +362,9 @@ function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
       })
 
       await loadLinks()
-      setSuccessMsg('Link closed successfully')
+      notifySuccess('Link closed successfully')
     } catch (error) {
-      setErrorMsg(error.message || 'Unable to close link')
+      notifyError(error.message || 'Unable to close link')
     } finally {
       setLoading(false)
     }
@@ -380,6 +384,10 @@ function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
 
         <span className="record-count">{links.length} Links</span>
       </div>
+      {/* Action feedback: right next to the page actions + a little pop-up
+          toast - never at the bottom of the page (owner rule 8). */}
+      <AlertMessage tone="success" message={feedback.successMsg} onDismiss={clearSuccess} />
+      <AlertMessage tone="error" message={feedback.errorMsg} onDismiss={clearError} />
 
       {primeMoverAssets.length === 0 && (
         <div className="info-box">
@@ -549,12 +557,6 @@ function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
         </div>
       </form>
 
-      {successMsg && (
-        <div className="success-box">{successMsg}</div>
-      )}
-      {errorMsg && (
-        <div className="error-box">{errorMsg}</div>
-      )}
 
       <div className="section-title">
         <h3>Saved Prime Mover - Tanker Links</h3>
@@ -719,7 +721,7 @@ function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
 
                     <button
                       type="button"
-                      onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteItem(item) }}
+                      onClick={() => { clearSuccess(); clearError(); setConfirmDeleteItem(item) }}
                       disabled={loading}
                     >
                       Delete

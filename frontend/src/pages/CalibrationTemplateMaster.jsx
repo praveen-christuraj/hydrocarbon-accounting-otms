@@ -9,6 +9,8 @@ import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
 import { usePermissions } from '../hooks/usePermissions'
+import AlertMessage from '../components/common/AlertMessage'
+import useActionFeedback from '../hooks/useActionFeedback'
 
 function CalibrationTemplateMaster({
   assetTypes,
@@ -39,8 +41,10 @@ function CalibrationTemplateMaster({
   const [editTemplateId, setEditTemplateId] = useState(null)
   const [showHelp, setShowHelp] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [successMsg, setSuccessMsg] = useState('')
-  const [errorMsg, setErrorMsg] = useState('')
+  // Action feedback: little pop-up (toast) + inline message near the
+  // action area (owner rule 8) - never at the bottom of the page.
+  const feedback = useActionFeedback()
+  const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
   const [validationErrors, setValidationErrors] = useState({})
   const [confirmRemoveColumnIndex, setConfirmRemoveColumnIndex] = useState(null)
   const [confirmDeleteItem, setConfirmDeleteItem] = useState(null)
@@ -73,12 +77,12 @@ function CalibrationTemplateMaster({
   }
 
   const handleAddColumn = () => {
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
     setValidationErrors({})
 
     if (!canWriteTemplate) {
-      setErrorMsg(
+      notifyError(
         `You do not have permission to ${editTemplateId === null ? 'create' : 'edit'} calibration templates.`
       )
       return
@@ -128,7 +132,7 @@ function CalibrationTemplateMaster({
 
   const confirmRemoveColumn = () => {
     if (!canWriteTemplate) {
-      setErrorMsg(
+      notifyError(
         `You do not have permission to ${editTemplateId === null ? 'create' : 'edit'} calibration templates.`
       )
       return
@@ -205,12 +209,12 @@ function CalibrationTemplateMaster({
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
     setValidationErrors({})
 
     if (!(editTemplateId === null ? canCreate : canEdit)) {
-      setErrorMsg(
+      notifyError(
         `You do not have permission to ${editTemplateId === null ? 'create' : 'edit'} calibration templates.`
       )
       return
@@ -225,10 +229,10 @@ function CalibrationTemplateMaster({
 
       if (editTemplateId === null) {
         await createCalibrationTemplate(template)
-        setSuccessMsg('Calibration template created successfully')
+        notifySuccess('Calibration template created successfully')
       } else {
         await updateCalibrationTemplate(editTemplateId, template)
-        setSuccessMsg('Calibration template updated successfully')
+        notifySuccess('Calibration template updated successfully')
       }
 
       await reloadCalibrationTemplates()
@@ -237,18 +241,18 @@ function CalibrationTemplateMaster({
       setColumn(emptyColumn)
       setEditTemplateId(null)
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
   }
 
   const handleEdit = (item) => {
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
 
     if (!canEdit) {
-      setErrorMsg('You do not have permission to edit calibration templates.')
+      notifyError('You do not have permission to edit calibration templates.')
       return
     }
 
@@ -265,11 +269,11 @@ function CalibrationTemplateMaster({
   }
 
   const handleDelete = async () => {
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
 
     if (!canDelete) {
-      setErrorMsg('You do not have permission to delete calibration templates.')
+      notifyError('You do not have permission to delete calibration templates.')
       return
     }
 
@@ -285,9 +289,9 @@ function CalibrationTemplateMaster({
       }
 
       setConfirmDeleteItem(null)
-      setSuccessMsg('Calibration template deleted successfully')
+      notifySuccess('Calibration template deleted successfully')
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
@@ -423,6 +427,10 @@ function CalibrationTemplateMaster({
           {calibrationTemplates.length} Templates
         </span>
       </div>
+      {/* Action feedback: right next to the page actions + a little pop-up
+          toast - never at the bottom of the page (owner rule 8). */}
+      <AlertMessage tone="success" message={feedback.successMsg} onDismiss={clearSuccess} />
+      <AlertMessage tone="error" message={feedback.errorMsg} onDismiss={clearError} />
 
       {showHelp && (
         <div className="help-modal-overlay">
@@ -804,7 +812,7 @@ function CalibrationTemplateMaster({
                         <td>
                           <button
                             type="button"
-                            onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmRemoveColumnIndex(columnIndex) }}
+                            onClick={() => { clearSuccess(); clearError(); setConfirmRemoveColumnIndex(columnIndex) }}
                           >
                             Remove
                           </button>
@@ -833,12 +841,6 @@ function CalibrationTemplateMaster({
           </div>
         </form>
 
-      {successMsg && (
-        <div className="success-box">{successMsg}</div>
-      )}
-      {errorMsg && (
-        <div className="error-box">{errorMsg}</div>
-      )}
       </>
       )}
 
@@ -918,7 +920,7 @@ function CalibrationTemplateMaster({
                     )}
 
                     {canDelete && (
-                      <button type="button" onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteItem(item) }}>
+                      <button type="button" onClick={() => { clearSuccess(); clearError(); setConfirmDeleteItem(item) }}>
                         Delete
                       </button>
                     )}

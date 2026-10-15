@@ -11,6 +11,8 @@ import {
 import { useCompanyPrintProfile } from '../hooks/useCompanyPrintProfile'
 import CompanyPrintHeader from '../components/reports/CompanyPrintHeader'
 import CompanyPrintFooter from '../components/reports/CompanyPrintFooter'
+import AlertMessage from '../components/common/AlertMessage'
+import useActionFeedback from '../hooks/useActionFeedback'
 
 const downloadCsv = (filename, headers, rows) => {
   const escape = (v) => {
@@ -36,8 +38,10 @@ function FSOTracking({ locations = [], assets = [] }) {
 
   const [tab, setTab] = useState('OTR') // OTR | MB | OUTTURN
   const [loading, setLoading] = useState(false)
-  const [successMsg, setSuccessMsg] = useState('')
-  const [errorMsg, setErrorMsg] = useState('')
+  // Action feedback: little pop-up (toast) + inline message near the
+  // action area (owner rule 8) - never at the bottom of the page.
+  const feedback = useActionFeedback()
+  const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
   const [validationErrors, setValidationErrors] = useState({})
 
   const [filters, setFilters] = useState({
@@ -82,7 +86,7 @@ function FSOTracking({ locations = [], assets = [] }) {
       })
       setOtr(data)
     } catch (e) {
-      setErrorMsg(e.message || 'Unable to load FSO OTR report')
+      notifyError(e.message || 'Unable to load FSO OTR report')
     } finally {
       setLoading(false)
     }
@@ -100,7 +104,7 @@ function FSOTracking({ locations = [], assets = [] }) {
       })
       setMb(data)
     } catch (e) {
-      setErrorMsg(e.message || 'Unable to load FSO Material Balance report')
+      notifyError(e.message || 'Unable to load FSO Material Balance report')
     } finally {
       setLoading(false)
     }
@@ -118,7 +122,7 @@ function FSOTracking({ locations = [], assets = [] }) {
       })
       setOutturn(data)
     } catch (e) {
-      setErrorMsg(e.message || 'Unable to load FSO Outturn report')
+      notifyError(e.message || 'Unable to load FSO Outturn report')
     } finally {
       setLoading(false)
     }
@@ -126,7 +130,7 @@ function FSOTracking({ locations = [], assets = [] }) {
 
   const exportOTRcsv = () => {
     if (!otr?.rows?.length) {
-      setErrorMsg('No rows to export')
+      notifyError('No rows to export')
       return
     }
     const headers = [
@@ -142,7 +146,7 @@ function FSOTracking({ locations = [], assets = [] }) {
 
   const exportMBcsv = () => {
     if (!mb?.rows?.length) {
-      setErrorMsg('No rows to export')
+      notifyError('No rows to export')
       return
     }
     const headers = [
@@ -154,7 +158,7 @@ function FSOTracking({ locations = [], assets = [] }) {
 
   const exportOutturnCsv = () => {
     if (!outturn?.rows?.length) {
-      setErrorMsg('No rows to export')
+      notifyError('No rows to export')
       return
     }
     const headers = [
@@ -178,7 +182,7 @@ function FSOTracking({ locations = [], assets = [] }) {
         shuttle_number: filters.shuttleNumber || '',
       })
     } catch (e) {
-      setErrorMsg(e.message || 'Unable to download excel')
+      notifyError(e.message || 'Unable to download excel')
     } finally {
       setLoading(false)
     }
@@ -195,7 +199,7 @@ function FSOTracking({ locations = [], assets = [] }) {
         date_to: filters.dateTo,
       })
     } catch (e) {
-      setErrorMsg(e.message || 'Unable to download excel')
+      notifyError(e.message || 'Unable to download excel')
     } finally {
       setLoading(false)
     }
@@ -212,7 +216,7 @@ function FSOTracking({ locations = [], assets = [] }) {
         date_to: filters.dateTo,
       })
     } catch (e) {
-      setErrorMsg(e.message || 'Unable to download excel')
+      notifyError(e.message || 'Unable to download excel')
     } finally {
       setLoading(false)
     }
@@ -350,6 +354,10 @@ function FSOTracking({ locations = [], assets = [] }) {
           </div>
 
           {/* Filters */}
+          {/* Action feedback: right next to the page actions + a little pop-up
+              toast - never at the bottom of the page (owner rule 8). */}
+          <AlertMessage tone="success" message={feedback.successMsg} onDismiss={clearSuccess} />
+          <AlertMessage tone="error" message={feedback.errorMsg} onDismiss={clearError} />
           <div className="info-box no-print">
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'end' }}>
               <div style={{ minWidth: 220 }}>
@@ -564,16 +572,6 @@ function FSOTracking({ locations = [], assets = [] }) {
         </div>
       </div>
 
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
     </>
   )
 }

@@ -15,6 +15,8 @@ import {
 } from '../api/dashboardApi'
 
 import { listDashboardDataSources, fetchDashboardData } from '../api/dashboardDataApi'
+import AlertMessage from '../components/common/AlertMessage'
+import useActionFeedback from '../hooks/useActionFeedback'
 
 const ResponsiveGridLayout = WidthProvider(GridLayout)
 const DEFAULT_GRID_COLS = 12
@@ -155,8 +157,10 @@ function DashboardBuilder({
 }) {
   const [loading, setLoading] = useState(false)
   const [sourcesLoading, setSourcesLoading] = useState(false)
-  const [successMsg, setSuccessMsg] = useState('')
-  const [errorMsg, setErrorMsg] = useState('')
+  // Action feedback: little pop-up (toast) + inline message near the
+  // action area (owner rule 8) - never at the bottom of the page.
+  const feedback = useActionFeedback()
+  const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
   const [confirmRemoveWidget, setConfirmRemoveWidget] = useState(false)
 
   const [configs, setConfigs] = useState([])
@@ -278,7 +282,7 @@ function DashboardBuilder({
       const rows = Array.isArray(data) ? data : Array.isArray(data?.rows) ? data.rows : []
       setDataSources(rows)
     } catch (e) {
-      setErrorMsg(e.message || 'Unable to load dashboard data sources')
+      notifyError(e.message || 'Unable to load dashboard data sources')
       setDataSources([])
     } finally {
       setSourcesLoading(false)
@@ -311,12 +315,12 @@ function DashboardBuilder({
 
   const saveDraftToLocalStorage = () => {
     localStorage.setItem(localDraftKey, JSON.stringify(configJson))
-    setSuccessMsg('Draft saved locally (browser).')
+    notifySuccess('Draft saved locally (browser).')
   }
 
   const clearLocalDraft = () => {
     localStorage.removeItem(localDraftKey)
-    setSuccessMsg('Local draft cleared.')
+    notifySuccess('Local draft cleared.')
   }
 
   useEffect(() => {
@@ -326,7 +330,7 @@ function DashboardBuilder({
         await loadConfigs()
         await loadDataSources()
       } catch (e) {
-        setErrorMsg(e.message || 'Unable to initialize builder')
+        notifyError(e.message || 'Unable to initialize builder')
       } finally {
         setLoading(false)
       }
@@ -365,7 +369,7 @@ function DashboardBuilder({
         const loadedLocal = loadDraftFromLocalStorage()
         if (!loadedLocal) await hydrateFromActiveVersion(cfg)
       } catch (e) {
-        setErrorMsg(e.message || 'Unable to load dashboard config')
+        notifyError(e.message || 'Unable to load dashboard config')
       } finally {
         setLoading(false)
       }
@@ -513,7 +517,7 @@ function DashboardBuilder({
     applyDashboardFiltersToWidgetParams(widget)
 
     const v = validateWidgetParams(widget)
-    if (!v.ok) { setErrorMsg(v.msg); return }
+    if (!v.ok) { notifyError(v.msg); return }
 
     setWidgetPreview((p) => ({ ...p, [selectedWidgetId]: { loading: true } }))
     try {
@@ -539,8 +543,8 @@ function DashboardBuilder({
   }
 
   const createNewConfigHandler = async () => {
-    if (!name.trim()) { setErrorMsg('Name is required'); return }
-    if (scopeType === 'LOCATION' && !locationCode.trim()) { setErrorMsg('Location is required for LOCATION scope'); return }
+    if (!name.trim()) { notifyError('Name is required'); return }
+    if (scopeType === 'LOCATION' && !locationCode.trim()) { notifyError('Location is required for LOCATION scope'); return }
 
     try {
       setLoading(true)
@@ -553,16 +557,16 @@ function DashboardBuilder({
       const cfg = await createDashboardConfig(payload)
       await loadConfigs()
       setSelectedConfigId(String(cfg.id))
-      setSuccessMsg('Dashboard config created. Now add widgets and Publish.')
+      notifySuccess('Dashboard config created. Now add widgets and Publish.')
     } catch (e) {
-      setErrorMsg(e.message || 'Unable to create dashboard config')
+      notifyError(e.message || 'Unable to create dashboard config')
     } finally {
       setLoading(false)
     }
   }
 
   const updateConfigMetaHandler = async () => {
-    if (!selectedConfigId) { setErrorMsg('Select a dashboard config first'); return }
+    if (!selectedConfigId) { notifyError('Select a dashboard config first'); return }
     try {
       setLoading(true)
       await updateDashboardConfig(selectedConfigId, {
@@ -572,28 +576,28 @@ function DashboardBuilder({
         remarks: remarks ? remarks.trim() : null,
       })
       await loadConfigs()
-      setSuccessMsg('Config info updated.')
+      notifySuccess('Config info updated.')
     } catch (e) {
-      setErrorMsg(e.message || 'Unable to update config')
+      notifyError(e.message || 'Unable to update config')
     } finally {
       setLoading(false)
     }
   }
 
   const publishHandler = async () => {
-    if (!selectedConfigId) { setErrorMsg('Select a dashboard config first'); return }
+    if (!selectedConfigId) { notifyError('Select a dashboard config first'); return }
 
     const widgetIds = Object.keys(configJson.widgets || {})
     for (const wid of widgetIds) {
       const found = (configJson.layout || []).some((l) => l.i === wid)
-      if (!found) { setErrorMsg(`Widget ${wid} missing layout item`); return }
+      if (!found) { notifyError(`Widget ${wid} missing layout item`); return }
     }
 
     for (const wid of widgetIds) {
       const w = configJson.widgets[wid]
       if (w.type === 'TEXT') continue
       const v = validateWidgetParams(w)
-      if (!v.ok) { setErrorMsg(`Widget "${w.title || wid}": ${v.msg}`); return }
+      if (!v.ok) { notifyError(`Widget "${w.title || wid}": ${v.msg}`); return }
     }
 
     for (const wid of widgetIds) {
@@ -601,7 +605,7 @@ function DashboardBuilder({
       if (w.type === 'CHART') {
         const xField = String(w.config?.xField || '').trim()
         const yField = String(w.config?.yField || '').trim()
-        if (!xField || !yField) { setErrorMsg(`Chart "${w.title || wid}" must have xField and yField`); return }
+        if (!xField || !yField) { notifyError(`Chart "${w.title || wid}" must have xField and yField`); return }
       }
     }
 
@@ -611,9 +615,9 @@ function DashboardBuilder({
       setDirty(false)
       clearLocalDraft()
       await loadConfigs()
-      setSuccessMsg('Published successfully. Open /dashboard to view.')
+      notifySuccess('Published successfully. Open /dashboard to view.')
     } catch (e) {
-      setErrorMsg(e.message || 'Publish failed')
+      notifyError(e.message || 'Publish failed')
     } finally {
       setLoading(false)
     }
@@ -705,6 +709,10 @@ function DashboardBuilder({
         </div>
         <span className="record-count">{dirty ? 'Draft (unsaved)' : 'Saved'}</span>
       </div>
+      {/* Action feedback: right next to the page actions + a little pop-up
+          toast - never at the bottom of the page (owner rule 8). */}
+      <AlertMessage tone="success" message={feedback.successMsg} onDismiss={clearSuccess} />
+      <AlertMessage tone="error" message={feedback.errorMsg} onDismiss={clearError} />
 
       {/* Universal Dashboard Filters */}
       <div className="info-box">
@@ -1258,16 +1266,6 @@ function DashboardBuilder({
         </div>
       </div>
 
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
     </div>
   )
 }

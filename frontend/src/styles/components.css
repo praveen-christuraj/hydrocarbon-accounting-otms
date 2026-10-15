@@ -1471,7 +1471,9 @@ tbody tr.matrix-category-row:hover {
   position: fixed;
   top: 16px;
   right: 16px;
-  z-index: 1500;
+  /* Above every dialog (form / review modals sit at 9999) so action
+     feedback is always visible, even for actions fired inside a pop-up. */
+  z-index: 10000;
   display: flex;
   flex-direction: column;
   gap: 8px;

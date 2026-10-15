@@ -9,6 +9,8 @@ import FormDialog from '../components/common/FormDialog'
 import Icon from '../components/common/Icon'
 import { useConfirm } from '../components/common/ConfirmProvider'
 import { logUiAction } from '../utils/actionLogger'
+import AlertMessage from '../components/common/AlertMessage'
+import useActionFeedback from '../hooks/useActionFeedback'
 
 const IMPORT_STATUSES = ['Active', 'Inactive', 'Blocked']
 
@@ -22,8 +24,17 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
   const [role, setRole] = useState(emptyRole)
   const [editId, setEditId] = useState(null)
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const [success, setSuccess] = useState('')
+  // Action feedback: little pop-up (toast) + inline message near the action
+  // area (owner rule 8). Aliased to the page's existing variable names.
+  const feedback = useActionFeedback()
+  const {
+    successMsg: success,
+    errorMsg: error,
+    notifySuccess: setSuccess,
+    notifyError: setError,
+    clearSuccess,
+    clearError,
+  } = feedback
   const [formOpen, setFormOpen] = useState(false)
   const [fieldErrors, setFieldErrors] = useState({})
   const [page, setPage] = useState(1)
@@ -38,8 +49,6 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
   const canEdit = hasPermission('Edit Role')
   const canDelete = hasPermission('Delete Role')
 
-  const clearError = () => setError('')
-  const clearSuccess = () => setSuccess('')
 
   const handleChange = (e) => {
     setRole({ ...role, [e.target.name]: e.target.value })
@@ -114,8 +123,8 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
   }
 
   const handleDeleteRequest = async (target) => {
-    setError('')
-    setSuccess('')
+    clearError()
+    clearSuccess()
     const confirmed = await confirm({
       title: 'Delete role',
       message: `Delete role ${target.roleName}? This cannot be undone.`,
@@ -201,19 +210,8 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
         </div>
       </div>
 
-      {success && (
-        <div className="success-box">
-          {success}
-          <button className="error-close" onClick={clearSuccess} type="button">&times;</button>
-        </div>
-      )}
-
-      {error && (
-        <div className="error-box">
-          {error}
-          <button className="error-close" onClick={clearError} type="button">&times;</button>
-        </div>
-      )}
+      <AlertMessage tone="success" message={success} onDismiss={clearSuccess} />
+      <AlertMessage tone="error" message={error} onDismiss={clearError} />
 
       {!canCreate && !canEdit && !canDelete && (
         <div className="info-box">

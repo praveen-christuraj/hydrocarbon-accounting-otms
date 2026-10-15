@@ -9,6 +9,8 @@ import PaginationControls, { paginateRows, usePageSize } from '../components/com
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
+import AlertMessage from '../components/common/AlertMessage'
+import useActionFeedback from '../hooks/useActionFeedback'
 
 function TankStockLedger({ locations, assets, loggedInUser }) {
   const emptyFilters = {
@@ -31,8 +33,10 @@ function TankStockLedger({ locations, assets, loggedInUser }) {
   const pageSize = usePageSize()
   const [stockSummaryPage, setStockSummaryPage] = useState(1)
   const [ledgerDetailsPage, setLedgerDetailsPage] = useState(1)
-  const [successMsg, setSuccessMsg] = useState('')
-  const [errorMsg, setErrorMsg] = useState('')
+  // Action feedback: little pop-up (toast) + inline message near the
+  // action area (owner rule 8) - never at the bottom of the page.
+  const feedback = useActionFeedback()
+  const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
 
   const [profile, setProfile] = useState(null)
   const isAdminBootstrap =
@@ -159,7 +163,7 @@ function TankStockLedger({ locations, assets, loggedInUser }) {
       setStockSummaryPage(1)
       setLedgerDetailsPage(1)
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
@@ -267,7 +271,7 @@ function TankStockLedger({ locations, assets, loggedInUser }) {
 
   const handleExportDailySummaryCsv = () => {
     if (dailySummaryRows.length === 0) {
-      setErrorMsg('No Daily Summary rows available to export')
+      notifyError('No Daily Summary rows available to export')
       return
     }
 
@@ -314,7 +318,7 @@ function TankStockLedger({ locations, assets, loggedInUser }) {
 
   const handleExportStockSummaryCsv = () => {
     if (summaryRows.length === 0) {
-      setErrorMsg('No Stock Summary rows available to export')
+      notifyError('No Stock Summary rows available to export')
       return
     }
 
@@ -351,7 +355,7 @@ function TankStockLedger({ locations, assets, loggedInUser }) {
 
   const handleExportLedgerDetailsCsv = () => {
     if (ledgerRows.length === 0) {
-      setErrorMsg('No Ledger Detail rows available to export')
+      notifyError('No Ledger Detail rows available to export')
       return
     }
 
@@ -475,6 +479,10 @@ function TankStockLedger({ locations, assets, loggedInUser }) {
           </button>
         </div>
       </div>
+      {/* Action feedback: right next to the page actions + a little pop-up
+          toast - never at the bottom of the page (owner rule 8). */}
+      <AlertMessage tone="success" message={feedback.successMsg} onDismiss={clearSuccess} />
+      <AlertMessage tone="error" message={feedback.errorMsg} onDismiss={clearError} />
 
       <form onSubmit={handleApplyFilters} className="filter-panel">
         <div>
@@ -920,16 +928,6 @@ function TankStockLedger({ locations, assets, loggedInUser }) {
             same tank/product sequence.
           </div>
 
-          {successMsg && (
-            <div className="success-box" onClick={() => setSuccessMsg('')}>
-              {successMsg}
-            </div>
-          )}
-          {errorMsg && (
-            <div className="error-box" onClick={() => setErrorMsg('')}>
-              {errorMsg}
-            </div>
-          )}
         </>
       )}
 

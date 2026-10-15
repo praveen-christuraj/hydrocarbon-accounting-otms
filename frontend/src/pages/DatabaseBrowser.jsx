@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { getDbTables, getDbTableData } from '../api/adminDbBrowserApi'
 import Icon from '../components/common/Icon'
+import AlertMessage from '../components/common/AlertMessage'
+import useActionFeedback from '../hooks/useActionFeedback'
 
 const REDACTED_PLACEHOLDER = '*** REDACTED ***'
 
@@ -43,7 +45,9 @@ function DatabaseBrowser() {
   const [tables, setTables] = useState([])
   const [selectedTable, setSelectedTable] = useState('')
   const [loading, setLoading] = useState(false)
-  const [errorMsg, setErrorMsg] = useState('')
+  // Load errors pop up as a toast and stay inline near the table controls.
+  const feedback = useActionFeedback()
+  const { errorMsg, notifyError: setErrorMsg, clearError } = feedback
 
   // Table data
   const [tableData, setTableData] = useState(null)
@@ -65,12 +69,13 @@ function DatabaseBrowser() {
         setLoading(false)
       }
     })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const loadTableData = useCallback(async (tableName, pageNum) => {
     try {
       setDataLoading(true)
-      setErrorMsg('')
+      clearError()
       const result = await getDbTableData(tableName, pageNum, perPage)
       setTableData(result)
     } catch (err) {
@@ -79,6 +84,7 @@ function DatabaseBrowser() {
     } finally {
       setDataLoading(false)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const handleTableChange = (e) => {
@@ -108,12 +114,7 @@ function DatabaseBrowser() {
         </div>
       </div>
 
-      {errorMsg && (
-        <div className="error-message">
-          {errorMsg}
-          <button type="button" onClick={() => setErrorMsg('')}>×</button>
-        </div>
-      )}
+      <AlertMessage tone="error" message={errorMsg} onDismiss={clearError} />
 
       <div className="db-browser-controls">
         <label htmlFor="table-select">Select Table:</label>

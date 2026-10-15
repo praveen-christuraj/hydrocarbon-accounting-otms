@@ -14,6 +14,8 @@ import { usePermissions } from '../hooks/usePermissions'
 import { parseImportMatrix } from '../utils/importUtils'
 import { exportRows } from '../utils/exportUtils'
 import { logUiAction } from '../utils/actionLogger'
+import AlertMessage from '../components/common/AlertMessage'
+import useActionFeedback from '../hooks/useActionFeedback'
 
 const UPLOAD_EXTENSIONS = ['xlsx', 'xlsm', 'csv', 'txt']
 
@@ -28,8 +30,10 @@ function Table11FactorMaster({ loggedInUser }) {
   const [uploadFileFormat, setUploadFileFormat] = useState('')
   const [uploadedRows, setUploadedRows] = useState([])
   const [uploadValidationErrors, setUploadValidationErrors] = useState([])
-  const [successMsg, setSuccessMsg] = useState('')
-  const [errorMsg, setErrorMsg] = useState('')
+  // Action feedback: little pop-up (toast) + inline message near the
+  // action area (owner rule 8) - never at the bottom of the page.
+  const feedback = useActionFeedback()
+  const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
   const [confirmClear, setConfirmClear] = useState(false)
   const [confirmSaveRowsAction, setConfirmSaveRowsAction] = useState(null)
 
@@ -57,13 +61,13 @@ function Table11FactorMaster({ loggedInUser }) {
   const loadTable11Factors = async () => {
     try {
       setLoading(true)
-      setSuccessMsg('')
-      setErrorMsg('')
+      clearSuccess()
+      clearError()
 
       const data = await getTable11Factors()
       setRows(data)
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
@@ -186,24 +190,24 @@ function Table11FactorMaster({ loggedInUser }) {
   }
 
   const handlePreview = () => {
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
 
     try {
       const parsedRows = parsePastedRows()
       setRows(parsedRows)
       setUploadedRows([])
       setUploadValidationErrors([])
-      setSuccessMsg(`${parsedRows.length} Table 11 rows loaded for preview.`)
+      notifySuccess(`${parsedRows.length} Table 11 rows loaded for preview.`)
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     }
   }
 
   const handleFileUpload = async (e) => {
     const selectedFile = e.target.files[0]
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
 
     resetUploadState()
 
@@ -215,7 +219,7 @@ function Table11FactorMaster({ loggedInUser }) {
     const fileExtension = fileName.split('.').pop().toLowerCase()
 
     if (!UPLOAD_EXTENSIONS.includes(fileExtension)) {
-      setErrorMsg('Unsupported file type. Upload an Excel (.xlsx) or CSV (.csv) file.')
+      notifyError('Unsupported file type. Upload an Excel (.xlsx) or CSV (.csv) file.')
       e.target.value = ''
       return
     }
@@ -230,12 +234,12 @@ function Table11FactorMaster({ loggedInUser }) {
       setUploadValidationErrors(validation.errors)
 
       if (validation.errors.length > 0) {
-        setErrorMsg(
+        notifyError(
           `Uploaded file has ${validation.errors.length} validation error(s). Correct the file and upload it again – nothing has been saved yet.`
         )
       } else {
         setRows(validation.rows)
-        setSuccessMsg(`${validation.rows.length} Table 11 rows parsed successfully.`)
+        notifySuccess(`${validation.rows.length} Table 11 rows parsed successfully.`)
         logUiAction('Table 11 Factor Master', 'Factor File Parsed', {
           fileName,
           rows: validation.rows.length,
@@ -244,7 +248,7 @@ function Table11FactorMaster({ loggedInUser }) {
       }
     } catch (error) {
       setUploadValidationErrors([error.message])
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       e.target.value = ''
     }
@@ -269,13 +273,13 @@ function Table11FactorMaster({ loggedInUser }) {
         module: 'Table 11 Factor Master',
       })
     } catch (error) {
-      setErrorMsg(error.message || 'Unable to build the template file.')
+      notifyError(error.message || 'Unable to build the template file.')
     }
   }
 
   const executeSaveRows = async () => {
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
 
     try {
       setLoading(true)
@@ -287,25 +291,25 @@ function Table11FactorMaster({ loggedInUser }) {
       setLookupResult(null)
       setConfirmSaveRowsAction(null)
 
-      setSuccessMsg('Table 11 factors saved successfully.')
+      notifySuccess('Table 11 factors saved successfully.')
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
   }
 
   const handleSaveRows = async (sourceRows, sourceName) => {
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
 
     if (!canEditTable11) {
-      setErrorMsg('You do not have permission to save Table 11 factors.')
+      notifyError('You do not have permission to save Table 11 factors.')
       return
     }
 
     if (!Array.isArray(sourceRows) || sourceRows.length === 0) {
-      setErrorMsg(`No valid ${sourceName} rows available to save.`)
+      notifyError(`No valid ${sourceName} rows available to save.`)
       return
     }
 
@@ -313,15 +317,15 @@ function Table11FactorMaster({ loggedInUser }) {
   }
 
   const handleSavePastedRows = async () => {
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
 
     let parsedRows = []
 
     try {
       parsedRows = parsePastedRows()
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
       return
     }
 
@@ -333,8 +337,8 @@ function Table11FactorMaster({ loggedInUser }) {
   }
 
   const executeClearTable = async () => {
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
 
     try {
       setLoading(true)
@@ -346,20 +350,20 @@ function Table11FactorMaster({ loggedInUser }) {
       setLookupResult(null)
       setConfirmClear(false)
 
-      setSuccessMsg('Table 11 factors cleared successfully.')
+      notifySuccess('Table 11 factors cleared successfully.')
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
   }
 
   const handleClear = () => {
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
 
     if (!canDeleteTable11) {
-      setErrorMsg('You do not have permission to clear Table 11 factors.')
+      notifyError('You do not have permission to clear Table 11 factors.')
       return
     }
 
@@ -367,11 +371,11 @@ function Table11FactorMaster({ loggedInUser }) {
   }
 
   const handleLookup = async () => {
-    setSuccessMsg('')
-    setErrorMsg('')
+    clearSuccess()
+    clearError()
 
     if (String(lookupApi60).trim() === '') {
-      setErrorMsg('Enter API@60 value for lookup test.')
+      notifyError('Enter API@60 value for lookup test.')
       return
     }
 
@@ -381,7 +385,7 @@ function Table11FactorMaster({ loggedInUser }) {
       const data = await lookupTable11Factor(lookupApi60)
       setLookupResult(data)
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
       setLookupResult(null)
     } finally {
       setLoading(false)
@@ -401,6 +405,10 @@ function Table11FactorMaster({ loggedInUser }) {
 
         <span className="record-count">{rows.length} Rows</span>
       </div>
+      {/* Action feedback: right next to the page actions + a little pop-up
+          toast - never at the bottom of the page (owner rule 8). */}
+      <AlertMessage tone="success" message={feedback.successMsg} onDismiss={clearSuccess} />
+      <AlertMessage tone="error" message={feedback.errorMsg} onDismiss={clearError} />
 
       <div className="info-box">
         Table 11 is common reference data. It is not asset-specific. Required
@@ -735,12 +743,6 @@ API@60 LT_FACTOR
           Showing first 10 rows only for easy viewing. Total saved Table 11 rows:{' '}
           {sortedRows.length}. Use Lookup Test to verify any API @ 60°F value.
         </div>
-      )}
-      {successMsg && (
-        <div className="success-box">{successMsg}</div>
-      )}
-      {errorMsg && (
-        <div className="error-box">{errorMsg}</div>
       )}
 
       <div className="info-box">

@@ -5,6 +5,8 @@ import {
 import { useCompanyPrintProfile } from '../hooks/useCompanyPrintProfile'
 import CompanyPrintHeader from '../components/reports/CompanyPrintHeader'
 import CompanyPrintFooter from '../components/reports/CompanyPrintFooter'
+import AlertMessage from '../components/common/AlertMessage'
+import useActionFeedback from '../hooks/useActionFeedback'
 
 function FlowmeterRecordEntry({ locations = [], assets = [] }) {
   const profile = useCompanyPrintProfile()
@@ -21,8 +23,10 @@ function FlowmeterRecordEntry({ locations = [], assets = [] }) {
   const [loading, setLoading] = useState(false)
   const [lastAppliedAt, setLastAppliedAt] = useState('')
   const [printedAt] = useState(() => new Date().toLocaleString())
-  const [successMsg, setSuccessMsg] = useState('')
-  const [errorMsg, setErrorMsg] = useState('')
+  // Action feedback: little pop-up (toast) + inline message near the
+  // action area (owner rule 8) - never at the bottom of the page.
+  const feedback = useActionFeedback()
+  const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
 
   const flowmeterAssets = useMemo(() => {
     return (assets || []).filter((a) => String(a.status || '').toLowerCase() === 'active')
@@ -35,7 +39,7 @@ function FlowmeterRecordEntry({ locations = [], assets = [] }) {
       setRows(recordRows)
       setLastAppliedAt(new Date().toLocaleString())
     } catch (error) {
-      setErrorMsg(error?.message || 'Failed to load flowmeter records')
+      notifyError(error?.message || 'Failed to load flowmeter records')
     } finally {
       setLoading(false)
     }
@@ -56,7 +60,7 @@ function FlowmeterRecordEntry({ locations = [], assets = [] }) {
 
   const exportCsv = () => {
     if (!rows.length) {
-      setErrorMsg('No rows available to export.')
+      notifyError('No rows available to export.')
       return
     }
 
@@ -182,6 +186,10 @@ function FlowmeterRecordEntry({ locations = [], assets = [] }) {
           <p>Approved records only, reflected from saved Operation Entry tickets (Meter Reading layout).</p>
         </div>
       </div>
+      {/* Action feedback: right next to the page actions + a little pop-up
+          toast - never at the bottom of the page (owner rule 8). */}
+      <AlertMessage tone="success" message={feedback.successMsg} onDismiss={clearSuccess} />
+      <AlertMessage tone="error" message={feedback.errorMsg} onDismiss={clearError} />
 
       <div className="report-filter-panel no-print">
         <div>
@@ -305,16 +313,6 @@ function FlowmeterRecordEntry({ locations = [], assets = [] }) {
       )}
       </div>
 
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>
-          {errorMsg}
-        </div>
-      )}
     </>
   )
 }

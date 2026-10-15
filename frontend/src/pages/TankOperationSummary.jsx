@@ -8,6 +8,8 @@ import PaginationControls, { paginateRows, usePageSize } from '../components/com
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
+import AlertMessage from '../components/common/AlertMessage'
+import useActionFeedback from '../hooks/useActionFeedback'
 
 function TankOperationSummary({ locations, assets, loggedInUser }) {
   const emptyFilters = {
@@ -25,8 +27,10 @@ function TankOperationSummary({ locations, assets, loggedInUser }) {
   const [loading, setLoading] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
   const pageSize = usePageSize()
-  const [successMsg, setSuccessMsg] = useState('')
-  const [errorMsg, setErrorMsg] = useState('')
+  // Action feedback: little pop-up (toast) + inline message near the
+  // action area (owner rule 8) - never at the bottom of the page.
+  const feedback = useActionFeedback()
+  const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
 
   const [profile, setProfile] = useState(null)
   const isAdminBootstrap =
@@ -109,7 +113,7 @@ function TankOperationSummary({ locations, assets, loggedInUser }) {
       setReportMeta(reportData)
       setCurrentPage(1)
     } catch (error) {
-      setErrorMsg(error.message)
+      notifyError(error.message)
     } finally {
       setLoading(false)
     }
@@ -228,7 +232,7 @@ function TankOperationSummary({ locations, assets, loggedInUser }) {
 
   const handleExportCsv = () => {
     if (rows.length === 0) {
-      setErrorMsg('No Tank Operation Summary rows available to export')
+      notifyError('No Tank Operation Summary rows available to export')
       return
     }
 
@@ -324,6 +328,10 @@ function TankOperationSummary({ locations, assets, loggedInUser }) {
           </button>
         </div>
       </div>
+      {/* Action feedback: right next to the page actions + a little pop-up
+          toast - never at the bottom of the page (owner rule 8). */}
+      <AlertMessage tone="success" message={feedback.successMsg} onDismiss={clearSuccess} />
+      <AlertMessage tone="error" message={feedback.errorMsg} onDismiss={clearError} />
 
       <form onSubmit={handleApplyFilters} className="filter-panel">
         <div>
@@ -498,16 +506,6 @@ function TankOperationSummary({ locations, assets, loggedInUser }) {
         </div>
       )}
 
-      {successMsg && (
-        <div className="success-box" onClick={() => setSuccessMsg('')}>
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="error-box" onClick={() => setErrorMsg('')}>{
-          errorMsg
-        }</div>
-      )}
     </div>
   )
 }
