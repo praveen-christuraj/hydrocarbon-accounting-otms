@@ -438,6 +438,109 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
+  /* ---------------------------------------------------- barge trip tracking (mock) */
+  if (pathname === '/barge-trip/voyages') {
+    const tab = (url.searchParams.get('tab') || 'OPEN').toUpperCase()
+    const openRows = [
+      {
+        trip_id: 1,
+        convoy_number: 'CNV-OPEN-1',
+        status: 'OPEN',
+        barge_asset_codes: ['BRG-001'],
+        barges: [{ asset_code: 'BRG-001', asset_name: 'Barge Ada' }],
+        barge_count: 1,
+        ticket_count: 2,
+        first_operation_date: '2026-10-02',
+        last_operation_date: '2026-10-05',
+        origin_location_codes: ['UTP'],
+        destination_location_codes: ['BNY'],
+        trip_created_by: 'admin',
+        trip_remarks: null,
+        trip_updated_at: now(),
+      },
+    ]
+    const closedRows = [
+      {
+        trip_id: 2,
+        convoy_number: 'CNV-CLOSED-1',
+        status: 'CLOSED',
+        barge_asset_codes: ['BRG-001'],
+        barges: [{ asset_code: 'BRG-001', asset_name: 'Barge Ada' }],
+        barge_count: 1,
+        ticket_count: 1,
+        first_operation_date: '2026-09-20',
+        last_operation_date: '2026-09-21',
+        origin_location_codes: ['UTP'],
+        destination_location_codes: ['BNY'],
+        trip_created_by: 'admin',
+        trip_remarks: 'settled',
+        trip_updated_at: now(),
+      },
+    ]
+    const open_count = openRows.length
+    const closed_count = closedRows.length
+    const rows = tab === 'CLOSED' ? closedRows : openRows
+    sendJson(res, 200, { tab, open_count, closed_count, rows })
+    return
+  }
+
+  if (pathname === '/barge-trip/convoy-tracker' || pathname === '/barge-trip/barge-tracking') {
+    const convoy = url.searchParams.get('convoy_number') || 'CNV-OPEN-1'
+    sendJson(res, 200, {
+      convoy_number: convoy,
+      total_tickets: 2,
+      assets: [
+        {
+          asset_code: 'BRG-001',
+          asset_name: 'Barge Ada',
+          tickets: [
+            {
+              transaction_id: 1,
+              ticket_number: 'TKT-001',
+              operation_type_code: 'BARGE_LOADING',
+              operation_type_name: 'Barge Loading',
+              operation_date: '2026-10-02',
+              origin_location_code: 'UTP',
+              origin_location_name: 'Utapate Terminal',
+              destination_location_code: 'BNY',
+              destination_location_name: 'Bonny Depot',
+              status: 'Approved',
+            },
+          ],
+        },
+      ],
+    })
+    return
+  }
+
+  if (pathname.startsWith('/barge-trip/trips/by-convoy/')) {
+    const convoy = decodeURIComponent(pathname.split('/').pop())
+    sendJson(res, 200, {
+      trip: {
+        id: 1,
+        convoy_number: convoy,
+        primary_barge_asset_code: 'BRG-001',
+        status: 'OPEN',
+        created_by: 'admin',
+        remarks: null,
+        created_at: now(),
+        updated_at: now(),
+      },
+      events: [],
+      comparisons: [],
+      timeline_rebuilt: false,
+      warnings: [],
+    })
+    return
+  }
+
+  if (pathname.match(/^\/barge-trip\/trips\/\d+\/(close|reopen)$/) && method === 'POST') {
+    const id = Number(pathname.split('/')[4])
+    const status = pathname.endsWith('/close') ? 'CLOSED' : 'OPEN'
+    sendJson(res, 200, { message: 'ok', trip_id: id, status })
+    return
+  }
+
   sendJson(res, 200, {})
 })
 

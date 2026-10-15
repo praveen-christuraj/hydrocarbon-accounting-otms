@@ -13,6 +13,7 @@ import { useDataFilters } from '../hooks/useDataFilters'
 import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import AlertMessage from '../components/common/AlertMessage'
+import Modal from '../components/common/Modal'
 import CompanyPrintHeader from '../components/reports/CompanyPrintHeader'
 import CompanyPrintFooter from '../components/reports/CompanyPrintFooter'
 import { logUiAction } from '../utils/actionLogger'
@@ -56,6 +57,7 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
   const [voyageError, setVoyageError] = useState('')
   const [voyagePage, setVoyagePage] = useState(1)
   const [selectedVoyage, setSelectedVoyage] = useState('')
+  const [detailOpen, setDetailOpen] = useState(false)
   const voyagePageSize = usePageSize()
   const [confirmAction, setConfirmAction] = useState(null) // { type, message, data }
   const [promptModal, setPromptModal] = useState(null) // { type, message, default, value }
@@ -241,8 +243,16 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
     logUiAction('Barge Tracking', 'Open Voyage', { convoyNumber: convoy })
     setSelectedVoyage(convoy)
     setConvoyNumber(convoy)
+    setDetailOpen(true)
     loadAll(convoy)
-    document.getElementById('barge-voyage-detail')?.scrollIntoView()
+  }
+
+  const closeVoyageDetail = () => {
+    setDetailOpen(false)
+    setTracker(null)
+    setTimeline(null)
+    setTimelineWarning('')
+    setErrorMsg('')
   }
 
   const loadAll = async (cn) => {
@@ -254,10 +264,8 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
 
     setLoading(true)
 
-    let trackerData = null
-
     try {
-      trackerData = await getBargeTracking(clean)
+      const trackerData = await getBargeTracking(clean)
       setTracker(trackerData)
     } catch (e) {
       setTracker(null)
@@ -293,6 +301,7 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
 
   const handleSearch = async (e) => {
     e.preventDefault()
+    setDetailOpen(true)
     await loadAll(convoyNumber)
   }
 
@@ -525,6 +534,7 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
       await closeTrip(timeline.trip.id, remarks)
       setSuccessMsg('Barge movement closed.')
       await loadAll(timeline.trip.convoy_number)
+      switchVoyageTab('CLOSED')
     } catch (e) {
       setErrorMsg(e.message || 'Failed to close barge movement')
     } finally {
@@ -556,6 +566,7 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
       await reopenTrip(timeline.trip.id, remarks)
       setSuccessMsg('Barge movement reopened.')
       await loadAll(timeline.trip.convoy_number)
+      switchVoyageTab('OPEN')
     } catch (e) {
       setErrorMsg(e.message || 'Failed to reopen barge movement')
     } finally {
@@ -1209,12 +1220,13 @@ return (
         onPageChange={setVoyagePage}
       />
 
-      {/* Convoy lookup and voyage detail */}
-      <div id="barge-voyage-detail" className="section-title">
-        <h3>Voyage Detail</h3>
-        <p>Search a convoy number, or open a voyage from the list above.</p>
-      </div>
-
+      <Modal
+        open={detailOpen}
+        title="Voyage Detail"
+        description="Search a convoy number, or open a voyage from the list above."
+        onClose={closeVoyageDetail}
+        size="xl"
+      >
       <form onSubmit={handleSearch}>
         <div>
           <label>Convoy Number</label>
@@ -1605,6 +1617,7 @@ return (
           )}
         </>
       )}
+      </Modal>
 
       {successMsg && (
         <div className="success-box" onClick={() => setSuccessMsg('')}>
