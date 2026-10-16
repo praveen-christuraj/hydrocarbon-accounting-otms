@@ -820,7 +820,7 @@ function AppContent({
             element={
               <PermissionGuard
                 loggedInUser={loggedInUser}
-                requiredPermission="Create Operation Entry"
+                anyOfPermissions={['Create Operation Entry', 'Create Receiving Ticket']}
                 fallbackMessage="You do not have permission to create operation entries."
               >
                 <OperationEntry

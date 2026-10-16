@@ -99,3 +99,17 @@ export const getPermissionCatalog = async () => {
 }
 
 export const seedStandardPermissions = async () => apiPost('/permissions/seed-standard', {})
+
+/**
+ * Read-only access decision diagnostic ("why can this user see this?").
+ * Composes the four criteria of PERMISSION_CRITERIA_MODEL.md for one user and,
+ * optionally, one operation ticket.
+ */
+export const getAccessDiagnostic = async ({ userId, transactionId = null, actionCode = null }) => {
+  let endpoint = `/permissions/access-diagnostic?user_id=${encodeURIComponent(userId)}`
+  if (transactionId !== null && transactionId !== undefined && String(transactionId).trim() !== '') {
+    endpoint += `&transaction_id=${encodeURIComponent(transactionId)}`
+  }
+  if (actionCode) endpoint += `&action_code=${encodeURIComponent(actionCode)}`
+  return apiGet(endpoint)
+}

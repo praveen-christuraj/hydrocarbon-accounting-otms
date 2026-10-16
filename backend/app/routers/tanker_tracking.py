@@ -1391,7 +1391,7 @@ def get_tanker_sender_reference(
 ):
     require_any_user_permission(
         current_user,
-        ["Create Operation Entry", "Edit Operation Entry"],
+        ["Create Operation Entry", "Edit Operation Entry", "Create Receiving Ticket"],
         db,
     )
 
@@ -1540,9 +1540,12 @@ def acknowledge_tanker_receipt(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(
+    # The receiving side of a cross-location movement may be granted the
+    # scoped "Acknowledge Shipment Receipt" capability instead of the general
+    # tanker tracking edit right (PERMISSION_CRITERIA_MODEL.md, section 7.1).
+    require_any_user_permission(
         current_user,
-        "Edit Tanker Tracking",
+        ["Edit Tanker Tracking", "Acknowledge Shipment Receipt"],
         db,
     )
 
@@ -1688,9 +1691,9 @@ def revoke_tanker_receipt_acknowledgement(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(
+    require_any_user_permission(
         current_user,
-        "Edit Tanker Tracking",
+        ["Edit Tanker Tracking", "Acknowledge Shipment Receipt"],
         db,
     )
 

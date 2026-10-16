@@ -129,7 +129,12 @@ export const navigationItems = [
     label: 'Operations',
     type: 'dropdown',
     items: [
-      { label: 'Operation Entry', path: '/operation-entry', permission: 'Create Operation Entry' },
+      {
+        label: 'Operation Entry',
+        path: '/operation-entry',
+        // A receiving terminal may hold only the shipment-receipt capability.
+        anyPermission: ['Create Operation Entry', 'Create Receiving Ticket'],
+      },
       {
         label: 'Operation Transaction Register',
         path: '/operation-transactions',

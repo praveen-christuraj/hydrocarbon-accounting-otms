@@ -93,6 +93,11 @@ data/
 # Source files under frontend/src/components/reports/ were silently untracked
 # because of the reports/ rule above, which broke the pages importing them.
 !frontend/src/components/reports/
+
+# ...and never ignore the frontend data folder (navigation items, default
+# permissions/roles, help content) for the same reason: the "data/" rule above
+# silently untracks new files that live there.
+!frontend/src/data/
 !frontend/src/components/reports/**
 
 # Docker

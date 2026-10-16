@@ -15,7 +15,7 @@ from app.models import (
 )
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
-    apply_location_filter,
+    apply_transaction_party_scope_filter,
     require_user_permission,
 )
 from app.routers.tank_operation_summary import (
@@ -293,8 +293,13 @@ def _get_transaction_query(
     )
 
     if current_user is not None:
-        query = apply_location_filter(
-            query, OperationTransaction, current_user, db, column_name="origin_location_code"
+        # Cross-location record: a location-scoped user sees a ticket when ANY
+        # party location (origin, destination, sender or receiver) is in scope,
+        # so the receiving terminal sees the movement it took part in - the same
+        # rule as the tracking lists and the register
+        # (PERMISSION_CRITERIA_MODEL.md, sections 3 and 7).
+        query = apply_transaction_party_scope_filter(
+            query, OperationTransaction, current_user, db
         )
 
     cleaned_location_code = clean_optional_text(location_code)

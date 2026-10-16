@@ -17,7 +17,7 @@ from app.models import (
 )
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
-    apply_location_filter,
+    apply_transaction_party_scope_filter,
     get_user_location_codes,
     ensure_location_in_user_scope,
     require_user_permission,
@@ -128,8 +128,9 @@ def get_all_possible_columns(
     )
 
     if current_user is not None:
-        query = apply_location_filter(
-            query, OperationTransaction, current_user, db, column_name="origin_location_code"
+        # Cross-location record: party rule (PERMISSION_CRITERIA_MODEL.md).
+        query = apply_transaction_party_scope_filter(
+            query, OperationTransaction, current_user, db
         )
 
     cleaned_location_code = clean_optional_text(location_code)
@@ -249,8 +250,9 @@ def get_filtered_tank_operation_summary_rows(
     )
 
     if current_user is not None:
-        query = apply_location_filter(
-            query, OperationTransaction, current_user, db, column_name="origin_location_code"
+        # Cross-location record: party rule (PERMISSION_CRITERIA_MODEL.md).
+        query = apply_transaction_party_scope_filter(
+            query, OperationTransaction, current_user, db
         )
 
     cleaned_location_code = clean_optional_text(location_code)
