@@ -34,7 +34,6 @@ def _serialize(row: TrackingModuleConfig, operation_type: OperationType | None):
         "operation_type_name": operation_type.operation_type_name if operation_type else "",
         "applicable_asset_type_code": operation_type.applicable_asset_type_code if operation_type else None,
         "movement_role": row.movement_role,
-        "tracking_stage": row.tracking_stage,
         "status": row.status,
         "remarks": row.remarks,
         "created_by": row.created_by,
@@ -57,7 +56,6 @@ def _snapshot(row: TrackingModuleConfig):
         "module_code": row.module_code,
         "operation_type_code": row.operation_type_code,
         "movement_role": row.movement_role,
-        "tracking_stage": row.tracking_stage,
         "status": row.status,
         "remarks": row.remarks,
     }
@@ -69,7 +67,7 @@ def get_tracking_module_catalog(
     db: Session = Depends(get_db),
 ):
     """
-    Modules, roles, stages and the Operation Type Master with the tracking
+    Modules, roles and the Operation Type Master with the tracking
     mappings of each operation type. Lets the admin see which operation types
     of the system are not yet mapped to any tracking module.
     """
@@ -85,7 +83,6 @@ def get_tracking_module_catalog(
             "id": row.id,
             "module_code": row.module_code,
             "movement_role": row.movement_role,
-            "tracking_stage": row.tracking_stage,
             "status": row.status,
         })
 
@@ -148,7 +145,6 @@ def create_tracking_module_config(
         module_code=payload.module_code,
         operation_type_code=payload.operation_type_code,
         movement_role=payload.movement_role,
-        tracking_stage=payload.tracking_stage,
         status=payload.status,
     )
 
@@ -156,7 +152,6 @@ def create_tracking_module_config(
         module_code=cleaned["module_code"],
         operation_type_code=cleaned["operation_type_code"],
         movement_role=cleaned["movement_role"],
-        tracking_stage=cleaned["tracking_stage"],
         status=cleaned["status"],
         remarks=clean_optional_text(payload.remarks),
         created_by=get_current_user_display_name(current_user),
@@ -208,7 +203,6 @@ def update_tracking_module_config(
         module_code=payload.module_code,
         operation_type_code=payload.operation_type_code,
         movement_role=payload.movement_role,
-        tracking_stage=payload.tracking_stage,
         status=payload.status,
         exclude_id=config_id,
     )
@@ -216,7 +210,10 @@ def update_tracking_module_config(
     row.module_code = cleaned["module_code"]
     row.operation_type_code = cleaned["operation_type_code"]
     row.movement_role = cleaned["movement_role"]
-    row.tracking_stage = cleaned["tracking_stage"]
+    # The barge stage is captured per ticket on the entry screen, not here.
+    # Rows written before the stage was removed keep their old value in the
+    # (now unused) column; editing the mapping clears it.
+    row.tracking_stage = None
     row.status = cleaned["status"]
     row.remarks = clean_optional_text(payload.remarks)
     row.updated_by = get_current_user_display_name(current_user)

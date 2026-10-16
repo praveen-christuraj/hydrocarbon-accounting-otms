@@ -29,10 +29,12 @@ from app.services.tracking_config import (
     ROLE_RECEIVER,
     ROLE_SENDER,
     TRACKING_MODULES,
+    configured_operation_type_code_list,
     configured_role_for_transaction,
     get_active_config_row,
     is_ticket_captured,
     module_is_configured,
+    receiving_config_rows,
 )
 from app.services.transaction_helpers import require_approved_transaction_for_tracking
 from app.utils.helpers import clean_optional_text, get_transaction_ticket_number
@@ -239,6 +241,19 @@ def validate_linked_sender_ticket(
             detail="Convoy number must match the linked sender ticket",
         )
 
+    if get_linked_sender_transaction_id(db, sender.id) is not None:
+        # A receiving ticket is never a sender ticket, whatever role its
+        # operation type is mapped with. This is the Barge Tracking case: the
+        # same operation type is used by both sides, so the link (and not the
+        # configured role) tells the two apart.
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Ticket {get_transaction_ticket_number(sender)} is itself a receiving ticket. "
+                "Only a sender ticket can be received."
+            ),
+        )
+
     module_code = sender_module_code(db, sender)
     if module_code is None:
         if any(module_is_configured(db, code) for code in TRACKING_MODULES):
@@ -250,15 +265,19 @@ def validate_linked_sender_ticket(
                 ),
             )
     else:
-        role = configured_role_for_transaction(db, module_code, sender)
-        if module_is_configured(db, module_code) and role != ROLE_SENDER:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Ticket {get_transaction_ticket_number(sender)} is not a sender ticket for "
-                    f"{TRACKING_MODULES.get(module_code, module_code)}. Only sender tickets can be received."
-                ),
-            )
+        # Tanker Tracking has a dedicated sending operation type. Barge
+        # Tracking uses one operation type for both sides, so its role is only
+        # a nominal one and must not block the receiving side.
+        if module_code != MODULE_BARGE and module_is_configured(db, module_code):
+            role = configured_role_for_transaction(db, module_code, sender)
+            if role != ROLE_SENDER:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Ticket {get_transaction_ticket_number(sender)} is not a sender ticket for "
+                        f"{TRACKING_MODULES.get(module_code, module_code)}. Only sender tickets can be received."
+                    ),
+                )
 
     if not user_has_location_access(current_user, db, sender.origin_location_code) and not any(
         user_has_location_access(current_user, db, code)
@@ -304,12 +323,41 @@ def validate_receiver_operation_type(
     module_code: str | None,
     operation_type_code: str,
 ):
-    """A receiving ticket must use an operation type configured as RECEIVER."""
+    """
+    A receiving ticket must use an operation type captured by its module.
+
+    Tanker Tracking uses two operation types - one per side - so the receiving
+    ticket must use the type mapped as RECEIVER. Barge Tracking uses ONE
+    operation type for both sides (the receiver ticket is created against the
+    approved sender ticket of the same barge and convoy), so every Active barge
+    mapping is accepted here whatever role it was mapped with.
+    """
     if module_code is None or not module_is_configured(db, module_code):
         return
 
     row = get_active_config_row(db, module_code, operation_type_code)
-    if row is None or row.movement_role != ROLE_RECEIVER:
+    if row is None:
+        configured = ", ".join(
+            configured_operation_type_code_list(db, module_code)
+        )
+        hint = (
+            f"Select one of the configured operation types: {configured}."
+            if configured
+            else "Configure the mapping in Tracking Module Configuration first."
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Operation type {operation_type_code} is not mapped to "
+                f"{TRACKING_MODULES.get(module_code, module_code)}. {hint}"
+            ),
+        )
+
+    if module_code == MODULE_BARGE:
+        # One barge operation type serves both sides of the movement.
+        return
+
+    if row.movement_role != ROLE_RECEIVER:
         raise HTTPException(
             status_code=400,
             detail=(
@@ -322,12 +370,13 @@ def validate_receiver_operation_type(
 def describe_linked_sender(db: Session, sender_transaction_id: int, current_user: User):
     """
     Read model for the receiver entry screen: the sender ticket, its route and
-    the receiving operation types configured for its tracking module.
+    the receiving operation types configured for its tracking module
+    (Tanker Tracking: the operation types mapped as RECEIVER; Barge Tracking:
+    every Active mapping, because one barge operation type serves both sides).
     Does not require the receiver to hold View Operation Transaction.
     """
     from app.models import Location, OperationType
     from app.services.tracking_config import TRACKING_MODULES as _MODULES
-    from app.services.tracking_config import _module_index
 
     sender = (
         db.query(OperationTransaction)
@@ -365,10 +414,7 @@ def describe_linked_sender(db: Session, sender_transaction_id: int, current_user
     module_code = sender_module_code(db, sender)
     receiver_options = []
     if module_code is not None:
-        index = _module_index(db, module_code)
-        for row in index["rows"].values():
-            if row.movement_role != ROLE_RECEIVER:
-                continue
+        for row in receiving_config_rows(db, module_code):
             operation_type = (
                 db.query(OperationType)
                 .filter(OperationType.operation_type_code.ilike(row.operation_type_code))
@@ -377,9 +423,9 @@ def describe_linked_sender(db: Session, sender_transaction_id: int, current_user
             receiver_options.append({
                 "operation_type_code": row.operation_type_code,
                 "operation_type_name": operation_type.operation_type_name if operation_type else row.operation_type_code,
-                "tracking_stage": row.tracking_stage,
+                "movement_role": row.movement_role,
             })
-        receiver_options.sort(key=lambda item: item["operation_type_code"])
+    receiver_options.sort(key=lambda item: item["operation_type_code"])
 
     active_receiver = find_active_receiver_for_sender(
         db, sender.id, sender.convoy_number

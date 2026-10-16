@@ -2,7 +2,8 @@
 Tracking Module Configuration + sender/receiver linked tickets (barge).
 
 Covers the flow the product owner asked for:
-  1. Admin maps Barge Tracking operation types (SENDER / RECEIVER, stage).
+  1. Admin maps Barge Tracking operation types (SENDER / RECEIVER). No stage is
+     configured: the barge stage is captured on the ticket (barge_event_type).
   2. Sender location approves a LOAD ticket -> convoy shows under OPEN voyages
      for the receiving location.
   3. Receiver acknowledges receipt, creates a linked UNLOAD ticket. Origin,
@@ -242,24 +243,25 @@ def _acknowledge(client, headers, convoy=CONVOY, asset="BARGE_01", location="UTP
     return res
 
 
-def _config(client, headers, module, op_code, role, stage=None):
+def _config(client, headers, module, op_code, role, extra=None):
+    payload = {
+        "module_code": module,
+        "operation_type_code": op_code,
+        "movement_role": role,
+        "status": "Active",
+    }
+    payload.update(extra or {})
     return client.post(
         "/tracking-module-configs",
-        json={
-            "module_code": module,
-            "operation_type_code": op_code,
-            "movement_role": role,
-            "tracking_stage": stage,
-            "status": "Active",
-        },
+        json=payload,
         headers=headers,
     )
 
 
 def _configure_barge(client, admin_headers):
-    res = _config(client, admin_headers, "BARGE", "BARGE_LOAD", "SENDER", "LOAD_1")
+    res = _config(client, admin_headers, "BARGE", "BARGE_LOAD", "SENDER")
     assert res.status_code == 200, res.text
-    res = _config(client, admin_headers, "BARGE", "BARGE_UNLOAD", "RECEIVER", "UNLOAD")
+    res = _config(client, admin_headers, "BARGE", "BARGE_UNLOAD", "RECEIVER")
     assert res.status_code == 200, res.text
 
 
@@ -276,18 +278,22 @@ def test_config_catalog_and_validation(client, db):
     body = catalog.text
     assert "BARGE_LOAD" in body and "BARGE_UNLOAD" in body
 
-    ok = _config(client, admin_headers, "BARGE", "BARGE_LOAD", "SENDER", "LOAD_1")
+    catalog_body = catalog.json()
+    # The barge stage is not configured here any more: the stage belongs to the
+    # ticket (barge_event_type value) so one operation type serves both sides.
+    assert "stages" not in catalog_body
+    assert [role["code"] for role in catalog_body["roles"]] == ["SENDER", "RECEIVER"]
+
+    ok = _config(client, admin_headers, "BARGE", "BARGE_LOAD", "SENDER")
     assert ok.status_code == 200, ok.text
     assert ok.json()["module_label"]
     assert ok.json()["operation_type_name"] == "Barge Loading"
+    assert "tracking_stage" not in ok.json()
 
-    dup = _config(client, admin_headers, "BARGE", "BARGE_LOAD", "SENDER", "LOAD_1")
+    dup = _config(client, admin_headers, "BARGE", "BARGE_LOAD", "SENDER")
     assert dup.status_code == 400, dup.text
 
-    bad_stage = _config(client, admin_headers, "BARGE", "BARGE_UNLOAD", "RECEIVER", "LOAD_1")
-    assert bad_stage.status_code == 400, bad_stage.text
-
-    unknown_op = _config(client, admin_headers, "BARGE", "NOPE", "SENDER", "LOAD_1")
+    unknown_op = _config(client, admin_headers, "BARGE", "NOPE", "SENDER")
     assert unknown_op.status_code == 400, unknown_op.text
 
     listed = client.get("/tracking-module-configs", headers=admin_headers)
@@ -298,11 +304,13 @@ def test_config_catalog_and_validation(client, db):
     updated = client.put(
         f"/tracking-module-configs/{config_id}",
         json={"module_code": "BARGE", "operation_type_code": "BARGE_LOAD",
-              "movement_role": "SENDER", "tracking_stage": "LOAD_1", "status": "Inactive"},
+              "movement_role": "SENDER", "status": "Inactive",
+              "tracking_stage": "LOAD_1"},  # legacy field sent by old clients is ignored
         headers=admin_headers,
     )
     assert updated.status_code == 200, updated.text
     assert updated.json()["status"] == "Inactive"
+    assert "tracking_stage" not in updated.json()
 
     deleted = client.delete(f"/tracking-module-configs/{config_id}", headers=admin_headers)
     assert deleted.status_code in (200, 204), deleted.text
@@ -311,7 +319,7 @@ def test_config_catalog_and_validation(client, db):
 def test_config_requires_permission(client, db):
     _seed(db)
     headers, _ = _make_user(db, client, "cfg_viewer_none", ["View Barge Tracking"], all_locations=True)
-    res = _config(client, headers, "BARGE", "BARGE_LOAD", "SENDER", "LOAD_1")
+    res = _config(client, headers, "BARGE", "BARGE_LOAD", "SENDER")
     assert res.status_code == 403, res.text
 
 
@@ -343,7 +351,6 @@ def test_sender_receiver_linked_ticket_flow(client, db):
     ticket = tracker.json()["assets"][0]["tickets"][0]
     assert ticket["transaction_id"] == sender_tx_id
     assert ticket["movement_role"] == "SENDER"
-    assert ticket["tracking_stage"] == "LOAD_1"
     assert ticket["receiver_transaction_id"] is None
 
     # 3. the entry form loads the sender ticket and the receiving op types
@@ -354,7 +361,13 @@ def test_sender_receiver_linked_ticket_flow(client, db):
     assert info_json["origin_location_code"] == "UTP"
     assert info_json["destination_location_code"] == "UTP"
     assert info_json["sender_location_code"] == "AGGE"
-    assert [op["operation_type_code"] for op in info_json["receiver_operation_types"]] == ["BARGE_UNLOAD"]
+    # Barge Tracking uses one operation type per movement side, so every Active
+    # mapping of the module may be used by the receiver (the link decides the
+    # receiving side). No stage is part of the mapping.
+    assert sorted(
+        op["operation_type_code"] for op in info_json["receiver_operation_types"]
+    ) == ["BARGE_LOAD", "BARGE_UNLOAD"]
+    assert all("tracking_stage" not in op for op in info_json["receiver_operation_types"])
 
     # 4. receiver must acknowledge receipt before creating the linked ticket
     early = client.post(

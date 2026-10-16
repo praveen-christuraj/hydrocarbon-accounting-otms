@@ -88,7 +88,6 @@ def test_tanker_tracking_lists_only_configured_operation_types(client, db):
             "module_code": "TANKER",
             "operation_type_code": "TANKER_LOAD",
             "movement_role": "SENDER",
-            "tracking_stage": None,
             "status": "Active",
         },
         headers=admin_headers,

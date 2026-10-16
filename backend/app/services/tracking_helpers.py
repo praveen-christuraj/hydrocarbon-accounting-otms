@@ -48,7 +48,6 @@ from app.config import APPROVED_TRANSACTION_STATUS
 from app.services.asset_family import FAMILY_BARGE, resolve_ticket_family
 from app.services.tracking_config import (
     MODULE_BARGE,
-    configured_stage_for_transaction,
     is_ticket_captured,
 )
 
@@ -245,13 +244,11 @@ BARGE_EVENT_TYPES = [
 
 def _explicit_barge_event_type(db: Session, transaction: OperationTransaction):
     """
-    Stage for the ticket: the configured stage of its operation type first,
-    then the stage stored on the ticket (barge_event_type value field).
+    Stage stored on the ticket itself (``barge_event_type`` value field), or
+    None. The stage is captured on the entry screen per ticket - Tracking
+    Module Configuration maps operation types only, so one operation type can
+    carry any stage (LOAD_1 / UNLOAD / STS / ...) from any location.
     """
-    configured_stage = configured_stage_for_transaction(db, transaction)
-    if configured_stage in BARGE_EVENT_TYPES:
-        return configured_stage
-
     stage = get_transaction_value_text(db, transaction.id, "barge_event_type")
 
     if not stage:
@@ -260,6 +257,32 @@ def _explicit_barge_event_type(db: Session, transaction: OperationTransaction):
     stage_upper = stage.strip().upper()
 
     return stage_upper if stage_upper in BARGE_EVENT_TYPES else None
+
+
+def _barge_event_type_for_transaction(
+    db: Session,
+    transaction: OperationTransaction,
+    linked_sender_id: int | None,
+) -> str | None:
+    """
+    Stage the timeline event of a barge ticket must carry, or None when it has
+    to fall back to the first-load default.
+
+    A ticket created against an approved sender ticket is the receiving side of
+    the movement, so a missing stage on it becomes UNLOAD instead of a load.
+    """
+    stage = _explicit_barge_event_type(db, transaction)
+    if stage is not None:
+        return stage
+
+    resolved = resolve_barge_event_type_from_ticket(db, transaction)
+    if resolved is not None:
+        return resolved
+
+    if linked_sender_id is not None:
+        return "UNLOAD"
+
+    return None
 
 
 def _default_load_event_type(db: Session, trip: Trip, asset_code: str) -> str:
@@ -293,6 +316,8 @@ def ensure_trip_event_for_transaction(
     location_code = clean_optional_text(transaction.origin_location_code)
     event_datetime = transaction.operation_start_datetime or datetime.now()
 
+    linked_sender_id = get_linked_sender_transaction_id(db, transaction.id)
+
     existing_event = (
         db.query(TripEvent)
         .filter(TripEvent.operation_transaction_id == transaction.id)
@@ -315,8 +340,8 @@ def ensure_trip_event_for_transaction(
             changed = True
 
         explicit_stage = _explicit_barge_event_type(db, transaction)
-        resolved_stage = explicit_stage or resolve_barge_event_type_from_ticket(
-            db, transaction
+        resolved_stage = _barge_event_type_for_transaction(
+            db, transaction, linked_sender_id
         )
         existing_stage = str(existing_event.event_type or "").strip().upper()
 
@@ -332,9 +357,9 @@ def ensure_trip_event_for_transaction(
 
         return existing_event, changed
 
-    event_type = resolve_barge_event_type_from_ticket(db, transaction) or (
-        _default_load_event_type(db, trip, asset_code)
-    )
+    event_type = _barge_event_type_for_transaction(
+        db, transaction, linked_sender_id
+    ) or _default_load_event_type(db, trip, asset_code)
 
     new_event = TripEvent(
         trip_id=trip.id,

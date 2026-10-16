@@ -3,7 +3,6 @@ from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
-from app.services.tracking_config import configured_stage_for_transaction
 from app.config import APPROVED_CORRECTION_WINDOW_HOURS, APPROVED_TRANSACTION_STATUS, CORRECTION_HOLD_STATUS
 from app.models import (
     ApprovedTransactionCorrectionRequest,
@@ -180,22 +179,17 @@ def resolve_barge_event_type_from_ticket(db: Session, transaction: OperationTran
     """
     Canonical barge timeline event type for an approved barge ticket.
 
-    The entry screen stores the barge stage in the ticket value
-    `barge_event_type` (LOAD_1 / LOAD_2_TOPUP / UNLOAD / STS_OUT / STS_IN).
-    When that value is missing we fall back to the operation type code so
-    old tickets (created before the stage field existed) still land on the
-    timeline as UNLOAD.
+    The stage belongs to the ticket, not to the operation type mapping: the
+    entry screen stores it in the ticket value `barge_event_type` (LOAD_1 /
+    LOAD_2_TOPUP / UNLOAD / STS_OUT / STS_IN / STS / SHUTTLE_RECEIPT), so one
+    operation type can be used with any stage by any location. When that value
+    is missing we fall back to the operation type code so old tickets (created
+    before the stage field existed) still land on the timeline as UNLOAD.
 
     Returns None when the stage cannot be derived - the caller then falls
-    back to LOAD_1 / LOAD_2_TOPUP based on the existing timeline.
+    back to LOAD_1 / LOAD_2_TOPUP (sender side) or UNLOAD (receiving ticket,
+    see app/services/tracking_helpers.py).
     """
-    # The stage configured for the operation type (Tracking Module
-    # Configuration) is authoritative. The entry-screen value and the keyword
-    # fallback below only apply when the operation type is not configured.
-    configured_stage = configured_stage_for_transaction(db, transaction)
-    if configured_stage:
-        return configured_stage
-
     stage = get_transaction_value_text(db, transaction.id, "barge_event_type")
 
     if stage:

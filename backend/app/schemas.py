@@ -1760,9 +1760,10 @@ class ConvoyTrackerTicket(BaseModel):
     sender_location_code: Optional[str] = None
     receiver_location_code: Optional[str] = None
     status: str
-    # Tracking Module Configuration: SENDER / RECEIVER and barge stage
+    # Tracking Module Configuration: SENDER / RECEIVER. For barge tickets the
+    # link decides: a ticket created against an approved sender ticket is the
+    # RECEIVER side even when both sides share one operation type.
     movement_role: Optional[str] = None
-    tracking_stage: Optional[str] = None
     # Receiver ticket created against this approved sender ticket
     receiver_transaction_id: Optional[int] = None
     receiver_ticket_number: Optional[str] = None
@@ -3046,7 +3047,6 @@ class TrackingModuleConfigBase(BaseModel):
     module_code: str
     operation_type_code: str
     movement_role: str
-    tracking_stage: Optional[str] = None
     status: str = "Active"
     remarks: Optional[str] = None
 

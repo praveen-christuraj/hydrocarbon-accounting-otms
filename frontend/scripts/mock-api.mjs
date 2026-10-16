@@ -128,6 +128,15 @@ const db = {
   operation_types: [
     { id: 1, operation_type_name: 'Tank Gauging', operation_type_code: 'TANK_GAUGING', applicable_asset_type_code: 'TANK', operation_category: 'Metering', requires_sender_location: 'No', requires_receiver_location: 'No', requires_comparison: 'No', requires_approval: 'Yes', description: 'Daily tank gauging', status: 'Active' },
     { id: 2, operation_type_name: 'Barge Loading', operation_type_code: 'BARGE_LOADING', applicable_asset_type_code: 'BARGE', operation_category: 'Loading', requires_sender_location: 'Yes', requires_receiver_location: 'Yes', requires_comparison: 'Yes', requires_approval: 'Yes', description: 'Barge loading operation', status: 'Active' },
+    { id: 3, operation_type_name: 'Barge Move', operation_type_code: 'BARGE_MOVE', applicable_asset_type_code: 'BARGE', operation_category: 'Movement', requires_sender_location: 'Yes', requires_receiver_location: 'Yes', requires_comparison: 'Yes', requires_approval: 'Yes', description: 'Barge movement used by the sender and the receiver', status: 'Active' },
+  ].map(make),
+
+  // Tracking Module Configuration keeps no barge stage: one operation type
+  // serves both sides of a barge movement (the link decides the side).
+  tracking_module_configs: [
+    { id: 1, module_code: 'BARGE', operation_type_code: 'BARGE_MOVE', movement_role: 'SENDER', status: 'Active', remarks: 'Barge movement ticket' },
+    { id: 2, module_code: 'TANKER', operation_type_code: 'TANKER_LOAD', movement_role: 'SENDER', status: 'Active', remarks: 'Tanker loading side' },
+    { id: 3, module_code: 'TANKER', operation_type_code: 'TANKER_RECEIPT', movement_role: 'RECEIVER', status: 'Active', remarks: 'Tanker receiving side' },
   ].map(make),
 
   operation_templates: [
@@ -336,6 +345,105 @@ const server = http.createServer(async (req, res) => {
   if (pathname.startsWith('/system-notifications')) {
     sendJson(res, 200, [])
     return
+  }
+
+  /* -------------------------------------- tracking module configuration */
+  if (pathname === '/tracking-module-configs/catalog') {
+    const mappingsByCode = {}
+    for (const row of db.tracking_module_configs) {
+      const key = String(row.operation_type_code || '').toLowerCase()
+      mappingsByCode[key] = mappingsByCode[key] || []
+      mappingsByCode[key].push({
+        id: row.id,
+        module_code: row.module_code,
+        movement_role: row.movement_role,
+        status: row.status,
+      })
+    }
+    sendJson(res, 200, {
+      modules: [
+        { code: 'BARGE', label: 'Barge Tracking' },
+        { code: 'TANKER', label: 'Tanker Tracking' },
+      ],
+      roles: [
+        { code: 'SENDER', label: 'Sender (creates the approved ticket that is tracked)' },
+        { code: 'RECEIVER', label: 'Receiver (creates a ticket against an approved sender ticket)' },
+      ],
+      statuses: ['Active', 'Inactive'],
+      operation_types: db.operation_types.map((op) => ({
+        operation_type_code: op.operation_type_code,
+        operation_type_name: op.operation_type_name,
+        applicable_asset_type_code: op.applicable_asset_type_code,
+        status: op.status,
+        mappings: mappingsByCode[String(op.operation_type_code || '').toLowerCase()] || [],
+      })),
+    })
+    return
+  }
+
+  if (pathname === '/tracking-module-configs' || pathname.match(/^\/tracking-module-configs\/\d+$/)) {
+    const idMatch = pathname.match(/^\/tracking-module-configs\/(\d+)$/)
+    const modules = { BARGE: 'Barge Tracking', TANKER: 'Tanker Tracking' }
+    const serialize = (row) => {
+      const opType = db.operation_types.find(
+        (op) => String(op.operation_type_code).toLowerCase() === String(row.operation_type_code).toLowerCase()
+      )
+      return {
+        id: row.id,
+        module_code: row.module_code,
+        module_label: modules[row.module_code] || row.module_code,
+        operation_type_code: row.operation_type_code,
+        operation_type_name: opType ? opType.operation_type_name : row.operation_type_code,
+        applicable_asset_type_code: opType ? opType.applicable_asset_type_code : null,
+        movement_role: row.movement_role,
+        status: row.status,
+        remarks: row.remarks || null,
+        created_by: row.created_by || 'System Administrator',
+        updated_by: row.updated_by || 'System Administrator',
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+      }
+    }
+
+    if (method === 'GET') {
+      const rows = idMatch
+        ? db.tracking_module_configs.filter((row) => String(row.id) === idMatch[1])
+        : db.tracking_module_configs
+      sendJson(res, 200, idMatch ? (rows[0] ? serialize(rows[0]) : null) : rows.map(serialize))
+      return
+    }
+
+    if (method === 'POST') {
+      const body = await readBody(req)
+      const created = make({ ...body, id: nextId() })
+      db.tracking_module_configs.push(created)
+      sendJson(res, 201, serialize(created))
+      return
+    }
+
+    if ((method === 'PUT' || method === 'PATCH') && idMatch) {
+      const body = await readBody(req)
+      const index = db.tracking_module_configs.findIndex((row) => String(row.id) === idMatch[1])
+      if (index < 0) {
+        sendJson(res, 404, { detail: 'Tracking module configuration not found' })
+        return
+      }
+      db.tracking_module_configs[index] = {
+        ...db.tracking_module_configs[index],
+        ...body,
+        id: Number(idMatch[1]),
+        updated_at: now(),
+      }
+      sendJson(res, 200, serialize(db.tracking_module_configs[index]))
+      return
+    }
+
+    if (method === 'DELETE' && idMatch) {
+      const index = db.tracking_module_configs.findIndex((row) => String(row.id) === idMatch[1])
+      if (index >= 0) db.tracking_module_configs.splice(index, 1)
+      sendJson(res, 200, { message: 'Tracking module configuration deleted', id: Number(idMatch[1]) })
+      return
+    }
   }
 
   /* -------------------------------------------------- barge seal master */

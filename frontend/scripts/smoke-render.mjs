@@ -249,6 +249,23 @@ const operationTransactions = [
   },
 ]
 
+const trackingModuleConfigs = [
+  {
+    id: 1, module_code: 'BARGE', module_label: 'Barge Tracking',
+    operation_type_code: 'BARGE_MOVE', operation_type_name: 'Barge Move',
+    applicable_asset_type_code: 'BARGE', movement_role: 'SENDER',
+    status: 'Active', remarks: 'Barge movement ticket',
+    created_by: 'admin', updated_by: 'admin', created_at: now, updated_at: now,
+  },
+  {
+    id: 2, module_code: 'TANKER', module_label: 'Tanker Tracking',
+    operation_type_code: 'TANKER_RECEIPT', operation_type_name: 'Tanker Receipt',
+    applicable_asset_type_code: 'TANKER', movement_role: 'RECEIVER',
+    status: 'Active', remarks: 'Tanker receiving side',
+    created_by: 'admin', updated_by: 'admin', created_at: now, updated_at: now,
+  },
+]
+
 const paged = (items, url) => {
   const u = new URL(url, 'http://x')
   const skip = Number(u.searchParams.get('skip') || 0)
@@ -284,6 +301,43 @@ globalThis.fetch = async (input, init = {}) => {
       return jsonResponse(created, 201)
     }
     return jsonResponse(paged(locations, path))
+  }
+  if (path === '/tracking-module-configs/catalog') {
+    // No `stages`: the barge stage belongs to the ticket, not to the mapping.
+    return jsonResponse({
+      modules: [
+        { code: 'BARGE', label: 'Barge Tracking' },
+        { code: 'TANKER', label: 'Tanker Tracking' },
+      ],
+      roles: [
+        { code: 'SENDER', label: 'Sender (creates the approved ticket that is tracked)' },
+        { code: 'RECEIVER', label: 'Receiver (creates a ticket against an approved sender ticket)' },
+      ],
+      statuses: ['Active', 'Inactive'],
+      operation_types: [
+        { operation_type_code: 'BARGE_MOVE', operation_type_name: 'Barge Move', applicable_asset_type_code: 'BARGE', status: 'Active', mappings: [{ id: 1, module_code: 'BARGE', movement_role: 'SENDER', status: 'Active' }] },
+        { operation_type_code: 'BARGE_UNUSED', operation_type_name: 'Barge Unused', applicable_asset_type_code: 'BARGE', status: 'Active', mappings: [] },
+      ],
+    })
+  }
+  if (path.startsWith('/tracking-module-configs')) {
+    const idMatch = path.match(/^\/tracking-module-configs\/(\d+)/)
+    if (method === 'POST') {
+      const body = JSON.parse(init.body)
+      const created = { ...body, id: trackingModuleConfigs.length + 1, created_at: now, updated_at: now }
+      trackingModuleConfigs.push(created)
+      return jsonResponse(created, 201)
+    }
+    if ((method === 'PUT' || method === 'PATCH') && idMatch) {
+      const body = JSON.parse(init.body)
+      const index = trackingModuleConfigs.findIndex((row) => String(row.id) === idMatch[1])
+      trackingModuleConfigs[index] = { ...trackingModuleConfigs[index], ...body, updated_at: now }
+      return jsonResponse(trackingModuleConfigs[index])
+    }
+    if (method === 'DELETE' && idMatch) {
+      return jsonResponse({ message: 'deleted' })
+    }
+    return jsonResponse(trackingModuleConfigs)
   }
   if (path.startsWith('/assets')) return jsonResponse(paged(assets, path))
   if (path.startsWith('/calibration-templates')) return jsonResponse(calibrationTemplates)
@@ -460,7 +514,7 @@ try {
   await flush()
 
   // Navigate to pages requested on the CLI (default set)
-  const pages = process.argv.slice(2).length ? process.argv.slice(2) : ['/locations', '/users', '/role-locations', '/audit-logs', '/operation-transactions/1']
+  const pages = process.argv.slice(2).length ? process.argv.slice(2) : ['/locations', '/users', '/role-locations', '/audit-logs', '/operation-transactions/1', '/tracking-module-configuration']
   for (const path of pages) {
     const before = errors.length
     const link = qa('a[href]').find((a) => a.getAttribute('href') === path)
@@ -661,6 +715,42 @@ try {
           )
         }
         check('opening the confirmation modal does not error', errors.length === before)
+      }
+    }
+
+    if (path === '/tracking-module-configuration') {
+      // Regression guard (owner change 2026-10-16): Barge Tracking maps the
+      // operation type only - the barge stage lives on the ticket, so the
+      // configuration form must not ask for a stage any more.
+      const mappingsTable = qa('.main-content table').find((t) =>
+        text(t.querySelector('thead')).includes('Movement Role')
+      )
+      const mappingRows = mappingsTable ? Array.from(mappingsTable.querySelectorAll('tbody tr')) : []
+      check(
+        'tracking module configuration lists the barge mapping',
+        mappingRows.length >= 1 && text(mappingRows[0]).includes('BARGE_MOVE'),
+        mappingRows.length ? text(mappingRows[0]).slice(0, 90) : 'no mappings table'
+      )
+      check('tracking module table has no Stage column', Boolean(mappingsTable) && !text(mappingsTable.querySelector('thead')).includes('Stage'))
+
+      const newMappingButton = qa('.main-content button').find((b) => text(b).includes('New Mapping'))
+      check('tracking module configuration has a New Mapping button', Boolean(newMappingButton))
+      if (newMappingButton) {
+        click(newMappingButton)
+        await flush(150)
+        const dialog = q('.app-modal')
+        check('tracking mapping dialog opens', Boolean(dialog))
+        if (dialog) {
+          const labels = qa('.app-modal-body label').map((l) => text(l))
+          check('tracking mapping dialog has no Barge Stage field', !labels.some((l) => l.includes('Stage')), labels.join(' | '))
+          check(
+            'tracking mapping dialog offers the operation type and the role',
+            labels.includes('Operation Type') && labels.includes('Movement Role'),
+            labels.join(' | ')
+          )
+          click(q('.app-modal-close') || qa('.app-modal-footer button')[0])
+          await flush(120)
+        }
       }
     }
 

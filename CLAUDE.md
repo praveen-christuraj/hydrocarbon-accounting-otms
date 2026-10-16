@@ -109,6 +109,41 @@ Rules:
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
 
+## Recent Fixes (2026-10-16) - Barge Tracking: One Operation Type For Both Sides, No Barge Stage
+
+### "Operation type BARGE_MOVE is not configured as a receiver operation for Barge Tracking"
+
+- **Root cause:** Barge Tracking followed the Tanker Tracking model and required a dedicated
+  `movement_role = RECEIVER` mapping (plus a *Barge Stage*) before a receiving ticket was accepted.
+  A barge installation uses **one** operation type (BARGE_MOVE) for both sides — the loading terminal
+  approves it, the receiving terminal creates its ticket against that approved sender ticket with the
+  same operation type — so `validate_receiver_operation_type` (backend/app/services/tracking_links.py)
+  refused the receiver with the message above.
+- **Barge semantics (product owner, 2026-10-16):** for Barge Tracking the **operation type is the
+  mapping**; the ticket links decide the side — a ticket created against an approved sender ticket is
+  the RECEIVER, the ticket that has a receiver ticket linked to it is the SENDER. Tanker Tracking is
+  unchanged: it really has two operation types, so a receiving tanker ticket must still use the type
+  mapped as RECEIVER.
+- **Barge Stage removed from Tracking Module Configuration.** All locations that own the operation
+  type use all barge stages, so the stage is captured where it belongs: on the ticket, in the
+  `barge_event_type` value of the Multi-Tank entry layout (LOAD 1 / LOAD 2 TOP-UP / UNLOAD / STS) —
+  the same as Tanker Tracking, which has no stage in its configuration.
+- **Code:** `tracking_config.receiving_config_rows()` (Tanker: RECEIVER rows only; Barge: every Active
+  row), `configured_stage_for_transaction()` and the `BARGE_STAGES` / `BARGE_STAGE_ALLOWED_ROLES` /
+  `BARGE_RECEIVING_STAGES` catalog removed from `backend/app/services/tracking_config.py`;
+  `tracking_stage` dropped from the model / schema / router / API mapper / configuration page (the
+  physical column stays as a nullable legacy column — no migration needed);
+  `barge_ticket_movement_role()` in `backend/app/routers/barge_trip_tracking.py` reports the role from
+  the links; a ticket that is itself a receiving ticket can never be received
+  (`validate_linked_sender_ticket`); a receiving ticket without a stage lands on the timeline as
+  UNLOAD instead of a load (`_barge_event_type_for_transaction` in
+  `backend/app/services/tracking_helpers.py`).
+- **Tests:** new `backend/tests/test_barge_single_operation_type.py` (mapping without a stage, the
+  reported receiver flow end to end, unmapped operation type still refused, linked ticket without a
+  stage → UNLOAD; the exact reported 400 is reproduced on the pre-fix code). Updated
+  `test_tracking_module_config_flow.py`, `test_barge_tracking_custom_asset_type.py`,
+  `test_tanker_tracking_config.py`. All 186 backend tests pass.
+
 ## Recent Fixes (2026-10-16) - Asset Calibration Load Timeout
 
 ### "Unable to load asset calibration tables from the server" (recurring, got worse over time)

@@ -51,8 +51,9 @@ from app.services.transaction_helpers import (
 )
 from app.services.tracking_config import (
     MODULE_BARGE,
+    ROLE_RECEIVER,
+    ROLE_SENDER,
     configured_role_for_transaction,
-    configured_stage_for_transaction,
 )
 from app.services.tracking_links import (
     get_linked_sender_transaction_id,
@@ -109,6 +110,33 @@ def ensure_barge_transaction_location_scope(transaction: OperationTransaction, c
 def barge_transaction_in_user_scope(transaction: OperationTransaction, current_user: User, db: Session) -> bool:
     """True when the user may see the ticket (any of its four locations in scope)."""
     return user_is_party_to_transaction(current_user, db, transaction)
+
+
+def barge_ticket_movement_role(
+    db: Session,
+    transaction,
+    linked_sender,
+    has_receiver: bool = False,
+) -> str:
+    """
+    SENDER / RECEIVER of a barge ticket.
+
+    Barge Tracking does not need two operation types: the receiver creates his
+    ticket against the approved sender ticket of the same barge and convoy, so
+    the ticket links identify the two sides even when both share one operation
+    type - a ticket with a linked sender is the RECEIVER, a ticket that has a
+    receiver ticket linked to it is the SENDER. Only a ticket without any link
+    falls back to the configured movement role (rows created before the link
+    existed), and a plain barge ticket is the sender side.
+    """
+    if linked_sender is not None:
+        return ROLE_RECEIVER
+    if has_receiver:
+        return ROLE_SENDER
+    return (
+        configured_role_for_transaction(db, MODULE_BARGE, transaction)
+        or ROLE_SENDER
+    )
 
 
 def ensure_trip_location_scope(trip: Trip, current_user: User, db: Session):
@@ -249,9 +277,13 @@ def get_convoy_tracker(
             "sender_location_code": tx.sender_location_code,
             "receiver_location_code": tx.receiver_location_code,
             "status": tx.status,
-            "movement_role": configured_role_for_transaction(db, MODULE_BARGE, tx)
-            or ("RECEIVER" if linked_sender is not None else None),
-            "tracking_stage": configured_stage_for_transaction(db, tx),
+            # The links decide the sides: Barge Tracking uses one operation
+            # type for both sides, so a ticket created against an approved
+            # sender ticket is the RECEIVER ticket and the ticket it points
+            # back to is the SENDER, whatever the configured role says.
+            "movement_role": barge_ticket_movement_role(
+                db, tx, linked_sender, has_receiver=receiver is not None
+            ),
             "receiver_transaction_id": receiver.id if receiver else None,
             "receiver_ticket_number": get_transaction_ticket_number(receiver) if receiver else None,
             "receiver_status": receiver.status if receiver else None,

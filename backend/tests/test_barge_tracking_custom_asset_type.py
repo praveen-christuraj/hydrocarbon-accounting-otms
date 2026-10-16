@@ -114,7 +114,6 @@ def _map_barge_module(client, headers):
             "module_code": "BARGE",
             "operation_type_code": OPERATION_TYPE_CODE,
             "movement_role": "SENDER",
-            "tracking_stage": "LOAD_1",
             "status": "Active",
         },
         headers=headers,
@@ -132,7 +131,6 @@ def test_custom_barge_asset_type_can_be_mapped_to_barge_tracking(client, db):
     mapped = _map_barge_module(client, admin_headers)
     assert mapped.status_code == 200, mapped.text
     assert mapped.json()["module_code"] == "BARGE"
-    assert mapped.json()["tracking_stage"] == "LOAD_1"
     assert mapped.json()["applicable_asset_type_code"] == ASSET_TYPE_CODE
 
 
@@ -167,7 +165,6 @@ def test_tanker_operation_type_is_still_refused_for_barge_module(client, db):
             "module_code": "BARGE",
             "operation_type_code": "TANKER_RECEIPT",
             "movement_role": "SENDER",
-            "tracking_stage": "LOAD_1",
             "status": "Active",
         },
         headers=admin_headers,
@@ -264,7 +261,6 @@ def test_convoy_tracker_and_timeline_for_custom_asset_type(client, db):
     ticket = body["assets"][0]["tickets"][0]
     assert ticket["transaction_id"] == tx.id
     assert ticket["movement_role"] == "SENDER"
-    assert ticket["tracking_stage"] == "LOAD_1"
 
     timeline = client.get(
         f"/barge-trip/trips/by-convoy/{tx.convoy_number}", headers=viewer_headers
