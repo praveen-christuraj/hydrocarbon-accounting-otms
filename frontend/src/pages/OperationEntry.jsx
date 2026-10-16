@@ -12,6 +12,7 @@ import MultiTankBeforeAfterLayout from '../components/operationLayouts/MultiTank
 import TankerTruckLayout from '../components/operationLayouts/TankerTruckLayout'
 import TankerPayloadPreview from '../components/operationLayouts/TankerPayloadPreview'
 import { getTankerSenderReference } from '../api/tankerTrackingApi'
+import { getLinkedSenderTicket } from '../api/operationEntryApi'
 import { getLocations } from '../api/locationApi'
 import StockMovementLayout from '../components/operationLayouts/StockMovementLayout'
 import VesselCycleLayout from '../components/operationLayouts/VesselCycleLayout'
@@ -679,9 +680,19 @@ function OperationEntry({
     remarks: '',
     status: 'Draft',
     values: [],
+    // Receiver ticket created against an approved sender ticket (tracking modules).
+    linkedTicketId: null,
   }
 
   const [entry, setEntry] = useState(emptyEntry)
+  // Sender ticket summary for a linked receiver ticket (locations, convoy, receiving op types).
+  const [linkedSender, setLinkedSender] = useState(null)
+  const isLinkedEntry = Boolean(entry.linkedTicketId)
+  // Only trust sender info that belongs to the currently linked ticket.
+  const activeLinkedSender =
+    isLinkedEntry && linkedSender && Number(linkedSender.transaction_id) === Number(entry.linkedTicketId)
+      ? linkedSender
+      : null
 
   const [allSystemLocations, setAllSystemLocations] = useState([])
 
@@ -768,8 +779,8 @@ function OperationEntry({
     const autoEventType = String(
       params.get('barge_event_type') || params.get('auto_event_type') || ''
     ).trim()
-    const leftTicketIdRaw = String(params.get('left_ticket_id') || '').trim()
-    const leftTicketId = leftTicketIdRaw ? Number(leftTicketIdRaw) : null
+    const linkedTicketIdRaw = String(params.get('linked_ticket_id') || '').trim()
+    const linkedTicketId = linkedTicketIdRaw ? Number(linkedTicketIdRaw) : null
 
     return {
       mode,
@@ -788,7 +799,7 @@ function OperationEntry({
       autoEventType,
       fromBargeTracking:
         Boolean(autoEventType) || String(source || '').trim() === 'barge-tracking',
-      leftTicketId,
+      linkedTicketId,
     }
   }, [location.search])
 
@@ -811,7 +822,7 @@ function OperationEntry({
       prefill.remarks ||
       prefill.autoEventType ||
       prefill.fromBargeTracking ||
-      prefill.leftTicketId
+      prefill.linkedTicketId
 
     if (!hasAny) return
 
@@ -832,11 +843,54 @@ function OperationEntry({
         prefill.operationTemplateId || current.operationTemplateId,
       productName: prefill.productName || current.productName,
       remarks: prefill.remarks || current.remarks,
+      linkedTicketId: prefill.linkedTicketId || current.linkedTicketId,
       status: 'Draft',
     }))
 
     setPrefillApplied(true)
   }, [prefill, prefillApplied])
+
+  // Linked receiver ticket: load the sender ticket. On a new ticket the sender's
+  // route, convoy and barge are copied into the form and locked; the receiving
+  // operation type is preselected when the sender has only one receiving type.
+  useEffect(() => {
+    const linkedId = entry.linkedTicketId
+    if (!linkedId) return
+
+    let active = true
+    getLinkedSenderTicket(linkedId)
+      .then((info) => {
+        if (!active) return
+        setLinkedSender(info)
+        if (editId !== null) return
+        setEntry((current) => {
+          if (Number(current.linkedTicketId) !== Number(linkedId)) return current
+          const receivingTypes = info.receiver_operation_types || []
+          const onlyType = receivingTypes.length === 1 ? receivingTypes[0].operation_type_code : ''
+          return {
+            ...current,
+            convoyNumber: info.convoy_number || current.convoyNumber,
+            primaryAssetCode: info.primary_asset_code || current.primaryAssetCode,
+            originLocationCode: info.origin_location_code || current.originLocationCode,
+            destinationLocationCode: info.destination_location_code || '',
+            senderLocationCode: info.sender_location_code || '',
+            receiverLocationCode: info.receiver_location_code || '',
+            operationTypeCode: onlyType || current.operationTypeCode,
+            operationTemplateId: onlyType ? '' : current.operationTemplateId,
+          }
+        })
+      })
+      .catch((error) => {
+        if (!active) return
+        setLinkedSender(null)
+        notifyError(error.message)
+      })
+
+    return () => {
+      active = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entry.linkedTicketId, editId])
 
   useEffect(() => {
     const shouldLoadSenderReference =
@@ -946,6 +1000,16 @@ function OperationEntry({
         : locations
     return (source || []).filter((item) => item.status === 'Active')
   }, [allSystemLocations, locations])
+
+  const operationTypeChoices = useMemo(() => {
+    if (!activeLinkedSender) return operationTypeOptions
+    const receivingCodes = new Set(
+      (activeLinkedSender.receiver_operation_types || []).map((item) => normalizeCode(item.operation_type_code))
+    )
+    // No tracking configuration for this sender: nothing to restrict to.
+    if (receivingCodes.size === 0) return operationTypeOptions
+    return operationTypeOptions.filter((item) => receivingCodes.has(normalizeCode(item.operationTypeCode)))
+  }, [activeLinkedSender, operationTypeOptions])
 
   const selectedOperationType = operationTypeOptions.find((item) => {
     return item.operationTypeCode === entry.operationTypeCode
@@ -1155,6 +1219,17 @@ function OperationEntry({
 
   const handleChange = (e) => {
     const { name, value } = e.target
+
+    if (name === 'operationTypeCode' && isLinkedEntry) {
+      // Linked receiver ticket: route, convoy and barge come from the sender ticket.
+      setEntry({
+        ...entry,
+        operationTypeCode: value,
+        operationTemplateId: '',
+        values: [],
+      })
+      return
+    }
 
     if (name === 'operationTypeCode') {
       const preserveAsset = prefillApplied && prefill.primaryAssetCode
@@ -1674,6 +1749,7 @@ function OperationEntry({
     setConfirmAction(null)
 
     setEntry({
+      linkedTicketId: entryToEdit.linkedTicketId || null,
       operationTypeCode: entryToEdit.operationTypeCode,
       operationTemplateId: String(entryToEdit.operationTemplateId),
       primaryAssetCode: entryToEdit.primaryAssetCode,
@@ -1845,11 +1921,11 @@ function OperationEntry({
             name="operationTypeCode"
             value={entry.operationTypeCode}
             onChange={handleChange}
-            disabled={!canCreateOperationEntry}
+            disabled={!canCreateOperationEntry || (isLinkedEntry && operationTypeChoices.length <= 1)}
           >
             <option value="">Select Operation Type</option>
 
-            {operationTypeOptions.map((operationType) => (
+            {operationTypeChoices.map((operationType) => (
               <option
                 key={operationType.id}
                 value={operationType.operationTypeCode}
@@ -1894,7 +1970,7 @@ function OperationEntry({
             name="primaryAssetCode"
             value={entry.primaryAssetCode}
             onChange={handleAssetChange}
-            disabled={!selectedOperationType || !canCreateOperationEntry}
+            disabled={!selectedOperationType || !canCreateOperationEntry || isLinkedEntry}
           >
             <option value="">
               {selectedOperationType ? 'Select Asset' : 'Select Operation First'}
@@ -1926,7 +2002,7 @@ function OperationEntry({
               value={entry.convoyNumber}
               onChange={handleChange}
               placeholder="Example: CNV-2026-001"
-              disabled={!canCreateOperationEntry}
+              disabled={!canCreateOperationEntry || isLinkedEntry}
             />
           </div>
         )}
@@ -1936,11 +2012,11 @@ function OperationEntry({
             name="originLocationCode"
             value={entry.originLocationCode}
             onChange={handleChange}
-            disabled={selectedAsset?.assetScope === 'Local' || !canCreateOperationEntry}
+            disabled={selectedAsset?.assetScope === 'Local' || !canCreateOperationEntry || isLinkedEntry}
           >
             <option value="">Select Origin Location</option>
 
-            {activeLocations.map((location) => (
+            {(isLinkedEntry ? allActiveLocations : activeLocations).map((location) => (
               <option key={location.id} value={location.locationCode}>
                 {location.locationName} ({location.locationCode})
               </option>
@@ -1954,7 +2030,7 @@ function OperationEntry({
             name="destinationLocationCode"
             value={entry.destinationLocationCode}
             onChange={handleChange}
-            disabled={!canCreateOperationEntry}
+            disabled={!canCreateOperationEntry || isLinkedEntry}
           >
             <option value="">None</option>
 
@@ -1978,11 +2054,11 @@ function OperationEntry({
             name="senderLocationCode"
             value={entry.senderLocationCode}
             onChange={handleChange}
-            disabled={!canCreateOperationEntry}
+            disabled={!canCreateOperationEntry || isLinkedEntry}
           >
             <option value="">None</option>
 
-            {activeLocations.map((location) => (
+            {(isLinkedEntry ? allActiveLocations : activeLocations).map((location) => (
               <option key={location.id} value={location.locationCode}>
                 {location.locationName} ({location.locationCode})
               </option>
@@ -2002,7 +2078,7 @@ function OperationEntry({
             name="receiverLocationCode"
             value={entry.receiverLocationCode}
             onChange={handleChange}
-            disabled={!canCreateOperationEntry}
+            disabled={!canCreateOperationEntry || isLinkedEntry}
           >
             <option value="">None</option>
 

@@ -529,6 +529,8 @@ function TankerTracking({
     params.set('mode', 'tanker-receiver')
     params.set('source', 'tanker-tracking')
     params.set('sender_transaction_id', String(row.senderTicket.transactionId))
+    // Server-side link: the receiver ticket inherits route and convoy from the sender ticket.
+    params.set('linked_ticket_id', String(row.senderTicket.transactionId))
     params.set('operation_type_code', receiverOperationTypeCode)
     params.set('operation_template_id', receiverTemplateId)
 

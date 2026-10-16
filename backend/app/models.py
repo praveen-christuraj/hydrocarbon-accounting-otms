@@ -2009,3 +2009,40 @@ class OutTurnSummaryConfig(Base):
     updated_by = Column(String(150), nullable=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class TrackingModuleConfig(Base):
+    """
+    Admin configuration that decides which approved operation types are
+    captured by an operation-tracking module (Barge Tracking / Tanker Tracking).
+
+    One row = one operation type mapped to one tracking module, with the
+    movement role it plays (SENDER creates the approved ticket that flows out,
+    RECEIVER creates the ticket against an approved sender ticket) and, for
+    barge tracking, the timeline stage it represents. Replaces the hard-coded
+    operation-type keyword matching the tracking pages used before.
+    """
+    __tablename__ = "tracking_module_configs"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    module_code = Column(String(40), nullable=False, index=True)
+    operation_type_code = Column(String(80), nullable=False, index=True)
+    movement_role = Column(String(20), nullable=False)
+    tracking_stage = Column(String(50), nullable=True)
+
+    status = Column(String(20), nullable=False, default="Active")
+    remarks = Column(Text, nullable=True)
+
+    created_by = Column(String(150), nullable=True)
+    updated_by = Column(String(150), nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "module_code",
+            "operation_type_code",
+            name="unique_tracking_module_operation_type",
+        ),
+    )

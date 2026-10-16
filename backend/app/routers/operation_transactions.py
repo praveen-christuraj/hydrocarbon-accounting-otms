@@ -65,6 +65,7 @@ from app.services.transaction_helpers import (
 )
 from app.services.tracking_helpers import (
     ensure_barge_trip_timeline,
+    get_linked_sender_transaction_id,
     ensure_barge_unload_comparison,
     ensure_trip_event_for_transaction,
     get_trip_by_convoy_or_none,
@@ -767,7 +768,14 @@ def auto_create_barge_tracking_on_approval(
 
     new_cmp = None
 
-    if str(new_event.event_type or "").strip().upper() == "UNLOAD":
+    # A receiving ticket - UNLOAD stage, or any ticket created against an
+    # approved sender ticket - is compared with its sender ticket.
+    is_receiving_ticket = (
+        str(new_event.event_type or "").strip().upper() == "UNLOAD"
+        or get_linked_sender_transaction_id(db, transaction.id) is not None
+    )
+
+    if is_receiving_ticket:
         try:
             new_cmp = ensure_barge_unload_comparison(
                 db=db,
@@ -1931,7 +1939,7 @@ def update_operation_transaction_status(
     )
 
     trip = None
-    if str(transaction.primary_asset_type_code or "").strip().upper() == "BARGE":
+    if is_barge_transaction(db, transaction):
         trip = get_trip_by_convoy_or_none(db, transaction.convoy_number)
         ensure_trip_not_closed(trip)
 

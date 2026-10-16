@@ -112,7 +112,7 @@ from app.routers import (
     operation_tasks, operation_templates, operation_transactions, operation_types,
     permissions, prime_mover_tanker_links, reports, role_permissions, roles,
     shuttle_fso_voyages, system_notifications, table11_factors, tank_operations,
-    tank_operation_summary, tank_stock_ledger, tanker_tracking, user_locations, user_roles, users, vessel_operations,
+    tank_operation_summary, tank_stock_ledger, tanker_tracking, tracking_module_configs, user_locations, user_roles, users, vessel_operations,
     vessel_stock_ledger, workflow_policies,
     out_turn_summary,
 )
@@ -156,6 +156,7 @@ app.include_router(tank_operations.router)
 app.include_router(tank_operation_summary.router)
 app.include_router(tank_stock_ledger.router)
 app.include_router(tanker_tracking.router)
+app.include_router(tracking_module_configs.router)
 app.include_router(user_locations.router)
 app.include_router(user_roles.router)
 app.include_router(users.router)

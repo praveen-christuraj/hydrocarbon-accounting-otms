@@ -82,6 +82,7 @@ const convertOperationEntryFromApi = (entry) => {
     operationTypeName: transaction.operation_type_name || '',
     operationTemplateId: entry.operation_template_id || '',
     operationTemplateName: entry.operation_template_name || '',
+    linkedTicketId: entry.linked_ticket_id ?? null,
     primaryAssetCode: transaction.primary_asset_code || '',
     primaryAssetName: transaction.primary_asset_name || '',
     primaryAssetTypeCode: transaction.primary_asset_type_code || '',
@@ -121,6 +122,7 @@ const convertOperationEntryFromApi = (entry) => {
 const convertOperationEntryToApi = (entry) => {
   return {
     operation_template_id: Number(entry.operationTemplateId),
+    linked_ticket_id: entry.linkedTicketId ? Number(entry.linkedTicketId) : null,
     transaction: {
       operation_type_code: entry.operationTypeCode,
       primary_asset_code: entry.primaryAssetCode,
@@ -167,6 +169,10 @@ export const updateOperationEntry = async (entryId, entry) => {
   )
 
   return convertOperationEntryFromApi(data)
+}
+
+export const getLinkedSenderTicket = async (transactionId) => {
+  return apiGet(`/operation-entries/linked-sender/${transactionId}`)
 }
 
 export const deleteOperationEntry = async (entryId) => {

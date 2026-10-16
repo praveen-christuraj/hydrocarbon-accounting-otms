@@ -37,6 +37,7 @@ from app.utils.helpers import (
     get_asset_by_code,
 )
 from app.services.audit_service import create_audit_log
+from app.services.tracking_links import get_linked_sender_transaction_id
 from app.services.transaction_helpers import (
     get_transaction_value_text,
     require_approved_transaction_for_tracking,
@@ -44,6 +45,11 @@ from app.services.transaction_helpers import (
     transaction_has_pending_correction_request,
 )
 from app.config import APPROVED_TRANSACTION_STATUS
+from app.services.tracking_config import (
+    MODULE_BARGE,
+    configured_stage_for_transaction,
+    is_ticket_captured,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -172,15 +178,27 @@ def ensure_trip_not_closed(trip: Trip | None):
 
 
 def is_barge_transaction(db: Session, transaction: OperationTransaction) -> bool:
-    """True when the ticket belongs to a barge asset."""
+    """
+    True when the ticket is captured by Barge Tracking.
+
+    When Barge Tracking is configured (Tracking Module Configuration) the
+    operation type decides - the ticket must be an Active barge mapping and
+    be for a barge asset. Without configuration the legacy rule applies: the
+    ticket belongs to a barge asset.
+    """
     asset_type_code = str(transaction.primary_asset_type_code or "").strip().lower()
 
     if asset_type_code:
-        return "barge" in asset_type_code
+        is_barge_asset = "barge" in asset_type_code
+    else:
+        asset = get_asset_by_code(transaction.primary_asset_code, db)
+        asset_master_type = str(getattr(asset, "asset_type_code", "") or "").strip().lower()
+        is_barge_asset = "barge" in asset_master_type
 
-    asset = get_asset_by_code(transaction.primary_asset_code, db)
-    asset_master_type = str(getattr(asset, "asset_type_code", "") or "").strip().lower()
-    return "barge" in asset_master_type
+    captured = is_ticket_captured(db, MODULE_BARGE, transaction)
+    if captured is None:
+        return is_barge_asset
+    return captured and is_barge_asset
 
 
 def get_approved_barge_transactions_for_convoy(
@@ -229,7 +247,14 @@ BARGE_EVENT_TYPES = [
 
 
 def _explicit_barge_event_type(db: Session, transaction: OperationTransaction):
-    """Stage explicitly stored on the ticket (barge_event_type value field)."""
+    """
+    Stage for the ticket: the configured stage of its operation type first,
+    then the stage stored on the ticket (barge_event_type value field).
+    """
+    configured_stage = configured_stage_for_transaction(db, transaction)
+    if configured_stage in BARGE_EVENT_TYPES:
+        return configured_stage
+
     stage = get_transaction_value_text(db, transaction.id, "barge_event_type")
 
     if not stage:
@@ -385,7 +410,11 @@ def ensure_barge_trip_timeline(
 
         changed = True
 
-        if str(event.event_type or "").strip().upper() != "UNLOAD":
+        is_receiving_ticket = (
+            str(event.event_type or "").strip().upper() == "UNLOAD"
+            or get_linked_sender_transaction_id(db, transaction.id) is not None
+        )
+        if not is_receiving_ticket:
             continue
 
         try:
@@ -890,14 +919,10 @@ def build_multitank_comparison_json_v2(
 
 def require_barge_tracking_ready_for_closure(trip: Trip, db: Session):
     """Validate that all barges in a convoy have comparisons before allowing closure."""
-    approved_transactions = (
-        db.query(OperationTransaction)
-        .filter(
-            OperationTransaction.convoy_number.ilike(trip.convoy_number),
-            OperationTransaction.status == APPROVED_TRANSACTION_STATUS,
-            OperationTransaction.primary_asset_type_code.ilike("BARGE"),
-        )
-        .all()
+    # Same ticket set the timeline and voyage list use (configured operation
+    # types of Barge Tracking, or the legacy barge asset rule).
+    approved_transactions = get_approved_barge_transactions_for_convoy(
+        db, trip.convoy_number
     )
 
     approved_asset_codes = {
@@ -987,26 +1012,44 @@ def ensure_barge_unload_comparison(
 
     comparison_type = "LOAD_AFTER_vs_UNLOAD_BEFORE"
 
-    latest_load_event = (
-        db.query(TripEvent)
-        .filter(
-            TripEvent.trip_id == trip.id,
-            TripEvent.asset_code == asset,
-            TripEvent.event_type.in_(["LOAD_1", "LOAD_2_TOPUP"]),
-            TripEvent.operation_transaction_id.isnot(None),
+    # A receiver ticket created against an approved sender ticket is compared
+    # with exactly that sender ticket. Otherwise the latest load on the
+    # timeline is the sender side (legacy behaviour).
+    linked_sender_id = get_linked_sender_transaction_id(db, unload_tx.id)
+    if linked_sender_id is not None:
+        left_tx = (
+            db.query(OperationTransaction)
+            .filter(OperationTransaction.id == linked_sender_id)
+            .first()
         )
-        .order_by(TripEvent.sequence_no.desc(), TripEvent.id.desc())
-        .first()
-    )
+        if left_tx is None:
+            return None
+        if str(left_tx.primary_asset_code or "").strip().lower() != asset.lower():
+            raise HTTPException(
+                status_code=400,
+                detail="The linked sender ticket is for a different barge",
+            )
+    else:
+        latest_load_event = (
+            db.query(TripEvent)
+            .filter(
+                TripEvent.trip_id == trip.id,
+                TripEvent.asset_code == asset,
+                TripEvent.event_type.in_(["LOAD_1", "LOAD_2_TOPUP"]),
+                TripEvent.operation_transaction_id.isnot(None),
+            )
+            .order_by(TripEvent.sequence_no.desc(), TripEvent.id.desc())
+            .first()
+        )
 
-    if not latest_load_event or not latest_load_event.operation_transaction_id:
-        return None
+        if not latest_load_event or not latest_load_event.operation_transaction_id:
+            return None
 
-    left_tx = (
-        db.query(OperationTransaction)
-        .filter(OperationTransaction.id == latest_load_event.operation_transaction_id)
-        .first()
-    )
+        left_tx = (
+            db.query(OperationTransaction)
+            .filter(OperationTransaction.id == latest_load_event.operation_transaction_id)
+            .first()
+        )
 
     require_approved_transaction_for_tracking(left_tx, "barge comparison", db=db)
 
