@@ -28,8 +28,11 @@ from app.schemas import (
 )
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
-    apply_location_filter,
+    TRANSACTION_PARTY_LOCATION_FIELDS,
+    apply_transaction_party_scope_filter,
     ensure_location_in_user_scope,
+    ensure_user_is_party_to_location_codes,
+    get_user_location_codes,
     require_user_permission,
 )
 from app.services.audit_service import create_audit_log
@@ -121,6 +124,49 @@ def _xlsx_autofit(ws):
 # ----- Shuttle Voyage Close / Reopen -----
 
 
+def ensure_voyage_in_user_scope(
+    db: Session,
+    current_user: User,
+    location_code: str | None,
+    shuttle_number: str | None,
+    asset_code: str | None,
+    asset_field_name: str = "primary_asset_code",
+    voyage_label: str = "voyage",
+):
+    """
+    Party rule for a shuttle / FSO voyage (location + shuttle number + asset).
+
+    A user may view or act on a voyage when any of its tickets involves one of
+    their assigned locations (origin, destination, sender or receiver), so the
+    receiving terminal can work a voyage whose key location is the sending
+    terminal. A voyage without tickets falls back to the voyage's own location
+    code, which keeps empty-voyage behaviour unchanged.
+    """
+    if get_user_location_codes(current_user, db) is None:
+        return
+
+    lc = clean_optional_text(location_code)
+    sn = clean_optional_text(shuttle_number)
+    ac = clean_optional_text(asset_code)
+
+    query = db.query(OperationTransaction)
+    if lc is not None:
+        query = query.filter(OperationTransaction.origin_location_code.ilike(lc))
+    if sn is not None:
+        query = query.filter(OperationTransaction.convoy_number.ilike(sn))
+    if ac is not None:
+        query = query.filter(getattr(OperationTransaction, asset_field_name).ilike(ac))
+
+    party_codes = [lc]
+    for transaction in query.all():
+        party_codes.extend(
+            getattr(transaction, field_name, None)
+            for field_name in TRANSACTION_PARTY_LOCATION_FIELDS
+        )
+
+    ensure_user_is_party_to_location_codes(current_user, db, party_codes, voyage_label)
+
+
 @router.post("/shuttle-voyages/close", response_model=ShuttleVoyageResponse)
 def close_shuttle_voyage(
     request: ShuttleVoyageCloseRequest,
@@ -128,7 +174,14 @@ def close_shuttle_voyage(
     db: Session = Depends(get_db),
 ):
     require_user_permission(current_user, "Close Shuttle Voyage", db)
-    ensure_location_in_user_scope(current_user, db, request.location_code, "Location")
+    ensure_voyage_in_user_scope(
+        db,
+        current_user,
+        request.location_code,
+        request.shuttle_number,
+        request.shuttle_asset_code,
+        voyage_label="Shuttle voyage",
+    )
 
     voyage = get_or_create_shuttle_voyage(
         db=db,
@@ -175,7 +228,14 @@ def reopen_shuttle_voyage(
     db: Session = Depends(get_db),
 ):
     require_user_permission(current_user, "Reopen Shuttle Voyage", db)
-    ensure_location_in_user_scope(current_user, db, request.location_code, "Location")
+    ensure_voyage_in_user_scope(
+        db,
+        current_user,
+        request.location_code,
+        request.shuttle_number,
+        request.shuttle_asset_code,
+        voyage_label="Shuttle voyage",
+    )
 
     voyage = get_shuttle_voyage_by_key(
         db,
@@ -228,7 +288,15 @@ def close_fso_voyage(
     db: Session = Depends(get_db),
 ):
     require_user_permission(current_user, "Close FSO Voyage", db)
-    ensure_location_in_user_scope(current_user, db, request.location_code, "Location")
+    ensure_voyage_in_user_scope(
+        db,
+        current_user,
+        request.location_code,
+        request.shuttle_number,
+        request.fso_asset_code,
+        asset_field_name="primary_asset_code",
+        voyage_label="FSO voyage",
+    )
 
     voyage = get_or_create_fso_voyage(
         db=db,
@@ -275,7 +343,15 @@ def reopen_fso_voyage(
     db: Session = Depends(get_db),
 ):
     require_user_permission(current_user, "Reopen FSO Voyage", db)
-    ensure_location_in_user_scope(current_user, db, request.location_code, "Location")
+    ensure_voyage_in_user_scope(
+        db,
+        current_user,
+        request.location_code,
+        request.shuttle_number,
+        request.fso_asset_code,
+        asset_field_name="primary_asset_code",
+        voyage_label="FSO voyage",
+    )
 
     voyage = get_fso_voyage_by_key(
         db,
@@ -365,12 +441,11 @@ def get_shuttle_tracking(
             approved_transaction_not_on_correction_hold(db),
         )
     )
-    base_q = apply_location_filter(
+    base_q = apply_transaction_party_scope_filter(
         base_q,
         OperationTransaction,
         current_user,
         db,
-        column_name="origin_location_code",
     )
 
     if df:
@@ -402,7 +477,9 @@ def get_shuttle_tracking(
         parts = [p.strip() for p in str(group_key).split("|")]
         if len(parts) == 3:
             g_loc, g_shuttle, g_asset = parts
-            ensure_location_in_user_scope(current_user, db, g_loc, "Location")
+            ensure_voyage_in_user_scope(
+                db, current_user, g_loc, g_shuttle, g_asset, voyage_label="Shuttle voyage"
+            )
             base_q = base_q.filter(
                 OperationTransaction.origin_location_code == g_loc,
                 OperationTransaction.convoy_number == g_shuttle,
@@ -651,7 +728,9 @@ def export_shuttle_voyage_xlsx(
         )
 
     loc_code, shuttle_no, asset_code = parts
-    ensure_location_in_user_scope(current_user, db, loc_code, "Location")
+    ensure_voyage_in_user_scope(
+        db, current_user, loc_code, shuttle_no, asset_code, voyage_label="Shuttle voyage"
+    )
 
     txs = (
         db.query(OperationTransaction)
@@ -868,12 +947,11 @@ def get_fso_tracking(
         )
     )
     base_q = base_q.filter(OperationTransaction.primary_asset_type_code.ilike("FSO"))
-    base_q = apply_location_filter(
+    base_q = apply_transaction_party_scope_filter(
         base_q,
         OperationTransaction,
         current_user,
         db,
-        column_name="origin_location_code",
     )
 
     if group_key:
@@ -881,7 +959,9 @@ def get_fso_tracking(
         if len(parts) != 3:
             raise HTTPException(status_code=400, detail="Invalid group_key format for FSO tracking")
         g_loc, g_shuttle, g_fso = parts
-        ensure_location_in_user_scope(current_user, db, g_loc, "Location")
+        ensure_voyage_in_user_scope(
+            db, current_user, g_loc, g_shuttle, g_fso, voyage_label="FSO voyage"
+        )
         base_q = base_q.filter(
             OperationTransaction.origin_location_code == g_loc,
             OperationTransaction.convoy_number == g_shuttle,

@@ -1,6 +1,6 @@
 from datetime import datetime, date, timezone
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func, or_
+from sqlalchemy import func, literal, or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -23,8 +23,11 @@ from app.schemas import (
 )
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
-    apply_location_filter,
+    TRANSACTION_PARTY_LOCATION_FIELDS,
+    apply_transaction_party_scope_filter,
     ensure_location_in_user_scope,
+    ensure_transaction_in_user_party_scope,
+    ensure_user_is_party_to_location_codes,
     get_user_location_codes,
     require_user_permission,
     require_any_user_permission,
@@ -69,18 +72,11 @@ def parse_json_field_value(value):
 
 
 def ensure_tanker_transaction_location_scope(transaction: OperationTransaction, current_user: User, db: Session):
-    for field_name in (
-        "origin_location_code",
-        "destination_location_code",
-        "sender_location_code",
-        "receiver_location_code",
-    ):
-        ensure_location_in_user_scope(
-            current_user,
-            db,
-            getattr(transaction, field_name, None),
-            field_name.replace("_", " ").title(),
-        )
+    # Party rule: a ticket is visible/actable when ANY of its locations
+    # (origin, destination, sender, receiver) is in the user's scope. The
+    # receiver of a cross-location ticket must reach it even though the
+    # sender's terminal is outside their assigned locations.
+    ensure_transaction_in_user_party_scope(current_user, db, transaction, "tanker ticket")
 
 
 def ensure_tanker_acknowledgement_scope(acknowledgement: TankerReceiptAcknowledgement, current_user: User, db: Session):
@@ -89,12 +85,17 @@ def ensure_tanker_acknowledgement_scope(acknowledgement: TankerReceiptAcknowledg
     ).first()
     if not transaction:
         raise HTTPException(status_code=404, detail="Sender tanker transaction not found")
-    ensure_tanker_transaction_location_scope(transaction, current_user, db)
-    ensure_location_in_user_scope(
+    ensure_user_is_party_to_location_codes(
         current_user,
         db,
-        acknowledgement.receiver_location_code,
-        "Receiver location",
+        [
+            *(
+                getattr(transaction, field_name, None)
+                for field_name in TRANSACTION_PARTY_LOCATION_FIELDS
+            ),
+            acknowledgement.receiver_location_code,
+        ],
+        "tanker receipt acknowledgement",
     )
     return transaction
 
@@ -292,9 +293,8 @@ def get_filtered_tanker_transaction_report_rows(
     )
 
     if current_user is not None:
-        query = apply_location_filter(
-            query, OperationTransaction, current_user, db,
-            column_name="origin_location_code",
+        query = apply_transaction_party_scope_filter(
+            query, OperationTransaction, current_user, db
         )
 
     date_from_value = parse_date_filter(date_from, "Date From")
@@ -1166,9 +1166,8 @@ def get_tanker_tracking_rows(
         )
 
     if current_user is not None:
-        query = apply_location_filter(
-            query, OperationTransaction, current_user, db,
-            column_name="origin_location_code",
+        query = apply_transaction_party_scope_filter(
+            query, OperationTransaction, current_user, db
         )
 
     date_from_value = parse_date_filter(date_from, "Date From")
@@ -1462,21 +1461,28 @@ def get_tanker_receipt_acknowledgements(
         OperationTransaction,
         OperationTransaction.id == TankerReceiptAcknowledgement.sender_transaction_id,
     )
-    query = apply_location_filter(
-        query,
-        OperationTransaction,
-        current_user,
-        db,
-        column_name="origin_location_code",
-    )
+    # Party rule: the receiver must see the acknowledgement of a ticket
+    # addressed to their location even when the sender's terminal is outside
+    # their scope, and the sender side keeps seeing the acknowledgements raised
+    # against its own tickets. Visible when ANY of the sender ticket's
+    # locations or the acknowledgement's own receiver location is in scope.
     allowed_codes = get_user_location_codes(current_user, db)
     if allowed_codes is not None:
-        query = query.filter(
-            or_(
-                TankerReceiptAcknowledgement.receiver_location_code.is_(None),
-                func.lower(func.trim(TankerReceiptAcknowledgement.receiver_location_code)).in_(allowed_codes),
+        if not allowed_codes:
+            query = query.filter(literal(False))
+        else:
+            def _scoped(column):
+                return func.lower(func.trim(column)).in_(allowed_codes)
+
+            query = query.filter(
+                or_(
+                    *[
+                        _scoped(getattr(OperationTransaction, field_name))
+                        for field_name in TRANSACTION_PARTY_LOCATION_FIELDS
+                    ],
+                    _scoped(TankerReceiptAcknowledgement.receiver_location_code),
+                )
             )
-        )
 
     cleaned_convoy_number = clean_optional_text(convoy_number)
 

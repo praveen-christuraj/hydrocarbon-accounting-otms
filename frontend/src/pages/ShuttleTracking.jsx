@@ -15,6 +15,7 @@ import CompanyPrintHeader from '../components/reports/CompanyPrintHeader'
 import CompanyPrintFooter from '../components/reports/CompanyPrintFooter'
 import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
 import AlertMessage from '../components/common/AlertMessage'
+import Modal from '../components/common/Modal'
 import useActionFeedback from '../hooks/useActionFeedback'
 
 const defaultFilters = {
@@ -1135,7 +1136,7 @@ function ShuttleTracking({
           {/* Voyage list */}
           <div className="section-title">
             <h3>Voyage List</h3>
-            <p>Click a voyage to expand. Click again or press “Minimize” to collapse.</p>
+            <p>Click a voyage to open its detail in a pop-up window. Use the Close button to return to the list.</p>
           </div>
 
           <table>
@@ -1182,14 +1183,32 @@ function ShuttleTracking({
             onPageChange={setVoyagePage}
           />
         </div>
+      </div>
+      </div>
+      </div>
 
-        {/* RIGHT COLUMN */}
-        <div>
-          {!selectedGroup ? (
-            <div className="info-box">Select a voyage to view timeline and actions.</div>
-          ) : (
+      {/* Voyage detail pop-up: opened from the voyage list. Owner rule -
+          the detail opens in a pop-up window with a Close button instead of
+          expanding under the voyage list. */}
+      <Modal
+        open={Boolean(selectedGroup)}
+        title={
+          selectedGroup
+            ? `Voyage Detail — ${selectedGroup.locationCode} | ${selectedGroup.shuttleAssetCode} | ${selectedGroup.shuttleNumber}`
+            : 'Voyage Detail'
+        }
+        description="Approved tickets of this voyage, its timeline and the voyage actions."
+        onClose={minimizeVoyage}
+        size="xl"
+        footer={
+          <button type="button" onClick={minimizeVoyage}>
+            Close
+          </button>
+        }
+      >
+          {selectedGroup ? (
             <>
-              {/* Selected voyage header with minimize */}
+              {/* Selected voyage header with close */}
               <div className="info-box compact-card sticky-right-header">
                 <div style={{ display: 'flex', gap: 10, justifyContent: 'space-between', flexWrap: 'wrap' }}>
                   <div>
@@ -1201,7 +1220,7 @@ function ShuttleTracking({
 
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     <button type="button" onClick={minimizeVoyage}>
-                      Minimize
+                      Close
                     </button>
                     <button
                       type="button"
@@ -1655,12 +1674,8 @@ function ShuttleTracking({
                 </div>
               )}
             </>
-          )}
-        </div>
-      </div>
-      </div>
-      </div>
-
+          ) : null}
+      </Modal>
     </>
   )
 }

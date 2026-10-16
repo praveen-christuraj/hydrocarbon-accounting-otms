@@ -32,7 +32,8 @@ from app.schemas import (
 )
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
-    apply_location_filter,
+    apply_transaction_party_scope_filter,
+    ensure_transaction_in_user_party_scope,
     get_user_location_codes,
     is_admin_user,
     normalize_location_code,
@@ -387,8 +388,11 @@ def get_filtered_operation_transaction_rows(
     )
 
     if current_user is not None:
-        query = apply_location_filter(
-            query, OperationTransaction, current_user, db, column_name="origin_location_code"
+        # Party rule: the register must show a cross-location ticket to both
+        # sides - the receiver sees the tickets addressed to their location
+        # even though the sender's terminal is outside their assigned scope.
+        query = apply_transaction_party_scope_filter(
+            query, OperationTransaction, current_user, db
         )
 
     if date_from:
@@ -1132,8 +1136,10 @@ def get_operation_transactions_paged(
 
     allowed = get_user_location_codes(current_user, db)
     if allowed is not None:
-        base_query = base_query.filter(
-            func.lower(func.trim(OperationTransaction.origin_location_code)).in_(allowed)
+        # Party rule: both sides of a cross-location ticket see it in the
+        # register (see apply_transaction_party_scope_filter).
+        base_query = apply_transaction_party_scope_filter(
+            base_query, OperationTransaction, current_user, db
         )
 
     if date_from:
@@ -1186,8 +1192,8 @@ def get_operation_transactions_paged(
     )
 
     if allowed is not None:
-        count_query = count_query.filter(
-            func.lower(func.trim(OperationTransaction.origin_location_code)).in_(allowed)
+        count_query = apply_transaction_party_scope_filter(
+            count_query, OperationTransaction, current_user, db
         )
 
     if date_from:
@@ -1857,12 +1863,9 @@ def get_operation_transaction_detail(
     if transaction is None:
         raise HTTPException(status_code=404, detail="Operation transaction not found")
 
-    ensure_location_in_user_scope(
-        current_user,
-        db,
-        transaction.origin_location_code,
-        "Origin location",
-    )
+    # Party rule: the receiver of a cross-location ticket must be able to open
+    # its detail even though the origin (sender) location is out of scope.
+    ensure_transaction_in_user_party_scope(current_user, db, transaction, "ticket")
 
     operation_type = get_operation_type_by_code(transaction.operation_type_code, db)
     location = get_location_by_code(transaction.origin_location_code, db)
@@ -2225,12 +2228,7 @@ def get_operation_transaction_status_history(
             detail="Operation transaction not found",
         )
 
-    ensure_location_in_user_scope(
-        current_user,
-        db,
-        transaction.origin_location_code,
-        "Origin location",
-    )
+    ensure_transaction_in_user_party_scope(current_user, db, transaction, "ticket")
 
     history = (
         db.query(OperationTransactionStatusHistory)

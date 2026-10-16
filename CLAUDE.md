@@ -27,6 +27,7 @@
 | 8 | **All user alerts (errors, cautions, success) are shown next to the respective data-entry section or as pop-ups** – never `window.alert`, never far away from the field/section they belong to. | Inline: `frontend/src/components/common/AlertMessage.jsx` placed directly above/below the form or table it concerns, field errors under the field. Pop-up: `ToastProvider`/`useToast` (`frontend/src/components/common/Toast.jsx`) for non-blocking notices and `ConfirmDialog` for confirmations. `window.alert`/`window.confirm` are banned (ESLint `no-alert`). |
 | 9 | **Every page ships with Auditing and RBAC by default**, controlled by the admin user. | Wrap every route in `PermissionGuard` (module **View** permission) and gate every mutating control with the matching **action** permission from the catalog: `usePermissions(loggedInUser).hasPermission('Create Location')` / `'Edit Location'` / `'Delete Location'` / the named workflow permission (`Close Movement Mapping`, `Approve Operation Transaction`, …). Never use a single `Manage …` flag for create, edit and delete – the legacy `Manage X` names no longer exist. Permission names must exist in the Permission Master so the admin can assign them per role. Audit = rule 1. |
 | 10 | **Pop-ups must not close when the user clicks outside them.** Only the Cancel / Close button closes a dialog. | Use `frontend/src/components/common/Modal.jsx` (and `ConfirmDialog`) for every dialog. The backdrop has no click handler and Escape is ignored by design. Never add `onClick` to a backdrop/overlay element. Any dialog that is rendered inline (for example a column configuration panel) is a bug: it must go through `Modal`, which portals to `<body>`, so its CSS cannot live under a page-scoped selector. |
+| 11 | **Cross-location records follow the party (involvement) rule** (product owner, 2026-10-16). A location-scoped user must see and act on a ticket / voyage / acknowledgement when **any** of its party locations (origin, destination, sender, receiver) is inside their assigned locations – location B must see a ticket addressed to it even though B has no access to location A. Applies to **all** tracking modules and the Operation Transaction Register. | Shared helpers in `backend/app/dependencies/permissions.py` (`apply_transaction_party_scope_filter`, `ensure_transaction_in_user_party_scope`, `user_is_party_to_transaction`); voyage-level: `ensure_voyage_in_user_scope` in `backend/app/routers/shuttle_fso_voyages.py`. Own-side records keep the plain `apply_location_filter`; create/edit/approve stay origin-scoped. The full multi-criteria model (Permission × Location × Operation availability × Workflow policy) is documented in `PERMISSION_CRITERIA_MODEL.md`. |
 
 ### Permission model (read before gating any control)
 
@@ -45,6 +46,11 @@
   * A create form needs `Create X`, an edit form / row Edit button needs `Edit X`, a delete
     needs `Delete X`. When one form does both, use `editId === null ? canCreate : canEdit`.
   * Workflow buttons use their own permission, not a CRUD one.
+  * Location scope has two modes: own-side records (masters, tanks, entries at your
+    location) use the plain assigned-location filter; cross-location records (tickets with
+    a sender/receiver pair, voyages, tanker acknowledgements) use the **party rule** – any
+    of origin/destination/sender/receiver in scope. Never filter cross-location tracking
+    lists on `origin_location_code` alone. See `PERMISSION_CRITERIA_MODEL.md`.
   * Hide the control (and the Actions column) when the permission is missing; also guard the
     handler, because the API enforces the same permission server-side.
   * Never invent a permission name – check the catalog first. `backend/tests/test_permission_catalog.py`

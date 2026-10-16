@@ -691,3 +691,123 @@ def apply_location_filter(query, model, user: User, db: Session, column_name: st
         return query.filter(sqlalchemy.literal(False))  # no access to any location
     col = getattr(model, column_name)
     return query.filter(sqlalchemy.func.lower(sqlalchemy.func.trim(col)).in_(allowed_codes))
+
+
+# ---------------------------------------------------------------------------
+# Cross-location ("party") scope for tickets, voyages and trips
+# ---------------------------------------------------------------------------
+# Tickets created at one terminal are routinely addressed to another terminal
+# (for example sender location A, receiver location B). The receiver must see
+# and act on that ticket even though location A is outside their assigned
+# locations, and the sender must keep seeing it after the receiver location is
+# filled in. A location-scoped user therefore sees a cross-location record when
+# ANY of its party locations (origin, destination, sender or receiver) is
+# inside their assigned scope - never when none of them is. Single-location
+# records keep using the plain `apply_location_filter` rule.
+
+TRANSACTION_PARTY_LOCATION_FIELDS = (
+    "origin_location_code",
+    "destination_location_code",
+    "sender_location_code",
+    "receiver_location_code",
+)
+
+
+def get_transaction_party_location_codes(
+    transaction,
+    field_names=TRANSACTION_PARTY_LOCATION_FIELDS,
+) -> list:
+    """Return the normalized, populated party location codes of a record."""
+    codes = []
+    for field_name in field_names:
+        normalized = normalize_location_code(getattr(transaction, field_name, None))
+        if normalized is not None:
+            codes.append(normalized)
+    return codes
+
+
+def user_is_party_to_location_codes(user: User, db: Session, location_codes) -> bool:
+    """
+    True when the user may see a record that involves these locations.
+
+    - Unrestricted users see every record.
+    - Records with no populated location at all stay visible (legacy rows).
+    - Otherwise at least one party location must be inside the assigned scope.
+    """
+    allowed_codes = get_user_location_codes(user, db)
+    if allowed_codes is None:
+        return True
+    codes = [
+        normalized
+        for code in location_codes
+        if (normalized := normalize_location_code(code)) is not None
+    ]
+    if not codes:
+        return True
+    return any(code in allowed_codes for code in codes)
+
+
+def user_is_party_to_transaction(user: User, db: Session, transaction) -> bool:
+    """True when any party location (origin, destination, sender, receiver) of
+    the transaction is inside the user's assigned location scope."""
+    return user_is_party_to_location_codes(
+        user,
+        db,
+        [getattr(transaction, field_name, None) for field_name in TRANSACTION_PARTY_LOCATION_FIELDS],
+    )
+
+
+def ensure_user_is_party_to_location_codes(
+    user: User,
+    db: Session,
+    location_codes,
+    record_label: str = "record",
+):
+    if user_is_party_to_location_codes(user, db, location_codes):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            f"This {record_label} does not involve any location in your assigned "
+            "scope (origin, destination, sender or receiver)."
+        ),
+    )
+
+
+def ensure_transaction_in_user_party_scope(
+    user: User,
+    db: Session,
+    transaction,
+    record_label: str = "ticket",
+):
+    ensure_user_is_party_to_location_codes(
+        user,
+        db,
+        [getattr(transaction, field_name, None) for field_name in TRANSACTION_PARTY_LOCATION_FIELDS],
+        record_label,
+    )
+
+
+def apply_transaction_party_scope_filter(
+    query,
+    model,
+    user: User,
+    db: Session,
+    field_names=TRANSACTION_PARTY_LOCATION_FIELDS,
+):
+    """
+    Apply the party rule to a query over a cross-location record: keep rows
+    where ANY of the party location columns is inside the user's assigned
+    scope. Unrestricted users get the query unchanged; a user with no assigned
+    locations gets zero rows.
+    """
+    allowed_codes = get_user_location_codes(user, db)
+    if allowed_codes is None:
+        return query
+    if not allowed_codes:
+        return query.filter(sqlalchemy.literal(False))
+    conditions = [
+        sqlalchemy.func.lower(sqlalchemy.func.trim(getattr(model, field_name))).in_(allowed_codes)
+        for field_name in field_names
+    ]
+    return query.filter(sqlalchemy.or_(*conditions))

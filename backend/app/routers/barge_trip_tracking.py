@@ -31,6 +31,7 @@ from app.dependencies.permissions import (
     require_user_permission,
     require_any_user_permission,
     user_has_location_access,
+    user_is_party_to_transaction,
 )
 from app.services.audit_service import create_audit_log
 from app.utils.helpers import (
@@ -127,21 +128,7 @@ def ensure_barge_transaction_location_scope(transaction: OperationTransaction, c
 
 def barge_transaction_in_user_scope(transaction: OperationTransaction, current_user: User, db: Session) -> bool:
     """True when the user may see the ticket (any of its four locations in scope)."""
-    location_codes = [
-        clean_optional_text(getattr(transaction, field_name, None))
-        for field_name in (
-            "origin_location_code",
-            "destination_location_code",
-            "sender_location_code",
-            "receiver_location_code",
-        )
-    ]
-    if all(code is None for code in location_codes):
-        return True
-    return any(
-        code is not None and user_has_location_access(current_user, db, code)
-        for code in location_codes
-    )
+    return user_is_party_to_transaction(current_user, db, transaction)
 
 
 def ensure_trip_location_scope(trip: Trip, current_user: User, db: Session):
