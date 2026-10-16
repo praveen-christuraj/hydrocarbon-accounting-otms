@@ -1307,3 +1307,39 @@ def ensure_operation_transaction_indexes():
     with engine.begin() as connection:
         for statement in statements:
             connection.execute(text(statement))
+
+
+def ensure_asset_calibration_table_indexes():
+    """Indexes for asset calibration table lookups.
+
+    The asset calibration list endpoint filters tables by asset/location scope
+    and loads every data row for the visible tables. Without indexes PostgreSQL
+    sequentially scans ``asset_calibration_tables`` and ``asset_calibration_data``
+    as history grows, which is what made loading asset calibration tables time
+    out. These indexes keep the scoped lookup and per-table row fetch fast.
+    """
+    inspector = inspect(engine)
+    table_names = inspector.get_table_names()
+
+    statements = []
+
+    if "asset_calibration_tables" in table_names:
+        statements += [
+            "CREATE INDEX IF NOT EXISTS ix_asset_calibration_tables_asset_code "
+            "ON asset_calibration_tables (asset_code);",
+            "CREATE INDEX IF NOT EXISTS ix_asset_calibration_tables_status "
+            "ON asset_calibration_tables (status);",
+        ]
+
+    if "asset_calibration_data" in table_names:
+        statements += [
+            "CREATE INDEX IF NOT EXISTS ix_asset_calibration_data_table_row "
+            "ON asset_calibration_data (calibration_table_id, row_number);",
+        ]
+
+    if not statements:
+        return
+
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))

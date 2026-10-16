@@ -2,8 +2,10 @@ import { useMemo, useState } from 'react'
 import {
   createAssetCalibrationTable,
   deleteAssetCalibrationTable,
+  getAssetCalibrationTable,
   updateAssetCalibrationTable,
 } from '../api/assetCalibrationApi'
+import { invalidateCalibrationRows } from '../hooks/useActiveCalibrationTable'
 import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import ExportMenu from '../components/common/ExportMenu'
@@ -522,6 +524,9 @@ function AssetCalibrationTable({
         notifySuccess('Asset Calibration Table updated successfully')
       }
 
+      // Charts are cached per table for the operation layouts; drop the
+      // edited one so they pick up the new data.
+      invalidateCalibrationRows(editId)
       await reloadAssetCalibrationTables()
       setFormData(emptyForm)
       setRowData({})
@@ -534,10 +539,29 @@ function AssetCalibrationTable({
     }
   }
 
-  const handleEdit = (table) => {
+  const handleEdit = async (table) => {
     if (!canEdit) {
       notifyError('You do not have permission to edit asset calibration tables.')
       return
+    }
+
+    clearSuccess()
+    clearError()
+
+    // The list is lean (no calibration data rows), so the rows for the table
+    // being edited are fetched here rather than shipped with the list.
+    let rows = table.rows
+    if (!table.rowsLoaded) {
+      try {
+        setLoading(true)
+        const fullTable = await getAssetCalibrationTable(table.id)
+        rows = fullTable.rows
+      } catch (error) {
+        notifyError(error.message)
+        return
+      } finally {
+        setLoading(false)
+      }
     }
 
     setFormData({
@@ -547,7 +571,7 @@ function AssetCalibrationTable({
       effectiveDate: table.effectiveDate,
       remarks: table.remarks,
       status: table.status,
-      rows: table.rows.map((row) => row.rowData),
+      rows: (rows || []).map((row) => row.rowData),
     })
 
     setRowData({})
@@ -567,6 +591,7 @@ function AssetCalibrationTable({
     try {
       setLoading(true)
       await deleteAssetCalibrationTable(confirmDeleteId)
+      invalidateCalibrationRows(confirmDeleteId)
       await reloadAssetCalibrationTables()
 
       if (editId === confirmDeleteId) {
@@ -1495,7 +1520,7 @@ function AssetCalibrationTable({
                 </td>
                 <td>{table.templateName}</td>
                 <td>{table.effectiveDate}</td>
-                <td>{table.rows.length}</td>
+                <td>{table.rowCount ?? table.rows.length}</td>
                 <td>
                   <span className={`status-badge ${table.status.toLowerCase()}`}>
                     {table.status}

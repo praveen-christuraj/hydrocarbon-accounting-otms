@@ -530,6 +530,33 @@ class AssetCalibrationTableResponse(AssetCalibrationTableBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class AssetCalibrationTableSummaryResponse(AssetCalibrationTableBase):
+    """List row for the calibration table master.
+
+    Deliberately excludes the calibration data rows: a single tank chart can
+    hold thousands of dip entries and shipping every row of every table made
+    the list endpoint slow enough to hit the client request timeout. Callers
+    that need the data (the edit form, the operation entry layouts) request it
+    per table instead.
+    """
+
+    id: int
+    asset_name: str
+    template_name: str
+    row_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AssetCalibrationDataRowsResponse(BaseModel):
+    """Calibration data rows for a single table (used for interpolation)."""
+
+    table_id: int
+    rows: list[AssetCalibrationDataRowResponse]
+
+
 class AssetAssignmentBase(BaseModel):
     asset_code: str
     asset_scope: str

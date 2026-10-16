@@ -109,6 +109,41 @@ Rules:
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
 
+## Recent Fixes (2026-10-16) - Asset Calibration Load Timeout
+
+### "Unable to load asset calibration tables from the server" (recurring, got worse over time)
+
+- **Root cause:** `GET /asset-calibration-tables` shipped every calibration table *together with
+  every calibration data row* (`rows`). A tank dip chart holds thousands of rows, so the response
+  payload grew with the data (measured: 6.7 MB for 20 tables / 40k rows — multiplicatively worse on
+  a real fleet). `App.jsx` preloads that list on every login, the serialisation + WAN transfer blew
+  past the 60 s client timeout in `frontend/src/api/apiClient.js`, which produced the "server took
+  too long to respond" toast. The scoped lookup and the per-table row fetch also had no supporting
+  indexes, so PostgreSQL sequentially scanned both calibration tables.
+- **Fix (backend):** the list endpoint is now a **lean summary** (`AssetCalibrationTableSummaryResponse`
+  — no `rows`, plus a `row_count` computed with a grouped `COUNT(*)`). Rows are served per table by
+  `GET /asset-calibration-tables/{id}` (full detail, used by the edit form) and
+  `GET /asset-calibration-tables/{id}/rows` (rows only, used by the operation entry layouts). Both
+  reuse `_scoped_calibration_table_query`, so a location-scoped user gets **404** for another
+  location's table instead of being able to enumerate it. Same payload dropped to 5.2 KB / 24 ms.
+- **Fix (database):** indexes for `asset_calibration_tables (asset_code)`, `(status)` and
+  `asset_calibration_data (calibration_table_id)` — added to the models and to
+  `ensure_asset_calibration_table_indexes()` in `backend/app/utils/db_migrations.py` (runs at
+  startup, so existing deployments get them without a manual migration).
+- **Fix (frontend):** new `frontend/src/hooks/useActiveCalibrationTable.js` — picks the newest active
+  table for an asset from the lean list and fetches that table's rows on demand, caching them per
+  table (LRU, 12 tables) with in-flight de-duplication. `TankGaugingLayout`, `TankerTruckLayout`,
+  `MultiTankBeforeAfterLayout` and `BargeSealMaster` now use it (each shows "Loading calibration
+  data…" / the error inline instead of a false "no calibration table" message). `AssetCalibrationTable`
+  loads the rows only when the user clicks Edit and shows the `row_count` column; saving or deleting
+  invalidates the cache (`invalidateCalibrationRows`).
+- **General rule (keep applying):** list endpoints must never return unbounded child collections.
+  Return a scalar summary (`row_count`) and add a dedicated sub-resource endpoint for the children.
+- **Tests:** `backend/tests/test_asset_calibration_payload.py` (lean list contract + scope on the new
+  endpoints) and new smoke checks in `frontend/scripts/smoke-render.mjs` (`/asset-calibrations` edit
+  flow, `/barge-seal-master` on-demand rows) with the mock API mirroring the lean/per-table split.
+  All 135 backend tests + the headless UI smoke checks pass.
+
 ## Recent Fixes (2026-10-15) - Action Feedback UX + Barge Tracking OR-Scope
 
 ### Save / Submit / Review / Approve Action Audit

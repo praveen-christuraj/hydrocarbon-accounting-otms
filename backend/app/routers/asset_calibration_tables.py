@@ -4,7 +4,12 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import AssetCalibrationTable, AssetCalibrationData, Asset, CalibrationTemplate, CalibrationTemplateColumn, User
-from app.schemas import AssetCalibrationTableCreate, AssetCalibrationTableResponse
+from app.schemas import (
+    AssetCalibrationDataRowsResponse,
+    AssetCalibrationTableCreate,
+    AssetCalibrationTableResponse,
+    AssetCalibrationTableSummaryResponse,
+)
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
     ensure_location_in_user_scope,
@@ -18,10 +23,10 @@ from app.utils.helpers import clean_optional_text
 router = APIRouter(prefix="/asset-calibration-tables", tags=["Asset Calibration Tables"])
 
 
-def _batch_load_references(db: Session, tables: list):
+def _batch_load_asset_and_template_lookups(db: Session, tables: list):
+    """Asset/template lookups only -- never touches calibration data rows."""
     asset_codes = {t.asset_code for t in tables}
     template_ids = {t.template_id for t in tables}
-    table_ids = {t.id for t in tables}
 
     assets = {
         a.asset_code: a
@@ -31,16 +36,49 @@ def _batch_load_references(db: Session, tables: list):
         t.id: t
         for t in db.query(CalibrationTemplate).filter(CalibrationTemplate.id.in_(template_ids)).all()
     }
-    rows_by_table: dict[int, list] = {}
-    if table_ids:
-        all_rows = (
-            db.query(AssetCalibrationData)
-            .filter(AssetCalibrationData.calibration_table_id.in_(table_ids))
-            .order_by(AssetCalibrationData.calibration_table_id, AssetCalibrationData.row_number)
-            .all()
+    return assets, templates
+
+
+def _load_row_counts(db: Session, table_ids: set[int]) -> dict[int, int]:
+    """Row count per calibration table without loading the rows themselves."""
+    if not table_ids:
+        return {}
+    counts = (
+        db.query(
+            AssetCalibrationData.calibration_table_id,
+            func.count(AssetCalibrationData.id),
         )
-        for row in all_rows:
-            rows_by_table.setdefault(row.calibration_table_id, []).append(row)
+        .filter(AssetCalibrationData.calibration_table_id.in_(table_ids))
+        .group_by(AssetCalibrationData.calibration_table_id)
+        .all()
+    )
+    return {table_id: count for table_id, count in counts}
+
+
+def _load_rows_by_table(db: Session, table_ids: set[int]) -> dict[int, list]:
+    rows_by_table: dict[int, list] = {}
+    if not table_ids:
+        return rows_by_table
+    all_rows = (
+        db.query(AssetCalibrationData)
+        .filter(AssetCalibrationData.calibration_table_id.in_(table_ids))
+        .order_by(AssetCalibrationData.calibration_table_id, AssetCalibrationData.row_number)
+        .all()
+    )
+    for row in all_rows:
+        rows_by_table.setdefault(row.calibration_table_id, []).append(row)
+    return rows_by_table
+
+
+def _batch_load_references(db: Session, tables: list):
+    """Full references (assets, templates, rows) for a handful of tables.
+
+    Only used by the single-table endpoints (create/update/delete/detail),
+    where loading one table's rows is cheap. The list endpoint uses the
+    leaner count-only helpers above.
+    """
+    assets, templates = _batch_load_asset_and_template_lookups(db, tables)
+    rows_by_table = _load_rows_by_table(db, {t.id for t in tables})
     return assets, templates, rows_by_table
 
 
@@ -69,6 +107,26 @@ def build_asset_calibration_table_response(calibration_table: AssetCalibrationTa
             }
             for row in rows
         ],
+    }
+
+
+def build_asset_calibration_table_summary(calibration_table: AssetCalibrationTable, assets: dict, templates: dict, row_counts: dict):
+    asset = assets.get(calibration_table.asset_code)
+    template = templates.get(calibration_table.template_id)
+
+    return {
+        "id": calibration_table.id,
+        "calibration_name": calibration_table.calibration_name,
+        "asset_code": calibration_table.asset_code,
+        "asset_name": asset.asset_name if asset else "",
+        "template_id": calibration_table.template_id,
+        "template_name": template.template_name if template else "",
+        "effective_date": calibration_table.effective_date,
+        "remarks": calibration_table.remarks,
+        "status": calibration_table.status,
+        "row_count": row_counts.get(calibration_table.id, 0),
+        "created_at": calibration_table.created_at,
+        "updated_at": calibration_table.updated_at,
     }
 
 
@@ -213,17 +271,14 @@ def validate_asset_calibration_table(calibration_table: AssetCalibrationTableCre
     return asset
 
 
-@router.get("", response_model=list[AssetCalibrationTableResponse])
-def get_asset_calibration_tables(
-    current_user: User = Depends(get_current_user_from_token),
-    db: Session = Depends(get_db),
-):
-    require_user_permission(
-        current_user,
-        "View Asset Calibration",
-        db,
-    )
+def _scoped_calibration_table_query(db: Session, current_user: User):
+    """Base query for calibration tables visible to ``current_user``.
 
+    Applies the same location/Global scope rule the list endpoint has always
+    used (location scoped users only see tables for assets inside their
+    locations plus Global assets) so the detail/rows endpoints cannot leak
+    tables the list would hide.
+    """
     query = db.query(AssetCalibrationTable)
     allowed_codes = get_user_location_codes(current_user, db)
     if allowed_codes is not None:
@@ -237,14 +292,101 @@ def get_asset_calibration_tables(
                 )
             )
             query = query.filter(AssetCalibrationTable.asset_code.in_(visible_assets))
+    return query
+
+
+@router.get("", response_model=list[AssetCalibrationTableSummaryResponse])
+def get_asset_calibration_tables(
+    current_user: User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db),
+):
+    require_user_permission(
+        current_user,
+        "View Asset Calibration",
+        db,
+    )
+
+    query = _scoped_calibration_table_query(db, current_user)
     calibration_tables = query.order_by(AssetCalibrationTable.id).all()
 
-    assets, templates, rows_by_table = _batch_load_references(db, calibration_tables)
+    assets, templates = _batch_load_asset_and_template_lookups(db, calibration_tables)
+    row_counts = _load_row_counts(db, {ct.id for ct in calibration_tables})
 
     return [
-        build_asset_calibration_table_response(ct, assets, templates, rows_by_table)
+        build_asset_calibration_table_summary(ct, assets, templates, row_counts)
         for ct in calibration_tables
     ]
+
+
+def _get_scoped_calibration_table(db: Session, current_user: User, calibration_table_id: int) -> AssetCalibrationTable:
+    calibration_table = _scoped_calibration_table_query(db, current_user).filter(
+        AssetCalibrationTable.id == calibration_table_id
+    ).first()
+
+    if not calibration_table:
+        raise HTTPException(
+            status_code=404,
+            detail="Asset calibration table not found",
+        )
+
+    return calibration_table
+
+
+@router.get("/{calibration_table_id}", response_model=AssetCalibrationTableResponse)
+def get_asset_calibration_table(
+    calibration_table_id: int,
+    current_user: User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db),
+):
+    """Full calibration table (including its data rows) for one table."""
+    require_user_permission(
+        current_user,
+        "View Asset Calibration",
+        db,
+    )
+
+    calibration_table = _get_scoped_calibration_table(db, current_user, calibration_table_id)
+    assets, templates, rows_by_table = _batch_load_references(db, [calibration_table])
+    return build_asset_calibration_table_response(calibration_table, assets, templates, rows_by_table)
+
+
+@router.get("/{calibration_table_id}/rows", response_model=AssetCalibrationDataRowsResponse)
+def get_asset_calibration_table_rows(
+    calibration_table_id: int,
+    current_user: User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db),
+):
+    """Calibration data rows for one table.
+
+    Operation entry layouts interpolate against the active table for the
+    selected asset; fetching only that table's rows keeps the payload small
+    instead of shipping every row of every table to the browser.
+    """
+    require_user_permission(
+        current_user,
+        "View Asset Calibration",
+        db,
+    )
+
+    calibration_table = _get_scoped_calibration_table(db, current_user, calibration_table_id)
+    rows = (
+        db.query(AssetCalibrationData)
+        .filter(AssetCalibrationData.calibration_table_id == calibration_table.id)
+        .order_by(AssetCalibrationData.row_number)
+        .all()
+    )
+
+    return {
+        "table_id": calibration_table.id,
+        "rows": [
+            {
+                "id": row.id,
+                "row_number": row.row_number,
+                "row_data": row.row_data,
+            }
+            for row in rows
+        ],
+    }
 
 
 @router.post("", response_model=AssetCalibrationTableResponse)

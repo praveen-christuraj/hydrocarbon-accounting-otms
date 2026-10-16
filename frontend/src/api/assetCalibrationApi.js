@@ -1,6 +1,14 @@
 import { apiDelete, apiGet, apiPost, apiPut } from './apiClient'
 
+const convertCalibrationRowFromApi = (row) => ({
+  id: row.id,
+  rowNumber: row.row_number,
+  rowData: row.row_data || {},
+})
+
 const convertAssetCalibrationTableFromApi = (table) => {
+  const rows = (table.rows || []).map(convertCalibrationRowFromApi)
+
   return {
     id: table.id,
     calibrationName: table.calibration_name,
@@ -11,13 +19,14 @@ const convertAssetCalibrationTableFromApi = (table) => {
     effectiveDate: table.effective_date || '',
     remarks: table.remarks || '',
     status: table.status,
+    rowCount: table.row_count ?? rows.length,
     createdAt: table.created_at,
     updatedAt: table.updated_at,
-    rows: (table.rows || []).map((row) => ({
-      id: row.id,
-      rowNumber: row.row_number,
-      rowData: row.row_data || {},
-    })),
+    rows,
+    // The list endpoint returns lean rows (no calibration data) so the
+    // browser never downloads every dip chart up front. Consumers that need
+    // the data ask for it per table -- see getAssetCalibrationTableRows.
+    rowsLoaded: Array.isArray(table.rows),
   }
 }
 
@@ -54,6 +63,18 @@ const convertAssetCalibrationTableToApi = (table) => {
 export const getAssetCalibrationTables = async () => {
   const data = await apiGet('/asset-calibration-tables')
   return data.map(convertAssetCalibrationTableFromApi)
+}
+
+/** Full calibration table, including its calibration data rows. */
+export const getAssetCalibrationTable = async (tableId) => {
+  const data = await apiGet(`/asset-calibration-tables/${tableId}`)
+  return convertAssetCalibrationTableFromApi(data)
+}
+
+/** Calibration data rows for one table (used for interpolation). */
+export const getAssetCalibrationTableRows = async (tableId) => {
+  const data = await apiGet(`/asset-calibration-tables/${tableId}/rows`)
+  return (data?.rows || []).map(convertCalibrationRowFromApi)
 }
 
 export const createAssetCalibrationTable = async (table) => {
