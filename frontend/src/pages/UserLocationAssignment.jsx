@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useId, useState } from 'react'
 import {
   saveUserLocations,
   updateUserAllLocationsAccess,
@@ -11,7 +11,12 @@ import { useAutoColumns } from '../hooks/useAutoColumns'
 import { usePermissions } from '../hooks/usePermissions'
 import AlertMessage from '../components/common/AlertMessage'
 import PageHeader from '../components/common/PageHeader'
+import LocationScopeSelector from '../components/common/LocationScopeSelector'
+import { useConfirm } from '../components/common/ConfirmProvider'
 import useActionFeedback from '../hooks/useActionFeedback'
+import { logUiAction } from '../utils/actionLogger'
+
+const MODULE = 'User Location Assignment'
 
 function UserLocationAssignment({
   users,
@@ -37,34 +42,42 @@ function UserLocationAssignment({
     clearSuccess,
     clearError,
   } = feedback
-  const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [fieldErrors, setFieldErrors] = useState({})
   const [page, setPage] = useState(1)
-  const [locationQuery, setLocationQuery] = useState('')
 
   const pageSize = usePageSize()
+  const confirm = useConfirm()
+  const allAccessLabelId = useId()
+  const locationsLabelId = useId()
+  const panelTitleId = useId()
+
   const activeUsers = users.filter((user) => user.status === 'Active')
   const activeLocations = locations.filter((loc) => loc.status === 'Active')
-  const filteredLocations = activeLocations.filter((loc) => {
-    const q = locationQuery.trim().toLowerCase()
-    if (!q) return true
-    return (
-      String(loc.locationName || '').toLowerCase().includes(q) ||
-      String(loc.locationCode || '').toLowerCase().includes(q)
-    )
-  })
 
   const { hasPermission } = usePermissions(loggedInUser)
   const canView = hasPermission('View User Location Assignment')
   const canEdit = hasPermission('Edit User Location Assignment')
   const canDelete = hasPermission('Delete User Location Assignment')
-  const userLocationAssignmentsFilters = useDataFilters(userLocationAssignments, useAutoColumns(userLocationAssignments), { module: 'User Location Assignment' })
+  const userLocationAssignmentsFilters = useDataFilters(userLocationAssignments, useAutoColumns(userLocationAssignments), { module: MODULE })
   const visibleAssignments = paginateRows(userLocationAssignmentsFilters.filteredRows, page, pageSize)
 
-  useEffect(() => {
-    setPage(1)
-  }, [userLocationAssignments.length])
+  // One user owns several location rows: the User and All Locations columns are
+  // merged across the user's contiguous rows (rowSpan) so the table reads as a
+  // one-to-many assignment list without repeating the user on every line.
+  // A group continuing from the previous page simply repeats its header cell.
+  const groupSpans = visibleAssignments.map((assignment, index) => {
+    const sameUser = (a, b) => String(a?.userId) === String(b?.userId)
+    if (index > 0 && sameUser(visibleAssignments[index - 1], assignment)) return 0
+    let span = 1
+    while (index + span < visibleAssignments.length && sameUser(visibleAssignments[index + span], assignment)) {
+      span += 1
+    }
+    return span
+  })
 
+  // The page number is clamped by paginateRows()/PaginationControls, so a
+  // shorter list (after a delete or a filter change) never leaves the table on
+  // an empty page.
 
   const validateAssignment = () => {
     const errors = {}
@@ -97,13 +110,18 @@ function UserLocationAssignment({
     )
   }
 
-  const handleSelectAllLocations = () => {
-    const allCodes = activeLocations.map((l) => l.locationCode)
-    setSelectedLocationCodes(
-      selectedLocationCodes.length === allCodes.length && allCodes.length > 0
-        ? []
-        : allCodes
-    )
+  // "Select all" in the scope panel: add or remove the codes it currently shows
+  // (the whole list, or only the rows that match the filter).
+  const handleSelectLocations = (codes, checked) => {
+    setSelectedLocationCodes((previous) => {
+      if (checked) {
+        const next = new Set(previous)
+        codes.forEach((code) => next.add(code))
+        return [...next]
+      }
+      const removing = new Set(codes)
+      return previous.filter((code) => !removing.has(code))
+    })
   }
 
   const handleSubmit = async (e) => {
@@ -118,6 +136,8 @@ function UserLocationAssignment({
 
     if (!validateAssignment()) return
 
+    const selectedUser = activeUsers.find((user) => String(user.id) === selectedUserId)
+
     try {
       setLoading(true)
 
@@ -129,11 +149,17 @@ function UserLocationAssignment({
         reloadUserLocationAssignments(),
       ])
 
+      logUiAction(MODULE, 'Save User Locations', {
+        userId: Number(selectedUserId),
+        username: selectedUser?.username || '',
+        locationCount: selectedLocationCodes.length,
+        allLocationsAccess,
+      })
+
       setSelectedUserId('')
       setSelectedLocationCodes([])
       setAllLocationsAccess('No')
       setFieldErrors({})
-      setLocationQuery('')
       setSuccess('User location assignment saved successfully')
     } catch (err) {
       setError(err.message)
@@ -145,7 +171,6 @@ function UserLocationAssignment({
   const handleEdit = (summary) => {
     clearError()
     clearSuccess()
-    setConfirmDeleteId(null)
     setFieldErrors({})
 
     if (!canEdit) {
@@ -156,30 +181,44 @@ function UserLocationAssignment({
     setSelectedUserId(String(summary.userId))
     setSelectedLocationCodes(summary.locationCodes || [])
     setAllLocationsAccess(summary.allLocationsAccess || 'No')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  const handleDeleteRequest = (assignmentId) => {
+  const handleDelete = async (assignment) => {
     clearError()
     clearSuccess()
-    setConfirmDeleteId(assignmentId)
-  }
 
-  const handleDeleteConfirm = async (assignmentId) => {
     if (!canDelete) {
       setError('You do not have permission to delete user location assignments.')
       return
     }
 
+    const confirmed = await confirm({
+      title: 'Remove location assignment',
+      message: `Remove "${assignment.locationName}" from ${assignment.fullName}?`,
+      details:
+        'The user loses access to this location immediately, unless a role they hold still grants it. This action is recorded in the audit log.',
+      tone: 'danger',
+      confirmLabel: 'Remove assignment',
+      module: MODULE,
+    })
+    if (!confirmed) return
+
     try {
       setLoading(true)
 
-      await deleteUserLocation(assignmentId)
+      await deleteUserLocation(assignment.id)
       await Promise.all([
         reloadUserLocationSummaries(),
         reloadUserLocationAssignments(),
       ])
 
-      setConfirmDeleteId(null)
+      logUiAction(MODULE, 'Remove User Location', {
+        userId: assignment.userId,
+        username: assignment.username,
+        locationCode: assignment.locationCode,
+      })
+
       setSuccess('User location assignment removed successfully')
     } catch (err) {
       setError(err.message)
@@ -274,10 +313,8 @@ function UserLocationAssignment({
     setSelectedLocationCodes([])
     setAllLocationsAccess('No')
     setFieldErrors({})
-    setLocationQuery('')
     clearError()
     clearSuccess()
-    setConfirmDeleteId(null)
   }
 
   if (!canView && !canEdit && !canDelete) {
@@ -294,10 +331,7 @@ function UserLocationAssignment({
     )
   }
 
-  const allLocationCodes = activeLocations.map((l) => l.locationCode)
-  const allSelected =
-    selectedLocationCodes.length === allLocationCodes.length &&
-    allLocationCodes.length > 0
+  const actionsVisible = canEdit || canDelete
 
   return (
     <div>
@@ -311,196 +345,134 @@ function UserLocationAssignment({
       <AlertMessage tone="error" message={error} onDismiss={clearError} />
 
       {!canEdit && !canDelete && canView && (
-        <div className="info-box">
-          You have View User Location Assignment permission only. Edit and
-          delete actions are disabled.
-        </div>
+        <AlertMessage
+          tone="info"
+          message="You have View User Location Assignment permission only. Edit and delete actions are disabled."
+        />
       )}
 
       {canEdit && (
-        <form onSubmit={handleSubmit}>
-          <div>
-            <label htmlFor="user-location-user">Select User</label>
-            <select
-              id="user-location-user"
-              value={selectedUserId}
-              onChange={(e) => handleUserChange(e.target.value)}
-              aria-invalid={fieldErrors.userId ? 'true' : undefined}
-            >
-              <option value="">Select User</option>
-              {activeUsers.map((user) => (
-                <option key={user.id} value={user.id}>
-                  {user.fullName} ({user.username})
-                </option>
-              ))}
-            </select>
-            {fieldErrors.userId && (
-              <small className="field-error">
-                {fieldErrors.userId}
-              </small>
-            )}
-          </div>
-
-          <div className="full-width-field">
-            <label htmlFor="user-location-search">Assigned Locations</label>
-            {activeLocations.length === 0 ? (
-              <div className="info-box">
-                Please create at least one active location in Location Master
-                before assigning locations.
+        <section className="assignment-panel" aria-labelledby={panelTitleId}>
+          <header className="assignment-panel-head">
+            <div>
+              <h3 id={panelTitleId}>Assign Locations to a User</h3>
+              <p>
+                Pick the user, then tick every location they may work in. Saving
+                replaces the locations that user currently has.
+              </p>
+            </div>
+            {selectedUserId !== '' && (
+              <div className="assignment-panel-meta">
+                <span className="record-count">{selectedLocationCodes.length} Selected</span>
               </div>
-            ) : (
-              <>
-                <div className="location-filter-bar">
-                  <input
-                    id="user-location-search"
-                    type="search"
-                    placeholder="Filter locations by name or code…"
-                    value={locationQuery}
-                    onChange={(e) => setLocationQuery(e.target.value)}
-                    aria-label="Filter locations"
-                  />
+            )}
+          </header>
+
+          <div className="assignment-panel-body">
+            <form onSubmit={handleSubmit}>
+              <div>
+                <label htmlFor="user-location-user">User</label>
+                <select
+                  id="user-location-user"
+                  value={selectedUserId}
+                  onChange={(e) => handleUserChange(e.target.value)}
+                  aria-invalid={fieldErrors.userId ? 'true' : undefined}
+                >
+                  <option value="">Select User</option>
+                  {activeUsers.map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {user.fullName} ({user.username})
+                    </option>
+                  ))}
+                </select>
+                {fieldErrors.userId && (
+                  <small className="field-error">
+                    {fieldErrors.userId}
+                  </small>
+                )}
+              </div>
+
+              <div>
+                <span className="field-label" id={allAccessLabelId}>
+                  All Locations Access
+                </span>
+                <div className="choice-row" role="radiogroup" aria-labelledby={allAccessLabelId}>
+                  <label className={`choice-option ${allLocationsAccess === 'Yes' ? 'is-selected' : ''}`.trim()}>
+                    <input
+                      type="radio"
+                      name="allLocationsAccess"
+                      value="Yes"
+                      checked={allLocationsAccess === 'Yes'}
+                      onChange={() => setAllLocationsAccess('Yes')}
+                    />
+                    <span className="choice-option-text">
+                      <strong>Yes</strong>
+                      <span>Every active location, including ones created later</span>
+                    </span>
+                  </label>
+                  <label className={`choice-option ${allLocationsAccess === 'No' ? 'is-selected' : ''}`.trim()}>
+                    <input
+                      type="radio"
+                      name="allLocationsAccess"
+                      value="No"
+                      checked={allLocationsAccess === 'No'}
+                      onChange={() => setAllLocationsAccess('No')}
+                    />
+                    <span className="choice-option-text">
+                      <strong>No</strong>
+                      <span>Only the locations ticked below</span>
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="full-width-field" role="group" aria-labelledby={locationsLabelId}>
+                <span className="field-label" id={locationsLabelId}>
+                  Assigned Locations
+                </span>
+                <LocationScopeSelector
+                  locations={activeLocations}
+                  selectedCodes={selectedLocationCodes}
+                  onToggle={handleLocationToggle}
+                  onSelectCodes={handleSelectLocations}
+                  onClear={() => setSelectedLocationCodes([])}
+                  disabled={loading}
+                  emptyMessage="Please create at least one active location in Location Master before assigning locations."
+                  footnote={
+                    selectedUserId === ''
+                      ? 'Select a user to load their current scope.'
+                      : 'Saving replaces the locations listed above.'
+                  }
+                />
+              </div>
+
+              <div className="form-actions">
+                <button type="submit" className="btn-primary" disabled={loading}>
+                  {loading ? 'Saving…' : 'Save Assignment'}
+                </button>
+
+                {(selectedUserId !== '' || selectedLocationCodes.length > 0) && (
                   <button
                     type="button"
-                    className="btn-secondary btn-sm"
-                    onClick={handleSelectAllLocations}
+                    className="btn-secondary"
+                    onClick={handleCancelEdit}
+                    disabled={loading}
                   >
-                    {allSelected ? 'Deselect All' : `Select All (${activeLocations.length})`}
+                    Clear
                   </button>
-                  <span className="location-selection-count">
-                    {selectedLocationCodes.length} of {activeLocations.length} selected
-                  </span>
-                </div>
-
-                <div className="permission-grid location-checkbox-list location-list checkbox-list">
-                  {filteredLocations.map((loc) => (
-                    <label
-                      key={loc.locationCode}
-                      className="permission-card location-checkbox location-checkbox-item location-option"
-                      style={{
-                        cursor: 'pointer',
-                        opacity: selectedLocationCodes.includes(loc.locationCode) ? 1 : 0.75,
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedLocationCodes.includes(loc.locationCode)}
-                        onChange={() => handleLocationToggle(loc.locationCode)}
-                        aria-label={loc.locationName}
-                      />
-                      <div>
-                        <strong>{loc.locationName}</strong>
-                        <span>{loc.locationCode}</span>
-                      </div>
-                    </label>
-                  ))}
-                  {filteredLocations.length === 0 && (
-                    <div className="info-box" style={{ gridColumn: '1 / -1' }}>
-                      No locations match the filter.
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
+                )}
+              </div>
+            </form>
           </div>
-
-          <div>
-            <label>All Locations Access</label>
-            <div
-              style={{
-                display: 'flex',
-                gap: 24,
-                marginTop: 8,
-              }}
-            >
-              <label
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  cursor: 'pointer',
-                  padding: '10px 16px',
-                  border: '1px solid var(--border-strong)',
-                  borderRadius: 6,
-                  background:
-                    allLocationsAccess === 'Yes' ? '#eff6ff' : '#fff',
-                  borderColor:
-                    allLocationsAccess === 'Yes' ? '#2563eb' : '#d1d5db',
-                  flex: 1,
-                  maxWidth: 320,
-                }}
-              >
-                <input
-                  type="radio"
-                  name="allLocationsAccess"
-                  value="Yes"
-                  checked={allLocationsAccess === 'Yes'}
-                  onChange={() => setAllLocationsAccess('Yes')}
-                />
-                <div>
-                  <strong style={{ fontSize: 14 }}>Yes</strong>
-                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                    — User can access all locations
-                  </span>
-                </div>
-              </label>
-              <label
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  cursor: 'pointer',
-                  padding: '10px 16px',
-                  border: '1px solid var(--border-strong)',
-                  borderRadius: 6,
-                  background:
-                    allLocationsAccess === 'No' ? '#f8fafc' : '#fff',
-                  borderColor:
-                    allLocationsAccess === 'No' ? '#64748b' : '#d1d5db',
-                  flex: 1,
-                  maxWidth: 380,
-                }}
-              >
-                <input
-                  type="radio"
-                  name="allLocationsAccess"
-                  value="No"
-                  checked={allLocationsAccess === 'No'}
-                  onChange={() => setAllLocationsAccess('No')}
-                />
-                <div>
-                  <strong style={{ fontSize: 14 }}>No</strong>
-                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                    — User is restricted to assigned locations only
-                  </span>
-                </div>
-              </label>
-            </div>
-          </div>
-
-          <div className="form-actions">
-            <button type="submit" disabled={loading}>
-              {loading ? 'Please wait...' : 'Save Assignment'}
-            </button>
-
-            {selectedUserId !== '' && (
-              <button
-                type="button"
-                onClick={handleCancelEdit}
-                disabled={loading}
-              >
-                Clear
-              </button>
-            )}
-          </div>
-        </form>
+        </section>
       )}
 
       <div className="section-title">
         <h3>Assigned Locations</h3>
         <p>
-          Each row represents one user-location assignment. A user can have
-          multiple locations. Use "All Locations Access" to grant universal
-          access.
+          One row per user and assigned location. A user with multiple locations
+          is listed once, with each location on its own row. Use &quot;All
+          Locations Access&quot; to grant universal access.
         </p>
       </div>
 
@@ -518,70 +490,65 @@ function UserLocationAssignment({
         <thead>
           <tr>
             <th>User</th>
-            <th>Assigned Location</th>
             <th>All Locations</th>
-            {(canEdit || canDelete) && <th>Actions</th>}
+            <th>Assigned Location</th>
+            {actionsVisible && <th className="row-actions">Actions</th>}
           </tr>
         </thead>
 
         <tbody>
           {userLocationAssignments.length === 0 ? (
             <tr>
-              <td colSpan={canEdit || canDelete ? 4 : 3} className="empty-table">
+              <td colSpan={actionsVisible ? 4 : 3} className="empty-table">
                 No location assignments yet.
               </td>
             </tr>
           ) : (
-            visibleAssignments.map((assignment) => {
+            visibleAssignments.map((assignment, index) => {
               const summary = summaryByUserId[assignment.userId]
-              const isFirstRowForUser =
-                userLocationAssignments.findIndex(
-                  (a) => a.userId === assignment.userId
-                ) ===
-                userLocationAssignments.indexOf(assignment)
+              const span = groupSpans[index]
+              const hasAllLocationsAccess = summary?.allLocationsAccess === 'Yes'
 
               return (
                 <tr key={assignment.id}>
-                  <td>
-                    {isFirstRowForUser ? (
-                      <>
-                        <strong>{assignment.fullName}</strong>
-                        <br />
-                        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                          {assignment.username}
+                  {span > 0 && (
+                    <td rowSpan={span} className="assignment-group-cell">
+                      <span className="assignment-group-name">{assignment.fullName}</span>
+                      <span className="assignment-group-sub">{assignment.username}</span>
+                    </td>
+                  )}
+
+                  {span > 0 && (
+                    <td rowSpan={span} className="assignment-group-cell">
+                      {hasAllLocationsAccess ? (
+                        <span
+                          className="status-badge approved"
+                          title="This user can access every active location"
+                        >
+                          Yes
                         </span>
-                      </>
-                    ) : null}
-                  </td>
+                      ) : (
+                        <span
+                          className="assignment-group-sub"
+                          title="This user is restricted to the locations listed in the next column"
+                        >
+                          No
+                        </span>
+                      )}
+                    </td>
+                  )}
+
                   <td>
-                    <span className="permission-badge">
-                      {assignment.locationName}
-                    </span>
-                  </td>
-                  <td>
-                    {summary &&
-                    summary.allLocationsAccess === 'Yes' ? (
-                      <span
-                        className="permission-badge"
-                        style={{
-                          background: 'var(--info-soft)',
-                          color: 'var(--primary)',
-                        }}
-                      >
-                        Yes
-                      </span>
-                    ) : (
-                      <span style={{ color: 'var(--text-faint)', fontSize: 13 }}>
-                        No
-                      </span>
-                    )}
+                    <span className="permission-badge">{assignment.locationName}</span>{' '}
+                    <span className="cell-code">{assignment.locationCode}</span>
                   </td>
 
-                  {(canEdit || canDelete) && (
-                    <td>
-                      {canEdit && isFirstRowForUser && (
+                  {actionsVisible && (
+                    <td className="row-actions">
+                      {canEdit && span > 0 && (
                         <button
                           type="button"
+                          className="btn-secondary btn-sm"
                           onClick={() =>
                             handleEdit(
                               summary || {
@@ -593,48 +560,23 @@ function UserLocationAssignment({
                               }
                             )
                           }
-                          style={{ marginRight: 6 }}
+                          disabled={loading}
                         >
                           Edit
                         </button>
                       )}
 
-                      {canDelete && confirmDeleteId === assignment.id ? (
-                        <span>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              handleDeleteConfirm(assignment.id)
-                            }
-                            disabled={loading}
-                            style={{
-                              background: 'var(--danger)',
-                              color: 'var(--text-inverse)',
-                              marginRight: 4,
-                            }}
-                          >
-                            {loading ? 'Deleting...' : 'Confirm'}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setConfirmDeleteId(null)}
-                            disabled={loading}
-                            style={{
-                              background: 'var(--btn-secondary)',
-                              color: 'var(--text-inverse)',
-                            }}
-                          >
-                            Cancel
-                          </button>
-                        </span>
-                      ) : canDelete ? (
+                      {canDelete && (
                         <button
                           type="button"
-                          onClick={() => handleDeleteRequest(assignment.id)}
+                          className="btn-danger btn-sm"
+                          onClick={() => handleDelete(assignment)}
+                          disabled={loading}
+                          title={`Remove ${assignment.locationName} from ${assignment.fullName}`}
                         >
                           Delete
                         </button>
-                      ) : null}
+                      )}
                     </td>
                   )}
                 </tr>

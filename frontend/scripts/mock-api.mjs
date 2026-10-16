@@ -206,8 +206,22 @@ const db = {
   permissions: [],
   role_permissions: [],
   user_roles: [{ id: 1, user_id: 1, role_id: 1, role_name: 'Admin', status: 'Active' }],
-  user_locations: [],
-  role_locations: [],
+
+  /* Location scope (User / Role Location Assignment). Rows hold user ids and
+     location codes only – full names are resolved when the request is served,
+     so renaming a user or location never leaves stale text behind. */
+  user_locations: [
+    { id: 1, user_id: 2, location_code: 'UTP' },
+    { id: 2, user_id: 2, location_code: 'BNY' },
+    { id: 3, user_id: 3, location_code: 'UTP' },
+    { id: 4, user_id: 5, location_code: 'WRR' },
+  ],
+  user_location_access: { 5: 'Yes' },
+  role_locations: [
+    { id: 1, role_id: 2, location_code: 'UTP' },
+    { id: 2, role_id: 2, location_code: 'BNY' },
+    { id: 3, role_id: 3, location_code: 'WRR' },
+  ],
   operation_entries: [],
   operation_transactions: [],
   audit_logs: [],
@@ -299,6 +313,24 @@ const pagedResponse = (items, url) => {
   }
 }
 
+/* The single mock account: full administrator, so every page is reachable. */
+const mockUser = {
+  id: 1,
+  full_name: 'System Administrator',
+  username: 'admin',
+  email: 'admin@example.com',
+  phone: '',
+  department: 'IT',
+  designation: 'Administrator',
+  status: 'Active',
+  is_admin: true,
+  security: {},
+  roles: [{ id: 1, role_name: 'Admin', description: 'Administrator', status: 'Active' }],
+  permissions: [],
+  assigned_location_codes: [],
+  all_locations_access: 'Yes',
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1')
   const pathname = url.pathname
@@ -311,29 +343,24 @@ const server = http.createServer(async (req, res) => {
 
   /* ------------------------------------------------------------ auth */
   if (pathname === '/auth/me' || pathname === '/auth/refresh') {
+    sendJson(res, 200, { user: mockUser })
+    return
+  }
+
+  // The real API returns the signed-in user together with the tokens, and the
+  // login page hands that straight to the app – so the mock has to send it too,
+  // otherwise the shell would render as an unprivileged user.
+  if (pathname === '/auth/login' || pathname === '/auth/2fa/verify') {
     sendJson(res, 200, {
-      user: {
-        id: 1,
-        full_name: 'System Administrator',
-        username: 'admin',
-        email: 'admin@example.com',
-        phone: '',
-        department: 'IT',
-        designation: 'Administrator',
-        status: 'Active',
-        is_admin: true,
-        security: {},
-        roles: [{ id: 1, role_name: 'Admin', description: 'Administrator', status: 'Active' }],
-        permissions: [],
-        assigned_location_codes: [],
-        all_locations_access: 'Yes',
-      },
+      access_token: 'mock-token',
+      refresh_token: 'mock-refresh-token',
+      user: mockUser,
     })
     return
   }
 
-  if (pathname === '/auth/login') {
-    sendJson(res, 200, { access_token: 'mock-token', refresh_token: 'mock-refresh-token' })
+  if (pathname === '/auth/logout') {
+    sendJson(res, 200, { ok: true })
     return
   }
 
@@ -526,6 +553,135 @@ const server = http.createServer(async (req, res) => {
       return
     }
     sendJson(res, 200, { table_id: table.id, rows: table.rows || [] })
+    return
+  }
+
+  /* --------------------------------- user / role location assignments */
+  // The front end reads both scopes as full lists:
+  //   GET /user-locations        -> one row per user + assigned location
+  //   GET /user-locations/users  -> per-user summary (codes + all-access flag)
+  //   GET /role-locations        -> per-role summary
+  // Writes replace the whole list for one user / role, exactly like the API.
+  const locationByCode = (code) =>
+    db.locations.find((item) => String(item.location_code).toLowerCase() === String(code).toLowerCase())
+  const userById = (id) => db.users.find((item) => String(item.id) === String(id))
+  const roleById = (id) => db.roles.find((item) => String(item.id) === String(id))
+
+  const serializeUserLocation = (row) => {
+    const user = userById(row.user_id)
+    const location = locationByCode(row.location_code)
+    return {
+      id: row.id,
+      user_id: row.user_id,
+      full_name: user ? user.full_name : '',
+      username: user ? user.username : '',
+      location_code: row.location_code,
+      location_name: location ? location.location_name : row.location_code,
+      created_at: row.created_at,
+    }
+  }
+
+  if (pathname === '/user-locations' && method === 'GET') {
+    sendJson(res, 200, db.user_locations.map(serializeUserLocation))
+    return
+  }
+
+  if (pathname === '/user-locations/users' && method === 'GET') {
+    sendJson(
+      res,
+      200,
+      db.users
+        .map((user) => ({
+          user_id: user.id,
+          full_name: user.full_name,
+          username: user.username,
+          all_locations_access: db.user_location_access[user.id] || 'No',
+          location_codes: db.user_locations
+            .filter((row) => String(row.user_id) === String(user.id))
+            .map((row) => row.location_code),
+        }))
+        .filter((summary) => summary.location_codes.length > 0 || summary.all_locations_access === 'Yes')
+    )
+    return
+  }
+
+  const userLocationMatch = pathname.match(/^\/user-locations\/(\d+)$/)
+  if (userLocationMatch && method === 'PUT') {
+    const userId = Number(userLocationMatch[1])
+    const body = await readBody(req)
+    const codes = Array.isArray(body.location_codes) ? body.location_codes : []
+    db.user_locations = db.user_locations.filter((row) => String(row.user_id) !== String(userId))
+    for (const code of codes) {
+      db.user_locations.push(make({ id: nextId(), user_id: userId, location_code: code }))
+    }
+    const user = userById(userId)
+    sendJson(res, 200, {
+      user_id: userId,
+      full_name: user ? user.full_name : '',
+      username: user ? user.username : '',
+      all_locations_access: db.user_location_access[userId] || 'No',
+      location_codes: codes,
+    })
+    return
+  }
+
+  const userAllAccessMatch = pathname.match(/^\/user-locations\/(\d+)\/all-locations-access$/)
+  if (userAllAccessMatch && method === 'PUT') {
+    const userId = Number(userAllAccessMatch[1])
+    const body = await readBody(req)
+    db.user_location_access[userId] = body.all_locations_access === 'Yes' ? 'Yes' : 'No'
+    const user = userById(userId)
+    sendJson(res, 200, {
+      user_id: userId,
+      full_name: user ? user.full_name : '',
+      username: user ? user.username : '',
+      all_locations_access: db.user_location_access[userId],
+      location_codes: db.user_locations
+        .filter((row) => String(row.user_id) === String(userId))
+        .map((row) => row.location_code),
+    })
+    return
+  }
+
+  if (userLocationMatch && method === 'DELETE') {
+    const index = db.user_locations.findIndex((row) => String(row.id) === userLocationMatch[1])
+    if (index >= 0) db.user_locations.splice(index, 1)
+    sendJson(res, 200, { deleted: true })
+    return
+  }
+
+  if (pathname === '/role-locations' && method === 'GET') {
+    sendJson(
+      res,
+      200,
+      db.roles.map((role) => ({
+        role_id: role.id,
+        role_name: role.role_name,
+        status: role.status,
+        location_codes: db.role_locations
+          .filter((row) => String(row.role_id) === String(role.id))
+          .map((row) => row.location_code),
+      }))
+    )
+    return
+  }
+
+  const roleLocationMatch = pathname.match(/^\/role-locations\/(\d+)$/)
+  if (roleLocationMatch && method === 'PUT') {
+    const roleId = Number(roleLocationMatch[1])
+    const body = await readBody(req)
+    const codes = Array.isArray(body.location_codes) ? body.location_codes : []
+    db.role_locations = db.role_locations.filter((row) => String(row.role_id) !== String(roleId))
+    for (const code of codes) {
+      db.role_locations.push(make({ id: nextId(), role_id: roleId, location_code: code }))
+    }
+    const role = roleById(roleId)
+    sendJson(res, 200, {
+      role_id: roleId,
+      role_name: role ? role.role_name : '',
+      status: role ? role.status : 'Active',
+      location_codes: codes,
+    })
     return
   }
 

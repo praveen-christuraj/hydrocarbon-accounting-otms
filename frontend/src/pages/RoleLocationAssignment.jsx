@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import {
   getRoleLocationSummaries,
   saveRoleLocations,
@@ -9,6 +9,7 @@ import PaginationControls, { paginateRows, usePageSize } from '../components/com
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import PageHeader from '../components/common/PageHeader'
 import AlertMessage from '../components/common/AlertMessage'
+import LocationScopeSelector from '../components/common/LocationScopeSelector'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
 import { usePermissions } from '../hooks/usePermissions'
@@ -16,6 +17,7 @@ import useActionFeedback from '../hooks/useActionFeedback'
 import { logUiAction } from '../utils/actionLogger'
 
 const MODULE = 'Role Location Assignment'
+const MAX_VISIBLE_CODES = 6
 
 /**
  * Per-role location scope (PERMISSION_CRITERIA_MODEL.md section 7.2).
@@ -31,7 +33,6 @@ function RoleLocationAssignment({ loggedInUser }) {
   const [summaries, setSummaries] = useState([])
   const [selectedRoleId, setSelectedRoleId] = useState('')
   const [selectedLocationCodes, setSelectedLocationCodes] = useState([])
-  const [locationQuery, setLocationQuery] = useState('')
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [listLoading, setListLoading] = useState(true)
@@ -40,6 +41,10 @@ function RoleLocationAssignment({ loggedInUser }) {
   const { successMsg, errorMsg, notifySuccess, notifyError, clearSuccess, clearError } = feedback
 
   const pageSize = usePageSize()
+  const currentScopeLabelId = useId()
+  const locationsLabelId = useId()
+  const panelTitleId = useId()
+
   const { hasPermission } = usePermissions(loggedInUser)
   const canView = hasPermission('View Role Location Assignment')
   const canEdit = hasPermission('Edit Role Location Assignment')
@@ -51,17 +56,6 @@ function RoleLocationAssignment({ loggedInUser }) {
   const activeLocations = useMemo(
     () => locations.filter((loc) => loc.status === 'Active'),
     [locations]
-  )
-  const filteredLocations = useMemo(
-    () => activeLocations.filter((loc) => {
-      const q = locationQuery.trim().toLowerCase()
-      if (!q) return true
-      return (
-        String(loc.locationName || '').toLowerCase().includes(q) ||
-        String(loc.locationCode || '').toLowerCase().includes(q)
-      )
-    }),
-    [activeLocations, locationQuery]
   )
 
   const assignmentRows = useMemo(() => {
@@ -154,11 +148,18 @@ function RoleLocationAssignment({ loggedInUser }) {
     )
   }
 
-  const handleSelectAll = () => {
-    const allCodes = activeLocations.map((loc) => loc.locationCode)
-    const allSelected =
-      allCodes.length > 0 && selectedLocationCodes.length === allCodes.length
-    setSelectedLocationCodes(allSelected ? [] : allCodes)
+  // "Select all" in the scope panel: add or remove the codes it currently shows
+  // (the whole list, or only the rows that match the filter).
+  const handleSelectLocations = (codes, checked) => {
+    setSelectedLocationCodes((previous) => {
+      if (checked) {
+        const next = new Set(previous)
+        codes.forEach((code) => next.add(code))
+        return [...next]
+      }
+      const removing = new Set(codes)
+      return previous.filter((code) => !removing.has(code))
+    })
   }
 
   const handleSubmit = async (event) => {
@@ -184,7 +185,6 @@ function RoleLocationAssignment({ loggedInUser }) {
       await loadSummaries()
       setSelectedRoleId('')
       setSelectedLocationCodes([])
-      setLocationQuery('')
       logUiAction(MODULE, 'Save Role Locations', {
         roleId: Number(selectedRoleId),
         roleName: role?.roleName || '',
@@ -203,14 +203,12 @@ function RoleLocationAssignment({ loggedInUser }) {
     clearSuccess()
     setSelectedRoleId(String(summary.roleId))
     setSelectedLocationCodes(summary.locationCodes || [])
-    setLocationQuery('')
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   const handleClear = () => {
     setSelectedRoleId('')
     setSelectedLocationCodes([])
-    setLocationQuery('')
     clearError()
     clearSuccess()
   }
@@ -229,12 +227,12 @@ function RoleLocationAssignment({ loggedInUser }) {
     )
   }
 
-  const allCodes = activeLocations.map((loc) => loc.locationCode)
-  const allSelected =
-    allCodes.length > 0 && selectedLocationCodes.length === allCodes.length
   const selectedRole = summaries.find(
     (summary) => String(summary.roleId) === String(selectedRoleId)
   )
+  const currentScopeCodes = selectedRole?.locationCodes || []
+  const visibleScopeCodes = currentScopeCodes.slice(0, MAX_VISIBLE_CODES)
+  const hiddenScopeCodes = currentScopeCodes.length - visibleScopeCodes.length
 
   return (
     <div>
@@ -247,125 +245,134 @@ function RoleLocationAssignment({ loggedInUser }) {
       <AlertMessage tone="success" message={successMsg} onDismiss={clearSuccess} />
       <AlertMessage tone="error" message={errorMsg} onDismiss={clearError} />
 
-      <div className="info-box">
-        Location scope is the <strong>union</strong> of a user's own assigned
-        locations (<strong>User Location Assignment</strong>) and the locations
-        of every active role they hold. Removing a role's locations never removes
+      <AlertMessage tone="info">
+        Location scope is the <strong>union</strong> of a user&apos;s own assigned
+        locations (<strong>User Location Assignment</strong>) and the locations of
+        every active role they hold. Removing a role&apos;s locations never removes
         a location that was assigned directly to the user.
-      </div>
+      </AlertMessage>
 
       {!canEdit && (
-        <div className="info-box">
-          You have View Role Location Assignment permission only. Edit actions
-          are disabled.
-        </div>
+        <AlertMessage
+          tone="info"
+          message="You have View Role Location Assignment permission only. Edit actions are disabled."
+        />
       )}
 
       {canEdit && (
-        <form onSubmit={handleSubmit}>
-          <div>
-            <label htmlFor="role-location-role">Select Role</label>
-            <select
-              id="role-location-role"
-              value={selectedRoleId}
-              onChange={(event) => handleRoleChange(event.target.value)}
-            >
-              <option value="">Select Role</option>
-              {activeRoles.map((role) => (
-                <option key={role.id} value={role.id}>
-                  {role.roleName}
-                </option>
-              ))}
-            </select>
-            {activeRoles.length === 0 && (
-              <small className="field-error">
-                No active role is available. Create one in Role Master first.
-              </small>
-            )}
-          </div>
-
-          <div className="full-width-field">
-            <label htmlFor="role-location-search">Role Locations</label>
-
-            {activeLocations.length === 0 ? (
-              <div className="info-box">
-                Please create at least one active location in Location Master
-                before assigning locations.
+        <section className="assignment-panel" aria-labelledby={panelTitleId}>
+          <header className="assignment-panel-head">
+            <div>
+              <h3 id={panelTitleId}>Assign Locations to a Role</h3>
+              <p>
+                Pick the role, then tick every location its users may work in.
+                Saving replaces the locations the role currently grants.
+              </p>
+            </div>
+            {selectedRoleId !== '' && (
+              <div className="assignment-panel-meta">
+                <span className="record-count">{selectedLocationCodes.length} Selected</span>
               </div>
-            ) : (
-              <>
-                <div className="location-filter-bar">
-                  <input
-                    id="role-location-search"
-                    type="search"
-                    placeholder="Filter locations by name or code…"
-                    value={locationQuery}
-                    onChange={(event) => setLocationQuery(event.target.value)}
-                    aria-label="Filter locations"
-                  />
-                  <button
-                    type="button"
-                    className="btn-secondary btn-sm"
-                    onClick={handleSelectAll}
-                  >
-                    {allSelected ? 'Deselect All' : `Select All (${activeLocations.length})`}
-                  </button>
-                  <span className="location-selection-count">
-                    {selectedLocationCodes.length} of {activeLocations.length} selected
-                  </span>
-                </div>
+            )}
+          </header>
 
-                <div className="permission-grid location-checkbox-list location-list checkbox-list">
-                  {filteredLocations.map((loc) => (
-                    <label
-                      key={loc.locationCode}
-                      className="permission-card location-checkbox location-checkbox-item location-option"
-                      style={{
-                        cursor: 'pointer',
-                        opacity: selectedLocationCodes.includes(loc.locationCode) ? 1 : 0.75,
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedLocationCodes.includes(loc.locationCode)}
-                        onChange={() => handleLocationToggle(loc.locationCode)}
-                        aria-label={loc.locationName}
-                      />
-                      <div>
-                        <strong>{loc.locationName}</strong>
-                        <span>{loc.locationCode}</span>
-                      </div>
-                    </label>
+          <div className="assignment-panel-body">
+            <form onSubmit={handleSubmit}>
+              <div>
+                <label htmlFor="role-location-role">Role</label>
+                <select
+                  id="role-location-role"
+                  value={selectedRoleId}
+                  onChange={(event) => handleRoleChange(event.target.value)}
+                  aria-invalid={activeRoles.length === 0 ? 'true' : undefined}
+                >
+                  <option value="">Select Role</option>
+                  {activeRoles.map((role) => (
+                    <option key={role.id} value={role.id}>
+                      {role.roleName}
+                    </option>
                   ))}
-                  {filteredLocations.length === 0 && (
-                    <div className="info-box" style={{ gridColumn: '1 / -1' }}>
-                      No locations match the filter.
-                    </div>
+                </select>
+                {activeRoles.length === 0 && (
+                  <small className="field-error">
+                    No active role is available. Create one in Role Master first.
+                  </small>
+                )}
+              </div>
+
+              <div>
+                <span className="field-label" id={currentScopeLabelId}>
+                  Current Scope
+                </span>
+                <div className="assignment-readout" aria-labelledby={currentScopeLabelId}>
+                  {selectedRoleId === '' ? (
+                    <span>Select a role to review the locations it grants today.</span>
+                  ) : currentScopeCodes.length === 0 ? (
+                    <span>This role grants no location yet — its users keep their own assignments.</span>
+                  ) : (
+                    <>
+                      <span className="code-chip-list">
+                        {visibleScopeCodes.map((code) => (
+                          <span className="code-chip" key={code}>
+                            {code}
+                          </span>
+                        ))}
+                        {hiddenScopeCodes > 0 && (
+                          <span
+                            className="code-chip is-more"
+                            title={currentScopeCodes.join(', ')}
+                          >
+                            +{hiddenScopeCodes} more
+                          </span>
+                        )}
+                      </span>
+                      <span className="assignment-readout-note">
+                        Saving replaces this list.
+                      </span>
+                    </>
                   )}
                 </div>
-              </>
-            )}
+              </div>
+
+              <div className="full-width-field" role="group" aria-labelledby={locationsLabelId}>
+                <span className="field-label" id={locationsLabelId}>
+                  Role Locations
+                </span>
+                <LocationScopeSelector
+                  locations={activeLocations}
+                  selectedCodes={selectedLocationCodes}
+                  onToggle={handleLocationToggle}
+                  onSelectCodes={handleSelectLocations}
+                  onClear={() => setSelectedLocationCodes([])}
+                  disabled={loading}
+                  emptyMessage="Please create at least one active location in Location Master before assigning locations."
+                  footnote={
+                    selectedRoleId === ''
+                      ? 'Select a role to load its current scope.'
+                      : 'Saving replaces the locations granted by this role.'
+                  }
+                />
+              </div>
+
+              <div className="form-actions">
+                <button type="submit" className="btn-primary" disabled={loading || selectedRoleId === ''}>
+                  {loading ? 'Saving…' : 'Save Role Locations'}
+                </button>
+
+                {(selectedRoleId !== '' || selectedLocationCodes.length > 0) && (
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={handleClear}
+                    disabled={loading}
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </form>
           </div>
-
-          {selectedRole && (selectedRole.locationCodes || []).length > 0 && (
-            <div className="info-box">
-              This role currently grants: <strong>{selectedRole.locationCodes.join(', ')}</strong>.
-              Saving replaces that list.
-            </div>
-          )}
-
-          <div className="form-actions">
-            <button type="submit" disabled={loading || selectedRoleId === ''}>
-              {loading ? 'Please wait...' : 'Save Role Locations'}
-            </button>
-
-            {selectedRoleId !== '' && (
-              <button type="button" onClick={handleClear} disabled={loading}>
-                Clear
-              </button>
-            )}
-          </div>
-        </form>
+        </section>
       )}
 
       <div className="section-title">
@@ -390,8 +397,8 @@ function RoleLocationAssignment({ loggedInUser }) {
             <th>Role</th>
             <th>Status</th>
             <th>Locations</th>
-            <th>Count</th>
-            {canEdit && <th>Actions</th>}
+            <th className="num">Count</th>
+            {canEdit && <th className="row-actions">Actions</th>}
           </tr>
         </thead>
 
@@ -399,7 +406,7 @@ function RoleLocationAssignment({ loggedInUser }) {
           {listLoading ? (
             <tr>
               <td colSpan={canEdit ? 5 : 4} className="empty-table">
-                Loading role location scopes...
+                Loading role location scopes…
               </td>
             </tr>
           ) : assignmentFilters.filteredRows.length === 0 ? (
@@ -409,35 +416,57 @@ function RoleLocationAssignment({ loggedInUser }) {
               </td>
             </tr>
           ) : (
-            visibleAssignments.map((row) => (
-              <tr key={row.roleId}>
-                <td>
-                  <strong>{row.roleName}</strong>
-                </td>
-                <td>
-                  <span className={`status-badge ${String(row.status || '').toLowerCase()}`}>
-                    {row.status}
-                  </span>
-                </td>
-                <td>
-                  {(row.locationCodes || []).length === 0 ? (
-                    <span style={{ color: 'var(--text-faint)', fontSize: 13 }}>
-                      No role locations (users keep their own assignments)
-                    </span>
-                  ) : (
-                    <span className="permission-badge">{row.locationList}</span>
-                  )}
-                </td>
-                <td>{row.locationCount}</td>
-                {canEdit && (
+            visibleAssignments.map((row) => {
+              const codes = row.locationCodes || []
+              const visibleCodes = codes.slice(0, MAX_VISIBLE_CODES)
+              const hiddenCodes = codes.length - visibleCodes.length
+
+              return (
+                <tr key={row.roleId}>
+                  <td className="cell-strong">{row.roleName}</td>
                   <td>
-                    <button type="button" onClick={() => handleEdit(row)}>
-                      Edit
-                    </button>
+                    <span className={`status-badge ${String(row.status || '').toLowerCase()}`}>
+                      {row.status}
+                    </span>
                   </td>
-                )}
-              </tr>
-            ))
+                  <td>
+                    {codes.length === 0 ? (
+                      <span
+                        className="cell-muted"
+                        title="Users keep their own User Location Assignment rows"
+                      >
+                        No role scope — users keep their own assignments
+                      </span>
+                    ) : (
+                      <span className="code-chip-list">
+                        {visibleCodes.map((code) => (
+                          <span className="code-chip" key={code}>
+                            {code}
+                          </span>
+                        ))}
+                        {hiddenCodes > 0 && (
+                          <span className="code-chip is-more" title={codes.join(', ')}>
+                            +{hiddenCodes} more
+                          </span>
+                        )}
+                      </span>
+                    )}
+                  </td>
+                  <td className="num">{row.locationCount}</td>
+                  {canEdit && (
+                    <td className="row-actions">
+                      <button
+                        type="button"
+                        className="btn-secondary btn-sm"
+                        onClick={() => handleEdit(row)}
+                      >
+                        Edit
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              )
+            })
           )}
         </tbody>
       </table>

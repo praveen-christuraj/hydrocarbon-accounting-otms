@@ -132,6 +132,7 @@ Print always uses the light palette (`@media print` re-declares the light tokens
 | `ImportDialog` | Import rows from `.xlsx` / `.csv` with column mapping, preview, per-row results. Only for master data with a create API. |
 | `DataTableToolbar` | Composes filter bar + export/import + record count for list pages. Props: `filters` (from `useDataFilters`), `columns`, `exportFileName`, `exportTitle`, `module`, optional `importConfig` (`{ title, description, fields:[{ key, label, required, options, defaultValue, hint, example }], validateRow(record) → string|null, onImportRow(record), onComplete(summary) }`), `canImport`, `extraActions`, `searchPlaceholder`. |
 | `Icon` | Inline SVG icon set (stroke 1.75, 16/18/20 px). Decorative icons get `aria-hidden`. Icon-only buttons need `aria-label`. |
+| `LocationScopeSelector` | Checkbox list used by User / Role Location Assignment. Props: `locations`, `selectedCodes`, `onToggle(code)`, `onSelectCodes(codes, checked)`, `onClear()`, `disabled`, `emptyMessage`, `footnote`. Owns its search box, the tri-state "select all (shown)" box, the live `n of m selected` count and the row order (name, then code, `Intl.Collator` with `numeric`). Rendered inside a page `<form>` – see the `form div` rule below. |
 
 
 ### List page recipe
@@ -181,7 +182,9 @@ chunks so filtering, paging and export work on the complete data set.
 
 ## 8. Forms & validation
 
-* Every input has a `<label htmlFor>`; field errors render directly under the field with
+* Every input has a `<label htmlFor>`; a group of checkboxes / radios is labelled by a
+  `<span className="field-label" id>` plus `role="group"` (or `role="radiogroup"`) with
+  `aria-labelledby`. Field errors render directly under the field with
   `className="field-error"` and the input gets `aria-invalid="true"`.
 * Section-level errors (API failures) render in an `AlertMessage` directly above the form's
   action buttons.
@@ -191,6 +194,35 @@ chunks so filtering, paging and export work on the complete data set.
   holds `Create X` (new record) or `Edit X` (existing record); the submit button repeats the
   check with `editId === null ? canCreate : canEdit`, and the handler guards it again because
   the API enforces the same permission.
+
+### Two global rules that bite inside `<form>` (read before styling a form)
+
+1. `form div { display:flex; flex-direction: column }` (index.css) matches **every** `div` in
+   a page form. A row of controls inside a form must therefore set `flex-direction: row`
+   itself, otherwise it renders as a vertically stacked, centre-aligned column (this is what
+   made the old `.location-filter-bar` look broken: `align-items: center` + a `220px`
+   `flex-basis` on the search input turned it into a tall centred stack).
+2. `form button[type='submit']` / `form button[type='button']` outrank any single-class
+   button rule (1 attribute + 2 type selectors). Ghost or icon buttons inside a form need a
+   two-class selector, e.g. `form .location-scope .location-scope-search-clear`.
+
+### Assignment modules
+
+User / Role Location Assignment wrap their data entry in a module panel instead of loose
+fields – `.assignment-panel` (border + `.assignment-panel-head` strip with the `h3` and a
+`record-count` chip + `.assignment-panel-body`), then the usual `.section-title` +
+`DataTableToolbar` + table + `PaginationControls`. Inside the panel:
+
+* `.choice-row` / `.choice-option` – radio cards (Yes / No answers) with `is-selected`.
+* `.location-scope` – the `LocationScopeSelector` panel: bordered box, `.location-scope-toolbar`
+  (search with icon, tri-state "select all", "Clear all" ghost button, `n of m selected`
+  count), `.location-scope-body` grid of `.location-option` rows (fixed 16 px checkbox column,
+  ellipsised name, right-aligned mono code in `min-width: 64px`), `.location-scope-footer`
+  summary. 2 columns ≥ 1100 px, 1 column below.
+* `.assignment-readout` – dashed read-only companion field (what a role grants today).
+* `.code-chip` / `.code-chip-list` – location-code chips in tables; `.cell-code` for a bare
+  code in a cell; `.assignment-group-cell` + `rowSpan` merges the User / All Locations cells
+  of a one-to-many assignment table.
 
 ## 9. Tables
 

@@ -1047,6 +1047,14 @@ td button.btn-secondary.btn-secondary:hover:not(:disabled) {
   color: var(--text-secondary);
 }
 
+/* Codes (location / asset) inside table cells. */
+.cell-code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
 .table-group-row td,
 tbody tr.table-group-row:hover {
   background: var(--surface-2);
@@ -2620,6 +2628,446 @@ tbody tr.matrix-category-row:hover {
 .column-config-move button:disabled {
   opacity: 0.35;
   cursor: not-allowed;
+}
+
+/* ----------------------------------- assignment modules (RBAC assignment) */
+/* Used by User Location Assignment and Role Location Assignment.
+   The data-entry part of those pages is a bordered module panel, not a loose
+   stack of fields, so the module reads like the rest of the list pages:
+   a titled panel (fields) followed by the section title + toolbar + table.
+
+   IMPORTANT: these panels are rendered inside a page <form>. The global rule
+   `form div { display:flex; flex-direction:column }` matches every div inside
+   the panel, so each flex/grid container below sets `flex-direction: row`
+   explicitly. Without it the toolbar becomes a vertically stacked, centred
+   column and the search field grows to its flex-basis height. */
+.assignment-panel {
+  margin-bottom: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+}
+
+.assignment-panel-head {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  border-radius: var(--radius-panel) var(--radius-panel) 0 0;
+  background: var(--surface-2);
+}
+
+.assignment-panel-head h3 {
+  margin: 0 0 3px;
+  font-size: 15px;
+}
+
+.assignment-panel-head p {
+  margin: 0;
+  max-width: 78ch;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.assignment-panel-meta {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.assignment-panel-body {
+  padding: 16px;
+}
+
+.assignment-panel-body > form {
+  margin-bottom: 0;
+}
+
+/* Visible label for a group of controls (checkbox / radio group). */
+.field-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+/* Radio cards (Yes / No style answers) – aligned like the checkbox rows. */
+.choice-row {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.choice-option {
+  flex: 1 1 220px;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  margin: 0;
+  padding: 8px 12px;
+  min-height: 52px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  cursor: pointer;
+  transition:
+    border-color var(--dur) var(--ease),
+    background-color var(--dur) var(--ease);
+}
+
+.choice-option:hover {
+  border-color: var(--primary-soft-strong);
+}
+
+.choice-option.is-selected {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.choice-option input[type='radio'] {
+  width: 15px;
+  height: 15px;
+  min-height: 0;
+  margin: 2px 0 0;
+  cursor: pointer;
+}
+
+.choice-option-text {
+  display: block;
+  min-width: 0;
+}
+
+.choice-option-text strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.choice-option-text span {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
+/* Read-only companion field next to a selection (e.g. the scope a role grants). */
+.assignment-readout {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  min-height: 52px;
+  padding: 8px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.assignment-readout-note {
+  color: var(--text-secondary);
+}
+
+/* ------------------------------------------------ location scope selector */
+.location-scope {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.location-scope-toolbar {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.location-scope-search {
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  flex: 1 1 240px;
+  max-width: 340px;
+}
+
+.location-scope-search-icon {
+  position: absolute;
+  left: 10px;
+  display: inline-flex;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.location-scope-search input[type='search'] {
+  width: 100%;
+  height: var(--control-height);
+  padding: 0 30px 0 32px;
+  font-size: 13px;
+}
+
+/* Two classes on purpose: `form button[type='button']` (index.css) styles every
+   non-submit button inside a form, and it outranks a single class. */
+form .location-scope .location-scope-search-clear {
+  position: absolute;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+form .location-scope .location-scope-search-clear:hover {
+  background: var(--btn-ghost-hover);
+  color: var(--text);
+}
+
+.location-scope-selectall {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  min-height: var(--control-height);
+  padding: 0 2px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.location-scope-selectall input[type='checkbox'] {
+  width: 15px;
+  height: 15px;
+  min-height: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+.location-scope-selectall:has(input:disabled) {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+form .location-scope-toolbar .location-scope-clear {
+  min-width: 0;
+  min-height: var(--button-height-compact);
+  margin: 0;
+  padding: 3px 9px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+
+form .location-scope-toolbar .location-scope-clear:hover:not(:disabled) {
+  background: var(--btn-ghost-hover);
+  color: var(--text);
+}
+
+.location-scope-count {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.location-scope-body {
+  display: grid;
+  flex-direction: row; /* neutralises `form div` – do not remove */
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 10px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.location-option {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 6px 10px;
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  font-weight: 400;
+  cursor: pointer;
+  transition:
+    border-color var(--dur) var(--ease),
+    background-color var(--dur) var(--ease);
+}
+
+.location-option:hover {
+  border-color: var(--primary-soft-strong);
+  background: var(--navy-50);
+}
+
+[data-theme='dark'] .location-option:hover {
+  background: var(--surface-3);
+}
+
+.location-option.is-selected {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.location-option input[type='checkbox'] {
+  width: 15px;
+  height: 15px;
+  min-height: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+.location-option-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.location-option-code {
+  min-width: 64px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.location-option.is-selected .location-option-code {
+  color: var(--info-text);
+}
+
+.location-scope-empty {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 18px 12px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.location-scope-footer {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 16px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.location-scope-footnote {
+  color: var(--text-secondary);
+}
+
+/* Location-code chips (table cells, read-only summaries). */
+.code-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+}
+
+.code-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.code-chip.is-more {
+  font-family: var(--font-sans);
+  color: var(--text-muted);
+}
+
+/* Merged user / role cell of a one-to-many assignment table. */
+.assignment-group-cell {
+  vertical-align: top;
+}
+
+.assignment-group-cell .assignment-group-name {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.assignment-group-cell .assignment-group-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Narrow viewports: one checkbox per row, toolbar stacks without centring. */
+@media (max-width: 1100px) {
+  .location-scope-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 720px) {
+  .location-scope-search {
+    max-width: none;
+    flex: 1 1 100%;
+  }
+
+  .location-scope-count {
+    margin-left: 0;
+  }
 }
 
 /* --------------------------------------------------------------- print */
