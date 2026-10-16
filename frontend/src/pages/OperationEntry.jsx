@@ -12,6 +12,7 @@ import MultiTankBeforeAfterLayout from '../components/operationLayouts/MultiTank
 import TankerTruckLayout from '../components/operationLayouts/TankerTruckLayout'
 import TankerPayloadPreview from '../components/operationLayouts/TankerPayloadPreview'
 import { getTankerSenderReference } from '../api/tankerTrackingApi'
+import { getLocations } from '../api/locationApi'
 import StockMovementLayout from '../components/operationLayouts/StockMovementLayout'
 import VesselCycleLayout from '../components/operationLayouts/VesselCycleLayout'
 import ShuttleTrackingLayout from '../components/operationLayouts/ShuttleTrackingLayout'
@@ -651,14 +652,24 @@ function OperationEntry({
     if (isAdminBootstrap) return true
     return hasPermission('Cancel Operation Transaction')
   }, [loggedInUser])
+  const defaultEntryLocationCode = (() => {
+    const allAccess = loggedInUser?.allLocationsAccess === 'Yes'
+    const assigned = loggedInUser?.assignedLocationCodes || []
+    if (isAdminBootstrap || allAccess) return ''
+    if (Array.isArray(assigned) && assigned.length === 1) {
+      return String(assigned[0]).trim()
+    }
+    return ''
+  })()
+
   const emptyEntry = {
     operationTypeCode: '',
     operationTemplateId: '',
     primaryAssetCode: '',
     convoyNumber: '',
-    originLocationCode: '',
+    originLocationCode: defaultEntryLocationCode,
     destinationLocationCode: '',
-    senderLocationCode: '',
+    senderLocationCode: defaultEntryLocationCode,
     receiverLocationCode: '',
     operationDate: '',
     operationStartDatetime: '',
@@ -671,6 +682,20 @@ function OperationEntry({
   }
 
   const [entry, setEntry] = useState(emptyEntry)
+
+  const [allSystemLocations, setAllSystemLocations] = useState([])
+
+  useEffect(() => {
+    let active = true
+    getLocations({ all_locations: true, limit: 500 })
+      .then((data) => {
+        if (active) setAllSystemLocations(data?.items || [])
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [])
 
   const setEntryField = (field, value) => {
     setEntry((prev) => ({
@@ -915,8 +940,12 @@ function OperationEntry({
 
   // Get all locations for receiver/destination dropdown - not filtered by user scope
   const allActiveLocations = useMemo(() => {
-    return locations.filter((item) => item.status === 'Active')
-  }, [locations])
+    const source =
+      allSystemLocations && allSystemLocations.length > 0
+        ? allSystemLocations
+        : locations
+    return (source || []).filter((item) => item.status === 'Active')
+  }, [allSystemLocations, locations])
 
   const selectedOperationType = operationTypeOptions.find((item) => {
     return item.operationTypeCode === entry.operationTypeCode
