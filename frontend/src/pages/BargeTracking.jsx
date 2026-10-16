@@ -18,6 +18,7 @@ import Modal from '../components/common/Modal'
 import CompanyPrintHeader from '../components/reports/CompanyPrintHeader'
 import CompanyPrintFooter from '../components/reports/CompanyPrintFooter'
 import { logUiAction } from '../utils/actionLogger'
+import { buildBargeMtrSampleRows } from '../utils/bargeMtrReport'
 
 const VOYAGE_TABS = [
   { value: 'OPEN', label: 'Open Voyages' },
@@ -796,6 +797,13 @@ return (
             const rightTotals = right.totals || {}
             const deltaTotals = (summary.delta || {}).totals || {}
 
+            // Sample / product parameters captured on each side of the
+            // comparison (observed API or density - whichever the operator
+            // used - plus the calculated API @ 60F and the temperatures).
+            // Built by utils/bargeMtrReport.js so the screen view, the print
+            // report and the smoke test all agree on the rows.
+            const sampleRows = buildBargeMtrSampleRows(cmp)
+
             const tanks =
               cmp.per_tank_json && Array.isArray(cmp.per_tank_json.tanks)
                 ? cmp.per_tank_json.tanks
@@ -987,6 +995,32 @@ return (
 
                 <div className="barge-mtr-two-column">
                   <div className="barge-mtr-section">
+                    <h2>Sample / Product Parameters</h2>
+
+                    <table className="barge-mtr-table barge-mtr-number-table">
+                      <thead>
+                        <tr>
+                          <th>Parameter</th>
+                          <th>Sender</th>
+                          <th>Receiver</th>
+                          <th>Diff.</th>
+                        </tr>
+                      </thead>
+
+                      <tbody>
+                        {sampleRows.map((row) => (
+                          <tr key={row.label}>
+                            <td><strong>{row.label}</strong></td>
+                            <td>{row.sender}</td>
+                            <td>{row.receiver}</td>
+                            <td>{row.delta}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="barge-mtr-section">
                     <h2>Quantity Summary</h2>
 
                     <table className="barge-mtr-table barge-mtr-number-table">
@@ -1011,60 +1045,58 @@ return (
                       </tbody>
                     </table>
                   </div>
+                </div>
 
-                  <div className="barge-mtr-section">
-                    <h2>Per Tank Summary</h2>
+                <div className="barge-mtr-section">
+                  <h2>Per Tank Summary</h2>
 
-                    <table className="barge-mtr-table barge-mtr-number-table">
-                      <thead>
+                  <table className="barge-mtr-table barge-mtr-number-table barge-mtr-pertank-table">
+                    <thead>
+                      <tr>
+                        <th>Tank</th>
+                        <th>S T.Dip</th>
+                        <th>S W.Dip</th>
+                        <th>S TOV</th>
+                        <th>S FW</th>
+                        <th>R T.Dip</th>
+                        <th>R W.Dip</th>
+                        <th>R TOV</th>
+                        <th>R FW</th>
+                        <th>Δ TOV</th>
+                        <th>Δ FW</th>
+                      </tr>
+                    </thead>
+
+                    <tbody>
+                      {shownTanks.length === 0 ? (
                         <tr>
-                          <th>Tank</th>
-                          <th>S T.Dip</th>
-                          <th>S W.Dip</th>
-                          <th>S TOV</th>
-                          <th>S FW</th>
-                          <th>R T.Dip</th>
-                          <th>R W.Dip</th>
-                          <th>R TOV</th>
-                          <th>R FW</th>
-                          <th>Δ TOV</th>
-                          <th>Δ FW</th>
+                          <td colSpan="11">No per-tank rows saved.</td>
                         </tr>
-                      </thead>
+                      ) : (
+                        shownTanks.map((row) => {
+                          const senderTank = row.left || {}
+                          const receiverTank = row.right || {}
+                          const deltaTank = row.delta || {}
 
-                      <tbody>
-                        {shownTanks.length === 0 ? (
-                          <tr>
-                            <td colSpan="11">No per-tank rows saved.</td>
-                          </tr>
-                        ) : (
-                          shownTanks.map((row) => {
-                            const senderTank = row.left || {}
-                            const receiverTank = row.right || {}
-                            const deltaTank = row.delta || {}
-
-                            return (
-                              <tr key={String(row.tank_id)}>
-                                <td><strong>{row.tank_id}</strong></td>
-                                <td>{formatNumber(senderTank.total_dip, 1)}</td>
-                                <td>{formatNumber(senderTank.water_dip, 1)}</td>
-                                <td>{formatNumber(senderTank.tov)}</td>
-                                <td>{formatNumber(senderTank.fw)}</td>
-                                <td>{formatNumber(receiverTank.total_dip, 1)}</td>
-                                <td>{formatNumber(receiverTank.water_dip, 1)}</td>
-                                <td>{formatNumber(receiverTank.tov)}</td>
-                                <td>{formatNumber(receiverTank.fw)}</td>
-                                <td>{formatNumber(deltaTank.tov)}</td>
-                                <td>{formatNumber(deltaTank.fw)}</td>
-                              </tr>
-                            )
-                          })
-                        )}
-                      </tbody>
-                    </table>
-
-
-                  </div>
+                          return (
+                            <tr key={String(row.tank_id)}>
+                              <td><strong>{row.tank_id}</strong></td>
+                              <td>{formatNumber(senderTank.total_dip, 1)}</td>
+                              <td>{formatNumber(senderTank.water_dip, 1)}</td>
+                              <td>{formatNumber(senderTank.tov)}</td>
+                              <td>{formatNumber(senderTank.fw)}</td>
+                              <td>{formatNumber(receiverTank.total_dip, 1)}</td>
+                              <td>{formatNumber(receiverTank.water_dip, 1)}</td>
+                              <td>{formatNumber(receiverTank.tov)}</td>
+                              <td>{formatNumber(receiverTank.fw)}</td>
+                              <td>{formatNumber(deltaTank.tov)}</td>
+                              <td>{formatNumber(deltaTank.fw)}</td>
+                            </tr>
+                          )
+                        })
+                      )}
+                    </tbody>
+                  </table>
                 </div>
 
                 <div className="barge-mtr-section">

@@ -1016,6 +1016,58 @@ def verify_admin_setup():
         db.close()
 
 
+ROLE_LOCATIONS_DDL = (
+    """
+    CREATE TABLE IF NOT EXISTS role_locations (
+        id SERIAL PRIMARY KEY,
+        role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+        location_code VARCHAR(50) NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        CONSTRAINT unique_role_location UNIQUE (role_id, location_code)
+    );
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS ix_role_locations_id
+    ON role_locations(id);
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS ix_role_locations_role_id
+    ON role_locations(role_id);
+    """,
+)
+
+
+def _role_location_table_is_missing() -> bool:
+    """True when ``role_locations`` still has to be created on this database."""
+    inspector = inspect(engine)
+    table_names = inspector.get_table_names()
+    if "role_locations" in table_names:
+        return False
+    # Without the referenced table the DDL cannot run; create_all will get to it
+    # on the next start once roles exists.
+    return "roles" in table_names
+
+
+def ensure_role_location_table():
+    """Create the ``role_locations`` table for per-role location scope.
+
+    PERMISSION_CRITERIA_MODEL.md section 7.2: a user's effective location scope
+    is the additive union of the *user_locations* rows and the *role_locations*
+    rows of every active role the user holds. A role therefore can only widen a
+    user's scope, never remove a location assigned directly to the user.
+
+    ``Base.metadata.create_all`` already creates the table on fresh databases;
+    this helper covers existing PostgreSQL deployments and is safe to run on
+    every application start.
+    """
+    if not _role_location_table_is_missing():
+        return
+
+    with engine.begin() as connection:
+        for statement in ROLE_LOCATIONS_DDL:
+            connection.execute(text(statement))
+
+
 def ensure_export_operations_tables():
     with engine.begin() as connection:
         connection.execute(text("""

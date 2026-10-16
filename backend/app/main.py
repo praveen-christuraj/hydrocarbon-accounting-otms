@@ -51,6 +51,7 @@ from app.utils.db_migrations import (
     ensure_operation_workflow_policy_tables,
     ensure_operation_task_tables,
     ensure_user_location_columns,
+    ensure_role_location_table,
     ensure_export_operations_tables,
     ensure_user_role_multi_role_constraint,
     ensure_operation_transaction_indexes,
@@ -78,6 +79,7 @@ async def lifespan(app: FastAPI):
     ensure_operation_task_tables()
     migrate_boolean_columns()
     ensure_user_location_columns()
+    ensure_role_location_table()
     ensure_export_operations_tables()
     ensure_operation_transaction_indexes()
     ensure_asset_calibration_table_indexes()
@@ -112,7 +114,7 @@ from app.routers import (
     flowmeter_configs_records, location_operation_availability, locations,
     material_balance_templates, movement_mappings, operation_entries,
     operation_tasks, operation_templates, operation_transactions, operation_types,
-    permissions, prime_mover_tanker_links, reports, role_permissions, roles,
+    permissions, prime_mover_tanker_links, reports, role_locations, role_permissions, roles,
     shuttle_fso_voyages, system_notifications, table11_factors, tank_operations,
     tank_operation_summary, tank_stock_ledger, tanker_tracking, tracking_module_configs, user_locations, user_roles, users, vessel_operations,
     vessel_stock_ledger, workflow_policies,
@@ -149,6 +151,7 @@ app.include_router(out_turn_summary.router)
 app.include_router(permissions.router)
 app.include_router(prime_mover_tanker_links.router)
 app.include_router(reports.router)
+app.include_router(role_locations.router)
 app.include_router(role_permissions.router)
 app.include_router(roles.router)
 app.include_router(shuttle_fso_voyages.router)

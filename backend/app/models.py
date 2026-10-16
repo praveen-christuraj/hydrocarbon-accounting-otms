@@ -245,6 +245,35 @@ class UserLocation(Base):
     )
 
 
+class RoleLocation(Base):
+    """Per-role location scope (PERMISSION_CRITERIA_MODEL.md section 7.2).
+
+    Location scope is additive: a user's effective scope is the union of their
+    ``user_locations`` rows and the ``role_locations`` rows of every active role
+    they hold. A role can only widen a user's scope, never remove a
+    user-specific assignment.
+    """
+
+    __tablename__ = "role_locations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    role_id = Column(
+        Integer,
+        ForeignKey("roles.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    location_code = Column(String(50), nullable=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "role_id",
+            "location_code",
+            name="unique_role_location",
+        ),
+    )
+
+
 class SystemNotification(Base):
     __tablename__ = "system_notifications"
 

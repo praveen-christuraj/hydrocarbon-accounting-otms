@@ -858,37 +858,12 @@ function TankerTracking({
       <AlertMessage tone="success" message={feedback.successMsg} onDismiss={clearSuccess} />
       <AlertMessage tone="error" message={feedback.errorMsg} onDismiss={clearError} />
 
-      <div className="report-summary-grid no-print">
-        <div className="report-summary-card">
-          <span>Total Groups</span>
-          <strong>{report.totalGroups}</strong>
-        </div>
-
-        <div className="report-summary-card">
-          <span>Pending Receipt</span>
-          <strong>{report.pendingReceipts}</strong>
-        </div>
-
-        <div className="report-summary-card">
-          <span>Received</span>
-          <strong>{report.receivedGroups}</strong>
-        </div>
-
-        <div className="report-summary-card">
-          <span>Compared</span>
-          <strong>{report.comparedGroups}</strong>
-        </div>
-
-        <div className="report-summary-card">
-          <span>Seal Mismatch</span>
-          <strong>{report.sealMismatchGroups}</strong>
-        </div>
-
-        <div className="report-summary-card">
-          <span>Quantity Variance</span>
-          <strong>{report.quantityVarianceGroups}</strong>
-        </div>
-      </div>
+      {/* Single KPI strip: the coloured, clickable exception cards. The plain
+          "plan" summary cards were removed because they duplicated every number
+          (Tanker Tracking owner change 2026-10-16). */}
+      <p className="kpi-strip-caption no-print">
+        Tanker movement KPIs - select a card to filter the list below
+      </p>
 
       <div className="tanker-exception-dashboard no-print">
         <button

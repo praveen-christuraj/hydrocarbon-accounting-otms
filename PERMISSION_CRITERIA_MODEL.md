@@ -154,12 +154,98 @@ scope and helper units. Full suite: **133 passed**.
 1. **Explicit cross-location role capabilities** – e.g. a `Receive Shipment` permission family so an
    admin can grant "acknowledge + create receiver entries" without granting `Create Operation Entry`
    in general. Requires catalog additions (`default_permissions.py`) and matching frontend gates.
-2. **Per-role location scope** – today location scope is per *user* (`user_locations`). For large
-   teams, scope per *role×location* would reduce admin work; it needs one new table and an
-   evaluation change inside `get_user_location_codes` only – the criteria pipeline stays the same.
+2. **Per-role location scope** – **shipped 2026-10-16**, see §8. Location scope is still assignable
+   per *user* (`user_locations`); a *role×location* assignment now widens that scope for large teams.
 3. **Criteria composition UI** – a read-only "Why can this user see this?" panel on Access Summary,
    showing the four criteria' outcomes for a sample record (purely diagnostic; the backend already
    exposes `/permissions/catalog` and the scope helpers can power it).
 4. **Extend the party rule to remaining origin-only reports** (out-turn, tank operation summary,
    flowmeter records) if the owner wants received tickets to appear there as well – each is a
    one-line swap to `apply_transaction_party_scope_filter`.
+
+## 8. Per-role location scope (shipped 2026-10-16)
+
+Owner request: *"finish the 7.2 follow-up – per-role location scope – properly: table, union in
+`get_user_location_codes`, endpoint, admin UI, tests and documentation."*
+
+### The rule
+
+A user's effective location scope is the **additive union** of two sources:
+
+```
+effective locations = user_locations(user)
+                    ∪ role_locations(role) for every role the user holds
+```
+
+* **Additive only.** A role can widen a user's scope but can never remove a location that was
+  assigned to the user directly – there is no per-user override / deny list. Removing a role's
+  locations only removes the locations that came from that role.
+* **Inactive roles grant nothing.** Role scope is evaluated over the user's roles; a role that is
+  not `Active` contributes no locations (the same rule `user_locations` already followed for
+  inactive locations).
+* **Admin / all-locations stay unrestricted.** `Admin` users and users with
+  `all_locations_access = Yes` keep `None` (= no filter) exactly as before; the union is only
+  computed for genuinely restricted users.
+
+### Schema
+
+`role_locations` – deliberately **role-level only, with no `user_id` column**:
+
+| column | type | notes |
+| --- | --- | --- |
+| `id` | serial PK | |
+| `role_id` | integer FK → `roles.id` | `ON DELETE CASCADE` – deleting a role drops its scope |
+| `location_code` | varchar(50) | canonical (trimmed, upper-cased) location code |
+| `created_at` | timestamp | server default `now()` |
+| | | `UNIQUE (role_id, location_code)` → `unique_role_location` |
+
+Created by `Base.metadata.create_all` and by `ensure_role_location_table()` in
+`app/utils/db_migrations.py` for existing databases (no separate SQL migration folder is used in
+this repository). Locations are **not** foreign-keyed so that a location rename/delete cannot break
+the scope rows; the endpoint validates the code against `locations` instead.
+
+### Evaluation change
+
+`app/dependencies/permissions.py`:
+
+* `get_role_location_codes(role_ids, db)` – resolves the union of the given roles' location codes
+  (canonical spelling via `lower(trim(location_code))`).
+* `get_user_location_codes(user, db)` – now returns the **union** of the user's own
+  `user_locations` rows and the role locations of every role the user holds, and still returns
+  `None` for unrestricted users. Every existing caller (`apply_location_filter`,
+  `apply_transaction_party_scope_filter`, `ensure_*_in_user_scope`) therefore honours role scope
+  with no per-router change – the criteria pipeline in §4 is untouched.
+
+### Endpoint
+
+`app/routers/role_locations.py` (registered in `main.py`):
+
+| route | behaviour |
+| --- | --- |
+| `GET /role-locations` | every role with its location codes + status; restricted actors do not see the reserved `Admin` role and do not see codes outside their own scope |
+| `GET /role-locations/{role_id}` | one role's codes |
+| `PUT /role-locations/{role_id}` | **replaces** the role's whole list; body `{ "location_codes": [...] }` |
+
+`PUT` rules: `Admin` role ⇒ 403 (it always has unrestricted access); non-`Active` role ⇒ 400;
+unknown location code ⇒ 400; inactive location ⇒ 400; blank/duplicate codes ⇒ 422; assigning or
+changing scope outside the actor's own location scope ⇒ 403. Every successful save writes an audit
+record (`module_name = "Role Location Assignment"`, `action = "Update Role Location Assignment"`,
+before/after codes in `details`).
+
+### Permissions & UI
+
+* Catalog module **Role Location Assignment** (`View` / `Edit`), plus the legacy group
+  `Manage Role Location Assignment`; seeded by `default_permissions.py` and shown automatically on
+  Access Summary, which reads the backend catalog.
+* `frontend/src/pages/RoleLocationAssignment.jsx` (route `/role-locations`, nav under
+  *User Management* after *User Location Assignment*) – role picker, select-all location grid,
+  replace-on-save warning, edit-from-row, paginated list, bulk export, audit logging of UI saves
+  and permission gates. `frontend/src/api/roleLocationApi.js` maps the snake_case payloads.
+
+### Tests
+
+* `backend/tests/test_role_location_scope.py` – additive union, "a role never removes a user
+  assignment", multi-role union, canonical spelling, actor-scope filtering of the list, empty
+  scope, inactive role grants nothing, endpoint permissions / Admin-role block / validation / audit.
+* `frontend/scripts/smoke-render.mjs` renders `/role-locations` (list, edit prefill,
+  `PUT /role-locations/{id}`) in the standard smoke pass.

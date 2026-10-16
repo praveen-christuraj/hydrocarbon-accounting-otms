@@ -4218,38 +4218,6 @@ table[border] {
   color: var(--text-secondary);
 }
 
-@media print {
-  body * {
-    visibility: hidden;
-  }
-
-  .print-only,
-  .print-only * {
-    visibility: visible;
-  }
-
-  .print-only {
-    display: block !important;
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-  }
-
-  .no-print,
-  .no-print * {
-    display: none !important;
-  }
-
-  .tanker-mtr-report {
-    padding: 8mm;
-  }
-
-  @page {
-    size: A4 landscape;
-    margin: 8mm;
-  }
-}
 .tracking-ticket-card-header {
   display: flex;
   justify-content: space-between;
@@ -4486,6 +4454,12 @@ table[border] {
   color: var(--text-secondary);
 }
 
+/* Consolidated Tanker MTR print block (owner change 2026-10-16).
+   A second, near-identical block that used to live ~280 lines above this one
+   was removed: it duplicated the same visibility scaffolding and only fought
+   with this one over padding/`@page` margin. All measurement now comes from
+   the shared compact print layer at the end of this stylesheet, so the MTR
+   report prints on one page (two at most) without triple-stacked overrides. */
 @media print {
   body * {
     visibility: hidden;
@@ -4509,26 +4483,16 @@ table[border] {
     display: none !important;
   }
 
-  .tanker-mtr-report {
-    padding: 4mm;
-    font-size: 9.5px;
-  }
-
   .mtr-report-header {
-    margin-bottom: 4px;
+    margin-bottom: 3px;
   }
 
   .mtr-section {
-    margin-top: 4px;
+    margin-top: 3px;
   }
 
   .mtr-status-strip {
-    margin-bottom: 4px;
-  }
-
-  @page {
-    size: A4 landscape;
-    margin: 5mm;
+    margin-bottom: 3px;
   }
 }
 .tanker-exception-dashboard {
@@ -4536,6 +4500,16 @@ table[border] {
   grid-template-columns: repeat(6, minmax(120px, 1fr));
   gap: 10px;
   margin: 12px 0;
+}
+
+/* Caption above the single KPI strip (the duplicate plain summary cards were
+   removed - see Tanker Tracking owner change 2026-10-16). */
+.kpi-strip-caption {
+  margin: 12px 0 0;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 
 .exception-card {
@@ -4782,6 +4756,11 @@ table[border] {
   color: var(--text-secondary);
 }
 
+/* Consolidated Barge MTR print block (owner change 2026-10-16).
+   Measurement (padding, font sizes, cell padding, @page) now lives in the
+   shared compact print layer at the end of this stylesheet - this block only
+   keeps the visibility scaffolding and the barge layout decisions, so print
+   output stays inside one page (two at most) without stacked overrides. */
 @media print {
   body * {
     visibility: hidden;
@@ -4805,13 +4784,13 @@ table[border] {
     display: none !important;
   }
 
-  .barge-mtr-report {
-    padding: 4mm;
-    font-size: 8.8px;
-  }
-
+  /* Keep the sample-parameter / quantity-summary panels side by side on paper
+     too - stacking them was adding a whole page to the report. */
   .barge-mtr-report .barge-mtr-two-column {
-    display: block;
+    display: grid;
+    grid-template-columns: 1.05fr 1fr;
+    gap: 6px;
+    align-items: start;
   }
 
   .barge-mtr-report .barge-mtr-section {
@@ -4825,21 +4804,6 @@ table[border] {
 
   .barge-mtr-report thead {
     display: table-header-group;
-  }
-
-
-  .barge-mtr-section {
-    margin-top: 4px;
-  }
-
-  .barge-mtr-table th,
-  .barge-mtr-table td {
-    padding: 2.5px;
-  }
-
-  @page {
-    size: A4 landscape;
-    margin: 5mm;
   }
 }
 /* -----------------------------
@@ -6141,4 +6105,342 @@ button.list-tab[aria-selected='true'] {
 
 tr.is-selected > td {
   background: var(--primary-soft);
+}
+
+/* =========================================================================
+   Saved Values Review (all operation modules)
+   Every operation module shows its saved values with the same presentation
+   the tank gauging module uses (owner change 2026-10-16).
+   ========================================================================= */
+.saved-values-review {
+  display: grid;
+  gap: 8px;
+}
+
+.saved-values-group {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface-2);
+  padding: 10px 12px;
+}
+
+.saved-values-group-title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* =========================================================================
+   Compact print reports (owner change 2026-10-16)
+   -------------------------------------------------------------------------
+   Every "Print" action must produce a compact document: a single page where
+   the report allows it, never more than two. This is the single compaction
+   layer for that: it sits at the very end of the stylesheet so it wins over
+   the per-report print blocks above, which now only decide WHAT is printed
+   (visibility scaffolding, page structure, column layout) and no longer
+   fight each other over how big it is.
+
+   Only measurement changes here (font sizes, padding, margins, page breaks,
+   header repetition). No report loses a field, a column or a value.
+   ========================================================================= */
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 6mm;
+  }
+
+  /* ---- 1. page containers: tight text, no outer card chrome ----------- */
+  .printable-report,
+  .printable-register-report,
+  .tanker-mtr-report,
+  .barge-mtr-report,
+  .mtr-page,
+  .print-report,
+  .export-operations-page,
+  .out-turn-report-page,
+  .material-balance-report-page,
+  .tank-operation-summary-page,
+  .out-turn-summary-page,
+  .tank-stock-ledger-page,
+  .op-transaction-register-page {
+    font-family: Arial, Helvetica, sans-serif !important;
+    font-size: 9px !important;
+    line-height: 1.25 !important;
+    color: #000 !important;
+    background: #fff !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* ---- 2. section boxes: tight padding, never split ------------------ */
+  .mtr-header,
+  .mtr-kv,
+  .mtr-section,
+  .barge-mtr-section,
+  .print-report-section,
+  .mtr-status-strip,
+  .mtr-remarks-grid,
+  .barge-mtr-remarks-grid,
+  .print-summary-grid {
+    padding: 3px 5px !important;
+    margin: 0 0 4px !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* ---- 3. tables ----------------------------------------------------- */
+  .printable-report table,
+  .printable-register-report table,
+  .tanker-mtr-report table,
+  .barge-mtr-report table,
+  .mtr-page table,
+  .mtr-table,
+  .print-table,
+  .out-turn-report-page table,
+  .material-balance-report-page table,
+  .tank-operation-summary-page table,
+  .out-turn-summary-page table,
+  .tank-stock-ledger-page table,
+  .op-transaction-register-page table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    table-layout: auto;
+    font-size: 8.5px !important;
+    margin: 0 !important;
+  }
+
+  .printable-report th,
+  .printable-report td,
+  .printable-register-report th,
+  .printable-register-report td,
+  .tanker-mtr-report th,
+  .tanker-mtr-report td,
+  .barge-mtr-report th,
+  .barge-mtr-report td,
+  .mtr-page th,
+  .mtr-page td,
+  .mtr-table th,
+  .mtr-table td,
+  .print-table th,
+  .print-table td,
+  .out-turn-report-page th,
+  .out-turn-report-page td,
+  .material-balance-report-page th,
+  .material-balance-report-page td,
+  .tank-operation-summary-page th,
+  .tank-operation-summary-page td,
+  .out-turn-summary-page th,
+  .out-turn-summary-page td,
+  .tank-stock-ledger-page th,
+  .tank-stock-ledger-page td,
+  .op-transaction-register-page th,
+  .op-transaction-register-page td {
+    border: 1px solid #000 !important;
+    padding: 1px 3px !important;
+    font-size: 8.5px !important;
+    line-height: 1.2 !important;
+    vertical-align: top !important;
+  }
+
+  .printable-report th,
+  .printable-register-report th,
+  .tanker-mtr-report th,
+  .barge-mtr-report th,
+  .mtr-page th,
+  .mtr-table th,
+  .print-table th,
+  .out-turn-report-page th,
+  .material-balance-report-page th,
+  .tank-operation-summary-page th,
+  .out-turn-summary-page th,
+  .tank-stock-ledger-page th,
+  .op-transaction-register-page th {
+    background: #f2f2f2 !important;
+    font-weight: 700 !important;
+  }
+
+  /* repeat header rows on continuation pages, never split a row */
+  .printable-report thead,
+  .printable-register-report thead,
+  .tanker-mtr-report thead,
+  .barge-mtr-report thead,
+  .mtr-page thead,
+  .mtr-table thead,
+  .print-table thead,
+  .out-turn-report-page thead,
+  .material-balance-report-page thead,
+  .tank-operation-summary-page thead,
+  .out-turn-summary-page thead,
+  .tank-stock-ledger-page thead,
+  .op-transaction-register-page thead {
+    display: table-header-group;
+  }
+
+  .printable-report tr,
+  .printable-register-report tr,
+  .tanker-mtr-report tr,
+  .barge-mtr-report tr,
+  .mtr-page tr,
+  .mtr-table tr,
+  .print-table tr,
+  .out-turn-report-page tr,
+  .material-balance-report-page tr,
+  .tank-operation-summary-page tr,
+  .out-turn-summary-page tr,
+  .tank-stock-ledger-page tr,
+  .op-transaction-register-page tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* ---- 4. headings and prose ----------------------------------------- */
+  .printable-report h1,
+  .mtr-page h1,
+  .tanker-mtr-report h1,
+  .barge-mtr-report h1,
+  .print-report h1,
+  .mtr-header h1 {
+    font-size: 13px !important;
+    margin: 0 0 2px !important;
+  }
+
+  .printable-report h2,
+  .printable-report h3,
+  .mtr-page h2,
+  .mtr-page h3,
+  .tanker-mtr-report h2,
+  .barge-mtr-report h2,
+  .print-report h2,
+  .mtr-section h2,
+  .barge-mtr-section h2,
+  .print-report-section h2 {
+    font-size: 9.5px !important;
+    margin: 0 0 3px !important;
+  }
+
+  .printable-report p,
+  .mtr-page p,
+  .tanker-mtr-report p,
+  .barge-mtr-report p,
+  .print-report p,
+  .print-footnote p,
+  .company-print-footer p {
+    font-size: 8.5px !important;
+    margin: 1px 0 !important;
+  }
+
+  /* ---- 5. report header, meta and footer ----------------------------- */
+  .print-report-header {
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: flex-start !important;
+    gap: 8px;
+    padding: 0 0 3px !important;
+    margin: 0 0 4px !important;
+    border: 0 !important;
+    border-bottom: 1.5px solid #000 !important;
+  }
+
+  .print-report-header h1 {
+    font-size: 13px !important;
+    margin: 0 0 1px !important;
+  }
+
+  .print-company-logo {
+    max-height: 30px !important;
+    max-width: 90px !important;
+  }
+
+  .print-logo-placeholder {
+    width: 56px !important;
+    height: 30px !important;
+    font-size: 8px !important;
+    line-height: 30px !important;
+  }
+
+  .print-report-meta {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 1px 8px !important;
+    margin: 0 0 4px !important;
+    font-size: 8.5px !important;
+  }
+
+  .print-report-meta div {
+    min-width: 0 !important;
+  }
+
+  .print-summary-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+    gap: 4px !important;
+  }
+
+  .print-summary-grid div {
+    padding: 3px 4px !important;
+  }
+
+  .print-summary-grid span {
+    font-size: 7.5px !important;
+  }
+
+  .print-summary-grid strong {
+    font-size: 10px !important;
+    margin-top: 1px !important;
+  }
+
+  .company-print-footer {
+    display: block !important;
+    margin-top: 6px !important;
+    padding-top: 3px !important;
+    border-top: 1px solid #000 !important;
+    font-size: 8px !important;
+    color: #000 !important;
+  }
+
+  /* ---- 6. signature blocks and MTR key/value panels ------------------ */
+  .mtr-signature-grid,
+  .barge-mtr-signature-grid {
+    display: grid !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    gap: 4px !important;
+    margin-top: 4px !important;
+  }
+
+  .mtr-signature-grid > div,
+  .barge-mtr-signature-grid > div {
+    padding: 3px 5px !important;
+    font-size: 8px !important;
+  }
+
+  .mtr-sub,
+  .mtr-kv-grid {
+    gap: 2px 10px !important;
+    font-size: 8.5px !important;
+  }
+
+  .mtr-footer {
+    margin-top: 4px !important;
+    font-size: 8px !important;
+  }
+
+  /* ---- 7. page-break control ----------------------------------------- */
+  .print-keep-together {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .print-page-break-before {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  /* never print scaffolding / empty shells */
+  .no-print,
+  .no-print * {
+    display: none !important;
+  }
 }
