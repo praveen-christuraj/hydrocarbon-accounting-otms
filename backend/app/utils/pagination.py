@@ -45,6 +45,14 @@ def paginate_query(query, skip: int = 0, limit: int = 50):
 DEFAULT_LIST_LIMIT = 200
 MAX_LIST_LIMIT = 1000
 
+# Location list page sizes. ``SCOPED_PAGE_SIZE`` protects the Location Master
+# grid; ``REFERENCE_PAGE_SIZE`` / ``MAX_LIST_LIMIT`` apply to the
+# ``all_locations=true`` reference-data mode that fills the Origin /
+# Destination / Sender / Receiver dropdowns of Operation Entry.
+SCOPED_DEFAULT_PAGE_SIZE = 50
+SCOPED_PAGE_SIZE = 200
+REFERENCE_PAGE_SIZE = 200
+
 DEFAULT_REPORT_WINDOW_DAYS = 90
 DEFAULT_REPORT_PAGE_SIZE = 500
 MAX_REPORT_PAGE_SIZE = 1000

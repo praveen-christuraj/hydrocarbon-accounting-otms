@@ -4,7 +4,14 @@ from sqlalchemy.orm import Session
 from datetime import date, time
 
 from app.database import get_db
-from app.utils.pagination import paginate_query
+from app.utils.pagination import (
+    MAX_LIST_LIMIT,
+    REFERENCE_PAGE_SIZE,
+    SCOPED_DEFAULT_PAGE_SIZE,
+    SCOPED_PAGE_SIZE,
+    clamp_limit,
+    paginate_query,
+)
 from app.models import Location, LocationAccountingDaySetting, User
 from app.schemas import (
     LocationCreate,
@@ -32,7 +39,7 @@ router = APIRouter(prefix="/locations", tags=["Locations"])
 @router.get("")
 def get_locations(
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int | None = Query(None, ge=1),
     search: str | None = Query(None),
     all_locations: bool = Query(False),
     db: Session = Depends(get_db),
@@ -51,7 +58,18 @@ def get_locations(
                 Location.location_code.ilike(f"%{search}%"),
             )
         )
-    result = paginate_query(query, skip, limit)
+    # ``all_locations`` is the reference-data mode used to populate the
+    # Destination / Receiver dropdowns of Operation Entry: those lists must
+    # contain every location in the system, so a page may be as large as the
+    # standard list maximum. Scoped browsing (the Location Master grid) keeps
+    # the conservative 200-row cap. Out-of-range values are clamped rather
+    # than rejected, because a hard 422 on the page size used to empty the
+    # dropdowns silently.
+    if all_locations:
+        effective_limit = clamp_limit(limit, REFERENCE_PAGE_SIZE, MAX_LIST_LIMIT)
+    else:
+        effective_limit = clamp_limit(limit, SCOPED_DEFAULT_PAGE_SIZE, SCOPED_PAGE_SIZE)
+    result = paginate_query(query, skip, effective_limit)
     return {
         "items": [LocationResponse.model_validate(l) for l in result["items"]],
         "total": result["total"],

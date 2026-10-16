@@ -13,7 +13,7 @@ import TankerTruckLayout from '../components/operationLayouts/TankerTruckLayout'
 import TankerPayloadPreview from '../components/operationLayouts/TankerPayloadPreview'
 import { getTankerSenderReference } from '../api/tankerTrackingApi'
 import { getLinkedSenderTicket } from '../api/operationEntryApi'
-import { getLocations } from '../api/locationApi'
+import { getAllLocations } from '../api/locationApi'
 import StockMovementLayout from '../components/operationLayouts/StockMovementLayout'
 import VesselCycleLayout from '../components/operationLayouts/VesselCycleLayout'
 import ShuttleTrackingLayout from '../components/operationLayouts/ShuttleTrackingLayout'
@@ -703,17 +703,35 @@ function OperationEntry({
 
   const [allSystemLocations, setAllSystemLocations] = useState([])
 
+  const [editId, setEditId] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const feedback = useActionFeedback()
+  const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
+
+  // Full location master for the Destination / Receiver dropdowns. A ticket can
+  // be addressed to any terminal, so this list is deliberately not limited to
+  // the locations the signed-in user is assigned to.
   useEffect(() => {
     let active = true
-    getLocations({ all_locations: true, limit: 500 })
+    getAllLocations()
       .then((data) => {
         if (active) setAllSystemLocations(data?.items || [])
       })
-      .catch(() => {})
+      .catch((error) => {
+        // Report instead of swallowing: when this call fails the Destination /
+        // Receiver dropdowns silently collapse to the user's own location.
+        console.error('Unable to load the full location list:', error)
+        if (active) {
+          notifyError(
+            `Unable to load the full location list, so Destination and Receiver only show your own location: ${error.message}`,
+            { title: 'Locations' }
+          )
+        }
+      })
     return () => {
       active = false
     }
-  }, [])
+  }, [notifyError])
 
   const setEntryField = (field, value) => {
     setEntry((prev) => ({
@@ -722,10 +740,6 @@ function OperationEntry({
     }))
   }
 
-  const [editId, setEditId] = useState(null)
-  const [loading, setLoading] = useState(false)
-  const feedback = useActionFeedback()
-  const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
   const [confirmAction, setConfirmAction] = useState(null)
   const [tankerSenderReference, setTankerSenderReference] = useState(null)
   const [tankerSenderReferenceLoading, setTankerSenderReferenceLoading] =
