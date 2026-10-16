@@ -639,7 +639,7 @@ class AssetCalibrationTable(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     calibration_name = Column(String(150), nullable=False)
-    asset_code = Column(String(80), nullable=False)
+    asset_code = Column(String(80), nullable=False, index=True)
     template_id = Column(
         Integer,
         ForeignKey("calibration_templates.id", ondelete="RESTRICT"),
@@ -660,6 +660,7 @@ class AssetCalibrationData(Base):
         Integer,
         ForeignKey("asset_calibration_tables.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
     )
     row_number = Column(Integer, nullable=False)
     row_data = Column(JSONB, nullable=False)
@@ -678,7 +679,7 @@ class AssetAssignment(Base):
     __tablename__ = "asset_assignments"
 
     id = Column(Integer, primary_key=True, index=True)
-    asset_code = Column(String(80), nullable=False)
+    asset_code = Column(String(80), nullable=False, index=True)
     asset_scope = Column(String(20), nullable=False)
     assignment_location_code = Column(String(50), nullable=False)
     assigned_to_type = Column(String(50), nullable=False)

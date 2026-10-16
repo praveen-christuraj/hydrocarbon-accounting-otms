@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { lookupTable11Factor } from '../../api/table11Api'
 import { getTankOperations } from '../../api/tankOperationApi'
+import { useActiveCalibrationTable } from '../../hooks/useActiveCalibrationTable'
 import {
   calculateTankQuantity,
   formatNumber,
@@ -13,7 +14,6 @@ import {
 } from '../../utils/tankQuantityEngine'
 
 const LONG_TON_TO_METRIC_TON = 1.01605
-const normalizeCode = (value) => String(value || '').trim().toUpperCase()
 
 const emptyTankInput = {
   tankOperationCode: '',
@@ -143,29 +143,16 @@ function TankGaugingLayout({
     loadTankOperations()
   }, [entry.originLocationCode])
   
-  const activeCalibrationTable = useMemo(() => {
-    if (!selectedAsset) {
-      return null
-    }
-
-    const matchingTables = assetCalibrationTables.filter((table) => {
-      return (
-        normalizeCode(table.assetCode) === normalizeCode(selectedAsset.assetCode) &&
-        table.status === 'Active'
-      )
-    })
-
-    if (matchingTables.length === 0) {
-      return null
-    }
-
-    return [...matchingTables].sort((a, b) => {
-      const dateA = a.effectiveDate || ''
-      const dateB = b.effectiveDate || ''
-
-      return dateB.localeCompare(dateA)
-    })[0]
-  }, [assetCalibrationTables, selectedAsset])
+  // Active calibration table for the selected tank, with its dip chart rows
+  // fetched on demand (the calibration list itself stays lean).
+  const {
+    table: activeCalibrationTable,
+    loading: calibrationLoading,
+    error: calibrationError,
+  } = useActiveCalibrationTable({
+    assetCalibrationTables,
+    assetCode: selectedAsset?.assetCode,
+  })
 
   const activeCalibrationTemplate = useMemo(() => {
     if (!activeCalibrationTable) {
@@ -499,12 +486,20 @@ function TankGaugingLayout({
           </div>
         )}
 
-        {selectedAsset && !activeCalibrationTable && (
+        {selectedAsset && !activeCalibrationTable && !calibrationLoading && (
           <div className="info-box">
             No active calibration table found for this tank. Please upload an
             active calibration table in Asset Calibration Table before entering
             tank quantities.
           </div>
+        )}
+
+        {calibrationLoading && (
+          <div className="info-box">Loading calibration data…</div>
+        )}
+
+        {calibrationError && (
+          <div className="error-box">{calibrationError}</div>
         )}
 
         {activeCalibrationTable && (

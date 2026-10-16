@@ -14,6 +14,7 @@ import {
   OBSERVED_DENSITY_LIMITS,
   validateTankGaugingInput,
 } from '../../utils/tankQuantityEngine'
+import { useActiveCalibrationTable } from '../../hooks/useActiveCalibrationTable'
 import { useConfirm } from '../common/ConfirmProvider'
 
 const LONG_TON_TO_METRIC_TON = 1.01605
@@ -462,29 +463,16 @@ function TankerTruckLayout({
     buildLinkAssetFromPayload(existingPayload)?.tankerAssetCode ||
     ''
 
-  const activeCalibrationTable = useMemo(() => {
-    if (!calibrationAssetCode) {
-      return null
-    }
-
-    const matchingTables = assetCalibrationTables.filter((table) => {
-      return (
-        table.assetCode === calibrationAssetCode &&
-        table.status === 'Active'
-      )
-    })
-
-    if (matchingTables.length === 0) {
-      return null
-    }
-
-    return [...matchingTables].sort((a, b) => {
-      const dateA = a.effectiveDate || ''
-      const dateB = b.effectiveDate || ''
-
-      return dateB.localeCompare(dateA)
-    })[0]
-  }, [assetCalibrationTables, calibrationAssetCode])
+  // Active calibration table for the linked tanker, with its dip chart rows
+  // fetched on demand (the calibration list itself stays lean).
+  const {
+    table: activeCalibrationTable,
+    loading: calibrationLoading,
+    error: calibrationError,
+  } = useActiveCalibrationTable({
+    assetCalibrationTables,
+    assetCode: calibrationAssetCode,
+  })
 
   const activeCalibrationTemplate = useMemo(() => {
     if (!activeCalibrationTable) {
@@ -1204,11 +1192,19 @@ function TankerTruckLayout({
           </div>
         </div>
 
-        {!activeCalibrationTable && (
+        {!activeCalibrationTable && !calibrationLoading && (
           <div className="info-box">
             Upload an active calibration table against the linked Tanker Trailer
             asset. Do not upload tanker calibration against the Prime Mover.
           </div>
+        )}
+
+        {calibrationLoading && (
+          <div className="info-box">Loading calibration data…</div>
+        )}
+
+        {calibrationError && (
+          <div className="error-box">{calibrationError}</div>
         )}
 
         {receiverMode && (

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { bulkSaveBargeSealMaster, getBargeSealMaster } from '../api/bargeSealApi'
+import { useActiveCalibrationTable } from '../hooks/useActiveCalibrationTable'
 import { usePermissions } from '../hooks/usePermissions'
 import { useBulkTemplates } from '../hooks/useBulkTemplates'
 import ImportDialog from '../components/common/ImportDialog'
@@ -92,13 +93,16 @@ function BargeSealMaster({
       .sort((a, b) => (a.assetCode || '').localeCompare(b.assetCode || ''))
   }, [assets])
 
-  const activeCalibrationTable = useMemo(() => {
-    if (!selectedAssetCode) return null
-    const tables = (assetCalibrationTables || [])
-      .filter((t) => t.assetCode === selectedAssetCode && String(t.status) === 'Active')
-      .sort((a, b) => String(b.effectiveDate || '').localeCompare(String(a.effectiveDate || '')))
-    return tables[0] || null
-  }, [assetCalibrationTables, selectedAssetCode])
+  // Active calibration table for the selected asset, with the rows that list
+  // the tank IDs it covers fetched on demand (the calibration list is lean).
+  const {
+    table: activeCalibrationTable,
+    loading: calibrationLoading,
+    error: calibrationError,
+  } = useActiveCalibrationTable({
+    assetCalibrationTables,
+    assetCode: selectedAssetCode,
+  })
 
   const calibrationTemplate = useMemo(() => {
     if (!activeCalibrationTable) return null
@@ -461,7 +465,13 @@ function BargeSealMaster({
         <div className="info-box">Select an asset to load the seal master.</div>
       ) : null}
 
-      {selectedAssetCode && tankIdsFromCalibration.length === 0 ? (
+      {calibrationLoading ? (
+        <div className="info-box">Loading calibration data…</div>
+      ) : null}
+
+      {calibrationError ? <div className="error-box">{calibrationError}</div> : null}
+
+      {selectedAssetCode && !calibrationLoading && tankIdsFromCalibration.length === 0 ? (
         <div className="section-title compact-section-title">
           <h3>Manual Tank List (only if calibration doesn’t provide tank IDs)</h3>
           <p>Add tank IDs like C1, C2, P1…</p>

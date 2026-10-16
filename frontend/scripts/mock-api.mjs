@@ -391,6 +391,34 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
+  /* -------------------------------------------- asset calibration tables */
+  // Mirrors the real API: the list is lean (no data rows) and the rows for a
+  // single table come from /asset-calibration-tables/{id}/rows or /{id}.
+  if (pathname === '/asset-calibration-tables' && method === 'GET') {
+    sendJson(
+      res,
+      200,
+      db.asset_calibration_tables.map(({ rows, ...table }) => ({
+        ...table,
+        row_count: (rows || []).length,
+      }))
+    )
+    return
+  }
+
+  const calibrationRowsMatch = pathname.match(/^\/asset-calibration-tables\/(\d+)\/rows$/)
+  if (calibrationRowsMatch && method === 'GET') {
+    const table = db.asset_calibration_tables.find(
+      (item) => String(item.id) === calibrationRowsMatch[1]
+    )
+    if (!table) {
+      sendJson(res, 404, { detail: 'Asset calibration table not found' })
+      return
+    }
+    sendJson(res, 200, { table_id: table.id, rows: table.rows || [] })
+    return
+  }
+
   /* --------------------------------------------------- generic CRUD */
   const route = findRoute(pathname)
   if (!route) {

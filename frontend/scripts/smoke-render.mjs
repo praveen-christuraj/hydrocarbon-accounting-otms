@@ -149,6 +149,44 @@ const auditLogs = Array.from({ length: 30 }, (_, i) => ({
   new_values: null,
 }))
 
+const assets = [
+  {
+    id: 1, asset_name: 'Agge Tank 1', asset_code: 'AGGE-TANK-1', asset_scope: 'Local',
+    asset_type_code: 'TANK', location_code: 'LOC001', status: 'Active', created_at: now, updated_at: now,
+  },
+  {
+    id: 2, asset_name: 'Barge Ada', asset_code: 'BRG-001', asset_scope: 'Local',
+    asset_type_code: 'BARGE', location_code: 'LOC001', status: 'Active', created_at: now, updated_at: now,
+  },
+]
+
+const calibrationTemplates = [
+  {
+    id: 1, template_name: 'Tank Strapping', asset_type_code: 'TANK', calibration_type: 'Tank Chart',
+    description: '', status: 'Active', created_at: now, updated_at: now,
+    columns: [
+      { id: 1, column_name: 'Ullage', data_type: 'Number', unit: 'mm', is_required: 'Yes', interpolation_role: 'Input X', sort_order: 1 },
+      { id: 2, column_name: 'Volume', data_type: 'Number', unit: 'bbl', is_required: 'Yes', interpolation_role: 'Output', sort_order: 2 },
+    ],
+  },
+]
+
+// The list endpoint is lean (no data rows); the rows live behind the
+// per-table endpoints, exactly like the real API.
+const calibrationTableRows = [
+  { id: 1, row_number: 1, row_data: { Ullage: 0, Volume: 0 } },
+  { id: 2, row_number: 2, row_data: { Ullage: 1000, Volume: 850 } },
+  { id: 3, row_number: 3, row_data: { Ullage: 2000, Volume: 1720 } },
+]
+const calibrationTables = [
+  {
+    id: 1, calibration_name: 'Agge Tank 1 Strapping 2026', asset_code: 'AGGE-TANK-1',
+    asset_name: 'Agge Tank 1', template_id: 1, template_name: 'Tank Strapping',
+    effective_date: '2026-01-01', remarks: '', status: 'Active',
+    created_at: now, updated_at: now,
+  },
+]
+
 const paged = (items, url) => {
   const u = new URL(url, 'http://x')
   const skip = Number(u.searchParams.get('skip') || 0)
@@ -184,6 +222,27 @@ globalThis.fetch = async (input, init = {}) => {
       return jsonResponse(created, 201)
     }
     return jsonResponse(paged(locations, path))
+  }
+  if (path.startsWith('/assets')) return jsonResponse(paged(assets, path))
+  if (path.startsWith('/calibration-templates')) return jsonResponse(calibrationTemplates)
+  if (path.startsWith('/asset-calibration-tables')) {
+    const rowsMatch = path.match(/^\/asset-calibration-tables\/(\d+)\/rows/)
+    if (rowsMatch) {
+      const table = calibrationTables.find((t) => String(t.id) === rowsMatch[1])
+      return table
+        ? jsonResponse({ table_id: table.id, rows: calibrationTableRows })
+        : jsonResponse({ detail: 'Asset calibration table not found' }, 404)
+    }
+    const idMatch = path.match(/^\/asset-calibration-tables\/(\d+)/)
+    if (idMatch) {
+      const table = calibrationTables.find((t) => String(t.id) === idMatch[1])
+      return table
+        ? jsonResponse({ ...table, rows: calibrationTableRows })
+        : jsonResponse({ detail: 'Asset calibration table not found' }, 404)
+    }
+    return jsonResponse(
+      calibrationTables.map(({ ...table }) => ({ ...table, row_count: calibrationTableRows.length }))
+    )
   }
   if (path.startsWith('/audit-logs')) return jsonResponse(paged(auditLogs, path))
   if (path.startsWith('/system-notifications/active')) return jsonResponse([])
@@ -418,6 +477,50 @@ try {
         click(qa('.import-dialog button').find((b) => text(b).trim() === 'Cancel'))
         await flush()
         check('import dialog closes on Cancel', !q('.import-dialog'))
+      }
+    }
+
+    if (path === '/barge-seal-master') {
+      // The tank list is derived from calibration, which is fetched per table.
+      const assetSelect = q('.main-content select')
+      check('barge seal master has an asset selector', Boolean(assetSelect))
+      if (assetSelect) {
+        setValue(assetSelect, 'AGGE-TANK-1')
+        await flush(250)
+        check(
+          'selecting an asset loads its calibration rows on demand',
+          apiCalls.includes('GET /asset-calibration-tables/1/rows'),
+          apiCalls.filter((c) => c.startsWith('GET /asset-calibration-tables')).join(', ')
+        )
+        const tankSource = qa('.main-content input[disabled]').map((i) => i.value).find((v) => /Calibration|Manual/.test(v))
+        check('barge seal master shows the tank source', Boolean(tankSource), tankSource || 'not found')
+      }
+    }
+
+    if (path === '/asset-calibrations') {
+      // Regression guard: the calibration list is lean (no data rows) and the
+      // rows are fetched per table when the user opens one for editing.
+      const listCalls = apiCalls.filter((c) => c === 'GET /asset-calibration-tables')
+      check('calibration list requested once', listCalls.length === 1, `${listCalls.length} calls`)
+      check('calibration list has no row payload calls before edit', !apiCalls.some((c) => /^GET \/asset-calibration-tables\/\d+/.test(c)))
+
+      const masterTable = qa('.main-content table').find((t) =>
+        text(t.querySelector('thead')).includes('Calibration Name')
+      )
+      const rows = masterTable ? Array.from(masterTable.querySelectorAll('tbody tr')) : []
+      check('calibration master lists the seeded table', rows.length >= 1 && text(rows[0]).includes('Agge Tank 1 Strapping 2026'), rows.length ? text(rows[0]).slice(0, 80) : 'no master table found')
+      check('calibration master shows the row count from the lean list', rows.length >= 1 && text(rows[0]).includes(String(calibrationTableRows.length)), rows.length ? text(rows[0]).slice(0, 80) : '')
+
+      const editButton = rows.flatMap((row) => Array.from(row.querySelectorAll('button'))).find((b) => text(b).trim() === 'Edit')
+      check('calibration row has an Edit button', Boolean(editButton))
+      if (editButton) {
+        const errorsBefore = errors.length
+        click(editButton)
+        await flush(200)
+        check('editing a table loads its rows on demand', apiCalls.includes('GET /asset-calibration-tables/1'), apiCalls.filter((c) => c.startsWith('GET /asset-calibration-tables')).join(', '))
+        check('editing a table does not error', errors.length === errorsBefore && !q('.toast.tone-error'), qa('.toast').map(text).join(' | '))
+        const nameInput = qa('.main-content input').find((i) => i.value === 'Agge Tank 1 Strapping 2026')
+        check('edit form is prefilled from the fetched table', Boolean(nameInput))
       }
     }
   }

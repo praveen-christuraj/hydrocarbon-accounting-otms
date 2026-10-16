@@ -54,6 +54,7 @@ from app.utils.db_migrations import (
     ensure_export_operations_tables,
     ensure_user_role_multi_role_constraint,
     ensure_operation_transaction_indexes,
+    ensure_asset_calibration_table_indexes,
     migrate_boolean_columns,
     seed_default_permissions,
     seed_admin_role,
@@ -79,6 +80,7 @@ async def lifespan(app: FastAPI):
     ensure_user_location_columns()
     ensure_export_operations_tables()
     ensure_operation_transaction_indexes()
+    ensure_asset_calibration_table_indexes()
     seed_default_permissions()
     seed_admin_role()
 

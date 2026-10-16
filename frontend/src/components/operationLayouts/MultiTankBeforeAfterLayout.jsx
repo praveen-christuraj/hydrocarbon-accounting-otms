@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { lookupTable11Factor } from '../../api/table11Api'
 import { getBargeSealMaster } from '../../api/bargeSealApi'
+import { useActiveCalibrationTable } from '../../hooks/useActiveCalibrationTable'
 
 const WAT60 = 999.012
 
@@ -203,13 +204,16 @@ export default function MultiTankBeforeAfterLayout({
     }
   }, [entry.values])
 
-  const activeCalibrationTable = useMemo(() => {
-    if (!selectedAsset) return null
-    const tables = (assetCalibrationTables || [])
-      .filter((t) => t.assetCode === selectedAsset.assetCode && t.status === 'Active')
-      .sort((a, b) => String(b.effectiveDate || '').localeCompare(String(a.effectiveDate || '')))
-    return tables[0] || null
-  }, [assetCalibrationTables, selectedAsset])
+  // Active calibration table for the selected tank, with its chart rows
+  // fetched on demand (the calibration list itself stays lean).
+  const {
+    table: activeCalibrationTable,
+    loading: calibrationLoading,
+    error: calibrationError,
+  } = useActiveCalibrationTable({
+    assetCalibrationTables,
+    assetCode: selectedAsset?.assetCode,
+  })
 
   const template = useMemo(() => {
     if (!activeCalibrationTable) return null
@@ -741,6 +745,22 @@ export default function MultiTankBeforeAfterLayout({
           Template setup required: Add a System field with field code{' '}
           <strong>{payloadFieldCode}</strong>
         </div>
+      </div>
+    )
+  }
+
+  if (calibrationLoading) {
+    return (
+      <div className="full-width-field">
+        <div className="info-box">Loading calibration data…</div>
+      </div>
+    )
+  }
+
+  if (calibrationError) {
+    return (
+      <div className="full-width-field">
+        <div className="error-box">{calibrationError}</div>
       </div>
     )
   }
