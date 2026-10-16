@@ -34,11 +34,16 @@ def get_locations(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     search: str | None = Query(None),
+    all_locations: bool = Query(False),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_from_token),
 ):
     require_user_permission(current_user, "View Location", db)
-    query = apply_location_filter(db.query(Location), Location, current_user, db).order_by(Location.id)
+    if all_locations:
+        query = db.query(Location)
+    else:
+        query = apply_location_filter(db.query(Location), Location, current_user, db)
+    query = query.order_by(Location.id)
     if search:
         query = query.filter(
             or_(

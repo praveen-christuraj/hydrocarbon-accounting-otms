@@ -29,9 +29,10 @@ const convertLocationToApi = (location) => {
 }
 
 export const getLocations = async (params = {}) => {
-  const { skip = 0, limit = 200, search = '' } = params
+  const { skip = 0, limit = 200, search = '', all_locations = false, allLocations = false } = params
   let endpoint = `/locations?skip=${skip}&limit=${limit}`
   if (search) endpoint += `&search=${encodeURIComponent(search)}`
+  if (all_locations || allLocations) endpoint += `&all_locations=true`
   const data = await apiGet(endpoint)
   return {
     items: (data.items || []).map(convertLocationFromApi),

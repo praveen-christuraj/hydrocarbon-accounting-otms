@@ -285,6 +285,10 @@ def ensure_operation_entry_locations_in_scope(
     current_user: User,
     db: Session,
 ):
+    # Origin and sender are the user's own side and must stay inside their
+    # assigned location scope. Destination and receiver may be any location
+    # registered in the system (cross-location movement), so they are not
+    # restricted to the user's scope.
     ensure_location_in_user_scope(
         current_user,
         db,
@@ -294,20 +298,8 @@ def ensure_operation_entry_locations_in_scope(
     ensure_location_in_user_scope(
         current_user,
         db,
-        clean_optional_text(transaction_payload.destination_location_code),
-        "Destination location",
-    )
-    ensure_location_in_user_scope(
-        current_user,
-        db,
         clean_optional_text(transaction_payload.sender_location_code),
         "Sender location",
-    )
-    ensure_location_in_user_scope(
-        current_user,
-        db,
-        clean_optional_text(transaction_payload.receiver_location_code),
-        "Receiver location",
     )
 
 

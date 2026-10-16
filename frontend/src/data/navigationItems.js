@@ -211,6 +211,26 @@ export const navigationItems = [
         path: '/tanker-transaction-report',
         permission: 'View Tanker Transaction Report',
       },
+      {
+        label: 'Barge Tracking Report',
+        path: '/barge-tracking',
+        permission: 'View Barge Tracking',
+      },
+      {
+        label: 'Tanker Tracking Report',
+        path: '/tanker-tracking',
+        permission: 'View Tanker Tracking',
+      },
+      {
+        label: 'Shuttle Tracking Report',
+        path: '/shuttle-tracking',
+        permission: 'View Shuttle Tracking',
+      },
+      {
+        label: 'FSO Tracking Report',
+        path: '/fso-tracking',
+        permission: 'View FSO Tracking',
+      },
     ],
   },
   {

@@ -56,7 +56,7 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
   const [voyageTab, setVoyageTab] = useState('OPEN')
   const [voyages, setVoyages] = useState([])
   const [voyageCounts, setVoyageCounts] = useState({ open: 0, closed: 0 })
-  const [voyagesLoading, setVoyagesLoading] = useState(false)
+  const [voyagesLoading, setVoyagesLoading] = useState(true)
   const [voyageError, setVoyageError] = useState('')
   const [voyagePage, setVoyagePage] = useState(1)
   const [selectedVoyage, setSelectedVoyage] = useState('')
