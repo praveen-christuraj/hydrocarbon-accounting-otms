@@ -45,6 +45,7 @@ from app.services.transaction_helpers import (
     transaction_has_pending_correction_request,
 )
 from app.config import APPROVED_TRANSACTION_STATUS
+from app.services.asset_family import FAMILY_BARGE, resolve_ticket_family
 from app.services.tracking_config import (
     MODULE_BARGE,
     configured_stage_for_transaction,
@@ -182,23 +183,19 @@ def is_barge_transaction(db: Session, transaction: OperationTransaction) -> bool
     True when the ticket is captured by Barge Tracking.
 
     When Barge Tracking is configured (Tracking Module Configuration) the
-    operation type decides - the ticket must be an Active barge mapping and
-    be for a barge asset. Without configuration the legacy rule applies: the
-    ticket belongs to a barge asset.
+    operation type decides: an Active barge mapping captures the ticket, an
+    unconfigured operation type is not captured (the same rule Tanker Tracking
+    applies). Without configuration the legacy rule applies and the ticket's
+    asset family is resolved from the configuration, the asset type / asset
+    masters, the operation type and the entry layout - an installation whose
+    barge asset type is a custom code such as 'YADE' is recognised instead of
+    requiring the literal word "barge".
     """
-    asset_type_code = str(transaction.primary_asset_type_code or "").strip().lower()
-
-    if asset_type_code:
-        is_barge_asset = "barge" in asset_type_code
-    else:
-        asset = get_asset_by_code(transaction.primary_asset_code, db)
-        asset_master_type = str(getattr(asset, "asset_type_code", "") or "").strip().lower()
-        is_barge_asset = "barge" in asset_master_type
-
     captured = is_ticket_captured(db, MODULE_BARGE, transaction)
-    if captured is None:
-        return is_barge_asset
-    return captured and is_barge_asset
+    if captured is not None:
+        return bool(captured)
+
+    return resolve_ticket_family(db, transaction) == FAMILY_BARGE
 
 
 def get_approved_barge_transactions_for_convoy(

@@ -2,7 +2,6 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-import sqlalchemy
 from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
 
@@ -25,12 +24,14 @@ from app.schemas import (
 )
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
-    apply_location_filter,
+    TRANSACTION_PARTY_LOCATION_FIELDS,
+    apply_transaction_party_scope_filter,
     ensure_location_in_user_scope,
+    ensure_transaction_in_user_party_scope,
+    ensure_user_is_party_to_location_codes,
     get_user_location_codes,
     require_user_permission,
     require_any_user_permission,
-    user_has_location_access,
     user_is_party_to_transaction,
 )
 from app.services.audit_service import create_audit_log
@@ -90,39 +91,18 @@ def ensure_barge_transaction_location_scope(transaction: OperationTransaction, c
     location-scoped user may view / act on the ticket when they are a party
     to the movement: at least one end (origin, destination, sender or
     receiver location) is inside their assigned scope. Unrestricted users
-    (admin / all-locations) are never blocked.
+    (admin / all-locations) are never blocked, and tickets without any
+    populated location stay visible (legacy rows).
 
     Requiring every end to be in scope hid approved cross-location barge
     tickets from the receiving terminal, which is exactly the side that must
     acknowledge the receipt and unload the barge.
+
+    The rule itself lives in app/dependencies/permissions.py (single source of
+    truth for every tracking module - see PERMISSION_CRITERIA_MODEL.md).
     """
-    location_codes = [
-        clean_optional_text(getattr(transaction, field_name, None))
-        for field_name in (
-            "origin_location_code",
-            "destination_location_code",
-            "sender_location_code",
-            "receiver_location_code",
-        )
-    ]
-
-    if all(code is None for code in location_codes):
-        # No location context at all - nothing to scope against (same as the
-        # previous behaviour, which only checked non-empty locations).
-        return
-
-    for location_code in location_codes:
-        if location_code is not None and user_has_location_access(
-            current_user, db, location_code
-        ):
-            return
-
-    raise HTTPException(
-        status_code=403,
-        detail=(
-            "This barge ticket does not involve any location in your assigned "
-            "scope (origin, destination, sender or receiver)."
-        ),
+    ensure_transaction_in_user_party_scope(
+        current_user, db, transaction, "barge ticket"
     )
 
 
@@ -138,6 +118,11 @@ def ensure_trip_location_scope(trip: Trip, current_user: User, db: Session):
     destination, sender, receiver) of a linked ticket inside their assigned
     scope. Legs that call at terminals outside the user's scope do not block
     access - a barge voyage is cross-location by definition.
+
+    The party decision itself comes from the shared helpers in
+    app/dependencies/permissions.py. A trip that has no location context at all
+    (no event and no ticket location) stays closed to location-scoped users,
+    which is the historical behaviour of this endpoint.
     """
     if get_user_location_codes(current_user, db) is None:
         return
@@ -162,45 +147,27 @@ def ensure_trip_location_scope(trip: Trip, current_user: User, db: Session):
             ).all()
         })
 
-    has_location_context = False
-    has_any_location_in_scope = False
-
-    for event in events:
-        location_code = clean_optional_text(event.location_code)
-        if location_code is None:
-            continue
-        has_location_context = True
-        if user_has_location_access(current_user, db, location_code):
-            has_any_location_in_scope = True
-
+    party_location_codes = [
+        clean_optional_text(event.location_code) for event in events
+    ]
     for transaction in transactions.values():
-        for field_name in (
-            "origin_location_code",
-            "destination_location_code",
-            "sender_location_code",
-            "receiver_location_code",
-        ):
-            location_code = clean_optional_text(getattr(transaction, field_name, None))
-            if location_code is None:
-                continue
-            has_location_context = True
-            if user_has_location_access(current_user, db, location_code):
-                has_any_location_in_scope = True
+        party_location_codes.extend(
+            getattr(transaction, field_name, None)
+            for field_name in TRANSACTION_PARTY_LOCATION_FIELDS
+        )
 
-    if not has_location_context:
+    if all(
+        clean_optional_text(location_code) is None
+        for location_code in party_location_codes
+    ):
         raise HTTPException(
             status_code=403,
             detail="This trip has no location context in your assigned scope",
         )
 
-    if not has_any_location_in_scope:
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                "This barge movement does not call at any location in your "
-                "assigned scope."
-            ),
-        )
+    ensure_user_is_party_to_location_codes(
+        current_user, db, party_location_codes, "barge movement"
+    )
 
 
 @router.get("/convoy-tracker", response_model=ConvoyTrackerResponse)
@@ -345,24 +312,11 @@ def get_barge_voyages(
     # terminal, the receiver tracks the incoming barge from the discharge
     # terminal. Filtering on the origin alone hid approved barge tickets
     # from the receiving side until their own unload ticket was approved.
-    allowed_codes = get_user_location_codes(current_user, db)
-    if allowed_codes is not None:
-        if not allowed_codes:
-            base_query = base_query.filter(sqlalchemy.literal(False))
-        else:
-            normalized_codes = [
-                str(code).strip().lower() for code in allowed_codes
-            ]
-
-            def _scoped_column(column):
-                return func.lower(func.trim(column)).in_(normalized_codes)
-
-            base_query = base_query.filter(
-                _scoped_column(OperationTransaction.origin_location_code)
-                | _scoped_column(OperationTransaction.destination_location_code)
-                | _scoped_column(OperationTransaction.sender_location_code)
-                | _scoped_column(OperationTransaction.receiver_location_code)
-            )
+    # The query filter is the shared party filter (single source of truth -
+    # see PERMISSION_CRITERIA_MODEL.md).
+    base_query = apply_transaction_party_scope_filter(
+        base_query, OperationTransaction, current_user, db
+    )
     transactions = base_query.order_by(
         OperationTransaction.operation_date.asc(),
         OperationTransaction.id.asc(),
@@ -472,7 +426,20 @@ def create_trip_event(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Edit Barge Tracking", db)
+    # Acknowledge / revoke receipt is the receiving side of a cross-location
+    # movement: it is allowed with the general barge tracking edit right or
+    # with the scoped "Acknowledge Shipment Receipt" capability
+    # (PERMISSION_CRITERIA_MODEL.md, section 7.1). Every other timeline event
+    # (manual fixes, backfills) stays restricted to Edit Barge Tracking.
+    event_type_code = str(clean_optional_text(request.event_type) or "").upper()
+    if event_type_code in ("RECEIVED", "RECEIPT_REVOKED"):
+        require_any_user_permission(
+            current_user,
+            ["Edit Barge Tracking", "Acknowledge Shipment Receipt"],
+            db,
+        )
+    else:
+        require_user_permission(current_user, "Edit Barge Tracking", db)
 
     convoy = clean_optional_text(request.convoy_number)
     if convoy is None:

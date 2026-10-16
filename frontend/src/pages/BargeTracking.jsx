@@ -113,9 +113,32 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
   const navigate = useNavigate()
   const location = useLocation()
 
-  const canManage = (loggedInUser?.permissions || []).some(
-    (p) => p.permissionName === 'Create Operation Entry'
+  const permissionNames = useMemo(
+    () => new Set((loggedInUser?.permissions || []).map((p) => p.permissionName)),
+    [loggedInUser]
   )
+
+  const canManage = permissionNames.has('Create Operation Entry')
+
+  // Cross-location receiving side (PERMISSION_CRITERIA_MODEL.md, section 7.1):
+  // a receiving terminal may hold the scoped shipment-receipt capabilities
+  // instead of the general entry / barge tracking edit rights.
+  const canAcknowledgeReceipt =
+    canManage ||
+    permissionNames.has('Acknowledge Shipment Receipt') ||
+    permissionNames.has('Edit Barge Tracking')
+  const canCreateReceivingTicket =
+    canManage || permissionNames.has('Create Receiving Ticket')
+
+  // Dedicated barge-movement permissions. A role may hold Close/Reopen Barge
+  // Movement or Edit Barge Tracking without the general entry right, so the
+  // screen must not be stricter than the API that guards these actions.
+  const canEditBargeTracking =
+    canManage || permissionNames.has('Edit Barge Tracking')
+  const mayCloseBargeMovement =
+    canManage || permissionNames.has('Close Barge Movement')
+  const mayReopenBargeMovement =
+    canManage || permissionNames.has('Reopen Barge Movement')
 
   const tripStatus = String(timeline?.trip?.status || 'OPEN').toUpperCase()
   const isTripClosed = tripStatus === 'CLOSED'
@@ -409,7 +432,7 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
   }
 
   const acknowledgeReceipt = async (assetCode) => {
-    if (!canManage) {
+    if (!canAcknowledgeReceipt) {
       notifyError('You do not have permission to acknowledge receipt')
       return
     }
@@ -470,7 +493,7 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
   }
 
   const revokeReceipt = async (assetCode) => {
-    if (!canManage) {
+    if (!canAcknowledgeReceipt) {
       notifyError('You do not have permission to revoke receipt')
       return
     }
@@ -520,7 +543,7 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
   }
 
   const handleCloseBargeMovement = async () => {
-    if (!canManage) {
+    if (!mayCloseBargeMovement) {
       notifyError('You do not have permission to close barge movement')
       return
     }
@@ -560,7 +583,7 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
   }
 
   const handleReopenBargeMovement = async () => {
-    if (!canManage) {
+    if (!mayReopenBargeMovement) {
       notifyError('You do not have permission to reopen barge movement')
       return
     }
@@ -1120,10 +1143,16 @@ return (
         comparison.
       </div>
 
-      {!canManage && (
+      {!canManage &&
+        !canEditBargeTracking &&
+        !mayCloseBargeMovement &&
+        !mayReopenBargeMovement &&
+        !canAcknowledgeReceipt &&
+        !canCreateReceivingTicket && (
         <div className="info-box no-print">
-          You have view-only access. Assign <strong>Create Operation Entry</strong> to
-          acknowledge/revoke receipts, close/reopen barge movements, or use Fix Timeline.
+          You have view-only access. Assign <strong>Create Operation Entry</strong> (or the
+          shipment-receipt permissions) to acknowledge/revoke receipts or create receiving
+          tickets, and the barge movement permissions to close/reopen movements.
         </div>
       )}
 
@@ -1297,10 +1326,10 @@ return (
               <div className="form-actions" style={{ marginTop: 10 }}>
                 <button
                   type="button"
-                  disabled={loading || !canManage || !canCloseBargeMovement()}
+                  disabled={loading || !mayCloseBargeMovement || !canCloseBargeMovement()}
                   onClick={handleCloseBargeMovement}
                   title={
-                    !canManage
+                    !mayCloseBargeMovement
                       ? 'You do not have permission to close barge movement'
                       : !hasApprovedBargeComparison()
                       ? `Pending comparison for: ${getPendingComparisonAssetCodes().join(
@@ -1314,9 +1343,13 @@ return (
 
                 <button
                   type="button"
-                  disabled={loading || !canManage || !isTripClosed}
+                  disabled={loading || !mayReopenBargeMovement || !isTripClosed}
                   onClick={handleReopenBargeMovement}
-                  title={!canManage ? 'You do not have permission to reopen barge movement' : ''}
+                  title={
+                    !mayReopenBargeMovement
+                      ? 'You do not have permission to reopen barge movement'
+                      : ''
+                  }
                 >
                   Reopen Barge Movement
                 </button>
@@ -1375,9 +1408,9 @@ return (
                   <div className="form-actions" style={{ marginTop: 8 }}>
                     <button
                       type="button"
-                      disabled={loading || !canManage || isTripClosed || acked}
+                      disabled={loading || !canAcknowledgeReceipt || isTripClosed || acked}
                       onClick={() => acknowledgeReceipt(assetCode)}
-                      title={!canManage ? 'You do not have permission to acknowledge receipt' : ''}
+                      title={!canAcknowledgeReceipt ? 'You do not have permission to acknowledge receipt' : ''}
                     >
                       Acknowledge Receipt
                     </button>
@@ -1385,9 +1418,9 @@ return (
                     {acked && (
                       <button
                         type="button"
-                        disabled={loading || !canManage || isTripClosed}
+                        disabled={loading || !canAcknowledgeReceipt || isTripClosed}
                         onClick={() => revokeReceipt(assetCode)}
-                        title={!canManage ? 'You do not have permission to revoke receipt' : ''}
+                        title={!canAcknowledgeReceipt ? 'You do not have permission to revoke receipt' : ''}
                       >
                         Revoke Receipt
                       </button>
@@ -1395,9 +1428,9 @@ return (
 
                     <button
                       type="button"
-                      disabled={loading || !canManage || isTripClosed || !acked || !pendingSender}
+                      disabled={loading || !canCreateReceivingTicket || isTripClosed || !acked || !pendingSender}
                       title={
-                        !canManage
+                        !canCreateReceivingTicket
                           ? 'You do not have permission to create a receiving ticket'
                           : !acked
                             ? 'Acknowledge receipt of this barge first'
@@ -1418,7 +1451,7 @@ return (
                       Create Receiving Ticket
                     </button>
 
-                    {canManage && (
+                    {canEditBargeTracking && (
                       <button
                         type="button"
                         disabled={loading || isTripClosed}

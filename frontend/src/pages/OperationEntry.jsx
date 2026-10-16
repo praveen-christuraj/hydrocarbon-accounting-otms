@@ -646,7 +646,14 @@ function OperationEntry({
 
   const canCreateOperationEntry = useMemo(() => {
     if (isAdminBootstrap) return true
-    return hasPermission('Create Operation Entry')
+    // Create Receiving Ticket (PERMISSION_CRITERIA_MODEL.md, section 7.1) lets
+    // a receiving terminal save the receiving ticket of an approved sender
+    // ticket without the general Create Operation Entry right. The backend
+    // still enforces which of the two the request actually needs.
+    return (
+      hasPermission('Create Operation Entry') ||
+      hasPermission('Create Receiving Ticket')
+    )
   }, [loggedInUser])
 
   const canCancelOperationTransaction = useMemo(() => {

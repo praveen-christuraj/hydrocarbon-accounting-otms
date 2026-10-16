@@ -16,6 +16,7 @@ from app.schemas import (
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
     apply_location_filter,
+    apply_transaction_party_scope_filter,
     ensure_location_in_user_scope,
     require_user_permission,
 )
@@ -551,7 +552,8 @@ def get_flowmeter_records(
         ensure_location_in_user_scope(current_user, db, location_code, "Location")
         q = q.filter(OperationTransaction.origin_location_code.ilike(location_code.strip()))
     else:
-        q = apply_location_filter(q, OperationTransaction, current_user, db, column_name="origin_location_code")
+        # Cross-location record: party rule (PERMISSION_CRITERIA_MODEL.md).
+        q = apply_transaction_party_scope_filter(q, OperationTransaction, current_user, db)
     if asset_code:
         q = q.filter(OperationTransaction.primary_asset_code.ilike(asset_code.strip()))
     if date_from:

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { getPermissionCatalog } from '../api/permissionApi'
+import { getAccessDiagnostic, getPermissionCatalog } from '../api/permissionApi'
 import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import PageHeader from '../components/common/PageHeader'
@@ -48,6 +48,11 @@ function AccessSummary({
   const [catalog, setCatalog] = useState(null)
   const [catalogError, setCatalogError] = useState('')
   const [detailUser, setDetailUser] = useState(null)
+  const [diagnosticTicketId, setDiagnosticTicketId] = useState('')
+  const [diagnosticActionCode, setDiagnosticActionCode] = useState('')
+  const [diagnostic, setDiagnostic] = useState(null)
+  const [diagnosticError, setDiagnosticError] = useState('')
+  const [diagnosticLoading, setDiagnosticLoading] = useState(false)
   const [userPage, setUserPage] = useState(1)
   const [rolePage, setRolePage] = useState(1)
   const pageSize = usePageSize()
@@ -168,7 +173,37 @@ function AccessSummary({
 
   const openDetail = (user) => {
     setDetailUser(user)
+    setDiagnostic(null)
+    setDiagnosticError('')
+    setDiagnosticTicketId('')
+    setDiagnosticActionCode('')
     logUiAction(MODULE, 'View User Access', { username: user.username })
+  }
+
+  // Read-only "why can this user see this?" composition of the four criteria
+  // (PERMISSION_CRITERIA_MODEL.md): permission, location scope, operation
+  // availability and workflow policy for one ticket.
+  const runAccessDiagnostic = async () => {
+    if (!detailUser) return
+    setDiagnosticLoading(true)
+    setDiagnosticError('')
+    try {
+      const data = await getAccessDiagnostic({
+        userId: detailUser.id,
+        transactionId: String(diagnosticTicketId || '').trim() || null,
+        actionCode: diagnosticActionCode || null,
+      })
+      setDiagnostic(data)
+      logUiAction(MODULE, 'Access Diagnostic', {
+        username: detailUser.username,
+        transactionId: String(diagnosticTicketId || '').trim() || null,
+      })
+    } catch (error) {
+      setDiagnostic(null)
+      setDiagnosticError(error.message || 'Unable to evaluate this access decision.')
+    } finally {
+      setDiagnosticLoading(false)
+    }
   }
 
   return (
@@ -356,7 +391,111 @@ function AccessSummary({
           </button>
         }
       >
-        {detailUser && <PermissionMatrix groups={groups} selected={detailUser.effectiveNames} />}
+        {detailUser && (
+          <>
+            <PermissionMatrix groups={groups} selected={detailUser.effectiveNames} />
+
+            <div className="section-title" style={{ marginTop: 24 }}>
+              <h3>Why can this user see this?</h3>
+              <p>
+                Read-only evaluation of the four access criteria - permission, location scope,
+                operation availability and workflow policy - for one operation ticket.
+              </p>
+            </div>
+
+            <div className="form-grid">
+              <div className="form-field">
+                <label htmlFor="access-diagnostic-ticket">Operation Ticket Id</label>
+                <input
+                  id="access-diagnostic-ticket"
+                  type="text"
+                  inputMode="numeric"
+                  value={diagnosticTicketId}
+                  placeholder="Optional - e.g. 1042"
+                  onChange={(event) => setDiagnosticTicketId(event.target.value)}
+                />
+              </div>
+              <div className="form-field">
+                <label htmlFor="access-diagnostic-action">Workflow Action</label>
+                <select
+                  id="access-diagnostic-action"
+                  value={diagnosticActionCode}
+                  onChange={(event) => setDiagnosticActionCode(event.target.value)}
+                >
+                  <option value="">Not evaluated</option>
+                  {(diagnostic?.workflow_action_codes || [
+                    'CREATE_ENTRY', 'EDIT_ENTRY', 'SUBMIT', 'APPROVE', 'REJECT', 'CANCEL', 'REVOKE_APPROVAL',
+                  ]).map((code) => (
+                    <option key={code} value={code}>{code}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-field">
+                <button type="button" onClick={runAccessDiagnostic} disabled={diagnosticLoading}>
+                  {diagnosticLoading ? 'Evaluating…' : 'Evaluate'}
+                </button>
+              </div>
+            </div>
+
+            <AlertMessage tone="error" message={diagnosticError} onDismiss={() => setDiagnosticError('')} />
+
+            {diagnostic && (
+              <div className="info-box">
+                <p>
+                  <strong>Location access:</strong>{' '}
+                  {diagnostic.criteria.location_scope.unrestricted
+                    ? 'All locations'
+                    : (diagnostic.criteria.location_scope.assigned_location_codes || []).join(', ') || 'No assigned location'}
+                </p>
+                {diagnostic.record && (
+                  <>
+                    <p>
+                      <strong>Ticket:</strong> {diagnostic.record.ticket_number || diagnostic.record.operation_number}{' '}
+                      · {diagnostic.record.status}
+                    </p>
+                    <p>
+                      <strong>Visible to this user:</strong>{' '}
+                      <span className={`status-badge ${diagnostic.record.visible ? 'active' : 'blocked'}`}>
+                        {diagnostic.record.visible ? 'Yes' : 'No'}
+                      </span>
+                    </p>
+                    <p>{diagnostic.record.reason}</p>
+                    {diagnostic.record.party_locations.length > 0 && (
+                      <div className="permission-list">
+                        {diagnostic.record.party_locations.map((location) => (
+                          <span
+                            key={location.field}
+                            className={`permission-badge ${location.in_scope ? '' : 'muted-table-text'}`}
+                          >
+                            {location.field.replace('_location_code', '')}: {location.location_code}{' '}
+                            {location.in_scope ? '(in scope)' : '(outside scope)'}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {diagnostic.criteria.operation_availability && (
+                      <p>
+                        <strong>Operation availability at {diagnostic.criteria.operation_availability.location_code}:</strong>{' '}
+                        {diagnostic.criteria.operation_availability.available ? 'Enabled' : 'Not enabled'}
+                      </p>
+                    )}
+                    {diagnostic.criteria.workflow_policy && (
+                      <p>
+                        <strong>Workflow policy ({diagnostic.criteria.workflow_policy.action_code}):</strong>{' '}
+                        {diagnostic.criteria.workflow_policy.allowed === true
+                          ? 'Allowed'
+                          : diagnostic.criteria.workflow_policy.allowed === false
+                            ? 'Denied'
+                            : 'Not restricted'}{' '}
+                        - {diagnostic.criteria.workflow_policy.reason}
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+          </>
+        )}
       </Modal>
     </div>
   )

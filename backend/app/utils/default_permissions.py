@@ -325,6 +325,28 @@ PERMISSION_CATALOG = [
                     _perm("Reopen FSO Voyage", OTHER, "Can reopen closed FSO voyages"),
                 ],
             },
+            {
+                # Cross-location receiving side of a movement (see
+                # PERMISSION_CRITERIA_MODEL.md, section 7). A receiving
+                # terminal can be granted "acknowledge the movement and create
+                # the receiving ticket" without the general entry / tracking
+                # edit rights of the sending terminal. Every endpoint that
+                # enforces these permissions also still accepts the general
+                # permission, so existing roles keep working unchanged.
+                "module_name": "Shipment Receipt",
+                "permissions": [
+                    _perm(
+                        "Acknowledge Shipment Receipt",
+                        OTHER,
+                        "Can acknowledge or revoke the receipt of a barge / tanker movement addressed to the user's location",
+                    ),
+                    _perm(
+                        "Create Receiving Ticket",
+                        CREATE,
+                        "Can create and edit the receiving ticket of an approved sender ticket (barge / tanker movement)",
+                    ),
+                ],
+            },
         ],
     },
     {

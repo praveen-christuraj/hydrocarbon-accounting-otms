@@ -22,6 +22,7 @@ from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
     apply_location_filter,
     require_user_permission,
+    require_any_user_permission,
     evaluate_operation_workflow_policy,
     ensure_location_in_user_scope,
     ensure_operation_type_available_for_location,
@@ -49,6 +50,7 @@ from app.services.tracking_links import (
     validate_receiver_operation_type,
     describe_linked_sender,
 )
+from app.services.asset_family import operation_type_is_barge
 from app.services.tracking_config import MODULE_BARGE
 from app.utils.pagination import clamp_limit
 
@@ -393,9 +395,12 @@ def get_operation_entries(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(
+    # A receiving terminal may be granted only the scoped shipment-receipt
+    # capabilities (PERMISSION_CRITERIA_MODEL.md, section 7.1): it must still
+    # be able to list its own Draft / Rejected receiving tickets.
+    require_any_user_permission(
         current_user,
-        "View Operation Transaction",
+        ["View Operation Transaction", "Create Receiving Ticket"],
         db,
     )
 
@@ -481,11 +486,21 @@ def create_operation_entry(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(
-        current_user,
-        "Create Operation Entry",
-        db,
-    )
+    if entry.linked_ticket_id is not None:
+        # Receiving ticket of an approved sender ticket: the cross-location
+        # "Create Receiving Ticket" capability is enough (the link itself and
+        # the receiving location are validated below).
+        require_any_user_permission(
+            current_user,
+            ["Create Operation Entry", "Create Receiving Ticket"],
+            db,
+        )
+    else:
+        require_user_permission(
+            current_user,
+            "Create Operation Entry",
+            db,
+        )
     if str(entry.transaction.status or "Draft").strip().casefold() != "draft":
         raise HTTPException(status_code=400, detail="New operation transactions must start in Draft status")
 
@@ -528,7 +543,12 @@ def create_operation_entry(
         raise HTTPException(status_code=403, detail=f"Workflow policy denied action: {policy_reason}")
 
     trip = None
-    if str(operation_type.applicable_asset_type_code or "").strip().upper() == "BARGE":
+    # Barge movements cannot be entered on a CLOSED trip. The barge module is
+    # resolved from the Tracking Module Configuration, the asset type / asset
+    # masters, the operation type and the entry layout - not from the literal
+    # text "barge" in the asset type code (custom barge asset types such as
+    # 'YADE' must be recognised too).
+    if operation_type_is_barge(db, operation_type):
         trip = get_trip_by_convoy_or_none(db, entry.transaction.convoy_number)
         ensure_trip_not_closed(trip)
 
@@ -638,11 +658,25 @@ def update_operation_entry(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(
-        current_user,
-        "Edit Operation Entry",
-        db,
+    # A receiver editing its own Draft receiving ticket needs the general
+    # entry edit right or the scoped receiving capability. The link is stored
+    # on the ticket (the edit form does not resend linked_ticket_id), so the
+    # stored link is checked as well.
+    linked_sender_id = entry.linked_ticket_id or get_linked_sender_transaction_id(
+        db, transaction_id
     )
+    if linked_sender_id is not None:
+        require_any_user_permission(
+            current_user,
+            ["Edit Operation Entry", "Create Receiving Ticket"],
+            db,
+        )
+    else:
+        require_user_permission(
+            current_user,
+            "Edit Operation Entry",
+            db,
+        )
 
     existing_transaction = db.query(OperationTransaction).filter(
         OperationTransaction.id == transaction_id
@@ -923,9 +957,9 @@ def get_linked_sender_ticket(
     tracking). The receiver sees the route and configured receiving operation
     types, not the sender's full transaction.
     """
-    require_user_permission(
+    require_any_user_permission(
         current_user,
-        "Create Operation Entry",
+        ["Create Operation Entry", "Edit Operation Entry", "Create Receiving Ticket"],
         db,
     )
     return describe_linked_sender(db, transaction_id, current_user)

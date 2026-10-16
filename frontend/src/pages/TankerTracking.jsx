@@ -134,6 +134,18 @@ function TankerTracking({
     if (isAdminBootstrap) return true
     return hasPermission('Create Operation Entry')
   }, [loggedInUser])
+
+  // Cross-location receiving side (PERMISSION_CRITERIA_MODEL.md, section 7.1):
+  // the receiving terminal may hold the scoped shipment-receipt capabilities
+  // instead of the general tanker tracking edit / entry rights.
+  const canAcknowledgeReceipt =
+    isAdminBootstrap ||
+    canManage ||
+    hasPermission('Acknowledge Shipment Receipt') ||
+    hasPermission('Edit Tanker Tracking')
+
+  const canCreateReceivingTicket =
+    isAdminBootstrap || canManage || hasPermission('Create Receiving Ticket')
   const [filters, setFilters] = useState(defaultFilters)
   const [report, setReport] = useState({
     rows: [],
@@ -1281,8 +1293,8 @@ function TankerTracking({
                           <button
                             type="button"
                             onClick={() => openAcknowledgePanel(row)}
-                            disabled={loading || !canManage}
-                            title={!canManage ? 'You do not have permission to acknowledge tanker receipt' : ''}
+                            disabled={loading || !canAcknowledgeReceipt}
+                            title={!canAcknowledgeReceipt ? 'You do not have permission to acknowledge tanker receipt' : ''}
                           >
                             Acknowledge
                           </button>
@@ -1293,8 +1305,8 @@ function TankerTracking({
                           <button
                             type="button"
                             onClick={() => handleCreateReceiverEntry(row)}
-                            disabled={loading || !canManage}
-                            title={!canManage ? 'You do not have permission to create receiver entry' : ''}
+                            disabled={loading || !canCreateReceivingTicket}
+                            title={!canCreateReceivingTicket ? 'You do not have permission to create receiver entry' : ''}
                           >
                             Create Receiver Entry
                           </button>
@@ -1302,8 +1314,8 @@ function TankerTracking({
                           <button
                             type="button"
                             onClick={() => openRevokePanel(row)}
-                            disabled={loading || !canManage}
-                            title={!canManage ? 'You do not have permission to revoke acknowledgement' : ''}
+                            disabled={loading || !canAcknowledgeReceipt}
+                            title={!canAcknowledgeReceipt ? 'You do not have permission to revoke acknowledgement' : ''}
                           >
                             Revoke Ack
                           </button>

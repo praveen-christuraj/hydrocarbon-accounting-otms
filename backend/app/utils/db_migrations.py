@@ -404,16 +404,24 @@ def ensure_flowmeter_stream_columns():
 
 def ensure_barge_event_type_template_field():
     from app.database import engine as _engine
+    from app.services.asset_family import (
+        operation_type_is_barge,
+        resolve_template_family,
+    )
+
     db = Session(bind=_engine)
     try:
+        # Barge operation types are resolved by asset family (Tracking Module
+        # Configuration -> asset type / asset masters -> operation type ->
+        # entry layout), not by the literal comparison
+        # applicable_asset_type_code == "BARGE": installations whose barge asset
+        # type is a custom code (e.g. 'YADE') must get the stage field too.
         barge_op_codes = [
             x.operation_type_code
             for x in db.query(OperationType)
-            .filter(
-                OperationType.applicable_asset_type_code == "BARGE",
-                OperationType.status == "Active",
-            )
+            .filter(OperationType.status == "Active")
             .all()
+            if operation_type_is_barge(db, x)
         ]
 
         if not barge_op_codes:
@@ -422,12 +430,24 @@ def ensure_barge_event_type_template_field():
         barge_templates = (
             db.query(OperationTemplate)
             .filter(
-                OperationTemplate.entry_layout_type == "Multi-Tank Before/After",
                 OperationTemplate.status == "Active",
                 OperationTemplate.operation_type_code.in_(barge_op_codes),
             )
             .all()
         )
+
+        # Only the barge entry layouts (Multi-Tank Before/After) carry the
+        # stage field; keep the previous filter as a fallback when a template
+        # has no layout resolved at all.
+        barge_templates = [
+            t
+            for t in barge_templates
+            if resolve_template_family(db, t.id) == "BARGE"
+            or str(t.entry_layout_type or "").strip() == "Multi-Tank Before/After"
+        ]
+
+        if not barge_templates:
+            return
 
         for t in barge_templates:
             exists = (

@@ -26,6 +26,10 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models import OperationType, TrackingModuleConfig
+from app.services.asset_family import (
+    FAMILY_LABELS,
+    asset_type_conflicting_module,
+)
 
 
 MODULE_BARGE = "BARGE"
@@ -222,13 +226,23 @@ def validate_config_payload(
                 status_code=400,
                 detail=f"Stage {stage} can only be configured as {allowed}",
             )
-        if "barge" not in str(operation_type.applicable_asset_type_code or "").strip().lower():
+        # Barge Tracking captures the operation types the admin maps to it. The
+        # old rule required the literal text "barge" in the asset type code,
+        # which refused perfectly valid installations whose barge asset type is
+        # a custom code (reported case: operation type BARGE_MOVE on asset type
+        # 'YADE'). Only an operation type that clearly belongs to another
+        # tracking module (a tanker movement, for example) is refused here; the
+        # admin's mapping is the source of truth for custom / unknown codes.
+        conflicting_module = asset_type_conflicting_module(db, operation_type, MODULE_BARGE)
+        if conflicting_module is not None:
             raise HTTPException(
                 status_code=400,
                 detail=(
                     f"Operation type {operation_type.operation_type_code} applies to asset type "
-                    f"'{operation_type.applicable_asset_type_code}'. Barge Tracking only captures "
-                    "operation types for barge assets."
+                    f"'{operation_type.applicable_asset_type_code}', which is a "
+                    f"{FAMILY_LABELS.get(conflicting_module, conflicting_module.lower())} asset. "
+                    f"{TRACKING_MODULES.get(conflicting_module, conflicting_module)} captures those "
+                    f"operation types - map this operation type there instead of in Barge Tracking."
                 ),
             )
     else:
