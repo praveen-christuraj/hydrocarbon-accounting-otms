@@ -1,5 +1,13 @@
 import { apiGet, apiPost, apiPut } from './apiClient'
 
+// Flags are JSON booleans over the API (the backend also accepts legacy
+// 'Yes'/'No' strings). Parse defensively so 'No' is never treated as truthy.
+const asBool = (value, fallback = false) => {
+  if (typeof value === 'boolean') return value
+  if (value === null || value === undefined || value === '') return fallback
+  return ['yes', 'y', 'true', '1'].includes(String(value).trim().toLowerCase())
+}
+
 const fromApi = (row) => ({
   id: row.id,
   notificationNumber: row.notification_number || '',
@@ -14,9 +22,9 @@ const fromApi = (row) => ({
   targetLocationCodes: row.target_location_codes || [],
   displayFrom: row.display_from || '',
   displayUntil: row.display_until || '',
-  requiresAcknowledgement: Boolean(row.requires_acknowledgement),
-  popupEnabled: Boolean(row.popup_enabled),
-  bannerEnabled: Boolean(row.banner_enabled),
+  requiresAcknowledgement: asBool(row.requires_acknowledgement),
+  popupEnabled: asBool(row.popup_enabled),
+  bannerEnabled: asBool(row.banner_enabled, true),
   autoDismissSeconds: row.auto_dismiss_seconds || '',
   status: row.status || '',
   createdByUserId: row.created_by_user_id || null,
@@ -48,9 +56,9 @@ const toApi = (row) => ({
   target_location_codes: row.targetLocationCodes || [],
   display_from: row.displayFrom || null,
   display_until: row.displayUntil || null,
-  requires_acknowledgement: Boolean(row.requiresAcknowledgement),
-  popup_enabled: Boolean(row.popupEnabled),
-  banner_enabled: Boolean(row.bannerEnabled),
+  requires_acknowledgement: asBool(row.requiresAcknowledgement),
+  popup_enabled: asBool(row.popupEnabled),
+  banner_enabled: asBool(row.bannerEnabled, true),
   auto_dismiss_seconds: row.autoDismissSeconds
     ? Number(row.autoDismissSeconds)
     : null,

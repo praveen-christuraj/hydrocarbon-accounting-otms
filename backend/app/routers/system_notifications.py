@@ -122,9 +122,9 @@ def validate_system_notification_payload(payload):
         "target_location_codes": target_location_codes,
         "display_from": display_from,
         "display_until": display_until,
-        "requires_acknowledgement": bool(payload.requires_acknowledgement),
-        "popup_enabled": bool(payload.popup_enabled),
-        "banner_enabled": bool(payload.banner_enabled),
+        "requires_acknowledgement": yes_no_to_bool(payload.requires_acknowledgement),
+        "popup_enabled": yes_no_to_bool(payload.popup_enabled),
+        "banner_enabled": yes_no_to_bool(payload.banner_enabled),
         "auto_dismiss_seconds": auto_dismiss_seconds,
     }
 

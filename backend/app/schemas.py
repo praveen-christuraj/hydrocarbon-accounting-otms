@@ -1,6 +1,8 @@
 from datetime import date, datetime, time
 from typing import Any, Optional
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, ValidationInfo, field_validator
+
+from app.utils.helpers import normalize_yes_no
 
 
 # ---------------------------------------------------------------------------
@@ -1820,10 +1822,21 @@ class SystemNotificationBase(BaseModel):
     target_location_codes: Optional[list[str]] = None
     display_from: Optional[datetime] = None
     display_until: Optional[datetime] = None
-    requires_acknowledgement: str = "No"
-    popup_enabled: str = "No"
-    banner_enabled: str = "Yes"
+    requires_acknowledgement: bool = False
+    popup_enabled: bool = False
+    banner_enabled: bool = True
     auto_dismiss_seconds: Optional[int] = None
+
+    @field_validator(
+        "requires_acknowledgement", "popup_enabled", "banner_enabled", mode="before"
+    )
+    @classmethod
+    def _coerce_yes_no_flag(cls, value, info: ValidationInfo):
+        """Accept real booleans plus legacy Yes/No style strings; null falls back
+        to the field default. The frontend sends JSON booleans for these flags."""
+        if value is None:
+            return cls.model_fields[info.field_name].default
+        return normalize_yes_no(value) == "Yes"
 
 
 class SystemNotificationCreate(SystemNotificationBase):
@@ -1852,9 +1865,9 @@ class SystemNotificationResponse(BaseModel):
     target_location_codes: Optional[list[str]] = None
     display_from: Optional[datetime] = None
     display_until: Optional[datetime] = None
-    requires_acknowledgement: str
-    popup_enabled: str
-    banner_enabled: str
+    requires_acknowledgement: bool
+    popup_enabled: bool
+    banner_enabled: bool
     auto_dismiss_seconds: Optional[int] = None
     status: str
     created_by_user_id: Optional[int] = None
