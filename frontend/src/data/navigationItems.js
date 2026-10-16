@@ -37,6 +37,11 @@ export const navigationItems = [
         permission: 'View User Location Assignment',
       },
       {
+        label: 'Role Location Assignment',
+        path: '/role-locations',
+        permission: 'View Role Location Assignment',
+      },
+      {
         label: 'Profile & Security',
         path: '/profile-security',
         permission: 'View Own Security Settings',

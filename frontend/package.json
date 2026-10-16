@@ -11,6 +11,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "smoke": "node scripts/smoke-render.mjs",
+    "check:print-css": "node scripts/check-print-css.mjs",
     "lint:src": "eslint src",
     "test:bulk": "node scripts/test-bulk-io.mjs",
     "test:bulk:ui": "node scripts/test-bulk-ui.mjs"

@@ -91,6 +91,13 @@ PERMISSION_CATALOG = [
                 ],
             },
             {
+                "module_name": "Role Location Assignment",
+                "permissions": [
+                    _perm("View Role Location Assignment", VIEW, "Can view per-role location scopes"),
+                    _perm("Edit Role Location Assignment", EDIT, "Can assign locations to roles (additive with the user's own locations)"),
+                ],
+            },
+            {
                 "module_name": "Profile & Security",
                 "permissions": [
                     _perm("View Own Security Settings", VIEW, "Can view own password and 2FA security settings"),
@@ -603,6 +610,7 @@ LEGACY_PERMISSION_REPLACEMENTS = {
     "Manage Role Permission Assignment": ["Edit Role Permission Assignment"],
     "Manage User Role Assignment": ["Edit User Role Assignment", "Delete User Role Assignment"],
     "Manage User Location Assignment": ["Edit User Location Assignment", "Delete User Location Assignment"],
+    "Manage Role Location Assignment": ["Edit Role Location Assignment"],
     "Manage Own Security Settings": ["Edit Own Security Settings"],
     "Manage Location": ["Create Location", "Edit Location", "Delete Location"],
     "Manage Asset Type": ["Create Asset Type", "Edit Asset Type", "Delete Asset Type"],

@@ -15,6 +15,7 @@ import PermissionMaster from './pages/PermissionMaster'
 import RolePermissionAssignment from './pages/RolePermissionAssignment'
 import UserRoleAssignment from './pages/UserRoleAssignment'
 import UserLocationAssignment from './pages/UserLocationAssignment'
+import RoleLocationAssignment from './pages/RoleLocationAssignment'
 import AccessSummary from './pages/AccessSummary'
 import LocationMaster from './pages/LocationMaster'
 import LocationAccountingDaySetting from './pages/LocationAccountingDaySetting'
@@ -368,6 +369,19 @@ function AppContent({
                   reloadUserLocationAssignments={reloadUserLocationAssignments}
                   loggedInUser={loggedInUser}
                 />
+              </PermissionGuard>
+            }
+          />
+
+          <Route
+            path="/role-locations"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View Role Location Assignment"
+                fallbackMessage="You do not have permission to view role location assignments."
+              >
+                <RoleLocationAssignment loggedInUser={loggedInUser} />
               </PermissionGuard>
             }
           />

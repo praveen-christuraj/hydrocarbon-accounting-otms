@@ -305,6 +305,21 @@ export const helpContent = {
     ],
   },
 
+  '/role-locations': {
+    title: 'Role Location Assignment Help',
+    description:
+      'Give every user of a role the same locations in one place. The role scope is additive with the locations assigned to the user directly.',
+    points: [
+      'Effective location scope = user locations (User Location Assignment) UNION role locations of every active role the user holds.',
+      'A role can only widen a user\'s scope — it never removes a location that was assigned directly to the user.',
+      'Only Active roles and Active locations are available for selection.',
+      'The reserved Admin role always has unrestricted access and cannot be scoped.',
+      'A location-restricted administrator can only hand out locations inside their own scope.',
+      'Saving a role replaces its whole location list; remove the checkboxes and save to clear it.',
+      'The change is audited (Role Location Assignment module) like every other master-data update.',
+    ],
+  },
+
   '/material-balance-report': {
     title: 'Material Balance Report Help',
     description:

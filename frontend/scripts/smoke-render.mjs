@@ -88,7 +88,7 @@ const now = new Date().toISOString()
 const permissionNames = [
   'View User', 'Create User', 'Update User', 'Delete User',
   'View Role', 'View Permission', 'View Role Permission Assignment',
-  'View User Role Assignment', 'View User Location Assignment', 'View Access Summary',
+  'View User Role Assignment', 'View User Location Assignment', 'View Role Location Assignment', 'View Access Summary',
   'View Own Security Settings', 'View Location', 'Create Location', 'Update Location', 'Delete Location',
   'View Location Accounting Day Setting', 'View Material Balance Template', 'View Asset Type', 'View Asset',
   'View Calibration Template', 'View Asset Calibration', 'View Asset Assignment', 'View Flowmeter Config',
@@ -98,7 +98,8 @@ const permissionNames = [
   'Create Operation Entry', 'View My Tasks', 'View Operation Transaction', 'View Shuttle Tracking', 'View FSO Tracking',
   'View Dashboard', 'Manage Dashboard', 'View Location Operation Availability', 'View Flowmeter Record',
   'View Tank Stock Ledger', 'View Tank Operation Summary', 'View Out-Turn Summary', 'View Out-Turn Report',
-  'View Material Balance Report',
+  'View Material Balance Report', 'Review Operation Transaction', 'Approve Operation Transaction',
+  'Reject Operation Transaction', 'Cancel Operation Transaction', 'Submit Operation Transaction',
 ]
 const me = {
   id: 1,
@@ -187,6 +188,67 @@ const calibrationTables = [
   },
 ]
 
+// A non-tank (shuttle) ticket in Submitted status: the review / approve screen
+// must show the saved sample values, not only the structured payload modules.
+const operationTransactions = [
+  {
+    id: 1,
+    ticket_number: 'SHU-2026-0001',
+    operation_ticket_number: 'SHU-2026-0001',
+    operation_date: '2026-10-15',
+    operation_type_id: 5,
+    operation_type_code: 'SHUTTLE',
+    operation_type_name: 'Shuttle Operation',
+    operation_template_id: 3,
+    location_id: 1,
+    location_name: 'Agge Terminal',
+    location_code: 'LOC001',
+    primary_asset_id: 2,
+    primary_asset_name: 'Barge Ada',
+    primary_asset_code: 'BRG-001',
+    primary_asset_type_code: 'BARGE',
+    convoy_number: '',
+    status: 'Submitted',
+    created_by: 'operator1',
+    created_at: now,
+    updated_at: now,
+    field_values: [
+      {
+        id: 1, field_code: 'obs_api', field_name: 'Observed API', field_label: 'Observed API',
+        field_group: 'Sample Parameters', data_type: 'Number', unit: 'API', sort_order: 1,
+        field_value: '34.5',
+      },
+      {
+        id: 2, field_code: 'obs_density', field_name: 'Observed Density', field_label: 'Observed Density',
+        field_group: 'Sample Parameters', data_type: 'Number', unit: 'kg/m3', sort_order: 2,
+        field_value: '825.4',
+      },
+      {
+        id: 3, field_code: 'sample_temp', field_name: 'Sample Temperature', field_label: 'Sample Temperature',
+        field_group: 'Sample Parameters', data_type: 'Number', unit: 'C', sort_order: 3,
+        field_value: '32.5',
+      },
+      {
+        id: 4, field_code: 'shuttle_payload', field_name: 'Shuttle Payload', field_label: 'Shuttle Payload',
+        field_group: 'System', data_type: 'JSON', unit: '', sort_order: 4,
+        field_value: JSON.stringify({
+          meta: { vessel_operation_label: 'Opening Stock' },
+          inputs: {
+            event_time: '2026-10-15 08:00',
+            opening_stock_bbl: 1000,
+            opening_water_bbl: 5,
+            closing_stock_bbl: 1200,
+            closing_water_bbl: 6,
+            barge_reference: 'BRG-001',
+            remarks: 'Sample values captured',
+          },
+          calculated: { net: { net_stock_bbl: 200, net_water_bbl: 1 } },
+        }),
+      },
+    ],
+  },
+]
+
 const paged = (items, url) => {
   const u = new URL(url, 'http://x')
   const skip = Number(u.searchParams.get('skip') || 0)
@@ -244,6 +306,51 @@ globalThis.fetch = async (input, init = {}) => {
       calibrationTables.map(({ ...table }) => ({ ...table, row_count: calibrationTableRows.length }))
     )
   }
+  if (path.startsWith('/role-locations')) {
+    const detailMatch = path.match(/^\/role-locations\/(\d+)/)
+    const roleLocations = [
+      { role_id: 1, role_name: 'Admin', status: 'Active', location_codes: [] },
+      { role_id: 2, role_name: 'Operator', status: 'Active', location_codes: ['LOC002'] },
+    ]
+    if (detailMatch) {
+      const match = roleLocations.find((r) => String(r.role_id) === detailMatch[1])
+      return match ? jsonResponse(match) : jsonResponse({ detail: 'Role not found' }, 404)
+    }
+    if (method === 'PUT') {
+      const roleId = Number(path.split('/').pop())
+      const body = JSON.parse(init.body || '{}')
+      const target = roleLocations.find((r) => r.role_id === roleId)
+      const updated = {
+        role_id: roleId,
+        role_name: target?.role_name || 'Role',
+        status: 'Active',
+        location_codes: body.location_codes || [],
+      }
+      if (target) Object.assign(target, updated)
+      return jsonResponse(updated)
+    }
+    return jsonResponse(roleLocations)
+  }
+  if (path.startsWith('/operation-transactions')) {
+    const historyMatch = path.match(/^\/operation-transactions\/(\d+)\/status-history/)
+    if (historyMatch) return jsonResponse([])
+    const correctionMatch = path.match(/^\/operation-transactions\/(\d+)\/correction-requests/)
+    if (correctionMatch) return jsonResponse([])
+    const statusMatch = path.match(/^\/operation-transactions\/(\d+)\/status$/)
+    if (statusMatch) {
+      const target = operationTransactions.find((t) => String(t.id) === statusMatch[1])
+      const body = JSON.parse(init.body || '{}')
+      if (target) target.status = body.status || target.status
+      return jsonResponse(target || {})
+    }
+    const detailMatch = path.match(/^\/operation-transactions\/(\d+)$/)
+    if (detailMatch) {
+      const target = operationTransactions.find((t) => String(t.id) === detailMatch[1])
+      return target ? jsonResponse(target) : jsonResponse({ detail: 'Operation transaction not found' }, 404)
+    }
+    return jsonResponse(paged(operationTransactions, path))
+  }
+  if (path.startsWith('/operation-workflow-policies')) return jsonResponse({ allowed: true, reason: '', matched_policy_name: '' })
   if (path.startsWith('/audit-logs')) return jsonResponse(paged(auditLogs, path))
   if (path.startsWith('/system-notifications/active')) return jsonResponse([])
   if (path.startsWith('/system-notifications/my')) return jsonResponse([])
@@ -353,7 +460,7 @@ try {
   await flush()
 
   // Navigate to pages requested on the CLI (default set)
-  const pages = process.argv.slice(2).length ? process.argv.slice(2) : ['/locations', '/users', '/audit-logs']
+  const pages = process.argv.slice(2).length ? process.argv.slice(2) : ['/locations', '/users', '/role-locations', '/audit-logs', '/operation-transactions/1']
   for (const path of pages) {
     const before = errors.length
     const link = qa('a[href]').find((a) => a.getAttribute('href') === path)
@@ -480,6 +587,83 @@ try {
       }
     }
 
+    if (path === '/role-locations') {
+      const roleTable = qa('.main-content table').find((t) =>
+        text(t.querySelector('thead')).includes('Locations')
+      )
+      const rows = roleTable ? Array.from(roleTable.querySelectorAll('tbody tr')) : []
+      check('role location scopes listed', rows.length >= 2, rows.length ? text(rows[0]).slice(0, 80) : 'no table found')
+      check(
+        'role locations shown per role',
+        rows.some((row) => text(row).includes('Operator') && text(row).includes('LOC002')),
+        rows.map(text).join(' | ').slice(0, 140)
+      )
+
+      const operatorRow = rows.find((row) => text(row).includes('Operator'))
+      const editButton = operatorRow
+        ? Array.from(operatorRow.querySelectorAll('button')).find((b) => text(b).trim() === 'Edit')
+        : null
+      check('role location row has an Edit button', Boolean(editButton))
+
+      if (editButton) {
+        click(editButton)
+        await flush(120)
+        const checkedBoxes = qa('.main-content .permission-card input').filter((input) => input.checked)
+        check('edit prefills the role locations', checkedBoxes.length === 1, `${checkedBoxes.length} checked`)
+
+        const saveButton = qa('.main-content button').find((b) => text(b).includes('Save Role Locations'))
+        check('role location save button present', Boolean(saveButton))
+
+        if (saveButton) {
+          const before = errors.length
+          click(saveButton)
+          await flush(200)
+          check('role location save calls the API', apiCalls.includes('PUT /role-locations/2'), apiCalls.filter((c) => c.includes('role-locations')).join(', '))
+          check('role location save runs without error', errors.length === before && !q('.toast.tone-error'), qa('.toast').map(text).join(' | '))
+        }
+      }
+    }
+
+    if (path === '/operation-transactions/1') {
+      // Owner change 2026-10-16: review / approve must show the saved values for
+      // EVERY operation module - this ticket is a shuttle (non-tank) module.
+      const reviewGrid = q('.saved-values-review')
+      check('review screen shows the saved values grid', Boolean(reviewGrid), text(q('.main-content h3')).slice(0, 60))
+      check(
+        'review screen lists the saved sample values',
+        text(reviewGrid).includes('Observed API') && text(reviewGrid).includes('34.5') && text(reviewGrid).includes('Observed Density') && text(reviewGrid).includes('825.4'),
+        text(reviewGrid).slice(0, 160)
+      )
+      check(
+        'review screen hides the raw payload field',
+        !text(reviewGrid).includes('shuttle_payload') && !text(reviewGrid).includes('Structured payload'),
+        text(reviewGrid).slice(0, 160)
+      )
+
+      const approveButton = qa('.main-content button').find((b) => text(b).includes('Review & Approve'))
+      check('review & approve button present for a submitted ticket', Boolean(approveButton))
+
+      if (approveButton) {
+        const before = errors.length
+        click(approveButton)
+        await flush(150)
+        const modal = q('.review-modal-backdrop')
+        check('approve confirmation modal opens', Boolean(modal), text(q('.review-modal-backdrop h3, .review-modal-backdrop h2')).slice(0, 80))
+        if (modal) {
+          check(
+            'approve confirmation shows the saved values',
+            text(modal).includes('Observed API') && text(modal).includes('34.5'),
+            text(modal).slice(0, 200)
+          )
+          check(
+            'approve confirmation hides the raw payload field',
+            !text(modal).includes('shuttle_payload') && !text(modal).includes('Structured payload')
+          )
+        }
+        check('opening the confirmation modal does not error', errors.length === before)
+      }
+    }
+
     if (path === '/barge-seal-master') {
       // The tank list is derived from calibration, which is fetched per table.
       const assetSelect = q('.main-content select')
@@ -532,6 +716,57 @@ try {
   await flush()
   check('activity panel opens', Boolean(q('.activity-panel')), `${qa('.activity-item').length} entries`)
   console.log('      first entries:', qa('.activity-item').slice(0, 4).map((e) => text(e)).join(' | ').slice(0, 300))
+
+  // ---- barge MTR print content (owner change 2026-10-16) ----------------
+  // "Barge operation MTR report does not show API and other sample parameters":
+  // every captured sample parameter and the calculated API @ 60F must reach the
+  // printed report. The rows come from utils/bargeMtrReport.js, which is what
+  // the printable MTR block renders.
+  const { buildBargeMtrSampleRows } = await server.ssrLoadModule('/src/utils/bargeMtrReport.js')
+  const bargeSampleRows = buildBargeMtrSampleRows({
+    summary_json: {
+      left: {
+        inputs: { obsMode: 'Observed API', obsApi: 34.5, sampleTemp: 32.5, sampleTempUnit: 'C', bswPct: 0.5 },
+        totals: { API60: 34.2, VCF: 0.99123 },
+      },
+      right: {
+        inputs: { obsMode: 'Observed Density', obsDensity: 825.4, sampleTemp: 33.1, sampleTempUnit: 'C' },
+        totals: { API60: 33.9, VCF: 0.9918 },
+      },
+    },
+  })
+  const sampleRow = (label) => bargeSampleRows.find((row) => row.label === label)
+
+  check(
+    'barge MTR names the captured sample parameter on each side',
+    sampleRow('Observed Input Mode')?.sender === 'Observed API' && sampleRow('Observed Input Mode')?.receiver === 'Observed Density',
+    JSON.stringify(sampleRow('Observed Input Mode'))
+  )
+  check(
+    'barge MTR prints observed API and observed density',
+    sampleRow('Observed API')?.sender === '34.50' && sampleRow('Observed Density (kg/m3)')?.receiver === '825.4000',
+    `${sampleRow('Observed API')?.sender} / ${sampleRow('Observed Density (kg/m3)')?.receiver}`
+  )
+  check(
+    'barge MTR prints API @ 60F for both sides',
+    sampleRow('API @ 60F')?.sender === '34.20' && sampleRow('API @ 60F')?.receiver === '33.90',
+    `${sampleRow('API @ 60F')?.sender} / ${sampleRow('API @ 60F')?.receiver}`
+  )
+  check(
+    'barge MTR prints the sample temperature with its unit',
+    sampleRow('Sample Temperature')?.sender === '32.50 C' && sampleRow('Sample Temperature')?.receiver === '33.10 C',
+    `${sampleRow('Sample Temperature')?.sender} / ${sampleRow('Sample Temperature')?.receiver}`
+  )
+  check(
+    'barge MTR never turns a missing sample value into zero',
+    sampleRow('Tank Temperature')?.sender === '-' && sampleRow('CCF')?.receiver === '-',
+    `${sampleRow('Tank Temperature')?.sender} / ${sampleRow('CCF')?.receiver}`
+  )
+  check(
+    'barge MTR shows the receiver-vs-sender difference',
+    sampleRow('API @ 60F')?.delta === '-0.30',
+    sampleRow('API @ 60F')?.delta
+  )
 
   console.log('\nDownloads:', downloads.join(', ') || 'none')
   console.log('API calls:', [...new Set(apiCalls)].slice(0, 40).join('\n  '))

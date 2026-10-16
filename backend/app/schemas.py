@@ -193,6 +193,21 @@ class UserAllLocationsUpdateRequest(BaseModel):
     all_locations_access: str
 
 
+class RoleLocationSaveRequest(BaseModel):
+    location_codes: list[str]
+
+
+class RoleLocationResponse(BaseModel):
+    """Per-role location scope (PERMISSION_CRITERIA_MODEL.md section 7.2)."""
+
+    role_id: int
+    role_name: str
+    status: str = "Active"
+    location_codes: list[str] = []
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class OperationWorkflowPolicyBase(BaseModel):
     policy_name: str
     action_code: str

@@ -9,6 +9,7 @@ from app.models import (
     RolePermission,
     UserRole,
     UserLocation,
+    RoleLocation,
     LocationOperationAvailability,
     OperationWorkflowPolicy,
     OperationWorkflowPolicyRole,
@@ -562,27 +563,53 @@ def normalize_operation_type_code(value: str | None) -> str | None:
     return normalized or None
 
 
-def get_user_location_codes(user: User, db: Session) -> set[str] | None:
-    """
-    Return assigned location codes, or None for unrestricted location access.
+def get_role_location_codes(role_ids, db: Session) -> set[str]:
+    """Location codes granted by the given roles (role_locations table)."""
+    ids = [int(role_id) for role_id in (role_ids or [])]
+    if not ids:
+        return set()
 
-    The reserved Admin account is unrestricted by definition. Existing users
-    with the all_locations_access flag set to a legacy truthy value are also
-    treated as unrestricted. An empty set means no location data is visible.
-    """
-    all_access = str(user.all_locations_access or "").strip().casefold()
-    if is_admin_user(user, db) or all_access in {"yes", "true", "1", "y"}:
-        return None
-    codes = (
-        db.query(UserLocation.location_code)
-        .filter(UserLocation.user_id == user.id)
+    rows = (
+        db.query(RoleLocation.location_code)
+        .filter(RoleLocation.role_id.in_(ids))
         .all()
     )
     return {
         normalized_code
-        for row in codes
+        for row in rows
         if (normalized_code := normalize_location_code(row[0])) is not None
     }
+
+
+def get_user_location_codes(user: User, db: Session) -> set[str] | None:
+    """
+    Return the effective assigned location codes, or None for unrestricted access.
+
+    The reserved Admin account is unrestricted by definition. Existing users
+    with the all_locations_access flag set to a legacy truthy value are also
+    treated as unrestricted. An empty set means no location data is visible.
+
+    The scope is **additive** (PERMISSION_CRITERIA_MODEL.md section 7.2): it is
+    the union of the user's own ``user_locations`` rows and the
+    ``role_locations`` rows of every active role the user holds. A role can
+    widen a user's scope, but it can never take a user-specific location away.
+    """
+    all_access = str(user.all_locations_access or "").strip().casefold()
+    if is_admin_user(user, db) or all_access in {"yes", "true", "1", "y"}:
+        return None
+
+    codes = {
+        normalized_code
+        for row in (
+            db.query(UserLocation.location_code)
+            .filter(UserLocation.user_id == user.id)
+            .all()
+        )
+        if (normalized_code := normalize_location_code(row[0])) is not None
+    }
+
+    codes.update(get_role_location_codes(get_user_role_ids(db, user), db))
+    return codes
 
 
 def user_is_within_actor_location_scope(actor: User, target: User, db: Session) -> bool:

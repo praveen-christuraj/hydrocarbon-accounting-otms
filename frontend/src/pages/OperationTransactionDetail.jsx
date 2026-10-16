@@ -151,140 +151,313 @@ const isBlank = (v) => String(v ?? '').trim() === ''
     ]
   }
 
-const getTankPayloadFromTransaction = (transaction) => {
-  if (!transaction || !Array.isArray(transaction.fieldValues)) {
+// ---------------------------------------------------------------------------
+// Saved value extraction (all ticket layouts)
+// ---------------------------------------------------------------------------
+// Every layout saves either a structured JSON payload field (fieldCode ending
+// in "_payload") or plain template fields. The review / approve screens must
+// show the saved values for BOTH kinds, so the helpers below are generic and
+// the payload list is the single place that knows the layout payload codes.
+const TICKET_PAYLOAD_FIELD_CODES = [
+  'tank_gauging_payload',
+  'multi_tank_payload',
+  'shuttle_payload',
+  'flowmeter_payload',
+  'fso_payload',
+  'tanker_payload',
+]
+
+const parseStructuredValue = (rawValue) => {
+  if (rawValue === null || rawValue === undefined) {
     return null
   }
 
-  const payloadField = transaction.fieldValues.find((field) => {
-    return field.fieldCode === 'tank_gauging_payload'
-  })
-
-  if (!payloadField || !payloadField.fieldValue) {
-    return null
+  if (typeof rawValue === 'object') {
+    return rawValue
   }
 
-  if (typeof payloadField.fieldValue === 'object') {
-    return payloadField.fieldValue
-  }
+  const rawText = String(rawValue || '').trim()
 
-  const rawValue = String(payloadField.fieldValue || '').trim()
-
-  if (rawValue === '' || rawValue === '[object Object]') {
+  if (rawText === '' || rawText === '[object Object]') {
     return null
   }
 
   try {
-    return JSON.parse(rawValue)
+    return JSON.parse(rawText)
   } catch {
     return null
   }
 }
 
-const isTankPayloadField = (field) => {
-  return field.fieldCode === 'tank_gauging_payload'
+const getPayloadFieldFromTransaction = (transaction, fieldCode) => {
+  if (!transaction || !Array.isArray(transaction.fieldValues)) {
+    return null
+  }
+
+  const payloadField = transaction.fieldValues.find((field) => {
+    return field.fieldCode === fieldCode
+  })
+
+  if (!payloadField) {
+    return null
+  }
+
+  return parseStructuredValue(payloadField.fieldValue)
 }
+
+const isPayloadField = (field) => {
+  return TICKET_PAYLOAD_FIELD_CODES.includes(String(field?.fieldCode || '').trim())
+}
+
+
+const getTankPayloadFromTransaction = (transaction) => {
+  return getPayloadFieldFromTransaction(transaction, 'tank_gauging_payload')
+}
+
 
 const getMultiTankPayloadFromTransaction = (transaction) => {
-  if (!transaction || !Array.isArray(transaction.fieldValues)) {
-    return null
-  }
-
-  const payloadField = transaction.fieldValues.find((field) => {
-    return field.fieldCode === 'multi_tank_payload'
-  })
-
-  if (!payloadField || payloadField.fieldValue === null || payloadField.fieldValue === undefined) {
-    return null
-  }
-
-  if (typeof payloadField.fieldValue === 'object') {
-    return payloadField.fieldValue
-  }
-
-  const rawValue = String(payloadField.fieldValue || '').trim()
-
-  if (rawValue === '' || rawValue === '[object Object]') {
-    return null
-  }
-
-  try {
-    return JSON.parse(rawValue)
-  } catch {
-    return null
-  }
+  return getPayloadFieldFromTransaction(transaction, 'multi_tank_payload')
 }
 
-const isMultiTankPayloadField = (field) => {
-  return field.fieldCode === 'multi_tank_payload'
-}
 
 const getShuttlePayloadFromTransaction = (transaction) => {
-  if (!transaction || !Array.isArray(transaction.fieldValues)) {
-    return null
-  }
-
-  const payloadField = transaction.fieldValues.find((field) => {
-    return field.fieldCode === 'shuttle_payload'
-  })
-
-  if (!payloadField || !payloadField.fieldValue) {
-    return null
-  }
-
-  if (typeof payloadField.fieldValue === 'object') {
-    return payloadField.fieldValue
-  }
-
-  const rawValue = String(payloadField.fieldValue || '').trim()
-
-  if (rawValue === '' || rawValue === '[object Object]') {
-    return null
-  }
-
-  try {
-    return JSON.parse(rawValue)
-  } catch {
-    return null
-  }
+  return getPayloadFieldFromTransaction(transaction, 'shuttle_payload')
 }
 
-const isShuttlePayloadField = (field) => {
-  return field.fieldCode === 'shuttle_payload'
-}
 
 const getFlowmeterPayloadFromTransaction = (transaction) => {
-  if (!transaction || !Array.isArray(transaction.fieldValues)) {
-    return null
-  }
-
-  const payloadField = transaction.fieldValues.find((field) => {
-    return field.fieldCode === 'flowmeter_payload'
-  })
-
-  if (!payloadField || !payloadField.fieldValue) {
-    return null
-  }
-
-  if (typeof payloadField.fieldValue === 'object') {
-    return payloadField.fieldValue
-  }
-
-  const rawValue = String(payloadField.fieldValue || '').trim()
-
-  if (rawValue === '' || rawValue === '[object Object]') {
-    return null
-  }
-
-  try {
-    return JSON.parse(rawValue)
-  } catch {
-    return null
-  }
+  return getPayloadFieldFromTransaction(transaction, 'flowmeter_payload')
 }
 
-const isFlowmeterPayloadField = (field) => {
-  return field.fieldCode === 'flowmeter_payload'
+const getFsoPayloadFromTransaction = (transaction) => {
+  return getPayloadFieldFromTransaction(transaction, 'fso_payload')
+}
+
+const getTankerPayloadFromTransaction = (transaction) => {
+  return getPayloadFieldFromTransaction(transaction, 'tanker_payload')
+}
+
+
+/**
+ * Plain (non-payload) saved values of a ticket. These are the values the
+ * reviewer / approver must see for EVERY operation module - the structured
+ * payload fields are rendered by the module-specific summary instead.
+ */
+const getReviewableFieldValues = (transaction) =>
+  (transaction?.fieldValues || []).filter((field) => !isPayloadField(field))
+
+const hasStructuredPayload = (payloads) =>
+  Object.values(payloads || {}).some((payload) => Boolean(payload))
+
+const formatFieldDisplayValue = (field) => {
+  const value = field?.fieldValue
+
+  if (value === null || value === undefined) {
+    return '-'
+  }
+
+  if (typeof value === 'object') {
+    return 'Structured JSON payload'
+  }
+
+  const rawValue = String(value).trim()
+
+  if (rawValue === '') {
+    return '-'
+  }
+
+  if (rawValue.startsWith('{') || rawValue.startsWith('[')) {
+    return 'Structured payload'
+  }
+
+  const unit = String(field?.unit || field?.fieldUnit || '').trim()
+  const shown = formatValue(value)
+
+  return unit ? `${shown} ${unit}` : shown
+}
+
+/**
+ * Generic "saved values" review block - the same presentation method the tank
+ * gauging module uses for review / approval (labelled grid of the entered
+ * values, grouped by the template field group). Every operation module that
+ * does not save a structured payload renders this, so a reviewer/approver
+ * always sees the saved values instead of an empty panel.
+ */
+function SavedValuesReview({ transaction, title = 'Saved Values Review', description = '' }) {
+  const savedFields = (transaction?.fieldValues || []).filter(
+    (field) => !isPayloadField(field)
+  )
+
+  const groups = new Map()
+
+  for (const field of savedFields) {
+    const groupName = String(field.fieldGroup || '').trim() || 'Entered Values'
+
+    if (!groups.has(groupName)) {
+      groups.set(groupName, [])
+    }
+
+    groups.get(groupName).push(field)
+  }
+
+  if (savedFields.length === 0) {
+    return (
+      <div className="info-box">
+        No saved field values were found for this ticket. Open the draft entry
+        again, save the values, and re-submit for review.
+      </div>
+    )
+  }
+
+  return (
+    <div className="saved-values-review">
+      <div className="section-title compact-section-title">
+        <h3>{title}</h3>
+      </div>
+
+      {description ? <p className="muted-table-text">{description}</p> : null}
+
+      {[...groups.entries()].map(([groupName, fields]) => (
+        <div key={groupName} className="saved-values-group">
+          <h4 className="saved-values-group-title">{groupName}</h4>
+
+          <div className="approval-review-grid">
+            {fields.map((field) => (
+              <div key={field.id ?? field.fieldCode}>
+                <span>{field.fieldLabel || field.fieldName || field.fieldCode}</span>
+                <strong>{formatFieldDisplayValue(field)}</strong>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function FsoCalculatedSummary({ payload }) {
+  if (!payload) return null
+
+  const meta = payload.meta || {}
+  const inputs = payload.inputs || {}
+  const net = (payload.calculated || {}).net || {}
+
+  const opLabel =
+    meta.operation_label || meta.operation_code || 'FSO Operation'
+
+  const numberOrDash = (value, decimals = 3) => {
+    if (value === null || value === undefined || String(value).trim() === '') {
+      return '-'
+    }
+
+    const number = Number(value)
+    return Number.isFinite(number) ? number.toFixed(decimals) : '-'
+  }
+
+  const cards = [
+    ['Vessel / Tanker', inputs.vessel_name || '-'],
+    ['Vessel Quantity', numberOrDash(inputs.vessel_quantity_bbl)],
+    ['Opening Stock', numberOrDash(inputs.opening_stock_bbl)],
+    ['Opening Water', numberOrDash(inputs.opening_water_bbl)],
+    ['Closing Stock', numberOrDash(inputs.closing_stock_bbl)],
+    ['Closing Water', numberOrDash(inputs.closing_water_bbl)],
+    ['Net Stock', numberOrDash(net.net_stock_bbl)],
+    ['Net Water', numberOrDash(net.net_water_bbl)],
+    ['Variance', numberOrDash(net.variance_bbl)],
+  ]
+
+  return (
+    <>
+      <div className="section-title compact-section-title">
+        <h3>FSO Ticket Summary</h3>
+      </div>
+
+      <div className="info-box">
+        <strong>Operation:</strong> {opLabel} &nbsp; | &nbsp;{' '}
+        <strong>Event Time:</strong> {inputs.event_time || '-'} &nbsp; | &nbsp;{' '}
+        <strong>Shuttle:</strong> {inputs.shuttle_number || '-'}
+      </div>
+
+      <div className="live-calculation-grid tank-live-grid">
+        {cards.map(([label, value]) => (
+          <div className="live-calculation-card" key={label}>
+            <span>{label}</span>
+            <strong>{value}</strong>
+          </div>
+        ))}
+      </div>
+
+      <div className="info-box" style={{ marginTop: 10 }}>
+        <div><strong>Remarks:</strong> {inputs.remarks || '-'}</div>
+      </div>
+    </>
+  )
+}
+
+function MultiTankInputReview({ payload }) {
+  if (!payload) return null
+
+  const inputs = payload.inputs || {}
+  const before = inputs.before || {}
+  const after = inputs.after || {}
+
+  const rows = [
+    { key: 'date', label: 'Date', text: true },
+    { key: 'time', label: 'Time', text: true },
+    { key: 'obsMode', label: 'Observed Input Mode', text: true },
+    { key: 'obsApi', label: 'Observed API', dp: 2 },
+    { key: 'obsDensity', label: 'Observed Density', dp: 4 },
+    { key: 'tankTemp', label: 'Tank Temperature', dp: 2, unitKey: 'tankTempUnit' },
+    { key: 'sampleTemp', label: 'Sample Temperature', dp: 2, unitKey: 'sampleTempUnit' },
+    { key: 'bswPct', label: 'BS&W %', dp: 3 },
+    { key: 'ccf', label: 'CCF', dp: 4 },
+  ]
+
+  const cell = (stage, row) => {
+    const value = stage?.[row.key]
+
+    if (value === null || value === undefined || String(value).trim() === '') {
+      return '-'
+    }
+
+    if (row.text) {
+      return String(value)
+    }
+
+    const number = Number(value)
+    const shown = Number.isFinite(number) ? number.toFixed(row.dp ?? 3) : String(value)
+    const unit = row.unitKey ? String(stage?.[row.unitKey] || '').trim() : ''
+
+    return unit ? `${shown} ${unit}` : shown
+  }
+
+  return (
+    <div className="full-width-field">
+      <div className="section-title compact-section-title">
+        <h3>Multi-Tank Input Values</h3>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Parameter</th>
+            <th>Before (Receiver)</th>
+            <th>After (Sender)</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.label}>
+              <td><strong>{row.label}</strong></td>
+              <td>{cell(before, row)}</td>
+              <td>{cell(after, row)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
 }
 
 function FlowmeterCalculatedSummary({ payload }) {
@@ -635,6 +808,8 @@ function ReviewConfirmationModal({
   multiTankPayload,
   shuttlePayload,
   flowmeterPayload,
+  fsoPayload,
+  tankerPayload,
   nextStatus,
   remarks,
   onRemarksChange,
@@ -796,15 +971,33 @@ function ReviewConfirmationModal({
             </div>
 
             <MultiTankCalculatedSummary payload={multiTankPayload} />
+            <MultiTankInputReview payload={multiTankPayload} />
           </>
         ) : shuttlePayload ? (
           <ShuttleCalculatedSummary payload={shuttlePayload} />
         ) : flowmeterPayload ? (
           <FlowmeterCalculatedSummary payload={flowmeterPayload} />
-        ) : (
-          <div className="info-box">
-            No asset-specific payload found. Please review the saved field values below before confirming.
-          </div>
+        ) : fsoPayload ? (
+          <FsoCalculatedSummary payload={fsoPayload} />
+        ) : tankerPayload ? (
+          <TankerPayloadPreview
+            entry={transaction}
+            values={transaction.fieldValues}
+            payload={tankerPayload}
+            title="Tanker Approval Preview"
+          />
+        ) : null}
+
+        {/* Owner change 2026-10-16: the saved values must be visible here for
+            every operation module, not only for tank operations. Structured
+            payload modules get their module summary above; this grid always
+            adds the saved (plain) template values, so approving is never blind. */}
+        {getReviewableFieldValues(transaction).length > 0 && (
+          <SavedValuesReview
+            transaction={transaction}
+            title="Saved Values Review"
+            description="Values saved with this ticket - verify them before confirming."
+          />
         )}
 
         {isReasonRequired && (
@@ -1727,9 +1920,19 @@ function OperationTransactionDetail({ loggedInUser }) {
     return getFlowmeterPayloadFromTransaction(transaction)
   }, [transaction])
 
-  const hasTankerPayload = (transaction?.fieldValues || []).some((value) => {
-    return value.fieldCode === 'tanker_payload'
-  })
+  const fsoPayload = useMemo(() => {
+    return getFsoPayloadFromTransaction(transaction)
+  }, [transaction])
+
+  const tankerPayload = useMemo(() => {
+    return getTankerPayloadFromTransaction(transaction)
+  }, [transaction])
+
+  const hasTankerPayload =
+    Boolean(tankerPayload) ||
+    (transaction?.fieldValues || []).some((value) => {
+      return value.fieldCode === 'tanker_payload'
+    })
 
   const hasPrintablePayload = Boolean(tankPayload || multiTankPayload)
   
@@ -2339,20 +2542,8 @@ function OperationTransactionDetail({ loggedInUser }) {
   }
 
   const renderSavedFieldValue = (field) => {
-    if (isTankPayloadField(field)) {
-      return <small>Hidden - Tank Gauging payload is shown above.</small>
-    }
-
-    if (isMultiTankPayloadField(field)) {
-      return <small>Hidden - Multi-Tank payload is shown above.</small>
-    }
-
-    if (isShuttlePayloadField(field)) {
-      return <small>Hidden - Shuttle payload is shown above.</small>
-    }
-
-    if (isFlowmeterPayloadField(field)) {
-      return <small>Hidden - Flowmeter payload is shown above.</small>
+    if (isPayloadField(field)) {
+      return <small>Hidden - structured payload is shown in the Entered Data Review above.</small>
     }
 
     if (typeof field.fieldValue === 'object') {
@@ -2365,7 +2556,7 @@ function OperationTransactionDetail({ loggedInUser }) {
       return <small>Structured payload hidden from normal view</small>
     }
 
-    return <strong>{rawValue || '-'}</strong>
+    return <strong>{formatFieldDisplayValue(field)}</strong>
   }
 
   if (loading) {
@@ -2446,6 +2637,8 @@ function OperationTransactionDetail({ loggedInUser }) {
         multiTankPayload={multiTankPayload}
         shuttlePayload={shuttlePayload}
         flowmeterPayload={flowmeterPayload}
+        fsoPayload={fsoPayload}
+        tankerPayload={tankerPayload}
         nextStatus={pendingStatus}
         remarks={pendingRemarks}
         onRemarksChange={setPendingRemarks}
@@ -2645,7 +2838,17 @@ function OperationTransactionDetail({ loggedInUser }) {
             <p>Saved before/after values and net movement summary for this ticket.</p>
           </div>
 
+          <MultiTankInputReview payload={multiTankPayload} />
           <MultiTankCalculatedSummary payload={multiTankPayload} />
+        </div>
+      ) : shuttlePayload ? (
+        <div className="operation-special-layout tank-gauging-layout">
+          <div className="operation-special-layout-header">
+            <h3>Shuttle Ticket Data</h3>
+            <p>Saved shuttle input values and net stock movement for this ticket.</p>
+          </div>
+
+          <ShuttleCalculatedSummary payload={shuttlePayload} />
         </div>
       ) : flowmeterPayload ? (
         <div className="operation-special-layout tank-gauging-layout">
@@ -2655,9 +2858,36 @@ function OperationTransactionDetail({ loggedInUser }) {
           </div>
           <FlowmeterCalculatedSummary payload={flowmeterPayload} />
         </div>
-      ) : (
-        <div className="info-box">
-          No asset-specific payload found. Review the saved template field values below before taking action.
+      ) : fsoPayload ? (
+        <div className="operation-special-layout tank-gauging-layout">
+          <div className="operation-special-layout-header">
+            <h3>FSO Ticket Data</h3>
+            <p>Saved FSO input values and net movement for this ticket.</p>
+          </div>
+
+          <FsoCalculatedSummary payload={fsoPayload} />
+        </div>
+      ) : null}
+
+      {/* Owner change 2026-10-16: every operation module shows its saved values
+          in this review screen - the same method the tank operation module
+          uses - so review and approve never depend on the module. */}
+      {getReviewableFieldValues(transaction).length > 0 && (
+        <div className="operation-special-layout tank-gauging-layout">
+          <div className="operation-special-layout-header">
+            <h3>Saved Values Review</h3>
+            <p>
+              {hasStructuredPayload({ tankPayload, multiTankPayload, shuttlePayload, flowmeterPayload, fsoPayload, tankerPayload })
+                ? 'Plain template values saved with this ticket, alongside the module summary above.'
+                : 'This operation module saves plain template values instead of a structured payload. The saved values are listed below - the same review method the tank gauging module uses.'}
+            </p>
+          </div>
+
+          <SavedValuesReview
+            transaction={transaction}
+            title="Entered Values"
+            description="Values saved with this ticket. Verify them before submitting, approving, rejecting or cancelling."
+          />
         </div>
       )}
 
@@ -2665,6 +2895,7 @@ function OperationTransactionDetail({ loggedInUser }) {
         <TankerPayloadPreview
           entry={transaction}
           values={transaction.fieldValues}
+          payload={tankerPayload}
           title="Tanker Approval Preview"
         />
       )}
