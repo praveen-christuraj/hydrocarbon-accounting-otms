@@ -31,6 +31,7 @@ function RoleLocationAssignment({ loggedInUser }) {
   const [summaries, setSummaries] = useState([])
   const [selectedRoleId, setSelectedRoleId] = useState('')
   const [selectedLocationCodes, setSelectedLocationCodes] = useState([])
+  const [locationQuery, setLocationQuery] = useState('')
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [listLoading, setListLoading] = useState(true)
@@ -50,6 +51,17 @@ function RoleLocationAssignment({ loggedInUser }) {
   const activeLocations = useMemo(
     () => locations.filter((loc) => loc.status === 'Active'),
     [locations]
+  )
+  const filteredLocations = useMemo(
+    () => activeLocations.filter((loc) => {
+      const q = locationQuery.trim().toLowerCase()
+      if (!q) return true
+      return (
+        String(loc.locationName || '').toLowerCase().includes(q) ||
+        String(loc.locationCode || '').toLowerCase().includes(q)
+      )
+    }),
+    [activeLocations, locationQuery]
   )
 
   const assignmentRows = useMemo(() => {
@@ -172,6 +184,7 @@ function RoleLocationAssignment({ loggedInUser }) {
       await loadSummaries()
       setSelectedRoleId('')
       setSelectedLocationCodes([])
+      setLocationQuery('')
       logUiAction(MODULE, 'Save Role Locations', {
         roleId: Number(selectedRoleId),
         roleName: role?.roleName || '',
@@ -190,12 +203,14 @@ function RoleLocationAssignment({ loggedInUser }) {
     clearSuccess()
     setSelectedRoleId(String(summary.roleId))
     setSelectedLocationCodes(summary.locationCodes || [])
+    setLocationQuery('')
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   const handleClear = () => {
     setSelectedRoleId('')
     setSelectedLocationCodes([])
+    setLocationQuery('')
     clearError()
     clearSuccess()
   }
@@ -249,8 +264,9 @@ function RoleLocationAssignment({ loggedInUser }) {
       {canEdit && (
         <form onSubmit={handleSubmit}>
           <div>
-            <label>Select Role</label>
+            <label htmlFor="role-location-role">Select Role</label>
             <select
+              id="role-location-role"
               value={selectedRoleId}
               onChange={(event) => handleRoleChange(event.target.value)}
             >
@@ -269,7 +285,7 @@ function RoleLocationAssignment({ loggedInUser }) {
           </div>
 
           <div className="full-width-field">
-            <label>Role Locations</label>
+            <label htmlFor="role-location-search">Role Locations</label>
 
             {activeLocations.length === 0 ? (
               <div className="info-box">
@@ -278,35 +294,32 @@ function RoleLocationAssignment({ loggedInUser }) {
               </div>
             ) : (
               <>
-                <div style={{ marginBottom: 10, display: 'flex', gap: 8 }}>
+                <div className="location-filter-bar">
+                  <input
+                    id="role-location-search"
+                    type="search"
+                    placeholder="Filter locations by name or code…"
+                    value={locationQuery}
+                    onChange={(event) => setLocationQuery(event.target.value)}
+                    aria-label="Filter locations"
+                  />
                   <button
                     type="button"
+                    className="btn-secondary btn-sm"
                     onClick={handleSelectAll}
-                    style={{
-                      background: 'var(--primary)',
-                      color: 'var(--text-inverse)',
-                      padding: '4px 10px',
-                      fontSize: 12,
-                    }}
                   >
                     {allSelected ? 'Deselect All' : `Select All (${activeLocations.length})`}
                   </button>
-                  <span
-                    style={{
-                      fontSize: 12,
-                      color: 'var(--text-muted)',
-                      alignSelf: 'center',
-                    }}
-                  >
+                  <span className="location-selection-count">
                     {selectedLocationCodes.length} of {activeLocations.length} selected
                   </span>
                 </div>
 
-                <div className="permission-grid">
-                  {activeLocations.map((loc) => (
+                <div className="permission-grid location-checkbox-list location-list checkbox-list">
+                  {filteredLocations.map((loc) => (
                     <label
                       key={loc.locationCode}
-                      className="permission-card"
+                      className="permission-card location-checkbox location-checkbox-item location-option"
                       style={{
                         cursor: 'pointer',
                         opacity: selectedLocationCodes.includes(loc.locationCode) ? 1 : 0.75,
@@ -316,6 +329,7 @@ function RoleLocationAssignment({ loggedInUser }) {
                         type="checkbox"
                         checked={selectedLocationCodes.includes(loc.locationCode)}
                         onChange={() => handleLocationToggle(loc.locationCode)}
+                        aria-label={loc.locationName}
                       />
                       <div>
                         <strong>{loc.locationName}</strong>
@@ -323,6 +337,11 @@ function RoleLocationAssignment({ loggedInUser }) {
                       </div>
                     </label>
                   ))}
+                  {filteredLocations.length === 0 && (
+                    <div className="info-box" style={{ gridColumn: '1 / -1' }}>
+                      No locations match the filter.
+                    </div>
+                  )}
                 </div>
               </>
             )}

@@ -10,6 +10,7 @@ import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
 import { usePermissions } from '../hooks/usePermissions'
 import AlertMessage from '../components/common/AlertMessage'
+import PageHeader from '../components/common/PageHeader'
 import useActionFeedback from '../hooks/useActionFeedback'
 
 function UserLocationAssignment({
@@ -39,10 +40,19 @@ function UserLocationAssignment({
   const [confirmDeleteId, setConfirmDeleteId] = useState(null)
   const [fieldErrors, setFieldErrors] = useState({})
   const [page, setPage] = useState(1)
+  const [locationQuery, setLocationQuery] = useState('')
 
   const pageSize = usePageSize()
   const activeUsers = users.filter((user) => user.status === 'Active')
   const activeLocations = locations.filter((loc) => loc.status === 'Active')
+  const filteredLocations = activeLocations.filter((loc) => {
+    const q = locationQuery.trim().toLowerCase()
+    if (!q) return true
+    return (
+      String(loc.locationName || '').toLowerCase().includes(q) ||
+      String(loc.locationCode || '').toLowerCase().includes(q)
+    )
+  })
 
   const { hasPermission } = usePermissions(loggedInUser)
   const canView = hasPermission('View User Location Assignment')
@@ -123,6 +133,7 @@ function UserLocationAssignment({
       setSelectedLocationCodes([])
       setAllLocationsAccess('No')
       setFieldErrors({})
+      setLocationQuery('')
       setSuccess('User location assignment saved successfully')
     } catch (err) {
       setError(err.message)
@@ -263,6 +274,7 @@ function UserLocationAssignment({
     setSelectedLocationCodes([])
     setAllLocationsAccess('No')
     setFieldErrors({})
+    setLocationQuery('')
     clearError()
     clearSuccess()
     setConfirmDeleteId(null)
@@ -289,20 +301,11 @@ function UserLocationAssignment({
 
   return (
     <div>
-      <div className="page-title">
-        <div>
-          <h2>User Location Assignment</h2>
-          <p>
-            Assign locations to users for location-based access control. Users
-            with "All Locations Access" can access every location regardless of
-            individual assignments.
-          </p>
-        </div>
-
-        <span className="record-count">
-          {userLocationAssignments.length} Assignments
-        </span>
-      </div>
+      <PageHeader
+        title="User Location Assignment"
+        description="Assign locations to users for location-based access control. Users with All Locations Access can access every location regardless of individual assignments."
+        count={`${userLocationAssignments.length} Assignments`}
+      />
 
       <AlertMessage tone="success" message={success} onDismiss={clearSuccess} />
       <AlertMessage tone="error" message={error} onDismiss={clearError} />
@@ -317,8 +320,9 @@ function UserLocationAssignment({
       {canEdit && (
         <form onSubmit={handleSubmit}>
           <div>
-            <label>Select User</label>
+            <label htmlFor="user-location-user">Select User</label>
             <select
+              id="user-location-user"
               value={selectedUserId}
               onChange={(e) => handleUserChange(e.target.value)}
               aria-invalid={fieldErrors.userId ? 'true' : undefined}
@@ -338,7 +342,7 @@ function UserLocationAssignment({
           </div>
 
           <div className="full-width-field">
-            <label>Assigned Locations</label>
+            <label htmlFor="user-location-search">Assigned Locations</label>
             {activeLocations.length === 0 ? (
               <div className="info-box">
                 Please create at least one active location in Location Master
@@ -346,53 +350,42 @@ function UserLocationAssignment({
               </div>
             ) : (
               <>
-                <div style={{ marginBottom: 10, display: 'flex', gap: 8 }}>
+                <div className="location-filter-bar">
+                  <input
+                    id="user-location-search"
+                    type="search"
+                    placeholder="Filter locations by name or code…"
+                    value={locationQuery}
+                    onChange={(e) => setLocationQuery(e.target.value)}
+                    aria-label="Filter locations"
+                  />
                   <button
                     type="button"
+                    className="btn-secondary btn-sm"
                     onClick={handleSelectAllLocations}
-                    style={{
-                      background: 'var(--primary)',
-                      color: 'var(--text-inverse)',
-                      padding: '4px 10px',
-                      fontSize: 12,
-                    }}
                   >
-                    {allSelected
-                      ? 'Deselect All'
-                      : `Select All (${activeLocations.length})`}
+                    {allSelected ? 'Deselect All' : `Select All (${activeLocations.length})`}
                   </button>
-                  <span
-                    style={{
-                      fontSize: 12,
-                      color: 'var(--text-muted)',
-                      alignSelf: 'center',
-                    }}
-                  >
-                    {selectedLocationCodes.length} of {activeLocations.length}{' '}
-                    selected
+                  <span className="location-selection-count">
+                    {selectedLocationCodes.length} of {activeLocations.length} selected
                   </span>
                 </div>
 
-                <div className="permission-grid">
-                  {activeLocations.map((loc) => (
+                <div className="permission-grid location-checkbox-list location-list checkbox-list">
+                  {filteredLocations.map((loc) => (
                     <label
                       key={loc.locationCode}
-                      className="permission-card"
+                      className="permission-card location-checkbox location-checkbox-item location-option"
                       style={{
                         cursor: 'pointer',
-                        opacity: selectedLocationCodes.includes(
-                          loc.locationCode
-                        )
-                          ? 1
-                          : 0.75,
+                        opacity: selectedLocationCodes.includes(loc.locationCode) ? 1 : 0.75,
                       }}
                     >
                       <input
                         type="checkbox"
-                        checked={selectedLocationCodes.includes(
-                          loc.locationCode
-                        )}
+                        checked={selectedLocationCodes.includes(loc.locationCode)}
                         onChange={() => handleLocationToggle(loc.locationCode)}
+                        aria-label={loc.locationName}
                       />
                       <div>
                         <strong>{loc.locationName}</strong>
@@ -400,6 +393,11 @@ function UserLocationAssignment({
                       </div>
                     </label>
                   ))}
+                  {filteredLocations.length === 0 && (
+                    <div className="info-box" style={{ gridColumn: '1 / -1' }}>
+                      No locations match the filter.
+                    </div>
+                  )}
                 </div>
               </>
             )}
