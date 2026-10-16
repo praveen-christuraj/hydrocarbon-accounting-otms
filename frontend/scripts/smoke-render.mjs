@@ -408,6 +408,40 @@ globalThis.fetch = async (input, init = {}) => {
   if (path.startsWith('/audit-logs')) return jsonResponse(paged(auditLogs, path))
   if (path.startsWith('/system-notifications/active')) return jsonResponse([])
   if (path.startsWith('/system-notifications/my')) return jsonResponse([])
+  if (path.startsWith('/user-locations')) {
+    // User 2 holds two locations, User 3 one and has All Locations Access.
+    const allAccessMatch = path.match(/^\/user-locations\/(\d+)\/all-locations-access$/)
+    if (allAccessMatch && method === 'PUT') {
+      return jsonResponse({
+        user_id: Number(allAccessMatch[1]),
+        full_name: 'User 2',
+        username: 'user2',
+        all_locations_access: JSON.parse(init.body || '{}').all_locations_access || 'No',
+        location_codes: ['LOC002', 'LOC003'],
+      })
+    }
+    const userMatch = path.match(/^\/user-locations\/(\d+)$/)
+    if (userMatch && method === 'PUT') {
+      return jsonResponse({
+        user_id: Number(userMatch[1]),
+        full_name: 'User 2',
+        username: 'user2',
+        all_locations_access: 'No',
+        location_codes: JSON.parse(init.body || '{}').location_codes || [],
+      })
+    }
+    if (path === '/user-locations/users') {
+      return jsonResponse([
+        { user_id: 2, full_name: 'User 2', username: 'user2', all_locations_access: 'No', location_codes: ['LOC002', 'LOC003'] },
+        { user_id: 3, full_name: 'User 3', username: 'user3', all_locations_access: 'Yes', location_codes: ['LOC004'] },
+      ])
+    }
+    return jsonResponse([
+      { id: 1, user_id: 2, full_name: 'User 2', username: 'user2', location_code: 'LOC002', location_name: 'Terminal 2', created_at: now },
+      { id: 2, user_id: 2, full_name: 'User 2', username: 'user2', location_code: 'LOC003', location_name: 'Terminal 3', created_at: now },
+      { id: 3, user_id: 3, full_name: 'User 3', username: 'user3', location_code: 'LOC004', location_name: 'Terminal 4', created_at: now },
+    ])
+  }
   if (path.startsWith('/roles')) return jsonResponse(paged([{ id: 1, role_name: 'Admin', description: 'Administrator', status: 'Active', created_at: now, updated_at: now }], path))
   if (path.startsWith('/permissions')) return jsonResponse(paged(me.permissions.map((p) => ({ ...p, description: '', created_at: now, updated_at: now })), path))
   // generic fallbacks
@@ -641,6 +675,116 @@ try {
       }
     }
 
+    if (path === '/user-locations') {
+      // The location scope panel is shared with /role-locations: dense rows of
+      // [checkbox · name · code], sorted by name, with a live selection count.
+      const scope = q('.main-content .location-scope')
+      check('location scope panel rendered', Boolean(scope))
+
+      const optionRows = qa('.main-content .location-option')
+      const countText = text(q('.main-content .location-scope-count'))
+      const totalShown = Number((countText.match(/of\s+(\d+)/) || [])[1] || 0)
+      check(
+        'location scope lists every active location',
+        optionRows.length > 0 && optionRows.length === totalShown,
+        `${optionRows.length} rows, count "${countText}"`
+      )
+
+      const names = optionRows.map((row) => text(row.querySelector('.location-option-name')))
+      const sortedNames = [...names].sort((a, b) =>
+        a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
+      )
+      check('location rows are sorted by name', names.join('|') === sortedNames.join('|'), names.slice(0, 3).join(', '))
+      check(
+        'every location row has checkbox, name and code columns',
+        optionRows.length > 0 &&
+          optionRows.every(
+            (row) =>
+              row.children.length === 3 &&
+              row.querySelector("input[type='checkbox']") &&
+              text(row.querySelector('.location-option-name')) !== '' &&
+              text(row.querySelector('.location-option-code')) !== ''
+          )
+      )
+
+      const firstBox = optionRows[0]?.querySelector("input[type='checkbox']")
+      if (firstBox) {
+        click(firstBox)
+        await flush(120)
+        check(
+          'selecting a location updates the count',
+          text(q('.main-content .location-scope-count')).startsWith('1 of '),
+          text(q('.main-content .location-scope-count'))
+        )
+        const clearButton = qa('.main-content .location-scope-clear')[0]
+        click(clearButton)
+        await flush(120)
+        check(
+          'clear all resets the selection',
+          text(q('.main-content .location-scope-count')).startsWith('0 of '),
+          text(q('.main-content .location-scope-count'))
+        )
+      }
+
+      // One-to-many table: a user's rows share one merged User / All Locations cell.
+      const assignmentRows = qa('.main-content table tbody tr')
+      check('user location rows are listed', assignmentRows.length === 3, `${assignmentRows.length} rows`)
+      const firstUserCell = assignmentRows[0]?.querySelector('td')
+      check(
+        'user cell is merged across that user’s location rows',
+        firstUserCell?.getAttribute('rowspan') === '2' && text(firstUserCell).includes('User 2'),
+        `rowspan=${firstUserCell?.getAttribute('rowspan')} cell="${text(firstUserCell)}"`
+      )
+      check(
+        'continuation row does not repeat the user cell',
+        assignmentRows[1]?.querySelectorAll('td').length === 2,
+        `${assignmentRows[1]?.querySelectorAll('td').length} cells`
+      )
+      check(
+        'all-locations access renders as a status chip',
+        Boolean(assignmentRows[2]?.querySelector('.status-badge.approved')),
+        text(assignmentRows[2]).slice(0, 60)
+      )
+
+      // Edit prefill + save round trip from the new panel.
+      setValue(q('.main-content #user-location-user'), '2')
+      await flush(150)
+      const prefilled = qa('.main-content .location-option input').filter((input) => input.checked)
+      check('selecting a user prefills the saved scope', prefilled.length === 2, `${prefilled.length} checked`)
+
+      const boxes = qa('.main-content .location-option input')
+      click(boxes[2])
+      await flush(120)
+      check(
+        'checkbox clicks update the live count',
+        text(q('.main-content .location-scope-count')).startsWith('3 of '),
+        text(q('.main-content .location-scope-count'))
+      )
+
+      const saveAssignment = qa('.main-content button').find((b) => text(b).includes('Save Assignment'))
+      check('save assignment button present', Boolean(saveAssignment))
+      if (saveAssignment) {
+        const beforeSave = errors.length
+        click(saveAssignment)
+        await flush(300)
+        check(
+          'save calls the user-location endpoints',
+          apiCalls.includes('PUT /user-locations/2') && apiCalls.includes('PUT /user-locations/2/all-locations-access'),
+          apiCalls.filter((call) => call.includes('/user-locations')).join(', ')
+        )
+        check(
+          'save reports success without a runtime error',
+          errors.length === beforeSave && !q('.toast.tone-error'),
+          qa('.toast').map(text).join(' | ')
+        )
+        check(
+          'the panel resets after a successful save',
+          text(q('.main-content .location-scope-count')).startsWith('0 of '),
+          text(q('.main-content .location-scope-count'))
+        )
+      }
+    }
+
     if (path === '/role-locations') {
       const roleTable = qa('.main-content table').find((t) =>
         text(t.querySelector('thead')).includes('Locations')
@@ -662,7 +806,7 @@ try {
       if (editButton) {
         click(editButton)
         await flush(120)
-        const checkedBoxes = qa('.main-content .permission-card input').filter((input) => input.checked)
+        const checkedBoxes = qa('.main-content .location-option input').filter((input) => input.checked)
         check('edit prefills the role locations', checkedBoxes.length === 1, `${checkedBoxes.length} checked`)
 
         const saveButton = qa('.main-content button').find((b) => text(b).includes('Save Role Locations'))

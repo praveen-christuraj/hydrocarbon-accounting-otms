@@ -238,9 +238,13 @@ before/after codes in `details`).
   `Manage Role Location Assignment`; seeded by `default_permissions.py` and shown automatically on
   Access Summary, which reads the backend catalog.
 * `frontend/src/pages/RoleLocationAssignment.jsx` (route `/role-locations`, nav under
-  *User Management* after *User Location Assignment*) – role picker, select-all location grid,
-  replace-on-save warning, edit-from-row, paginated list, bulk export, audit logging of UI saves
-  and permission gates. `frontend/src/api/roleLocationApi.js` maps the snake_case payloads.
+  *User Management* after *User Location Assignment*) – `.assignment-panel` module with the role
+  picker, a read-only *Current Scope* readout, the shared `LocationScopeSelector` location grid
+  (`frontend/src/components/common/LocationScopeSelector.jsx`, also used by User Location
+  Assignment) with per-list select-all and clear-all, replace-on-save notice, edit-from-row,
+  paginated list, bulk export, audit logging of UI saves and permission gates.
+  `frontend/src/api/roleLocationApi.js` maps the snake_case payloads. Both pages are covered by
+  `npm run smoke` (`/user-locations`, `/role-locations`).
 
 ### Tests
 
