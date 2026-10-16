@@ -15,8 +15,17 @@ Rules used by the tracking code:
   * A module WITH configuration rows captures only the approved tickets whose
     operation type is an *Active* row for that module. Inactive rows and
     unconfigured operation types are not captured.
-  * The configured stage / movement role is authoritative. The keyword
-    matching on the operation type code is only used by legacy mode.
+  * The configured movement role is authoritative for Tanker Tracking, which
+    uses a separate operation type per side: a receiving tanker ticket must use
+    an operation type mapped as RECEIVER.
+  * Barge Tracking uses ONE operation type for both sides of a movement - the
+    sender ticket and the receiving ticket the receiver creates against it -
+    so every Active barge mapping is a valid receiving operation type. See
+    ``receiving_config_rows``.
+  * No movement stage is configured here. The barge stage belongs to the
+    ticket (the entry screen captures it in the ``barge_event_type`` value
+    field), exactly like Tanker Tracking - one operation type can be used with
+    any stage by any location.
 
 The per-request cache lives on the SQLAlchemy session (``db.info``) so a single
 request does not re-query the configuration for every ticket it loops over.
@@ -51,31 +60,6 @@ STATUS_ACTIVE = "Active"
 STATUS_INACTIVE = "Inactive"
 CONFIG_STATUSES = [STATUS_ACTIVE, STATUS_INACTIVE]
 
-# Barge timeline stages (same vocabulary as the barge timeline events).
-BARGE_STAGES = {
-    "LOAD_1": "Load 1 - first loading of the barge",
-    "LOAD_2_TOPUP": "Load 2 - top-up loading",
-    "STS_OUT": "STS Out - transfer to another barge",
-    "STS_IN": "STS In - transfer received from another barge",
-    "STS": "STS - ship-to-ship transfer",
-    "UNLOAD": "Unload - receiver discharges the barge",
-    "SHUTTLE_RECEIPT": "Shuttle Receipt - receipt into a shuttle / FSO",
-}
-
-# Which movement roles a barge stage may be configured with.
-BARGE_STAGE_ALLOWED_ROLES = {
-    "LOAD_1": {ROLE_SENDER},
-    "LOAD_2_TOPUP": {ROLE_SENDER},
-    "STS_OUT": {ROLE_SENDER},
-    "STS_IN": {ROLE_RECEIVER},
-    "STS": {ROLE_SENDER, ROLE_RECEIVER},
-    "UNLOAD": {ROLE_RECEIVER},
-    "SHUTTLE_RECEIPT": {ROLE_RECEIVER},
-}
-
-# Stages whose tickets are the receiving side of a movement.
-BARGE_RECEIVING_STAGES = {"UNLOAD", "STS_IN", "SHUTTLE_RECEIPT"}
-
 
 def _key(value) -> str:
     return str(value or "").strip().lower()
@@ -86,7 +70,7 @@ def clean_code(value) -> str:
 
 
 def tracking_catalog() -> dict:
-    """Modules, roles and stages offered by the configuration page."""
+    """Modules, roles and statuses offered by the configuration page."""
     return {
         "modules": [
             {"code": code, "label": label}
@@ -95,14 +79,6 @@ def tracking_catalog() -> dict:
         "roles": [
             {"code": code, "label": label}
             for code, label in MOVEMENT_ROLES.items()
-        ],
-        "stages": [
-            {
-                "code": code,
-                "label": label,
-                "allowed_roles": sorted(BARGE_STAGE_ALLOWED_ROLES[code]),
-            }
-            for code, label in BARGE_STAGES.items()
         ],
         "statuses": CONFIG_STATUSES,
     }
@@ -157,6 +133,33 @@ def configured_operation_type_codes(db: Session, module_code: str):
     return set(index["rows"].keys())
 
 
+def configured_rows(db: Session, module_code: str) -> list[TrackingModuleConfig]:
+    """Active configuration rows of a module, ordered by operation type code."""
+    rows = list(_module_index(db, module_code)["rows"].values())
+    rows.sort(key=lambda row: _key(row.operation_type_code))
+    return rows
+
+
+def receiving_config_rows(db: Session, module_code: str) -> list[TrackingModuleConfig]:
+    """
+    Active configuration rows a receiving ticket may use.
+
+    Tanker Tracking has a dedicated receiving operation type per side, so only
+    rows configured as RECEIVER qualify. Barge Tracking uses one operation type
+    for the sender ticket and for the receiving ticket created against it, so
+    every Active barge mapping can be used by either side.
+    """
+    rows = configured_rows(db, module_code)
+    if module_code == MODULE_BARGE:
+        return rows
+    return [row for row in rows if row.movement_role == ROLE_RECEIVER]
+
+
+def configured_operation_type_code_list(db: Session, module_code: str) -> list[str]:
+    """Active operation type codes of a module, for messages and dropdowns."""
+    return [clean_code(row.operation_type_code) for row in configured_rows(db, module_code)]
+
+
 def is_ticket_captured(db: Session, module_code: str, transaction):
     """
     True / False when the module is configured; None when it is not
@@ -173,25 +176,21 @@ def configured_role_for_transaction(db: Session, module_code: str, transaction):
     return row.movement_role if row else None
 
 
-def configured_stage_for_transaction(db: Session, transaction):
-    """Barge stage configured for the ticket's operation type, or None."""
-    row = get_active_config_row(db, MODULE_BARGE, transaction.operation_type_code)
-    if row is None:
-        return None
-    stage = clean_code(row.tracking_stage).upper()
-    return stage or None
-
-
 def validate_config_payload(
     db: Session,
     module_code: str,
     operation_type_code: str,
     movement_role: str,
-    tracking_stage,
     status: str,
     exclude_id: int | None = None,
 ):
-    """Business rules for one configuration row. Raises HTTPException(400)."""
+    """Business rules for one configuration row. Raises HTTPException(400).
+
+    The row maps an operation type to a tracking module and a movement role.
+    No stage is configured: the barge stage is captured on the ticket itself
+    (entry screen ``barge_event_type`` value), so one operation type serves
+    every stage and both sides of a barge movement.
+    """
     module = clean_code(module_code).upper()
     if module not in TRACKING_MODULES:
         raise HTTPException(status_code=400, detail="Unknown tracking module")
@@ -213,19 +212,7 @@ def validate_config_payload(
     if str(operation_type.status or "").strip() != STATUS_ACTIVE:
         raise HTTPException(status_code=400, detail="Only Active operation types can be mapped to a tracking module")
 
-    stage = clean_code(tracking_stage).upper() or None
-
     if module == MODULE_BARGE:
-        if stage is None:
-            raise HTTPException(status_code=400, detail="Barge tracking stage is required")
-        if stage not in BARGE_STAGES:
-            raise HTTPException(status_code=400, detail="Unknown barge tracking stage")
-        if role not in BARGE_STAGE_ALLOWED_ROLES[stage]:
-            allowed = " or ".join(sorted(BARGE_STAGE_ALLOWED_ROLES[stage]))
-            raise HTTPException(
-                status_code=400,
-                detail=f"Stage {stage} can only be configured as {allowed}",
-            )
         # Barge Tracking captures the operation types the admin maps to it. The
         # old rule required the literal text "barge" in the asset type code,
         # which refused perfectly valid installations whose barge asset type is
@@ -245,8 +232,6 @@ def validate_config_payload(
                     f"operation types - map this operation type there instead of in Barge Tracking."
                 ),
             )
-    else:
-        stage = None
 
     duplicate_query = db.query(TrackingModuleConfig).filter(
         TrackingModuleConfig.module_code == module,
@@ -264,6 +249,5 @@ def validate_config_payload(
         "module_code": module,
         "operation_type_code": operation_type.operation_type_code,
         "movement_role": role,
-        "tracking_stage": stage,
         "status": status,
     }

@@ -7,7 +7,6 @@ const convertConfigFromApi = (item) => ({
   operationTypeCode: item.operation_type_code,
   operationTypeName: item.operation_type_name || '',
   movementRole: item.movement_role,
-  trackingStage: item.tracking_stage || '',
   status: item.status,
   remarks: item.remarks || '',
   createdBy: item.created_by || '',
@@ -20,7 +19,6 @@ const convertConfigToApi = (item) => ({
   module_code: item.moduleCode,
   operation_type_code: item.operationTypeCode,
   movement_role: item.movementRole,
-  tracking_stage: item.trackingStage || null,
   status: item.status || 'Active',
   remarks: item.remarks || null,
 })

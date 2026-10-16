@@ -2048,9 +2048,16 @@ class TrackingModuleConfig(Base):
 
     One row = one operation type mapped to one tracking module, with the
     movement role it plays (SENDER creates the approved ticket that flows out,
-    RECEIVER creates the ticket against an approved sender ticket) and, for
-    barge tracking, the timeline stage it represents. Replaces the hard-coded
-    operation-type keyword matching the tracking pages used before.
+    RECEIVER creates the ticket against an approved sender ticket). No movement
+    stage is configured here: the barge stage is captured on the ticket itself
+    (entry screen ``barge_event_type`` value), so one Barge Tracking operation
+    type can be used by the sender and by the receiver, with any stage.
+    Replaces the hard-coded operation-type keyword matching the tracking pages
+    used before.
+
+    ``tracking_stage`` is a legacy column from when Barge Tracking required a
+    stage per mapping. It is no longer read or written and stays nullable, so
+    existing databases keep working without a migration.
     """
     __tablename__ = "tracking_module_configs"
 

@@ -22,7 +22,6 @@ const emptyForm = {
   moduleCode: 'BARGE',
   operationTypeCode: '',
   movementRole: 'SENDER',
-  trackingStage: '',
   status: 'Active',
   remarks: '',
 }
@@ -35,7 +34,7 @@ function TrackingModuleConfiguration({ loggedInUser }) {
   const canDelete = hasPermission('Delete Tracking Module Configuration')
 
   const feedback = useActionFeedback()
-  const [catalog, setCatalog] = useState({ modules: [], roles: [], stages: [], statuses: [], operation_types: [] })
+  const [catalog, setCatalog] = useState({ modules: [], roles: [], statuses: [], operation_types: [] })
   const [configs, setConfigs] = useState([])
   const [loading, setLoading] = useState(false)
   const [formOpen, setFormOpen] = useState(false)
@@ -58,11 +57,6 @@ function TrackingModuleConfiguration({ loggedInUser }) {
     () => activeOperationTypes.filter((item) => (item.mappings || []).length === 0),
     [activeOperationTypes]
   )
-
-  const stagesForRole = useMemo(() => {
-    if (formData.moduleCode !== 'BARGE') return []
-    return (catalog.stages || []).filter((stage) => stage.allowed_roles.includes(formData.movementRole))
-  }, [catalog.stages, formData.moduleCode, formData.movementRole])
 
   const fetchAll = async () => {
     const [catalogData, configData] = await Promise.all([
@@ -107,7 +101,6 @@ function TrackingModuleConfiguration({ loggedInUser }) {
 
   const moduleLabel = (code) => catalog.modules.find((item) => item.code === code)?.label || code
   const roleLabel = (code) => catalog.roles.find((item) => item.code === code)?.label || code
-  const stageLabel = (code) => catalog.stages.find((item) => item.code === code)?.label || code || '-'
 
   const resetForm = () => {
     setFormData(emptyForm)
@@ -132,7 +125,6 @@ function TrackingModuleConfiguration({ loggedInUser }) {
       moduleCode: item.moduleCode,
       operationTypeCode: item.operationTypeCode,
       movementRole: item.movementRole,
-      trackingStage: item.trackingStage || '',
       status: item.status,
       remarks: item.remarks || '',
     })
@@ -148,15 +140,7 @@ function TrackingModuleConfiguration({ loggedInUser }) {
 
   const handleChange = (e) => {
     const { name, value } = e.target
-    setFormData((prev) => {
-      const next = { ...prev, [name]: value }
-      if (name === 'moduleCode' && value !== 'BARGE') next.trackingStage = ''
-      if (name === 'movementRole') {
-        const allowed = (catalog.stages || []).filter((stage) => stage.allowed_roles.includes(value))
-        if (!allowed.some((stage) => stage.code === prev.trackingStage)) next.trackingStage = ''
-      }
-      return next
-    })
+    setFormData((prev) => ({ ...prev, [name]: value }))
     setValidationErrors((prev) => {
       const next = { ...prev }
       delete next[name]
@@ -168,9 +152,6 @@ function TrackingModuleConfiguration({ loggedInUser }) {
   const validateForm = () => {
     const errors = {}
     if (!formData.operationTypeCode) errors.operationTypeCode = 'Operation type is required'
-    if (formData.moduleCode === 'BARGE' && !formData.trackingStage) {
-      errors.trackingStage = 'Barge tracking needs a stage (for example Load 1 or Unload)'
-    }
     const duplicate = configs.some(
       (item) =>
         item.id !== editId &&
@@ -240,6 +221,9 @@ function TrackingModuleConfiguration({ loggedInUser }) {
           <p>
             Map operation types of the Operation Type Master to Barge Tracking and Tanker Tracking.
             Each tracking page lists the approved tickets of its mapped operation types for the user's locations.
+            No stage is configured here: Barge Tracking captures the barge stage on the ticket itself,
+            so the same operation type serves the sender and the receiver with any stage (Load 1, Top-up,
+            STS, Unload).
           </p>
         </div>
         <div className="page-title-actions">
@@ -281,7 +265,7 @@ function TrackingModuleConfiguration({ loggedInUser }) {
       <FormDialog
         open={formOpen}
         title={editId === null ? 'New Tracking Mapping' : 'Edit Tracking Mapping'}
-        description="A receiver ticket is created against an approved sender ticket of the same barge and convoy."
+        description="Map an operation type to a tracking module. A receiver ticket is created against an approved sender ticket of the same barge and convoy."
         submitLabel={editId === null ? 'Save Mapping' : 'Update Mapping'}
         busy={loading}
         error={validationErrors._form}
@@ -320,22 +304,15 @@ function TrackingModuleConfiguration({ loggedInUser }) {
               <option key={item.code} value={item.code}>{item.label}</option>
             ))}
           </select>
+          {formData.moduleCode === 'BARGE' && (
+            <small>
+              Barge Tracking uses one operation type for both sides: the receiver ticket is
+              created against the approved sender ticket, so this role does not limit the
+              operation type to one side. No stage is mapped here - the barge stage is
+              selected on the ticket itself.
+            </small>
+          )}
         </div>
-
-        {formData.moduleCode === 'BARGE' && (
-          <div>
-            <label>Barge Stage</label>
-            <select name="trackingStage" value={formData.trackingStage} onChange={handleChange}>
-              <option value="">Select Stage</option>
-              {stagesForRole.map((item) => (
-                <option key={item.code} value={item.code}>{item.label}</option>
-              ))}
-            </select>
-            {validationErrors.trackingStage && (
-              <span className="field-error">{validationErrors.trackingStage}</span>
-            )}
-          </div>
-        )}
 
         <div>
           <label>Status</label>
@@ -372,7 +349,6 @@ function TrackingModuleConfiguration({ loggedInUser }) {
             <th>Tracking Module</th>
             <th>Operation Type</th>
             <th>Movement Role</th>
-            <th>Stage</th>
             <th>Status</th>
             <th>Remarks</th>
             {(canEdit || canDelete) && <th>Actions</th>}
@@ -381,7 +357,7 @@ function TrackingModuleConfiguration({ loggedInUser }) {
         <tbody>
           {visibleConfigs.length === 0 ? (
             <tr>
-              <td colSpan={canEdit || canDelete ? 7 : 6} className="empty-table">
+              <td colSpan={canEdit || canDelete ? 6 : 5} className="empty-table">
                 No tracking module mappings configured yet.
               </td>
             </tr>
@@ -391,7 +367,6 @@ function TrackingModuleConfiguration({ loggedInUser }) {
                 <td>{moduleLabel(item.moduleCode)}</td>
                 <td>{item.operationTypeName || item.operationTypeCode} ({item.operationTypeCode})</td>
                 <td>{roleLabel(item.movementRole)}</td>
-                <td>{stageLabel(item.trackingStage)}</td>
                 <td>
                   <span className={`status-badge ${String(item.status).toLowerCase()}`}>{item.status}</span>
                 </td>
