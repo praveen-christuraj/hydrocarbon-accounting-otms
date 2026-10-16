@@ -29,6 +29,7 @@ import TankOperationMaster from './pages/TankOperationMaster'
 import OperationTemplateMaster from './pages/OperationTemplateMaster'
 import OperationEntry from './pages/OperationEntry'
 import LocationOperationAvailability from './pages/LocationOperationAvailability'
+import TrackingModuleConfiguration from './pages/TrackingModuleConfiguration'
 import LocationOperationSummary from './pages/LocationOperationSummary'
 import OperationTransactionRegister from './pages/OperationTransactionRegister'
 import TankOperationSummary from './pages/TankOperationSummary'
@@ -957,6 +958,19 @@ function AppContent({
               </PermissionGuard>
             }
           /> */}
+          <Route
+            path="/tracking-module-configuration"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View Tracking Module Configuration"
+                fallbackMessage="You do not have permission to view tracking module configuration."
+              >
+                <TrackingModuleConfiguration loggedInUser={loggedInUser} />
+              </PermissionGuard>
+            }
+          />
+
           <Route
             path="/location-operation-availability"
             element={

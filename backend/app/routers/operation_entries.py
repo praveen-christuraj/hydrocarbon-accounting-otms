@@ -41,9 +41,27 @@ from app.routers.operation_transactions import (
     get_or_create_shuttle_voyage,
 )
 from app.routers.reports import normalize_jsonb_value
+from app.services.tracking_links import (
+    LINKED_TICKET_FIELD_CODE,
+    get_linked_sender_transaction_id,
+    set_linked_sender_value,
+    validate_linked_sender_ticket,
+    validate_receiver_operation_type,
+    describe_linked_sender,
+)
+from app.services.tracking_config import MODULE_BARGE
 from app.utils.pagination import clamp_limit
 
 router = APIRouter(prefix="/operation-entries", tags=["Operation Entries"])
+
+
+def _parse_linked_id(value):
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def build_operation_entry_response(
@@ -72,12 +90,22 @@ def build_operation_entry_response(
             .all()
         )
 
+    linked_ticket_id = None
+    visible_values = []
+    for value in values:
+        # The sender-link row is system metadata, not a template field.
+        if value.field_code == LINKED_TICKET_FIELD_CODE:
+            linked_ticket_id = _parse_linked_id(value.field_value)
+            continue
+        visible_values.append(value)
+
     return {
         "transaction": transaction_response
         if transaction_response is not None
         else build_operation_transaction_response(transaction, db),
         "operation_template_id": transaction.operation_template_id,
         "operation_template_name": template.template_name if template else "",
+        "linked_ticket_id": linked_ticket_id,
         "values": [
             {
                 "id": value.id,
@@ -91,7 +119,7 @@ def build_operation_entry_response(
                 "field_value": value.field_value,
                 "sort_order": value.sort_order,
             }
-            for value in values
+            for value in visible_values
         ],
     }
 
@@ -284,23 +312,76 @@ def ensure_operation_entry_locations_in_scope(
     transaction_payload,
     current_user: User,
     db: Session,
+    linked_receiver: bool = False,
 ):
     # Origin and sender are the user's own side and must stay inside their
     # assigned location scope. Destination and receiver may be any location
     # registered in the system (cross-location movement), so they are not
     # restricted to the user's scope.
+    # A receiver ticket created against a sender ticket takes its sender side
+    # from that sender ticket (another terminal). The receiving origin is still
+    # checked against the user's scope, and the link itself is validated by
+    # validate_linked_sender_ticket.
     ensure_location_in_user_scope(
         current_user,
         db,
         clean_optional_text(transaction_payload.origin_location_code),
         "Origin location",
     )
+    if linked_receiver:
+        return
     ensure_location_in_user_scope(
         current_user,
         db,
         clean_optional_text(transaction_payload.sender_location_code),
         "Sender location",
     )
+
+
+def apply_linked_sender_to_entry(
+    entry,
+    db: Session,
+    current_user: User,
+    exclude_transaction_id: int | None = None,
+):
+    """
+    For a receiver ticket: validate the sender link and overwrite the
+    location / convoy fields from the sender ticket. Returns
+    (module_code, sender_transaction) or (None, None) when there is no link.
+    """
+    if entry.linked_ticket_id is None:
+        return None, None
+
+    sender, module_code, overrides = validate_linked_sender_ticket(
+        db=db,
+        sender_transaction_id=entry.linked_ticket_id,
+        current_user=current_user,
+        requested_convoy_number=entry.transaction.convoy_number,
+        exclude_transaction_id=exclude_transaction_id,
+    )
+
+    transaction_operation_type_code = clean_optional_text(
+        entry.transaction.operation_type_code
+    )
+    if transaction_operation_type_code is None:
+        transaction_operation_type_code = entry.transaction.operation_type_code or ""
+    validate_receiver_operation_type(db, module_code, transaction_operation_type_code)
+
+    if module_code == MODULE_BARGE:
+        if str(entry.transaction.primary_asset_code or "").strip().lower() != str(
+            sender.primary_asset_code or ""
+        ).strip().lower():
+            raise HTTPException(
+                status_code=400,
+                detail="The receiving ticket must be for the same barge as the linked sender ticket",
+            )
+
+    entry.transaction.origin_location_code = overrides["origin_location_code"]
+    entry.transaction.destination_location_code = overrides["destination_location_code"]
+    entry.transaction.sender_location_code = overrides["sender_location_code"]
+    entry.transaction.receiver_location_code = overrides["receiver_location_code"]
+    entry.transaction.convoy_number = overrides["convoy_number"]
+    return module_code, sender
 
 
 @router.get(
@@ -408,7 +489,16 @@ def create_operation_entry(
     if str(entry.transaction.status or "Draft").strip().casefold() != "draft":
         raise HTTPException(status_code=400, detail="New operation transactions must start in Draft status")
 
-    ensure_operation_entry_locations_in_scope(entry.transaction, current_user, db)
+    linked_sender_module, linked_sender = apply_linked_sender_to_entry(
+        entry, db, current_user
+    )
+
+    ensure_operation_entry_locations_in_scope(
+        entry.transaction,
+        current_user,
+        db,
+        linked_receiver=linked_sender is not None,
+    )
 
     (
         template,
@@ -505,6 +595,9 @@ def create_operation_entry(
 
         db.add(new_value)
 
+    if linked_sender is not None:
+        set_linked_sender_value(db, new_transaction.id, linked_sender.id)
+
     create_audit_log(
         db=db,
         module_name="Operation Transaction",
@@ -524,6 +617,8 @@ def create_operation_entry(
             "primary_asset_code": new_transaction.primary_asset_code,
             "origin_location_code": new_transaction.origin_location_code,
             "operation_date": str(new_transaction.operation_date),
+            "linked_sender_transaction_id": linked_sender.id if linked_sender is not None else None,
+            "tracking_module_code": linked_sender_module,
         },
     )
 
@@ -575,11 +670,27 @@ def update_operation_entry(
             ),
         )
 
+    if entry.linked_ticket_id is None:
+        # Editing a receiver ticket keeps its link to the sender ticket.
+        entry.linked_ticket_id = get_linked_sender_transaction_id(db, transaction_id)
+
+    linked_sender_module, linked_sender = apply_linked_sender_to_entry(
+        entry,
+        db,
+        current_user,
+        exclude_transaction_id=transaction_id,
+    )
+
     convoy_to_check = clean_optional_text(entry.transaction.convoy_number) or clean_optional_text(existing_transaction.convoy_number)
     trip = get_trip_by_convoy_or_none(db, convoy_to_check)
     ensure_trip_not_closed(trip)
 
-    ensure_operation_entry_locations_in_scope(entry.transaction, current_user, db)
+    ensure_operation_entry_locations_in_scope(
+        entry.transaction,
+        current_user,
+        db,
+        linked_receiver=linked_sender is not None,
+    )
 
     (
         template,
@@ -649,6 +760,9 @@ def update_operation_entry(
         )
 
         db.add(new_value)
+
+    if linked_sender is not None:
+        set_linked_sender_value(db, transaction_id, linked_sender.id)
 
     changed_by = (
         f"{current_user.full_name} ({current_user.username})"
@@ -796,3 +910,22 @@ def delete_operation_entry(
     return {
         "message": "Operation entry cancelled successfully"
     }
+
+
+@router.get("/linked-sender/{transaction_id}")
+def get_linked_sender_ticket(
+    transaction_id: int,
+    current_user: User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db),
+):
+    """
+    Sender ticket details for creating a receiving ticket (barge / tanker
+    tracking). The receiver sees the route and configured receiving operation
+    types, not the sender's full transaction.
+    """
+    require_user_permission(
+        current_user,
+        "Create Operation Entry",
+        db,
+    )
+    return describe_linked_sender(db, transaction_id, current_user)

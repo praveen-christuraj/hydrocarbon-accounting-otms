@@ -100,6 +100,11 @@ export const navigationItems = [
         path: '/location-operation-availability',
         permission: 'View Location Operation Availability',
       },
+      {
+        label: 'Tracking Module Configuration',
+        path: '/tracking-module-configuration',
+        permission: 'View Tracking Module Configuration',
+      },
       { label: 'Table 11 Factor Master', path: '/table11-factors', permission: 'View Table 11 Factor' },
       {
         label: 'Company Report Profile Master',

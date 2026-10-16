@@ -75,7 +75,6 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
     remarks: '',
   })
 
-  const [nextStageByAsset, setNextStageByAsset] = useState({})
 
   const BARGE_SEAL_STATUS_LABELS = {
     MATCH: 'Matched',
@@ -1347,6 +1346,14 @@ return (
 
             const receiptLoc = receiptStateByAsset?.[String(assetCode)]?.location_code || ''
 
+            // Approved sender ticket of this barge that has no receiving ticket yet
+            const pendingSender = (g.tickets || [])
+              .filter((t) => t.movement_role === 'SENDER' && !t.receiver_transaction_id)
+              .slice(-1)[0]
+            const receivingTickets = (g.tickets || []).filter(
+              (t) => t.movement_role === 'RECEIVER' && t.linked_sender_transaction_id
+            )
+
             return (
               <div key={assetCode} className="full-width-field">
                 <div className="section-title">
@@ -1354,6 +1361,15 @@ return (
                   <p>
                     Tickets: <strong>{(g.tickets || []).length}</strong> | Receipt:{' '}
                     <strong>{acked ? `Acknowledged (${receiptLoc || '-'})` : 'Not Acknowledged'}</strong>
+                  </p>
+
+                  <p>
+                    {pendingSender
+                      ? `Waiting for receipt: ${pendingSender.ticket_number} (${pendingSender.operation_type_name || pendingSender.operation_type_code})`
+                      : 'No approved sender ticket is waiting for receipt.'}
+                    {receivingTickets.length > 0 && (
+                      <span> | Receiving tickets: {receivingTickets.map((t) => t.ticket_number).join(', ')}</span>
+                    )}
                   </p>
 
                   <div className="form-actions" style={{ marginTop: 8 }}>
@@ -1377,48 +1393,29 @@ return (
                       </button>
                     )}
 
-                    <select
-                      value={nextStageByAsset[String(assetCode)] || 'UNLOAD'}
-                      onChange={(e) =>
-                        setNextStageByAsset((cur) => ({
-                          ...cur,
-                          [String(assetCode)]: e.target.value,
-                        }))
-                      }
-                      disabled={loading || isTripClosed}
-                    >
-                      <option value="UNLOAD">UNLOAD</option>
-                      <option value="LOAD_2_TOPUP">LOAD 2 TOP-UP</option>
-                      <option value="STS">STS</option>
-                    </select>
-
                     <button
                       type="button"
-                      disabled={loading || isTripClosed}
+                      disabled={loading || !canManage || isTripClosed || !acked || !pendingSender}
+                      title={
+                        !canManage
+                          ? 'You do not have permission to create a receiving ticket'
+                          : !acked
+                            ? 'Acknowledge receipt of this barge first'
+                            : !pendingSender
+                              ? 'No approved sender ticket is waiting for receipt'
+                              : ''
+                      }
                       onClick={() => {
-                        const convoy = tracker?.convoy_number || ''
-                        const leftId = getLastLoadTicketId(assetCode)
-                        const leftTicket = leftId ? ticketById[String(leftId)] : null
-                        const origin =
-                          leftTicket?.destination_location_code ||
-                          leftTicket?.origin_location_code ||
-                          ''
-
-                        const stage = nextStageByAsset[String(assetCode)] || 'UNLOAD'
-
                         const url =
                           `/operation-entry?` +
                           `source=barge-tracking` +
-                          `&convoy_number=${encodeURIComponent(convoy)}` +
-                          `&primary_asset_code=${encodeURIComponent(assetCode)}` +
-                          `&origin_location_code=${encodeURIComponent(origin)}` +
-                          `&barge_event_type=${encodeURIComponent(stage)}` +
-                          (leftId ? `&left_ticket_id=${encodeURIComponent(leftId)}` : '')
-
+                          `&linked_ticket_id=${encodeURIComponent(pendingSender.transaction_id)}` +
+                          `&convoy_number=${encodeURIComponent(tracker?.convoy_number || '')}` +
+                          `&primary_asset_code=${encodeURIComponent(assetCode)}`
                         navigate(url)
                       }}
                     >
-                      Create Ticket
+                      Create Receiving Ticket
                     </button>
 
                     {canManage && (

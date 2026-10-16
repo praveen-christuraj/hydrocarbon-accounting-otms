@@ -1715,7 +1715,19 @@ class ConvoyTrackerTicket(BaseModel):
     origin_location_name: Optional[str] = None
     destination_location_code: Optional[str] = None
     destination_location_name: Optional[str] = None
+    sender_location_code: Optional[str] = None
+    receiver_location_code: Optional[str] = None
     status: str
+    # Tracking Module Configuration: SENDER / RECEIVER and barge stage
+    movement_role: Optional[str] = None
+    tracking_stage: Optional[str] = None
+    # Receiver ticket created against this approved sender ticket
+    receiver_transaction_id: Optional[int] = None
+    receiver_ticket_number: Optional[str] = None
+    receiver_status: Optional[str] = None
+    # Sender ticket this receiver ticket was created against
+    linked_sender_transaction_id: Optional[int] = None
+    linked_sender_ticket_number: Optional[str] = None
 
 
 class ConvoyTrackerAssetGroup(BaseModel):
@@ -1970,6 +1982,9 @@ class OperationEntryCreate(BaseModel):
     operation_template_id: int
     transaction: OperationTransactionCreate
     values: list[OperationEntryValueCreate]
+    # Receiver ticket created against an approved sender ticket (barge / tanker
+    # tracking). When set, the server takes the locations and convoy from it.
+    linked_ticket_id: Optional[int] = None
 
 
 class OperationEntryValueResponse(BaseModel):
@@ -1991,6 +2006,7 @@ class OperationEntryResponse(BaseModel):
     transaction: OperationTransactionResponse
     operation_template_id: int
     operation_template_name: str
+    linked_ticket_id: Optional[int] = None
     values: list[OperationEntryValueResponse]
 
 # -------------------------
@@ -2979,3 +2995,32 @@ class OutTurnSummaryColumnConfig(BaseModel):
 
 class OutTurnSummaryConfigUpdate(BaseModel):
     columns: list[OutTurnSummaryColumnConfig]
+
+# -------------------------
+# Tracking Module Configuration
+# -------------------------
+
+class TrackingModuleConfigBase(BaseModel):
+    module_code: str
+    operation_type_code: str
+    movement_role: str
+    tracking_stage: Optional[str] = None
+    status: str = "Active"
+    remarks: Optional[str] = None
+
+
+class TrackingModuleConfigCreate(TrackingModuleConfigBase):
+    pass
+
+
+class TrackingModuleConfigResponse(TrackingModuleConfigBase):
+    id: int
+    module_label: str
+    operation_type_name: str
+    applicable_asset_type_code: Optional[str] = None
+    created_by: Optional[str] = None
+    updated_by: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)

@@ -38,6 +38,11 @@ from app.utils.helpers import (
     get_asset_by_code,
 )
 from app.config import APPROVED_TRANSACTION_STATUS
+from app.services.tracking_config import (
+    MODULE_TANKER,
+    configured_operation_type_codes,
+    configured_role_for_transaction,
+)
 from app.services.transaction_helpers import (
     approved_transaction_not_on_correction_hold,
     transaction_has_pending_correction_request,
@@ -563,7 +568,10 @@ def build_tanker_tracking_ticket(
     if prime_mover_asset_code is None:
         prime_mover_asset_code = inputs.get("primeMoverNumber")
 
-    movement_role = detect_tanker_movement_role(transaction, operation_type)
+    movement_role = (
+        configured_role_for_transaction(db, MODULE_TANKER, transaction)
+        or detect_tanker_movement_role(transaction, operation_type)
+    )
 
     def number_from_input(key: str):
         return safe_float(inputs.get(key))
@@ -1129,11 +1137,26 @@ def get_tanker_tracking_rows(
         .exists()
     )
 
+    # Tracking Module Configuration: when Tanker Tracking is configured, the
+    # configured operation types decide which approved tickets are tracked.
+    # Without configuration the legacy rule (tanker payload or tanker asset) applies.
+    configured_codes = configured_operation_type_codes(db, MODULE_TANKER)
+
     query = (
         db.query(OperationTransaction)
         .filter(
             OperationTransaction.status == APPROVED_TRANSACTION_STATUS,
             approved_transaction_not_on_correction_hold(db),
+        )
+    )
+    if configured_codes is not None:
+        query = query.filter(
+            func.lower(OperationTransaction.operation_type_code).in_(
+                list(configured_codes) or [""]
+            )
+        )
+    else:
+        query = query.filter(
             or_(
                 tanker_payload_exists,
                 func.lower(
@@ -1141,7 +1164,6 @@ def get_tanker_tracking_rows(
                 ).like("%tanker%"),
             ),
         )
-    )
 
     if current_user is not None:
         query = apply_location_filter(

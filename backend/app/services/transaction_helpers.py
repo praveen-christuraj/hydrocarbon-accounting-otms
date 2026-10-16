@@ -3,6 +3,7 @@ from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
+from app.services.tracking_config import configured_stage_for_transaction
 from app.config import APPROVED_CORRECTION_WINDOW_HOURS, APPROVED_TRANSACTION_STATUS, CORRECTION_HOLD_STATUS
 from app.models import (
     ApprovedTransactionCorrectionRequest,
@@ -188,6 +189,13 @@ def resolve_barge_event_type_from_ticket(db: Session, transaction: OperationTran
     Returns None when the stage cannot be derived - the caller then falls
     back to LOAD_1 / LOAD_2_TOPUP based on the existing timeline.
     """
+    # The stage configured for the operation type (Tracking Module
+    # Configuration) is authoritative. The entry-screen value and the keyword
+    # fallback below only apply when the operation type is not configured.
+    configured_stage = configured_stage_for_transaction(db, transaction)
+    if configured_stage:
+        return configured_stage
+
     stage = get_transaction_value_text(db, transaction.id, "barge_event_type")
 
     if stage:

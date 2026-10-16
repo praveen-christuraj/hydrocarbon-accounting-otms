@@ -213,6 +213,15 @@ PERMISSION_CATALOG = [
                 ],
             },
             {
+                "module_name": "Tracking Module Configuration",
+                "permissions": [
+                    _perm("View Tracking Module Configuration", VIEW, "Can view which operation types feed Barge / Tanker tracking"),
+                    _perm("Create Tracking Module Configuration", CREATE, "Can map an operation type to a tracking module and role"),
+                    _perm("Edit Tracking Module Configuration", EDIT, "Can change the tracking module, role, stage or status of a mapping"),
+                    _perm("Delete Tracking Module Configuration", DELETE, "Can remove an operation type mapping from a tracking module"),
+                ],
+            },
+            {
                 "module_name": "Location Accounting Day Settings",
                 "permissions": _crud("Location Accounting Day Setting", "location-wise accounting day settings"),
             },

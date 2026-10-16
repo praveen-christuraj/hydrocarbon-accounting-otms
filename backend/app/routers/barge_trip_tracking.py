@@ -47,6 +47,15 @@ from app.services.transaction_helpers import (
     require_approved_transaction_for_tracking,
     transaction_has_pending_correction_request,
 )
+from app.services.tracking_config import (
+    MODULE_BARGE,
+    configured_role_for_transaction,
+    configured_stage_for_transaction,
+)
+from app.services.tracking_links import (
+    get_linked_sender_transaction_id,
+    get_receiver_links_for_convoy,
+)
 from app.services.tracking_helpers import (
     is_barge_transaction,
     get_trip_by_convoy_or_none,
@@ -113,6 +122,25 @@ def ensure_barge_transaction_location_scope(transaction: OperationTransaction, c
             "This barge ticket does not involve any location in your assigned "
             "scope (origin, destination, sender or receiver)."
         ),
+    )
+
+
+def barge_transaction_in_user_scope(transaction: OperationTransaction, current_user: User, db: Session) -> bool:
+    """True when the user may see the ticket (any of its four locations in scope)."""
+    location_codes = [
+        clean_optional_text(getattr(transaction, field_name, None))
+        for field_name in (
+            "origin_location_code",
+            "destination_location_code",
+            "sender_location_code",
+            "receiver_location_code",
+        )
+    ]
+    if all(code is None for code in location_codes):
+        return True
+    return any(
+        code is not None and user_has_location_access(current_user, db, code)
+        for code in location_codes
     )
 
 
@@ -194,13 +222,22 @@ def get_convoy_tracker(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
+    """
+    Approved barge tickets of one convoy, grouped by barge.
+
+    Only tickets captured by Barge Tracking are listed (Tracking Module
+    Configuration). A ticket is shown when one of its four locations is in the
+    user's scope - the receiver sees the sender's approved ticket even though the
+    sender side is another terminal. Each ticket also carries its movement role,
+    its stage and the sender / receiver ticket it is linked to.
+    """
     require_user_permission(current_user, "View Barge Tracking", db)
 
     convoy = clean_optional_text(convoy_number)
     if convoy is None:
         raise HTTPException(status_code=400, detail="convoy_number is required")
 
-    transactions = (
+    approved = (
         db.query(OperationTransaction)
         .filter(
             OperationTransaction.convoy_number.ilike(convoy),
@@ -209,9 +246,22 @@ def get_convoy_tracker(
         .order_by(OperationTransaction.operation_date.asc(), OperationTransaction.id.asc())
         .all()
     )
+    barge_transactions = [tx for tx in approved if is_barge_transaction(db, tx)]
 
-    for transaction in transactions:
-        ensure_barge_transaction_location_scope(transaction, current_user, db)
+    transactions = [
+        tx for tx in barge_transactions
+        if barge_transaction_in_user_scope(tx, current_user, db)
+    ]
+    if barge_transactions and not transactions:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "This barge ticket does not involve any location in your assigned "
+                "scope (origin, destination, sender or receiver)."
+            ),
+        )
+
+    receiver_by_sender = get_receiver_links_for_convoy(db, convoy)
 
     asset_map = {}
     for tx in transactions:
@@ -224,6 +274,14 @@ def get_convoy_tracker(
                 "tickets": [],
             }
         op_type = get_operation_type_by_code(tx.operation_type_code, db)
+
+        receiver = receiver_by_sender.get(tx.id)
+        linked_sender_id = get_linked_sender_transaction_id(db, tx.id)
+        linked_sender = (
+            db.query(OperationTransaction).filter(OperationTransaction.id == linked_sender_id).first()
+            if linked_sender_id is not None else None
+        )
+
         asset_map[asset_code]["tickets"].append({
             "transaction_id": tx.id,
             "ticket_number": get_transaction_ticket_number(tx),
@@ -234,7 +292,17 @@ def get_convoy_tracker(
             "origin_location_name": get_location_name_by_code(tx.origin_location_code, db),
             "destination_location_code": tx.destination_location_code,
             "destination_location_name": get_location_name_by_code(tx.destination_location_code, db),
+            "sender_location_code": tx.sender_location_code,
+            "receiver_location_code": tx.receiver_location_code,
             "status": tx.status,
+            "movement_role": configured_role_for_transaction(db, MODULE_BARGE, tx)
+            or ("RECEIVER" if linked_sender is not None else None),
+            "tracking_stage": configured_stage_for_transaction(db, tx),
+            "receiver_transaction_id": receiver.id if receiver else None,
+            "receiver_ticket_number": get_transaction_ticket_number(receiver) if receiver else None,
+            "receiver_status": receiver.status if receiver else None,
+            "linked_sender_transaction_id": linked_sender.id if linked_sender else None,
+            "linked_sender_ticket_number": get_transaction_ticket_number(linked_sender) if linked_sender else None,
         })
 
     return {
