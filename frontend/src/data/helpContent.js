@@ -56,6 +56,22 @@ export const helpContent = {
       'Example: Viewer may get only View permissions.',
       'Example: Admin may get View, Create, Edit, and Delete permissions.',
       'These permissions are later inherited by users assigned to that role.',
+      'In Assign Permissions, "Apply a preset" replaces or adds to the selection in one step; review it and select Save Permissions.',
+      '"Save selection as preset" stores the ticked permissions as a reusable preset (see Permission Presets).',
+    ],
+  },
+
+  '/permission-presets': {
+    title: 'Permission Presets Help',
+    description:
+      'A permission preset is a named, reusable set of permissions. Build it once and apply it to one role or many instead of ticking permissions one by one.',
+    points: [
+      'Standard presets (read only, and view only / full access per menu) are built from the permission catalog and are always available.',
+      'Saved presets: up to 20, each with a unique name and at least one permission. Load permissions from a role or another preset to start quickly.',
+      'Apply in Replace mode to give the roles exactly the preset, or in Add mode to keep what they already have.',
+      'Every applied change goes through Role Permission Assignment and is recorded in the audit log.',
+      'The Admin role, inactive roles and roles holding permissions you do not have cannot receive a preset.',
+      'Saved presets are kept in this browser; use Export and Bulk Upload to copy them to another computer.',
     ],
   },
 
@@ -280,14 +296,14 @@ export const helpContent = {
     description:
       'Material Balance Template allows users to configure location-wise Material Balance columns from Tank Operations without hardcoding location-specific report layouts.',
     points: [
-      'Create one active template per location for daily Material Balance reporting.',
-      'OPENING columns use configured SET operations like Opening Stock.',
-      'MOVEMENT columns must be mapped to Tank Operation codes.',
-      'IN movement columns can represent Receipt, Production, Receipt from X/Y, or similar terms configured by the user.',
-      'OUT movement columns can represent Dispatch, Dispatch to X/Y, Draining, or similar terms configured by the user.',
-      'Internal Tank Transfer / ITT columns should be marked as internal transfer so they are excluded from Material Balance and Book Closing.',
-      'Book Closing, Actual Closing, and Loss/Gain columns are calculated by the report engine.',
-      'This configuration removes hardcoded location-specific Material Balance columns.',
+      'The Material Balance Report uses the newest Active template of each location – the list shows which template is "Used by report". Use "Use for report" to switch.',
+      'New Template can build the columns from the Tank Operations of the location in one step, copy another template, or start empty.',
+      'Keep a new template Inactive while you configure it, so the report keeps using the current template.',
+      'OPENING columns show the previous day\'s closing stock, or the day\'s Opening Stock entry.',
+      'MOVEMENT columns add up the Tank Operations ticked under Count. IN columns hold receipts / production, OUT columns dispatches / draining.',
+      'Mark Internal Tank Transfer (ITT) columns as internal transfer so they never count in Book Closing.',
+      'Book Closing, Actual Closing and Loss/Gain columns are calculated by the report engine.',
+      'The checks under the report preview list Tank Operations that are not in any column, unknown codes and missing standard columns.',
     ],
   },
 

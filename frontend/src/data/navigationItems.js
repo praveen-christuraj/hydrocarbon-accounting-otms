@@ -22,6 +22,11 @@ export const navigationItems = [
       { label: 'Role Master', path: '/roles', permission: 'View Role' },
       { label: 'Permission Master', path: '/permissions', permission: 'View Permission' },
       {
+        label: 'Permission Presets',
+        path: '/permission-presets',
+        permission: 'View Role Permission Assignment',
+      },
+      {
         label: 'Role Permission Assignment',
         path: '/role-permissions',
         permission: 'View Role Permission Assignment',

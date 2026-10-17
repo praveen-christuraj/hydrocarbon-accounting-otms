@@ -3070,6 +3070,463 @@ form .location-scope-toolbar .location-scope-clear:hover:not(:disabled) {
   }
 }
 
+/* ------------------------------------------- material balance template */
+/* Template designer + column dialogs (MaterialBalanceTemplateMaster). The
+   dialogs are portalled by Modal, so nothing here is scoped under the page. */
+.mb-how-it-works {
+  margin-top: 0;
+  font-weight: 400;
+}
+
+.mb-designer-anchor {
+  scroll-margin-top: 108px;
+  margin-top: 20px;
+}
+
+.mb-designer .assignment-panel-meta {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.mb-designer .assignment-panel-meta button {
+  margin: 0;
+}
+
+.mb-designer-toolbar {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.mb-designer-toolbar > button {
+  margin: 0;
+}
+
+.mb-toolbar-spacer {
+  flex: 1 1 auto;
+}
+
+.mb-empty-designer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 20px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-panel);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: 13.5px;
+}
+
+.mb-empty-designer strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.mb-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.mb-empty-actions button {
+  margin: 0;
+}
+
+.mb-preview {
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface-2);
+}
+
+.mb-preview-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+
+.mb-preview-note {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.mb-preview-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mb-preview-cell {
+  display: inline-flex;
+  flex-direction: column;
+  min-width: 110px;
+  max-width: 220px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--navy-300);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+}
+
+.mb-preview-cell strong {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.mb-preview-cell small {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.mb-preview-cell.type-opening,
+.mb-preview-cell.type-book_closing,
+.mb-preview-cell.type-actual_closing {
+  border-top-color: var(--primary);
+}
+
+.mb-preview-cell.type-loss_gain {
+  border-top-color: var(--warning);
+}
+
+.mb-preview-cell.type-info,
+.mb-preview-cell.type-formula {
+  border-top-color: var(--border-strong);
+}
+
+.mb-formula {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 14px;
+  margin: 12px 0 0;
+  font-size: 13px;
+}
+
+.mb-formula > div {
+  display: contents;
+}
+
+.mb-formula dt {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.mb-formula dd {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.mb-checks {
+  margin-bottom: 6px;
+}
+
+button.mb-inline-action {
+  margin: 0 0 0 10px;
+  vertical-align: middle;
+}
+
+.mb-column-table tr.is-inactive td {
+  color: var(--text-muted);
+}
+
+.mb-role {
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.mb-role.tone-positive {
+  color: var(--success-text);
+}
+
+.mb-role.tone-negative {
+  color: var(--danger-text);
+}
+
+.mb-role.tone-info {
+  color: var(--info-text);
+}
+
+.mb-role.tone-muted {
+  color: var(--text-muted);
+}
+
+.code-chip.mb-excluded-chip {
+  border-style: dashed;
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+button.mb-icon-button {
+  min-width: 28px;
+  padding: 3px 6px;
+}
+
+.mb-usage-warning {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--danger-text);
+}
+
+button.mb-link-button,
+form button.mb-link-button[type='button'] {
+  min-height: 0;
+  min-width: 0;
+  margin: 0 0 0 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--link);
+  font-size: 12px;
+  font-weight: 500;
+  text-decoration: underline;
+}
+
+td button.mb-link-button {
+  margin: 4px 0 0;
+}
+
+button.mb-link-button:hover:not(:disabled),
+form button.mb-link-button[type='button']:hover:not(:disabled) {
+  background: none;
+  color: var(--link-hover);
+}
+
+.choice-option.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.mb-choice-grid .choice-option {
+  flex: 1 1 200px;
+}
+
+.mb-field-intro,
+.mb-dialog-intro {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.mb-operation-table,
+.mb-generate-table {
+  margin-bottom: 0;
+}
+
+.mb-operation-table td,
+.mb-generate-table td {
+  vertical-align: middle;
+}
+
+.mb-check-col {
+  width: 72px;
+  text-align: center;
+}
+
+.mb-check-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mb-operation-table input[type='checkbox'],
+.mb-generate-table input[type='checkbox'] {
+  margin: 0;
+  cursor: pointer;
+}
+
+.mb-generate-table tr.is-disabled td {
+  color: var(--text-muted);
+}
+
+input.mb-inline-input,
+select.mb-inline-select {
+  width: 100%;
+  min-width: 140px;
+}
+
+.mb-orphan-codes {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-top: 8px;
+  font-size: 12.5px;
+  color: var(--warning-text);
+}
+
+.code-chip.mb-removable-chip {
+  gap: 4px;
+  padding-right: 4px;
+}
+
+form button.mb-chip-remove[type='button'] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  min-width: 0;
+  height: 18px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+}
+
+form button.mb-chip-remove[type='button']:hover:not(:disabled) {
+  background: var(--btn-ghost-hover);
+  color: var(--text);
+}
+
+.mb-manual-codes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+}
+
+.mb-key-hint {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: baseline;
+}
+
+/* ---------------------------------------------------- permission presets */
+/* Permission Presets page + preset bar of the Assign Permissions pop-up. */
+.preset-info {
+  margin-top: 0;
+  font-weight: 400;
+}
+
+.preset-bar {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface-2);
+}
+
+.preset-bar button {
+  margin: 0;
+}
+
+.preset-bar-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+select.preset-bar-select {
+  flex: 0 1 320px;
+  min-width: 220px;
+  width: auto;
+}
+
+.preset-bar-spacer {
+  flex: 1 1 auto;
+}
+
+.preset-bar-meta {
+  flex-basis: 100%;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.preset-field-error {
+  margin: 0 0 10px;
+}
+
+button.preset-inline-action {
+  margin: 0 0 0 10px;
+  vertical-align: middle;
+}
+
+.preset-mode-row {
+  margin-bottom: 14px;
+}
+
+.preset-role-toolbar {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 8px;
+}
+
+.preset-role-toolbar .field-label {
+  margin: 0;
+}
+
+.preset-role-toolbar input[type='search'] {
+  flex: 1 1 220px;
+  max-width: 320px;
+}
+
+.preset-role-count {
+  margin-left: auto;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.preset-role-scroll {
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.preset-role-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.preset-check-col {
+  width: 44px;
+  text-align: center;
+}
+
+.preset-check-col input[type='checkbox'] {
+  margin: 0;
+  cursor: pointer;
+}
+
+td.preset-result-error {
+  color: var(--danger-text);
+}
+
+.preset-module-chips {
+  margin-top: 4px;
+}
+
+.code-chip.preset-module-chip {
+  font-family: var(--font-sans);
+}
+
 /* --------------------------------------------------------------- print */
 @media print {
   .app-topbar,

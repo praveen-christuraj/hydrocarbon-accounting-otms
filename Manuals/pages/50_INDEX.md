@@ -13,6 +13,7 @@
 | 03 | [03_RoleMaster.md](03_RoleMaster.md) | roleApi | roles.py | Role |
 | 04 | [04_PermissionMaster.md](04_PermissionMaster.md) | permissionApi | permissions.py | Permission |
 | 05 | [05_RolePermissionAssignment.md](05_RolePermissionAssignment.md) | rolePermissionApi | role_permissions.py | RolePermission |
+| 53 | [53_PermissionPresets.md](53_PermissionPresets.md) | rolePermissionApi, permissionApi | role_permissions.py | RolePermission (presets stored in the browser) |
 | 06 | [06_UserRoleAssignment.md](06_UserRoleAssignment.md) | userRoleApi | user_roles.py | UserRole |
 | 07 | [07_AccessSummary.md](07_AccessSummary.md) | (composite) | (composite) | (composite) |
 | 08 | [08_ProfileSecurity.md](08_ProfileSecurity.md) | securityApi | auth.py | User |

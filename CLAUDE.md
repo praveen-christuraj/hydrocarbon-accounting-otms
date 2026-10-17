@@ -109,6 +109,38 @@ Rules:
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
 
+## Recent Changes (2026-10-17) - Material Balance Template Redesign + Permission Presets (frontend only)
+
+### Material Balance Template Configuration (`/material-balance-template-master`)
+
+- **Root causes fixed:** column update / delete called `/material-balance-template-columns/{id}` (404) – the routes
+  live under the router prefix: `/material-balance-templates/material-balance-template-columns/{id}`
+  (`frontend/src/api/materialBalanceTemplateApi.js`). The list endpoint returns no columns, so the page now loads
+  the details (`getMaterialBalanceTemplatesWithColumns`) – column counts and the bulk upload (update an existing
+  key instead of "Column Key already exists") work. **New Template** only reset hidden inline state; it now opens
+  a dialog.
+- **New way of configuring:** New / Edit / Duplicate in `FormDialog` (start from Tank Operations, copy a template,
+  or empty); "Columns from Tank Operations" builds the whole layout in one reviewed step; a designer with report
+  preview, Book Closing formula in words, configuration checks with one-click fixes, move up / down ordering
+  (`planColumnOrders`: keeps orders when there is room, otherwise renumbers 10, 20, …) and Export Columns in the
+  bulk-upload layout. The report uses the newest Active template per location – the list shows it and
+  **Use for report** switches it. Rules mirrored from the backend live in
+  `frontend/src/utils/materialBalanceTemplate.js`; components in `frontend/src/components/materialBalance/`.
+- Inline `.confirm-overlay` dialogs replaced by `useConfirm`; Create / Edit / Delete gated separately.
+
+### Permission Presets (`/permission-presets`, User Management menu)
+
+- Same functionality as HCA-System's Permission Preset module (named presets, max 20, unique names, ≥ 1
+  permission, Active / Inactive, apply to many roles in replace / add mode, preset bar + "Save selection as preset"
+  in Role Permission Assignment, import / export). **No backend or database change:** saved presets are stored in
+  the browser by `frontend/src/utils/permissionPresetStore.js` (`localStorage` `hca.permissionPresets.v1`, swap
+  for an API later in that one file); standard presets are derived from the catalog
+  (`frontend/src/utils/permissionPresets.js`). Applying always goes through `POST /role-permissions/{role_id}`, so
+  the backend audits every role change. Gated by View / Edit Role Permission Assignment (no preset permission
+  exists in the catalog).
+- CSV note: the CSV reader treats an unquoted `;` as a delimiter, so list cells (permission names, operation codes)
+  are exported comma-separated (the CSV writer quotes them) and imports accept `,` or `;`.
+
 ## Recent Fixes (2026-10-16) - Barge Tracking: One Operation Type For Both Sides, No Barge Stage
 
 ### "Operation type BARGE_MOVE is not configured as a receiver operation for Barge Tracking"
