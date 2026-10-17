@@ -13,6 +13,7 @@ import UserMaster from './pages/UserMaster'
 import RoleMaster from './pages/RoleMaster'
 import PermissionMaster from './pages/PermissionMaster'
 import RolePermissionAssignment from './pages/RolePermissionAssignment'
+import PermissionPresets from './pages/PermissionPresets'
 import UserRoleAssignment from './pages/UserRoleAssignment'
 import UserLocationAssignment from './pages/UserLocationAssignment'
 import RoleLocationAssignment from './pages/RoleLocationAssignment'
@@ -323,6 +324,25 @@ function AppContent({
                 fallbackMessage="You do not have permission to view role permission assignments."
               >
                 <RolePermissionAssignment
+                  roles={roles}
+                  permissions={permissions}
+                  rolePermissionAssignments={rolePermissionAssignments}
+                  reloadRolePermissions={reloadRolePermissions}
+                  loggedInUser={loggedInUser}
+                />
+              </PermissionGuard>
+            }
+          />
+
+          <Route
+            path="/permission-presets"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View Role Permission Assignment"
+                fallbackMessage="You do not have permission to view permission presets."
+              >
+                <PermissionPresets
                   roles={roles}
                   permissions={permissions}
                   rolePermissionAssignments={rolePermissionAssignments}

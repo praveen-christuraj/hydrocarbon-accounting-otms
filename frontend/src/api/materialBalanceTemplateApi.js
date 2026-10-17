@@ -10,6 +10,9 @@ const convertTemplateFromApi = (row) => {
     createdAt: row.created_at || '',
     updatedAt: row.updated_at || '',
     columns: (row.columns || []).map(convertTemplateColumnFromApi),
+    // The list endpoint returns templates without their columns; only the
+    // detail endpoint (GET /material-balance-templates/{id}) includes them.
+    columnsLoaded: Array.isArray(row.columns),
   }
 }
 
@@ -91,6 +94,38 @@ export const getMaterialBalanceTemplateDetail = async (templateId) => {
   return convertTemplateFromApi(data)
 }
 
+/**
+ * Templates together with their columns. The list endpoint has no columns, so
+ * the details are fetched a few at a time. A template whose detail cannot be
+ * loaded is returned with `columnsError` instead of failing the whole list.
+ */
+export const getMaterialBalanceTemplatesWithColumns = async (filters = {}) => {
+  const templates = await getMaterialBalanceTemplates(filters)
+  const results = new Array(templates.length)
+  const CONCURRENCY = 4
+  let cursor = 0
+
+  const worker = async () => {
+    while (cursor < templates.length) {
+      const index = cursor
+      cursor += 1
+      try {
+        results[index] = await getMaterialBalanceTemplateDetail(templates[index].id)
+      } catch (error) {
+        results[index] = {
+          ...templates[index],
+          columns: [],
+          columnsLoaded: false,
+          columnsError: error?.message || 'Unable to load the columns of this template',
+        }
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, templates.length) }, worker))
+  return results
+}
+
 export const createMaterialBalanceTemplate = async (template) => {
   const data = await apiPost(
     '/material-balance-templates',
@@ -126,8 +161,10 @@ export const createMaterialBalanceTemplateColumn = async (
 }
 
 export const updateMaterialBalanceTemplateColumn = async (columnId, column) => {
+  // The column routes live under the template router's prefix:
+  // PUT /material-balance-templates/material-balance-template-columns/{column_id}
   const data = await apiPut(
-    `/material-balance-template-columns/${columnId}`,
+    `/material-balance-templates/material-balance-template-columns/${columnId}`,
     convertTemplateColumnToApi(column)
   )
 
@@ -135,7 +172,7 @@ export const updateMaterialBalanceTemplateColumn = async (columnId, column) => {
 }
 
 export const deleteMaterialBalanceTemplateColumn = async (columnId) => {
-  return apiDelete(`/material-balance-template-columns/${columnId}`)
+  return apiDelete(`/material-balance-templates/material-balance-template-columns/${columnId}`)
 }
 
 const convertTankOperationFromApi = (row) => {
@@ -146,6 +183,7 @@ const convertTankOperationFromApi = (row) => {
     operationLabel: row.operation_label || row.operationLabel || '',
     operationCategory: row.operation_category || row.operationCategory || '',
     operationSign: row.operation_sign || row.operationSign || '',
+    sortOrder: Number(row.sort_order ?? row.sortOrder ?? 0),
     status: row.status || 'Active',
   }
 }

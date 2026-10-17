@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { saveRolePermissions } from '../api/rolePermissionApi'
 import { getPermissionCatalog } from '../api/permissionApi'
 import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
@@ -6,8 +7,10 @@ import DataTableToolbar from '../components/common/DataTableToolbar'
 import PageHeader from '../components/common/PageHeader'
 import AlertMessage from '../components/common/AlertMessage'
 import Modal from '../components/common/Modal'
+import Icon from '../components/common/Icon'
 import { useConfirm } from '../components/common/ConfirmProvider'
 import PermissionMatrix from '../components/rbac/PermissionMatrix'
+import PresetBar from '../components/rbac/PresetBar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { usePermissions } from '../hooks/usePermissions'
 import { logUiAction } from '../utils/actionLogger'
@@ -35,6 +38,7 @@ function RolePermissionAssignment({
   loggedInUser,
 }) {
   const confirm = useConfirm()
+  const navigate = useNavigate()
   const { hasPermission, isAdmin } = usePermissions(loggedInUser)
   const canEdit = hasPermission('Edit Role Permission Assignment')
 
@@ -46,6 +50,7 @@ function RolePermissionAssignment({
   const [initialSelection, setInitialSelection] = useState(() => new Set())
   const [saving, setSaving] = useState(false)
   const [matrixError, setMatrixError] = useState('')
+  const [presetNotice, setPresetNotice] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [page, setPage] = useState(1)
@@ -127,6 +132,7 @@ function RolePermissionAssignment({
     setError('')
     setSuccess('')
     setMatrixError('')
+    setPresetNotice('')
     const names = new Set(row.assigned.map((permission) => nameKey(permission.permissionName)))
     setSelection(names)
     setInitialSelection(new Set(names))
@@ -149,6 +155,7 @@ function RolePermissionAssignment({
     }
     setMatrixRole(null)
     setMatrixError('')
+    setPresetNotice('')
   }
 
   const canAssignEntry = (entry) => isAdmin || actorPermissionNames.has(nameKey(entry.permissionName))
@@ -242,6 +249,12 @@ function RolePermissionAssignment({
         title="Role Permission Assignment"
         description="Grant module-wise View / Create / Edit / Delete permissions to each role."
         count={`${roles.length} Roles`}
+        actions={
+          <button type="button" className="btn-secondary" onClick={() => navigate('/permission-presets')}>
+            <Icon name="layers" size={15} />
+            Permission Presets
+          </button>
+        }
       />
 
       <AlertMessage tone="success" message={success} onDismiss={() => setSuccess('')} />
@@ -353,6 +366,21 @@ function RolePermissionAssignment({
         }
       >
         {matrixError && <AlertMessage tone="error" message={matrixError} onDismiss={() => setMatrixError('')} />}
+        {matrixRole && matrixEditable && (
+          <PresetBar
+            groups={groups}
+            selection={selection}
+            canAssign={canAssignEntry}
+            roleName={matrixRole.roleName}
+            actorName={loggedInUser?.fullName || loggedInUser?.username || ''}
+            onStage={(next, { message }) => {
+              setSelection(next)
+              setPresetNotice(message)
+            }}
+            onSaved={setPresetNotice}
+          />
+        )}
+        <AlertMessage tone="info" message={presetNotice} onDismiss={() => setPresetNotice('')} />
         {matrixRole && (
           <PermissionMatrix
             groups={groups}

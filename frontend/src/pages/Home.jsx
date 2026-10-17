@@ -8,6 +8,7 @@ const TILE_META = {
   '/users': { icon: 'user', description: 'Users' },
   '/roles': { icon: 'shield', description: 'Roles' },
   '/permissions': { icon: 'key', description: 'Module-wise permissions' },
+  '/permission-presets': { icon: 'layers', description: 'Reusable permission sets' },
   '/role-permissions': { icon: 'shieldCheck', description: 'Role access matrix' },
   '/user-roles': { icon: 'users', description: 'User access' },
   '/user-locations': { icon: 'mapPin', description: 'Location access' },

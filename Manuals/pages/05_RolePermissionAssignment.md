@@ -21,6 +21,14 @@ Assign permissions to roles. This is the mapping layer that connects the RBAC sy
 - `saveRolePermissions(roleId, permissionIds)` → `POST /role-permissions/{roleId}`
 - Sends array of permission IDs
 
+## Permission presets
+- The **Assign Permissions** pop-up has a preset bar: choose a saved or standard preset, see its effect
+  (`replace adds n and removes m · add grants n`), then **Replace selection** or **Add to selection**. Nothing is
+  written until **Save Permissions** (same audited endpoint). **Save selection as preset** stores the ticked
+  permissions as a new preset.
+- The header button **Permission Presets** opens the preset page – see
+  [53_PermissionPresets.md](53_PermissionPresets.md).
+
 ## API Endpoints
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
