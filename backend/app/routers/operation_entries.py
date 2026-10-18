@@ -51,6 +51,7 @@ from app.services.tracking_links import (
     describe_linked_sender,
 )
 from app.services.asset_family import operation_type_is_barge
+from app.services.location_pairing import apply_sender_receiver_pairing
 from app.services.tracking_config import MODULE_BARGE
 from app.utils.pagination import clamp_limit
 
@@ -508,6 +509,11 @@ def create_operation_entry(
         entry, db, current_user
     )
 
+    # Clubbed Sender / Receiver dropdowns: keep origin<->sender and
+    # destination<->receiver in sync (blanks only) so both columns of each
+    # pair always carry the same value.
+    apply_sender_receiver_pairing(entry.transaction)
+
     ensure_operation_entry_locations_in_scope(
         entry.transaction,
         current_user,
@@ -714,6 +720,9 @@ def update_operation_entry(
         current_user,
         exclude_transaction_id=transaction_id,
     )
+
+    # Clubbed Sender / Receiver dropdowns (see create_operation_entry).
+    apply_sender_receiver_pairing(entry.transaction)
 
     convoy_to_check = clean_optional_text(entry.transaction.convoy_number) or clean_optional_text(existing_transaction.convoy_number)
     trip = get_trip_by_convoy_or_none(db, convoy_to_check)

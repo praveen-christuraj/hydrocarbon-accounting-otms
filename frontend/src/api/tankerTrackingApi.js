@@ -79,6 +79,15 @@ const convertTicketFromApi = (ticket) => {
     receiverLocationCode: ticket.receiver_location_code || '',
     receiverLocationName: ticket.receiver_location_name || '',
 
+    // Clubbed Sender / Receiver pairing resolved by the server: the single
+    // Sender (sender, else origin) and the single Receiver (receiver, else
+    // destination) of the ticket. Tracking decisions read these, so tickets
+    // created before the clubbing behave exactly like new ones.
+    senderCode: ticket.sender_code || '',
+    senderName: ticket.sender_name || '',
+    receiverCode: ticket.receiver_code || '',
+    receiverName: ticket.receiver_name || '',
+
     primaryAssetCode: ticket.primary_asset_code || '',
     primaryAssetName: ticket.primary_asset_name || '',
     primaryAssetTypeCode: ticket.primary_asset_type_code || '',

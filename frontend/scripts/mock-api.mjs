@@ -798,6 +798,13 @@ const server = http.createServer(async (req, res) => {
               origin_location_name: 'Utapate Terminal',
               destination_location_code: 'BNY',
               destination_location_name: 'Bonny Depot',
+              sender_location_code: 'UTP',
+              receiver_location_code: 'BNY',
+              // Clubbed Sender / Receiver pairing resolved by the server.
+              sender_code: 'UTP',
+              sender_name: 'Utapate Terminal',
+              receiver_code: 'BNY',
+              receiver_name: 'Bonny Depot',
               status: 'Approved',
             },
           ],

@@ -36,6 +36,10 @@ from app.services.tracking_config import (
     module_is_configured,
     receiving_config_rows,
 )
+from app.services.location_pairing import (
+    resolve_receiver_location_code,
+    resolve_sender_location_code,
+)
 from app.services.transaction_helpers import require_approved_transaction_for_tracking
 from app.utils.helpers import clean_optional_text, get_transaction_ticket_number
 
@@ -139,29 +143,43 @@ def linked_location_overrides(sender: OperationTransaction) -> dict:
     """
     Locations a receiver ticket inherits from the approved sender ticket.
 
-    The receiving terminal (the sender's receiver / destination) becomes the
-    origin of the receiver ticket, so the receiver's own location scope and
-    location availability checks apply to the terminal that really receives.
+    The Operation Entry form clubs origin/sender into a single "Sender"
+    dropdown and destination/receiver into a single "Receiver" dropdown, so
+    the sender ticket is read through the pairing resolvers:
+
+      * ``sender_side``   - the terminal that dispatched the cargo
+        (``sender_location_code``, falling back to ``origin_location_code``
+        on records created before the clubbing);
+      * ``receiver_side`` - the terminal the cargo was addressed to
+        (``receiver_location_code``, falling back to
+        ``destination_location_code``).
+
+    The receiving terminal (the sender's Receiver) stays the **origin** of
+    the receiver ticket, because the origin is the location that owns and
+    creates the ticket - that is what the location scope and the location
+    availability checks apply to (see
+    :func:`app.routers.operation_entries.ensure_operation_entry_locations_in_scope`).
+    The counterparty is carried by ``sender_location_code`` (the sender's
+    Sender), so the receiver ticket still resolves to the same route as the
+    ticket it was created against.
     """
+    sender_side = resolve_sender_location_code(sender)
+    receiver_side = resolve_receiver_location_code(sender)
+
+    # The receiving terminal creates the ticket, so it is the ticket's own
+    # location (origin). Fall back to the sender side for tickets that carry
+    # no receiver at all, so the origin column is never left empty.
     receiving = (
-        clean_optional_text(sender.receiver_location_code)
-        or clean_optional_text(sender.destination_location_code)
+        receiver_side
+        or sender_side
         or clean_optional_text(sender.origin_location_code)
     )
+
     return {
         "origin_location_code": receiving,
-        "destination_location_code": (
-            clean_optional_text(sender.destination_location_code) or receiving
-        ),
-        "sender_location_code": (
-            clean_optional_text(sender.sender_location_code)
-            or clean_optional_text(sender.origin_location_code)
-        ),
-        "receiver_location_code": (
-            clean_optional_text(sender.receiver_location_code)
-            or clean_optional_text(sender.destination_location_code)
-            or receiving
-        ),
+        "destination_location_code": receiver_side or receiving,
+        "sender_location_code": sender_side or receiving,
+        "receiver_location_code": receiver_side or receiving,
         "convoy_number": clean_optional_text(sender.convoy_number),
     }
 
@@ -469,6 +487,11 @@ def describe_linked_sender(db: Session, sender_transaction_id: int, current_user
         "sender_location_name": loc_label(overrides["sender_location_code"]),
         "receiver_location_code": overrides["receiver_location_code"],
         "receiver_location_name": loc_label(overrides["receiver_location_code"]),
+        # Clubbed Sender / Receiver pairing: the route of the movement. The
+        # receiver ticket inherits it, so the entry page shows the same two
+        # ends whichever side created the ticket.
+        "sender_code": resolve_sender_location_code(sender),
+        "receiver_code": resolve_receiver_location_code(sender),
         "module_code": module_code,
         "module_label": _MODULES.get(module_code, "") if module_code else "",
         "receiver_operation_types": receiver_options,

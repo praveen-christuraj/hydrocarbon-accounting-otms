@@ -19,6 +19,12 @@ import CompanyPrintHeader from '../components/reports/CompanyPrintHeader'
 import CompanyPrintFooter from '../components/reports/CompanyPrintFooter'
 import { logUiAction } from '../utils/actionLogger'
 import { buildBargeMtrSampleRows } from '../utils/bargeMtrReport'
+import {
+  formatReceiverLabel,
+  formatSenderLabel,
+  resolveReceiverCode,
+  resolveSenderCode,
+} from '../utils/senderReceiver'
 
 const VOYAGE_TABS = [
   { value: 'OPEN', label: 'Open Voyages' },
@@ -31,8 +37,11 @@ const voyageColumns = [
   { key: 'bargeText', label: 'Barge(s)' },
   { key: 'bargeCount', label: 'Barges', type: 'number' },
   { key: 'ticketCount', label: 'Tickets', type: 'number' },
-  { key: 'originText', label: 'Origin' },
-  { key: 'destinationText', label: 'Destination' },
+  // Clubbed Sender / Receiver: a voyage connects the Sender terminal to the
+  // Receiver terminal. The server resolves the pair for every ticket, so
+  // tickets created before the clubbing list the same two ends.
+  { key: 'senderText', label: 'Sender' },
+  { key: 'receiverText', label: 'Receiver' },
   { key: 'firstOperationDate', label: 'First Operation Date', type: 'date' },
   { key: 'lastOperationDate', label: 'Last Operation Date', type: 'date' },
   { key: 'tripCreatedBy', label: 'Created By' },
@@ -245,8 +254,8 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
         .join(', '),
       bargeCount: voyage.bargeCount,
       ticketCount: voyage.ticketCount,
-      originText: voyage.originLocationCodes.join(', '),
-      destinationText: voyage.destinationLocationCodes.join(', '),
+      senderText: voyage.originLocationCodes.join(', '),
+      receiverText: voyage.destinationLocationCodes.join(', '),
       firstOperationDate: voyage.firstOperationDate,
       lastOperationDate: voyage.lastOperationDate,
       tripCreatedBy: voyage.tripCreatedBy,
@@ -453,13 +462,14 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
 
     const lastLoadId = getLastLoadTicketId(assetKey)
     const lastLoadTicket = lastLoadId ? ticketById[String(lastLoadId)] : null
+    // Clubbed Sender / Receiver: the barge is received at the Receiver of
+    // the sender ticket (receiver, else destination). Fall back to the
+    // Sender side so tickets recorded before the clubbing still resolve.
     const receiptLocation =
-      lastLoadTicket?.destination_location_code ||
-      lastLoadTicket?.origin_location_code ||
-      ''
+      resolveReceiverCode(lastLoadTicket) || resolveSenderCode(lastLoadTicket) || ''
 
     if (!receiptLocation) {
-      notifyError('Could not determine receipt location (destination). Please ensure the load ticket has destination.')
+      notifyError('Could not determine receipt location. Please ensure the load ticket has a Receiver (destination).')
       return
     }
 
@@ -1239,8 +1249,8 @@ return (
             <th>Status</th>
             <th>Barge(s)</th>
             <th>Tickets</th>
-            <th>Origin</th>
-            <th>Destination</th>
+            <th>Sender</th>
+            <th>Receiver</th>
             <th>First Date</th>
             <th>Last Date</th>
             <th className="no-print">Action</th>
@@ -1273,8 +1283,8 @@ return (
                 </td>
                 <td>{row.bargeText || '-'}</td>
                 <td>{row.ticketCount}</td>
-                <td>{row.originText || '-'}</td>
-                <td>{row.destinationText || '-'}</td>
+                <td>{row.senderText || '-'}</td>
+                <td>{row.receiverText || '-'}</td>
                 <td>{row.firstOperationDate || '-'}</td>
                 <td>{row.lastOperationDate || '-'}</td>
                 <td className="no-print">
@@ -1502,8 +1512,8 @@ return (
                       <th>Ticket</th>
                       <th>Operation</th>
                       <th>Date</th>
-                      <th>Origin</th>
-                      <th>Destination</th>
+                      <th>Sender</th>
+                      <th>Receiver</th>
                       <th>Status</th>
                       <th>Open</th>
                     </tr>
@@ -1519,8 +1529,8 @@ return (
                           <td><strong>{t.ticket_number}</strong></td>
                           <td>{t.operation_type_name}</td>
                           <td>{t.operation_date}</td>
-                          <td>{t.origin_location_name ? `${t.origin_location_name} (${t.origin_location_code})` : t.origin_location_code}</td>
-                          <td>{t.destination_location_code ? (t.destination_location_name ? `${t.destination_location_name} (${t.destination_location_code})` : t.destination_location_code) : '-'}</td>
+                          <td>{formatSenderLabel(t)}</td>
+                          <td>{formatReceiverLabel(t)}</td>
                           <td><span className={`status-badge ${String(t.status || '').toLowerCase()}`}>{t.status}</span></td>
                           <td>
                             <Link to={`/operation-transactions/${t.transaction_id}`}>
