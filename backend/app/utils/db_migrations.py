@@ -1381,6 +1381,46 @@ def ensure_operation_transaction_indexes():
             connection.execute(text(statement))
 
 
+def ensure_movement_mapping_management_columns():
+    """Additive compatibility migration for editable/auditable mappings.
+
+    Movement mappings are live accounting records, so no existing values are
+    rewritten. Legacy mapping items simply retain NULL for GSV until new data
+    is explicitly mapped (or a user re-adds them).
+    """
+    inspector = inspect(engine)
+    table_names = set(inspector.get_table_names())
+    column_sql = {
+        "movement_mappings": {
+            "archived_at": "ALTER TABLE movement_mappings ADD COLUMN archived_at TIMESTAMP;",
+            "archived_by": "ALTER TABLE movement_mappings ADD COLUMN archived_by VARCHAR(150);",
+        },
+        "movement_mapping_items": {
+            "gsv_bbl": "ALTER TABLE movement_mapping_items ADD COLUMN gsv_bbl DOUBLE PRECISION;",
+        },
+        "movement_mapping_comparisons": {
+            "source_gsv_bbl": "ALTER TABLE movement_mapping_comparisons ADD COLUMN source_gsv_bbl DOUBLE PRECISION;",
+            "target_gsv_bbl": "ALTER TABLE movement_mapping_comparisons ADD COLUMN target_gsv_bbl DOUBLE PRECISION;",
+        },
+    }
+
+    with engine.begin() as connection:
+        for table_name, columns in column_sql.items():
+            if table_name not in table_names:
+                continue
+            existing = {column["name"] for column in inspector.get_columns(table_name)}
+            for column_name, sql in columns.items():
+                if column_name not in existing:
+                    connection.execute(text(sql))
+        if "movement_mappings" in table_names:
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_movement_mappings_archived_at "
+                    "ON movement_mappings (archived_at);"
+                )
+            )
+
+
 def ensure_sender_receiver_pairing_backfill():
     """
     Align historical operation transactions with the clubbed Sender /

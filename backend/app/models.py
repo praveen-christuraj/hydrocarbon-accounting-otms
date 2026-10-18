@@ -1735,6 +1735,10 @@ class MovementMapping(Base):
     created_by = Column(String(150), nullable=True)
     closed_by = Column(String(150), nullable=True)
     closed_at = Column(DateTime, nullable=True)
+    # Soft deletion keeps the original mapping, ticket links and comparison
+    # available for audit/recovery in a live accounting system.
+    archived_at = Column(DateTime, nullable=True, index=True)
+    archived_by = Column(String(150), nullable=True)
 
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now())
@@ -1776,8 +1780,10 @@ class MovementMappingItem(Base):
     ticket_number = Column(String(120), nullable=True)
     operation_date = Column(Date, nullable=True)
 
-    # Snapshot quantities at mapping time
+    # Snapshot quantities at mapping time. GSV is nullable because legacy
+    # transactions and some movement layouts do not capture a GSV value.
     qty_bbl = Column(Float, nullable=True, default=0)
+    gsv_bbl = Column(Float, nullable=True)
     water_bbl = Column(Float, nullable=True, default=0)
     nsv_bbl = Column(Float, nullable=True, default=0)
 
@@ -1806,10 +1812,12 @@ class MovementMappingComparison(Base):
     )
 
     source_qty_bbl = Column(Float, nullable=True, default=0)
+    source_gsv_bbl = Column(Float, nullable=True)
     source_water_bbl = Column(Float, nullable=True, default=0)
     source_nsv_bbl = Column(Float, nullable=True, default=0)
 
     target_qty_bbl = Column(Float, nullable=True, default=0)
+    target_gsv_bbl = Column(Float, nullable=True)
     target_water_bbl = Column(Float, nullable=True, default=0)
     target_nsv_bbl = Column(Float, nullable=True, default=0)
 

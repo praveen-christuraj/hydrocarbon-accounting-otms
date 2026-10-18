@@ -167,6 +167,22 @@ def test_barge_maps_every_tank_and_database_totals(db):
     assert next(t for t in per_tank["tanks"] if t["tank_id"] == "12")["left"]["total_dip"] == 120
 
 
+def test_barge_comparison_does_not_treat_missing_gsv_as_zero(db):
+    left = _add_transaction(db, number="BRG-GSV-MISSING-S", convoy="C-GSV")
+    right = _add_transaction(db, number="BRG-GSV-MISSING-R", convoy="C-GSV")
+    summary, _ = build_multitank_comparison_json_v2(
+        left,
+        right,
+        "LOAD_AFTER_vs_UNLOAD_BEFORE",
+        {"calculated": {"after": {"TOV": 10, "FW": 1, "NSV": 8}}},
+        {"calculated": {"before": {"TOV": 12, "FW": 2, "GSV": 9, "NSV": 7}}},
+    )
+
+    assert summary["delta"]["totals"]["GSV"] is None
+    assert summary["delta"]["totals"]["NSV"] == 1
+    assert summary["delta"]["totals"]["TOV"] == -2
+
+
 def test_barge_comparison_rejects_cross_asset_and_client_totals(client, db):
     headers, _ = _make_user(db, client, "barge_integrity", ["Edit Barge Tracking"])
     left = _add_transaction(db, number="BRG-C1", convoy="C2", asset_code="BARGE_A")
