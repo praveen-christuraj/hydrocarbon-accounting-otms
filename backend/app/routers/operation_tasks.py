@@ -1,7 +1,7 @@
 from datetime import datetime, date, time as datetime_time
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy import or_
+from sqlalchemy import Integer, String, and_, case, cast, exists, false, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -18,6 +18,7 @@ from app.models import (
 from app.schemas import (
     OperationTaskActionRequest,
     OperationTaskResponse,
+    OperationTaskPageResponse,
     OperationTaskEventResponse,
     OperationTransactionStatusUpdate,
     ApprovedTransactionCorrectionAdminAction,
@@ -31,6 +32,8 @@ from app.dependencies.permissions import (
     user_has_permission,
     require_user_permission,
     get_role_ids_with_permission,
+    get_user_role_ids,
+    is_admin_user,
     user_can_act_on_operation_task,
     find_matching_operation_workflow_policy,
 )
@@ -363,6 +366,236 @@ def ensure_operation_task_location_scope(task: OperationTask, current_user: User
     if operation_task_is_within_location_scope(task, db, allowed_codes):
         return
     raise HTTPException(status_code=404, detail="Operation task not found")
+
+
+def _json_array_contains_any(column, values, db: Session, alias_name: str):
+    """Build a portable JSON-array membership predicate for task assignments."""
+    numeric_values = sorted({int(value) for value in (values or []) if value is not None})
+    if not numeric_values:
+        return None
+
+    dialect_name = db.get_bind().dialect.name
+    if dialect_name == "postgresql":
+        # JSONB containment checks exact array elements and can use a GIN index
+        # if one is present on the task assignment column.
+        return or_(*(column.contains([value]) for value in numeric_values))
+
+    if dialect_name == "sqlite":
+        # SQLite's JSON1 table-valued function keeps tests and local development
+        # behavior aligned with PostgreSQL without loading every task into Python.
+        array_values = func.json_each(column).table_valued("key", "value").alias(alias_name)
+        matching_assignment = (
+            select(1)
+            .select_from(array_values)
+            .where(cast(array_values.c.value, Integer).in_(numeric_values))
+            .correlate(OperationTask)
+        )
+        return exists(matching_assignment)
+
+    # Fallback for other JSON-capable databases: match complete comma-delimited
+    # integer elements rather than a substring (so ID 12 cannot match ID 2).
+    compact_json = func.replace(cast(column, String), " ", "")
+    return or_(
+        *[
+            or_(
+                compact_json == f"[{value}]",
+                compact_json.like(f"[{value},%"),
+                compact_json.like(f"%,{value},%"),
+                compact_json.like(f"%,{value}]")
+            )
+            for value in numeric_values
+        ]
+    )
+
+
+def _effective_operation_task_status_expression():
+    """Mirror legacy open-task status projection in SQL for filtering/paging."""
+    is_open_approval = and_(
+        OperationTask.task_type == "OPERATION_APPROVAL",
+        OperationTask.status.in_(["Pending", "In Progress"]),
+    )
+    return case(
+        (and_(is_open_approval, OperationTransaction.status == "Approved"), "Approved"),
+        (and_(is_open_approval, OperationTransaction.status == "Rejected"), "Rejected"),
+        (
+            and_(
+                is_open_approval,
+                OperationTransaction.status.in_(["Draft", "Cancelled"]),
+            ),
+            "Cancelled",
+        ),
+        else_=OperationTask.status,
+    )
+
+
+def _build_operation_task_list_response(task, transaction_status, effective_status):
+    """Return only fields used by the task table/details, not full transaction data."""
+    return {
+        "id": task.id,
+        "task_number": task.task_number,
+        "task_type": task.task_type,
+        "transaction_id": task.transaction_id,
+        "ticket_number": task.ticket_number,
+        "operation_number": task.operation_number,
+        "operation_type_code": task.operation_type_code,
+        "operation_template_id": task.operation_template_id,
+        "asset_type_code": task.asset_type_code,
+        "primary_asset_code": task.primary_asset_code,
+        "location_code": task.location_code,
+        "raised_by_user_id": task.raised_by_user_id,
+        "assigned_policy_id": task.assigned_policy_id,
+        "status": effective_status,
+        "priority": task.priority or "Normal",
+        "due_at": task.due_at,
+        "taken_by_user_id": task.taken_by_user_id,
+        "taken_at": task.taken_at,
+        "acted_by_user_id": task.acted_by_user_id,
+        "acted_at": task.acted_at,
+        "action_taken": task.action_taken,
+        "remarks": task.remarks,
+        "created_at": task.created_at,
+        "updated_at": task.updated_at,
+        "transaction": {"status": transaction_status} if transaction_status else None,
+    }
+
+
+@router.get("/my/paged", response_model=OperationTaskPageResponse)
+def get_my_operation_tasks_paged(
+    status: str | None = None,
+    task_type: str | None = None,
+    search: str | None = None,
+    created_from: str | None = None,
+    created_to: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+    current_user: User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db),
+):
+    """Load one bounded page of assigned tasks and aggregate status counts."""
+    require_user_permission(current_user, "View My Tasks", db)
+
+    page = max(int(page or 1), 1)
+    page_size = min(max(int(page_size or 20), 1), 100)
+    status_expression = _effective_operation_task_status_expression()
+    query = (
+        db.query(
+            OperationTask,
+            OperationTransaction.status.label("transaction_status"),
+            status_expression.label("effective_status"),
+        )
+        .outerjoin(
+            OperationTransaction,
+            OperationTransaction.id == OperationTask.transaction_id,
+        )
+    )
+    query = apply_operation_task_filters(
+        query,
+        None,
+        task_type,
+        search,
+        created_from,
+        created_to,
+    )
+
+    allowed_codes = get_user_location_codes(current_user, db)
+    if allowed_codes is not None:
+        normalized_codes = {
+            normalized
+            for code in allowed_codes
+            if (normalized := normalize_location_code(code)) is not None
+        }
+        if not normalized_codes:
+            query = query.filter(false())
+        else:
+            query = query.filter(
+                func.lower(func.trim(OperationTask.location_code)).in_(normalized_codes)
+            )
+            # Preserve the Task Manager's stricter scope rule: the task's
+            # location and every populated party location on its linked ticket
+            # must remain inside the user's assigned locations.
+            for field_name in (
+                "origin_location_code",
+                "destination_location_code",
+                "sender_location_code",
+                "receiver_location_code",
+            ):
+                transaction_location = getattr(OperationTransaction, field_name)
+                query = query.filter(
+                    or_(
+                        OperationTransaction.id.is_(None),
+                        transaction_location.is_(None),
+                        func.trim(transaction_location) == "",
+                        func.lower(func.trim(transaction_location)).in_(normalized_codes),
+                    )
+                )
+
+    if not is_admin_user(current_user, db):
+        user_role_ids = get_user_role_ids(db, current_user)
+        assignment_conditions = [
+            _json_array_contains_any(
+                OperationTask.assigned_user_ids_json,
+                [current_user.id],
+                db,
+                "assigned_task_users",
+            )
+        ]
+        assigned_roles = _json_array_contains_any(
+            OperationTask.assigned_role_ids_json,
+            user_role_ids,
+            db,
+            "assigned_task_roles",
+        )
+        if assigned_roles is not None:
+            assignment_conditions.append(assigned_roles)
+        query = query.filter(or_(*assignment_conditions))
+
+    grouped_counts = (
+        query.with_entities(
+            status_expression.label("effective_status"),
+            func.count(OperationTask.id),
+        )
+        .group_by(status_expression)
+        .all()
+    )
+    status_counts = {
+        str(task_status): int(count or 0)
+        for task_status, count in grouped_counts
+        if task_status is not None
+    }
+    status_counts["ALL"] = sum(status_counts.values())
+
+    wanted_status = clean_optional_text(status)
+    total_rows = (
+        status_counts.get(wanted_status, 0)
+        if wanted_status and wanted_status.upper() != "ALL"
+        else status_counts["ALL"]
+    )
+
+    page_query = query
+    if wanted_status and wanted_status.upper() != "ALL":
+        page_query = page_query.filter(status_expression == wanted_status)
+
+    page_rows = (
+        page_query.order_by(OperationTask.created_at.desc(), OperationTask.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size + 1)
+        .all()
+    )
+    has_more = len(page_rows) > page_size
+    page_rows = page_rows[:page_size]
+
+    rows = [
+        _build_operation_task_list_response(task, transaction_status, effective_status)
+        for task, transaction_status, effective_status in page_rows
+    ]
+    return {
+        "rows": rows,
+        "total_rows": total_rows,
+        "page": page,
+        "page_size": page_size,
+        "has_more": has_more,
+        "status_counts": status_counts,
+    }
 
 
 @router.get("/my", response_model=list[OperationTaskResponse])

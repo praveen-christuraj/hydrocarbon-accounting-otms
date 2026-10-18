@@ -4,7 +4,17 @@ from types import SimpleNamespace
 from sqlalchemy import create_engine, inspect, text
 
 from app.utils import db_migrations
-from app.models import MovementMapping, OperationTask, OperationTransaction, OperationTransactionValue, User
+from app.models import (
+    MovementMapping,
+    OperationTask,
+    OperationTransaction,
+    OperationTransactionValue,
+    Permission,
+    Role,
+    RolePermission,
+    User,
+    UserRole,
+)
 from app.routers.movement_mappings import (
     archive_movement_mapping,
     create_movement_mapping,
@@ -14,8 +24,12 @@ from app.routers.movement_mappings import (
     sum_optional,
     update_movement_mapping,
 )
-from app.routers.operation_tasks import get_my_operation_tasks, resolve_effective_operation_task_status
-from app.schemas import MovementMappingCreate, MovementMappingUpdate
+from app.routers.operation_tasks import (
+    get_my_operation_tasks,
+    get_my_operation_tasks_paged,
+    resolve_effective_operation_task_status,
+)
+from app.schemas import MovementMappingCreate, MovementMappingUpdate, OperationTaskPageResponse
 
 
 def _admin(db):
@@ -75,6 +89,117 @@ def test_legacy_open_task_status_follows_approved_transaction(db):
     assert [row["id"] for row in approved_rows] == [task.id]
     assert approved_rows[0]["status"] == "Approved"
     assert pending_rows == []
+
+
+def test_task_manager_paged_endpoint_limits_rows_and_counts_effective_status(db):
+    admin = _admin(db)
+    for index in range(25):
+        db.add(
+            OperationTask(
+                task_number=f"TASK-PAGE-{index:03d}",
+                task_type="PASSWORD_RESET_REQUEST",
+                status="Pending",
+                priority="Normal",
+                location_code="AGGE",
+                assigned_user_ids_json=[],
+                assigned_role_ids_json=[],
+            )
+        )
+
+    transaction = OperationTransaction(
+        operation_number="TASK-PAGE-APPROVED",
+        operation_type_code="SHUTTLE_MOVE",
+        primary_asset_code="SHUTTLE_01",
+        primary_asset_type_code="SHUTTLE",
+        origin_location_code="AGGE",
+        operation_date=date(2026, 10, 1),
+        status="Approved",
+    )
+    db.add(transaction)
+    db.flush()
+    db.add(
+        OperationTask(
+            task_number="TASK-PAGE-LEGACY-APPROVED",
+            task_type="OPERATION_APPROVAL",
+            transaction_id=transaction.id,
+            status="Pending",
+            priority="Normal",
+            location_code="AGGE",
+            assigned_user_ids_json=[],
+            assigned_role_ids_json=[],
+        )
+    )
+    db.flush()
+
+    first_page = get_my_operation_tasks_paged(
+        status="Pending", page=1, page_size=20, current_user=admin, db=db
+    )
+    assert len(first_page["rows"]) == 20
+    assert first_page["total_rows"] == 25
+    assert first_page["has_more"] is True
+    assert first_page["status_counts"] == {"Pending": 25, "Approved": 1, "ALL": 26}
+    OperationTaskPageResponse.model_validate(first_page)
+
+    second_page = get_my_operation_tasks_paged(
+        status="Pending", page=2, page_size=20, current_user=admin, db=db
+    )
+    assert len(second_page["rows"]) == 5
+    assert second_page["has_more"] is False
+
+    approved_page = get_my_operation_tasks_paged(
+        status="Approved", page=1, page_size=20, current_user=admin, db=db
+    )
+    assert approved_page["total_rows"] == 1
+    assert approved_page["rows"][0]["status"] == "Approved"
+    assert approved_page["rows"][0]["transaction"] == {"status": "Approved"}
+
+
+def test_task_manager_paged_query_filters_by_user_and_role_assignments(db):
+    role = Role(role_name="Task Reviewer", status="Active")
+    permission = Permission(
+        permission_name="View My Tasks",
+        module_name="Operations",
+        status="Active",
+    )
+    db.add_all([role, permission])
+    db.flush()
+    db.add(RolePermission(role_id=role.id, permission_id=permission.id))
+    user = User(
+        full_name="Task Reviewer",
+        username="task-reviewer",
+        email="task-reviewer@example.test",
+        password_hash="test-only",
+        status="Active",
+        all_locations_access="Yes",
+    )
+    db.add(user)
+    db.flush()
+    db.add(UserRole(user_id=user.id, role_id=role.id))
+
+    for task_number, user_ids, role_ids in (
+        ("TASK-ASSIGNED-ROLE", [], [role.id]),
+        ("TASK-ASSIGNED-USER", [user.id], []),
+        ("TASK-UNASSIGNED", [], []),
+    ):
+        db.add(
+            OperationTask(
+                task_number=task_number,
+                task_type="PASSWORD_RESET_REQUEST",
+                status="Pending",
+                priority="Normal",
+                location_code="AGGE",
+                assigned_user_ids_json=user_ids,
+                assigned_role_ids_json=role_ids,
+            )
+        )
+    db.flush()
+
+    page = get_my_operation_tasks_paged(current_user=user, db=db)
+    assert {task["task_number"] for task in page["rows"]} == {
+        "TASK-ASSIGNED-ROLE",
+        "TASK-ASSIGNED-USER",
+    }
+    assert page["total_rows"] == 2
 
 
 def test_movement_mapping_edit_archive_and_restore_preserve_record(db):
