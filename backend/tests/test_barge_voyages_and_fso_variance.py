@@ -1,7 +1,7 @@
 """
 Regression tests for:
   * Barge Tracking voyage list (Open / Closed tabs) – GET /barge-trip/voyages
-  * FSO variance sign convention – shuttle discharge minus FSO movement
+  * FSO variance sign convention – FSO movement minus vessel quantity
 """
 
 from datetime import date
@@ -278,7 +278,7 @@ def test_barge_voyages_listing_is_read_only(client, db):
 
 
 # ---------------------------------------------------------------------------
-# FSO variance – discharge minus FSO movement
+# FSO variance – movement minus vessel quantity
 # ---------------------------------------------------------------------------
 
 FSO_LOCATION = "AGGE"
@@ -292,7 +292,7 @@ def _fso_receipt_payload(stored_variance=None):
         "net_water_bbl": 0.0,
     }
     if stored_variance is not None:
-        # Value written under the previous (reversed) sign convention.
+        # Value written under the previous vessel-minus-movement convention.
         net["variance_bbl"] = stored_variance
     return {
         "meta": {
@@ -330,7 +330,7 @@ def _seed_fso_receipt(db, stored_variance=None):
     db.commit()
 
 
-def test_fso_otr_variance_is_discharge_minus_receipt(client, db):
+def test_fso_otr_variance_is_movement_minus_vessel_quantity(client, db):
     headers, _ = _make_user(db, client, "fso_otr", ["View FSO Tracking"])
     _seed_fso_receipt(db)
 
@@ -348,14 +348,14 @@ def test_fso_otr_variance_is_discharge_minus_receipt(client, db):
     data = resp.json()
 
     row = data["rows"][0]
-    # Shuttle discharged 1000 bbl, FSO received 800 bbl -> +200 (positive = loss).
-    assert row["variance_bbl"] == 200.0
-    assert data["total_variance_bbl"] == 200.0
-    # Compare variance = shuttle discharge - FSO movement.
+    # FSO movement is 800 bbl and vessel quantity is 1000 bbl -> -200.
+    assert row["variance_bbl"] == -200.0
+    assert data["total_variance_bbl"] == -200.0
+    # Compare variance remains shuttle discharge - FSO movement.
     assert row["compare_variance_bbl"] == 200.0
 
 
-def test_fso_outturn_variance_is_discharge_minus_receipt(client, db):
+def test_fso_outturn_variance_is_receipt_minus_discharge(client, db):
     headers, _ = _make_user(db, client, "fso_outturn", ["View FSO Tracking"])
     _seed_fso_receipt(db)
 
@@ -374,31 +374,33 @@ def test_fso_outturn_variance_is_discharge_minus_receipt(client, db):
 
     assert data["total_shuttle_discharge_bbl"] == 1000.0
     assert data["total_fso_receipt_bbl"] == 800.0
-    assert data["total_variance_bbl"] == 200.0
-    assert data["total_variance_pct"] == 20.0
+    assert data["total_variance_bbl"] == -200.0
+    assert data["total_variance_pct"] == -20.0
 
 
 def test_fso_tracking_variance_ignores_stale_stored_sign(client, db):
     headers, _ = _make_user(db, client, "fso_tracking", ["View FSO Tracking"])
-    # Ticket saved before the fix carries the old, reversed value (-200).
-    _seed_fso_receipt(db, stored_variance=-200.0)
+    # Ticket saved before the fix carries the old vessel-minus-movement value (+200).
+    _seed_fso_receipt(db, stored_variance=200.0)
 
-    resp = client.get(
-        "/shuttle-fso/fso-tracking",
-        params={"tab": "OPEN", "include_tickets": "true"},
-        headers=headers,
-    )
-    assert resp.status_code == 200, resp.text
-    rows = resp.json()["rows"]
-    assert len(rows) == 1
+    for include_tickets in (False, True):
+        resp = client.get(
+            "/shuttle-fso/fso-tracking",
+            params={"tab": "OPEN", "include_tickets": include_tickets},
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        rows = resp.json()["rows"]
+        assert len(rows) == 1
 
-    group = rows[0]
-    assert group["shuttle_discharge_bbl"] == 1000.0
-    assert group["fso_receipt_bbl"] == 800.0
-    assert group["variance_bbl"] == 200.0
-    assert group["total_variance_bbl"] == 200.0
+        group = rows[0]
+        assert group["shuttle_discharge_bbl"] == 1000.0
+        assert group["fso_receipt_bbl"] == 800.0
+        assert group["variance_bbl"] == -200.0
+        assert group["total_variance_bbl"] == -200.0
 
-    tickets = group["tickets"]
-    assert len(tickets) == 1
-    assert tickets[0]["variance_bbl"] == 200.0
-    assert tickets[0]["vessel_quantity_bbl"] == 1000.0
+        if include_tickets:
+            tickets = group["tickets"]
+            assert len(tickets) == 1
+            assert tickets[0]["variance_bbl"] == -200.0
+            assert tickets[0]["vessel_quantity_bbl"] == 1000.0
