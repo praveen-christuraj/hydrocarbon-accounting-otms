@@ -109,6 +109,99 @@ Rules:
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
 
+## Recent Changes (2026-10-18) - Operation Entry: Two Clubbed Location Dropdowns + Payload Operation Date
+
+### The change (product owner, 2026-10-18)
+
+The Operation Entry metadata had **four** location dropdowns. It now has **two**:
+
+| Dropdown | Writes |
+|----------|--------|
+| **Sender** | `origin_location_code` **and** `sender_location_code` |
+| **Receiver** | `destination_location_code` **and** `receiver_location_code` |
+
+The four database columns are **kept** – nothing is dropped, renamed or migrated
+away. They are simply two views of the same value from now on, and every
+tracking module (Barge / Tanker) reads them through the pairing resolvers.
+
+**Operation Date, Start Date/Time and End Date/Time were removed from the
+metadata.** The operation date is captured inside the data-entry payload
+(gauging date, tanker transaction date, reading date, multi-tank before/after
+dates, FSO / Shuttle `operation_date`), so the ticket's `operation_date` is
+derived from it (see "Operation date" below). Start / end date-time values
+already stored on an old ticket are preserved when that ticket is edited.
+
+### How existing data is handled (no data loss, no rewrite on read)
+
+* **New / edited records** – `apply_sender_receiver_pairing()`
+  (`backend/app/services/location_pairing.py`, called from
+  `create_operation_entry` / `update_operation_entry`) fills the **blank** side
+  of each pair from its partner. A column that already holds a value is never
+  overwritten, so linked receiver tickets keep theirs.
+* **Historical records** – `resolve_sender_location_code()` returns
+  `sender_location_code` when populated and falls back to
+  `origin_location_code`; `resolve_receiver_location_code()` returns
+  `receiver_location_code` and falls back to `destination_location_code`.
+  Every read path goes through those two, so a ticket recorded before the
+  change resolves to exactly the same Sender / Receiver as a new one.
+* **Start-up backfill** – `ensure_sender_receiver_pairing_backfill()`
+  (`backend/app/utils/db_migrations.py`, run from the `main.py` lifespan) copies
+  the populated side of each pair into its blank partner. NULL/blank columns
+  only, idempotent, and wrapped in a try/except so a failure can never block
+  start-up. It is a consistency net for queries that read a single column – the
+  feature does not depend on it.
+
+### Realigned tracking logics
+
+* **Linked receiver ticket** (`tracking_links.linked_location_overrides`): read
+  through the resolvers, so the sender ticket's *Sender* stays the receiver
+  ticket's Sender. The receiving terminal remains the receiver ticket's
+  **origin** – the origin is the location that owns and creates the ticket, and
+  that is what the location scope and operation-availability checks apply to.
+  Both tickets therefore resolve to the same route (A → B) whichever side
+  created them, and no RBAC / scope rule changed.
+* **Barge Tracking** – the voyage list (Open / Closed tabs) and the convoy
+  tracker now use the resolved pair. Previously the receiving terminal leaked
+  into a convoy's "Origin" list, because a receiver ticket keeps the receiving
+  terminal as its origin. The UI columns are renamed **Sender** / **Receiver**.
+* **Tanker Tracking** – acknowledgement, receiver-entry prefill and the ticket
+  serializer use the resolved pair (`sender_code` / `receiver_code`, added to
+  `TankerTrackingTicketResponse` and `ConvoyTrackerTicket`).
+* **Shared frontend helpers** – `frontend/src/utils/senderReceiver.js`
+  (`resolveSenderCode`, `resolveReceiverCode`, `entrySenderCode`,
+  `withClubbedSender`, `withClubbedReceiver`, `formatSenderLabel`, …) accepts
+  camelCase, snake_case and the server-resolved `*_code` keys, so old and new
+  payloads read identically.
+
+### Operation date
+
+`frontend/src/utils/operationDate.js` resolves the ticket date from the
+data-entry values, in this order:
+
+1. the date typed in the payload – keys are scored, so a typed
+   `reading_date` / `gaugingDate` / `tankerTransactionDate` outranks the
+   mirrored `operation_date` some layouts keep for reporting;
+2. the date already stored on the ticket (an edited draft keeps its date);
+3. today.
+
+`OperationEntry` keeps `entry.operationDate` in sync with that value, so the
+layouts that read it (FSO, Shuttle, Flowmeter, Tanker preview) keep working and
+`operation_date` is never blank on save.
+
+### Files
+
+**Backend:** `app/services/location_pairing.py` (new),
+`app/utils/db_migrations.py`, `app/main.py`, `app/routers/operation_entries.py`,
+`app/routers/barge_trip_tracking.py`, `app/routers/tanker_tracking.py`,
+`app/services/tracking_links.py`, `app/schemas.py`.
+**Frontend:** `src/utils/senderReceiver.js` (new),
+`src/utils/operationDate.js` (new), `src/pages/OperationEntry.jsx`,
+`src/pages/BargeTracking.jsx`, `src/pages/TankerTracking.jsx`,
+`src/api/tankerTrackingApi.js`, `scripts/mock-api.mjs`.
+**Tests:** `backend/tests/test_sender_receiver_pairing.py` (10 tests) and
+`frontend/scripts/test-sender-receiver-pairing.mjs` (17 checks,
+`npm run test:sender-receiver`).
+
 ## Recent Changes (2026-10-17) - Material Balance Template Redesign + Permission Presets (frontend only)
 
 ### Material Balance Template Configuration (`/material-balance-template-master`)

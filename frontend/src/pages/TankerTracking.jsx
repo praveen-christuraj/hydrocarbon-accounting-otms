@@ -1,4 +1,5 @@
 import { logUiAction } from '../utils/actionLogger'
+import { resolveReceiverCode, resolveSenderCode } from '../utils/senderReceiver'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
@@ -339,10 +340,9 @@ function TankerTracking({
 
     setAckGroup(row)
     setAckForm({
-      receiverLocationCode:
-        row.senderTicket.receiverLocationCode ||
-        row.senderTicket.destinationLocationCode ||
-        '',
+      // Clubbed Sender / Receiver: the tanker is received at the Receiver of
+      // the sender ticket (receiver, else destination).
+      receiverLocationCode: resolveReceiverCode(row.senderTicket) || '',
       remarks: '',
     })
   }
@@ -552,34 +552,23 @@ function TankerTracking({
       row.tankerAssetCode || row.primeMoverAssetCode || ''
     )
 
-    params.set(
-      'origin_location_code',
-      row.senderTicket.receiverLocationCode ||
-        row.senderTicket.destinationLocationCode ||
-        row.senderTicket.originLocationCode ||
-        ''
-    )
+    // Clubbed Sender / Receiver pairing. The receiving terminal (the sender
+    // ticket's Receiver) is the Origin of the receiver ticket - that is the
+    // location that owns and creates it - while the dispatching terminal
+    // (the sender ticket's Sender) is carried as its Sender. Both columns
+    // of each pair are written, so a ticket recorded before the clubbing
+    // (only origin / destination populated) pre-fills identically.
+    const senderCode = resolveSenderCode(row.senderTicket)
+    const receiverCode = resolveReceiverCode(row.senderTicket)
+    const receivingTerminal = receiverCode || senderCode || ''
 
-    params.set(
-      'sender_location_code',
-      row.senderTicket.originLocationCode ||
-        row.senderTicket.senderLocationCode ||
-        ''
-    )
+    params.set('origin_location_code', receivingTerminal)
 
-    params.set(
-      'receiver_location_code',
-      row.senderTicket.receiverLocationCode ||
-        row.senderTicket.destinationLocationCode ||
-        ''
-    )
+    params.set('sender_location_code', senderCode)
 
-    params.set(
-      'destination_location_code',
-      row.senderTicket.receiverLocationCode ||
-        row.senderTicket.destinationLocationCode ||
-        ''
-    )
+    params.set('receiver_location_code', receiverCode)
+
+    params.set('destination_location_code', receiverCode)
 
     params.set('product_name', row.productName || row.senderTicket.productName || '')
 
@@ -790,7 +779,11 @@ function TankerTracking({
 
           <span>Location</span>
           <strong>
-            {ticket.originLocationName || ticket.originLocationCode || '-'}
+            {ticket.senderName ||
+              ticket.originLocationName ||
+              ticket.senderCode ||
+              ticket.originLocationCode ||
+              '-'}
           </strong>
 
           <span>Total Dip</span>

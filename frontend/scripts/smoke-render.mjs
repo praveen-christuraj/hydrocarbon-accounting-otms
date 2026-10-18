@@ -548,7 +548,7 @@ try {
   await flush()
 
   // Navigate to pages requested on the CLI (default set)
-  const pages = process.argv.slice(2).length ? process.argv.slice(2) : ['/locations', '/users', '/role-locations', '/audit-logs', '/operation-transactions/1', '/tracking-module-configuration']
+  const pages = process.argv.slice(2).length ? process.argv.slice(2) : ['/locations', '/users', '/role-locations', '/audit-logs', '/operation-transactions/1', '/tracking-module-configuration', '/operation-entry']
   for (const path of pages) {
     const before = errors.length
     const link = qa('a[href]').find((a) => a.getAttribute('href') === path)
@@ -673,6 +673,38 @@ try {
         await flush()
         check('import dialog closes on Cancel', !q('.import-dialog'))
       }
+    }
+
+    if (path === '/operation-entry') {
+      // Clubbed Sender / Receiver dropdowns: two location selects replace the
+      // old Origin / Sender / Destination / Receiver quartet, and the
+      // operation date is no longer typed in the metadata (it is derived from
+      // the date captured inside the data-entry payload).
+      check('sender dropdown rendered', Boolean(q('.main-content select[name="senderLocationCode"]')))
+      check('receiver dropdown rendered', Boolean(q('.main-content select[name="receiverLocationCode"]')))
+      check(
+        'separate origin / destination dropdowns are gone',
+        !q('.main-content select[name="originLocationCode"]') &&
+          !q('.main-content select[name="destinationLocationCode"]'),
+      )
+      check(
+        'operation date / start / end inputs are gone from the metadata',
+        !q('.main-content input[name="operationDate"]') &&
+          !q('.main-content input[name="operationStartDatetime"]') &&
+          !q('.main-content input[name="operationEndDatetime"]'),
+      )
+
+      const senderSelect = q('.main-content select[name="senderLocationCode"]')
+      const firstCode = Array.from(senderSelect.options)
+        .map((o) => o.value)
+        .find((v) => v !== '')
+      setValue(senderSelect, firstCode || '')
+      await flush(120)
+      check(
+        'sender dropdown holds the chosen location',
+        q('.main-content select[name="senderLocationCode"]').value === (firstCode || ''),
+        firstCode || '(no locations in the mock)',
+      )
     }
 
     if (path === '/user-locations') {

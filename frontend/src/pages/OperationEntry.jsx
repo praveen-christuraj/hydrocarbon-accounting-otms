@@ -22,6 +22,14 @@ import FlowmeterReadingLayout from '../components/operationLayouts/FlowmeterRead
 import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
 import AlertMessage from '../components/common/AlertMessage'
 import useActionFeedback from '../hooks/useActionFeedback'
+import {
+  entryReceiverCode,
+  entrySenderCode,
+  formatSenderLabel,
+  withClubbedReceiver,
+  withClubbedSender,
+} from '../utils/senderReceiver'
+import { resolveOperationDate } from '../utils/operationDate'
 
 function LayoutSummaryPanel({ selectedTemplate }) {
   if (!selectedTemplate) {
@@ -675,10 +683,17 @@ function OperationEntry({
     operationTemplateId: '',
     primaryAssetCode: '',
     convoyNumber: '',
+    // Clubbed Sender / Receiver dropdowns. Both columns of each pair are
+    // written from a single choice so the four database columns stay in
+    // sync; the columns themselves are unchanged.
     originLocationCode: defaultEntryLocationCode,
     destinationLocationCode: '',
     senderLocationCode: defaultEntryLocationCode,
     receiverLocationCode: '',
+    // Operation date is no longer captured in the metadata - it is derived
+    // from the date the user enters inside the data-entry payload (see
+    // resolveOperationDate). Start / end date-time are kept in state only so
+    // that editing an old ticket does not wipe values already stored.
     operationDate: '',
     operationStartDatetime: '',
     operationEndDatetime: '',
@@ -708,9 +723,10 @@ function OperationEntry({
   const feedback = useActionFeedback()
   const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
 
-  // Full location master for the Destination / Receiver dropdowns. A ticket can
-  // be addressed to any terminal, so this list is deliberately not limited to
-  // the locations the signed-in user is assigned to.
+  // Full location master for the Receiver dropdown (and for the Sender
+  // dropdown of a linked receiving ticket). A ticket can be addressed to any
+  // terminal, so this list is deliberately not limited to the locations the
+  // signed-in user is assigned to.
   useEffect(() => {
     let active = true
     getAllLocations()
@@ -718,12 +734,12 @@ function OperationEntry({
         if (active) setAllSystemLocations(data?.items || [])
       })
       .catch((error) => {
-        // Report instead of swallowing: when this call fails the Destination /
-        // Receiver dropdowns silently collapse to the user's own location.
+        // Report instead of swallowing: when this call fails the Receiver
+        // dropdown silently collapses to the user's own location.
         console.error('Unable to load the full location list:', error)
         if (active) {
           notifyError(
-            `Unable to load the full location list, so Destination and Receiver only show your own location: ${error.message}`,
+            `Unable to load the full location list, so Receiver only shows your own location: ${error.message}`,
             { title: 'Locations' }
           )
         }
@@ -739,6 +755,23 @@ function OperationEntry({
       [field]: value,
     }))
   }
+
+  // Operation Date / Start / End are no longer entered in the metadata: the
+  // operation date lives inside the data-entry payload (gauging date, tanker
+  // transaction date, reading date, ...). Keep the ticket date in sync with
+  // it, falling back to the date already stored on the ticket and then to
+  // today, so `operation_date` is never blank on save.
+  useEffect(() => {
+    const resolved = resolveOperationDate(entry)
+
+    if (resolved === String(entry.operationDate || '').trim()) {
+      return
+    }
+
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setEntry((current) => ({ ...current, operationDate: resolved }))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entry.values, entry.operationDate])
 
   const [confirmAction, setConfirmAction] = useState(null)
   const [tankerSenderReference, setTankerSenderReference] = useState(null)
@@ -1013,7 +1046,7 @@ function OperationEntry({
     scopedLocationCodeSet,
   ])
 
-  // Get all locations for receiver/destination dropdown - not filtered by user scope
+  // Get all locations for the Receiver dropdown - not filtered by user scope
   const allActiveLocations = useMemo(() => {
     const source =
       allSystemLocations && allSystemLocations.length > 0
@@ -1147,7 +1180,7 @@ function OperationEntry({
 
       if (!search) return true
 
-      const blob = `${item.operationNumber} ${item.operationTypeName} ${item.operationTemplateName} ${item.primaryAssetName} ${item.primaryAssetCode} ${item.originLocationName} ${item.originLocationCode} ${item.operationDate} ${item.productName} ${item.status}`.toLowerCase()
+      const blob = `${item.operationNumber} ${item.operationTypeName} ${item.operationTemplateName} ${item.primaryAssetName} ${item.primaryAssetCode} ${item.originLocationName} ${item.originLocationCode} ${item.senderLocationName || ''} ${item.senderLocationCode || ''} ${item.destinationLocationName || ''} ${item.destinationLocationCode || ''} ${item.receiverLocationName || ''} ${item.receiverLocationCode || ''} ${item.operationDate} ${item.productName} ${item.status}`.toLowerCase()
 
       return blob.includes(search)
     })
@@ -1255,18 +1288,24 @@ function OperationEntry({
     if (name === 'operationTypeCode') {
       const preserveAsset = prefillApplied && prefill.primaryAssetCode
 
-      setEntry({
-        ...entry,
-        operationTypeCode: value,
-        operationTemplateId: '',
-        primaryAssetCode: preserveAsset ? entry.primaryAssetCode : '',
-        originLocationCode: preserveAsset ? entry.originLocationCode : '',
-        destinationLocationCode: '',
-        senderLocationCode: '',
-        receiverLocationCode: '',
-        values: [],
-        convoyNumber: entry.convoyNumber, // keep convoy
-      })
+      // Changing the operation type clears both clubbed pairs (unless the
+      // asset is being preserved from a tracking prefill).
+      setEntry(
+        withClubbedReceiver(
+          withClubbedSender(
+            {
+              ...entry,
+              operationTypeCode: value,
+              operationTemplateId: '',
+              primaryAssetCode: preserveAsset ? entry.primaryAssetCode : '',
+              values: [],
+              convoyNumber: entry.convoyNumber, // keep convoy
+            },
+            preserveAsset ? entry.originLocationCode : '',
+          ),
+          '',
+        ),
+      )
       return
     }
 
@@ -1276,6 +1315,19 @@ function OperationEntry({
         operationTemplateId: value,
         values: applyPrefilledBargeStage(initializeValuesFromTemplate(value)),
       })
+      return
+    }
+
+    // Clubbed dropdowns: one Sender choice feeds Origin + Sender, one
+    // Receiver choice feeds Destination + Receiver. The four columns are
+    // kept in the database - they are simply written together.
+    if (name === 'senderLocationCode') {
+      setEntry((current) => withClubbedSender(current, value))
+      return
+    }
+
+    if (name === 'receiverLocationCode') {
+      setEntry((current) => withClubbedReceiver(current, value))
       return
     }
 
@@ -1294,18 +1346,18 @@ function OperationEntry({
         ...entry,
         primaryAssetCode: '',
         originLocationCode: '',
+        senderLocationCode: '',
       })
       return
     }
 
-    setEntry({
-      ...entry,
-      primaryAssetCode: asset.assetCode,
-      originLocationCode:
-        asset.assetScope === 'Local'
-          ? asset.locationCode
-          : entry.originLocationCode,
-    })
+    // A local asset pins the entry to its own location: keep the clubbed
+    // Sender pair in step with the asset's location.
+    setEntry(
+      asset.assetScope === 'Local'
+        ? withClubbedSender({ ...entry, primaryAssetCode: asset.assetCode }, asset.locationCode)
+        : { ...entry, primaryAssetCode: asset.assetCode },
+    )
   }
 
   const handleValueChange = (fieldCode, value) => {
@@ -1525,15 +1577,19 @@ function OperationEntry({
         return
       }
     }
-    if (entry.originLocationCode.trim() === '') {
-      notifyError('Origin Location is required')
+    // Clubbed Sender / Receiver: the single Sender choice is the Origin of
+    // the ticket and is always mandatory; the Receiver is required when the
+    // operation type asks for it.
+    const senderCode = entrySenderCode(entry)
+    const receiverCode = entryReceiverCode(entry)
+
+    if (senderCode === '') {
+      notifyError('Sender Location is required')
       return
     }
 
-    if (entry.operationDate.trim() === '') {
-      notifyError('Operation Date is required')
-      return
-    }
+    // The operation date is captured inside the data-entry payload, so it is
+    // resolved instead of typed (see resolveOperationDate). Nothing to check.
 
     // Shuttle Tracking entries are captured from the Shuttle Tracking page,
     // which has no sender / receiver location row, so those locations are not
@@ -1541,7 +1597,7 @@ function OperationEntry({
     if (
       !isShuttleTracking &&
       selectedOperationType?.requiresSenderLocation === 'Yes' &&
-      entry.senderLocationCode.trim() === ''
+      senderCode === ''
     ) {
       notifyError('Sender Location is required for this operation type')
       return
@@ -1550,7 +1606,7 @@ function OperationEntry({
     if (
       !isShuttleTracking &&
       selectedOperationType?.requiresReceiverLocation === 'Yes' &&
-      entry.receiverLocationCode.trim() === ''
+      receiverCode === ''
     ) {
       notifyError('Receiver Location is required for this operation type')
       return
@@ -1712,12 +1768,20 @@ function OperationEntry({
 
       let saved = null
 
+      // The metadata no longer carries an Operation Date input: it is
+      // resolved from the date captured inside the data-entry payload.
+      const payload = {
+        ...entry,
+        operationDate:
+          String(entry.operationDate || '').trim() || resolveOperationDate(entry),
+      }
+
       if (editId === null) {
-        saved = await createOperationEntry({ ...entry, status: 'Draft' })
+        saved = await createOperationEntry({ ...payload, status: 'Draft' })
         notifySuccess('Operation Entry saved successfully')
       } else {
         saved = await updateOperationEntry(editId, {
-          ...entry,
+          ...payload,
           status: entry.status || 'Draft',
         })
         notifySuccess('Operation Entry updated successfully')
@@ -2028,14 +2092,14 @@ function OperationEntry({
           </div>
         )}
         <div>
-          <label>Origin Location</label>
+          <label>Sender *</label>
           <select
-            name="originLocationCode"
-            value={entry.originLocationCode}
+            name="senderLocationCode"
+            value={entrySenderCode(entry)}
             onChange={handleChange}
             disabled={selectedAsset?.assetScope === 'Local' || !canCreateOperationEntry || isLinkedEntry}
           >
-            <option value="">Select Origin Location</option>
+            <option value="">Select Sender Location</option>
 
             {(isLinkedEntry ? allActiveLocations : activeLocations).map((location) => (
               <option key={location.id} value={location.locationCode}>
@@ -2043,53 +2107,15 @@ function OperationEntry({
               </option>
             ))}
           </select>
-        </div>
-
-        <div>
-          <label>Destination Location</label>
-          <select
-            name="destinationLocationCode"
-            value={entry.destinationLocationCode}
-            onChange={handleChange}
-            disabled={!canCreateOperationEntry || isLinkedEntry}
-          >
-            <option value="">None</option>
-
-            {allActiveLocations.map((location) => (
-              <option key={location.id} value={location.locationCode}>
-                {location.locationName} ({location.locationCode})
-              </option>
-            ))}
-          </select>
+          <small>
+            The terminal the movement starts from. This sets both the Origin and
+            the Sender of the ticket.
+          </small>
         </div>
 
         <div>
           <label>
-            Sender Location{' '}
-            {!isShuttleTrackingLayout &&
-            selectedOperationType?.requiresSenderLocation === 'Yes'
-              ? '*'
-              : ''}
-          </label>
-          <select
-            name="senderLocationCode"
-            value={entry.senderLocationCode}
-            onChange={handleChange}
-            disabled={!canCreateOperationEntry || isLinkedEntry}
-          >
-            <option value="">None</option>
-
-            {(isLinkedEntry ? allActiveLocations : activeLocations).map((location) => (
-              <option key={location.id} value={location.locationCode}>
-                {location.locationName} ({location.locationCode})
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label>
-            Receiver Location{' '}
+            Receiver{' '}
             {!isShuttleTrackingLayout &&
             selectedOperationType?.requiresReceiverLocation === 'Yes'
               ? '*'
@@ -2097,7 +2123,7 @@ function OperationEntry({
           </label>
           <select
             name="receiverLocationCode"
-            value={entry.receiverLocationCode}
+            value={entryReceiverCode(entry)}
             onChange={handleChange}
             disabled={!canCreateOperationEntry || isLinkedEntry}
           >
@@ -2109,39 +2135,10 @@ function OperationEntry({
               </option>
             ))}
           </select>
-        </div>
-
-        <div>
-          <label>Operation Date</label>
-          <input
-            name="operationDate"
-            type="date"
-            value={entry.operationDate}
-            onChange={handleChange}
-            disabled={!canCreateOperationEntry}
-          />
-        </div>
-
-        <div>
-          <label>Start Date/Time</label>
-          <input
-            name="operationStartDatetime"
-            type="datetime-local"
-            value={entry.operationStartDatetime}
-            onChange={handleChange}
-            disabled={!canCreateOperationEntry}
-          />
-        </div>
-
-        <div>
-          <label>End Date/Time</label>
-          <input
-            name="operationEndDatetime"
-            type="datetime-local"
-            value={entry.operationEndDatetime}
-            onChange={handleChange}
-            disabled={!canCreateOperationEntry}
-          />
+          <small>
+            The terminal the movement is addressed to. This sets both the
+            Destination and the Receiver of the ticket.
+          </small>
         </div>
 
         <div>
@@ -2267,7 +2264,7 @@ function OperationEntry({
             <input
               value={editableSearch}
               onChange={(e) => setEditableSearch(e.target.value)}
-              placeholder="Search ticket / asset / origin / template / product…"
+              placeholder="Search ticket / asset / sender / receiver / template / product…"
             />
           </div>
         </div>
@@ -2285,7 +2282,7 @@ function OperationEntry({
             <th>Operation Type</th>
             <th>Template</th>
             <th>Asset</th>
-            <th>Origin</th>
+            <th>Sender</th>
             <th>Date</th>
             <th>Product</th>
             <th>Status</th>
@@ -2311,7 +2308,7 @@ function OperationEntry({
                   {item.primaryAssetName} ({item.primaryAssetCode})
                 </td>
                 <td>
-                  {item.originLocationName} ({item.originLocationCode})
+                  {formatSenderLabel(item)}
                 </td>
                 <td>{item.operationDate}</td>
                 <td>{item.productName}</td>

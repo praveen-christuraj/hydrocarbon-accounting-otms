@@ -33,6 +33,10 @@ from app.dependencies.permissions import (
     require_any_user_permission,
 )
 from app.services.audit_service import create_audit_log
+from app.services.location_pairing import (
+    resolve_receiver_location_code,
+    resolve_sender_location_code,
+)
 from app.utils.helpers import (
     safe_float,
     clean_optional_text,
@@ -602,6 +606,29 @@ def build_tanker_tracking_ticket(
         "sender_location_name": sender_location.location_name if sender_location else "",
         "receiver_location_code": transaction.receiver_location_code,
         "receiver_location_name": receiver_location.location_name if receiver_location else "",
+
+        # Clubbed Sender / Receiver pairing (Operation Entry): the single
+        # Sender of the record (sender, else origin) and its single Receiver
+        # (receiver, else destination). All tracking decisions - role
+        # detection, receiver-entry prefill, acknowledgement, closing - read
+        # these, so tickets created before the clubbing (only origin /
+        # destination populated) behave exactly like new ones.
+        "sender_code": resolve_sender_location_code(transaction),
+        "sender_name": (
+            sender_location.location_name
+            if sender_location
+            else origin_location.location_name
+            if origin_location
+            else ""
+        ),
+        "receiver_code": resolve_receiver_location_code(transaction),
+        "receiver_name": (
+            receiver_location.location_name
+            if receiver_location
+            else destination_location.location_name
+            if destination_location
+            else ""
+        ),
 
         "primary_asset_code": transaction.primary_asset_code,
         "primary_asset_name": primary_asset.asset_name if primary_asset else "",
@@ -1256,6 +1283,8 @@ def get_tanker_tracking_rows(
                     str(ticket.get("tanker_chassis_number") or ""),
                     str(ticket.get("origin_location_code") or ""),
                     str(ticket.get("destination_location_code") or ""),
+                    str(ticket.get("sender_code") or ""),
+                    str(ticket.get("receiver_code") or ""),
                     str(ticket.get("product_name") or ""),
                     str(ticket.get("status") or ""),
                 ]

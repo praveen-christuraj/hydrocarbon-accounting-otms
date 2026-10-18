@@ -1761,6 +1761,15 @@ class ConvoyTrackerTicket(BaseModel):
     destination_location_name: Optional[str] = None
     sender_location_code: Optional[str] = None
     receiver_location_code: Optional[str] = None
+    # Clubbed Sender / Receiver pairing (Operation Entry): resolved single
+    # Sender (sender_location_code, else origin_location_code) and single
+    # Receiver (receiver_location_code, else destination_location_code) of
+    # the ticket, with their names. Tracking reads these so tickets created
+    # before the clubbing behave exactly like new ones.
+    sender_code: Optional[str] = None
+    sender_name: Optional[str] = None
+    receiver_code: Optional[str] = None
+    receiver_name: Optional[str] = None
     status: str
     # Tracking Module Configuration: SENDER / RECEIVER. For barge tickets the
     # link decides: a ticket created against an approved sender ticket is the
@@ -2209,6 +2218,17 @@ class TankerTrackingTicketResponse(BaseModel):
     sender_location_name: Optional[str] = None
     receiver_location_code: Optional[str] = None
     receiver_location_name: Optional[str] = None
+
+    # Clubbed Sender / Receiver pairing (Operation Entry): the single Sender
+    # of the record (sender_location_code, else origin_location_code) and its
+    # single Receiver (receiver_location_code, else
+    # destination_location_code). The four columns above are kept as they are
+    # - these two are the resolved values every tracking decision uses, so
+    # records created before the clubbing read exactly like new ones.
+    sender_code: Optional[str] = None
+    sender_name: Optional[str] = None
+    receiver_code: Optional[str] = None
+    receiver_name: Optional[str] = None
 
     primary_asset_code: str
     primary_asset_name: Optional[str] = None

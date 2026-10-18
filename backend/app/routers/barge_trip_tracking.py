@@ -35,6 +35,10 @@ from app.dependencies.permissions import (
     user_is_party_to_transaction,
 )
 from app.services.audit_service import create_audit_log
+from app.services.location_pairing import (
+    resolve_receiver_location_code,
+    resolve_sender_location_code,
+)
 from app.utils.helpers import (
     clean_optional_text,
     get_transaction_ticket_number,
@@ -257,6 +261,9 @@ def get_convoy_tracker(
             }
         op_type = get_operation_type_by_code(tx.operation_type_code, db)
 
+        sender_code = resolve_sender_location_code(tx)
+        receiver_code = resolve_receiver_location_code(tx)
+
         receiver = receiver_by_sender.get(tx.id)
         linked_sender_id = get_linked_sender_transaction_id(db, tx.id)
         linked_sender = (
@@ -276,6 +283,15 @@ def get_convoy_tracker(
             "destination_location_name": get_location_name_by_code(tx.destination_location_code, db),
             "sender_location_code": tx.sender_location_code,
             "receiver_location_code": tx.receiver_location_code,
+            # Clubbed Sender / Receiver pairing: the single Sender of the
+            # record (sender, else origin) and its single Receiver
+            # (receiver, else destination). Tracking decisions and the UI
+            # read these, so records created before the clubbing behave
+            # exactly like new ones.
+            "sender_code": sender_code,
+            "sender_name": get_location_name_by_code(sender_code, db),
+            "receiver_code": receiver_code,
+            "receiver_name": get_location_name_by_code(receiver_code, db),
             "status": tx.status,
             # The links decide the sides: Barge Tracking uses one operation
             # type for both sides, so a ticket created against an approved
@@ -389,11 +405,17 @@ def get_barge_voyages(
         if asset_code and asset_code not in voyage["barge_asset_codes"]:
             voyage["barge_asset_codes"].append(asset_code)
 
-        origin = clean_optional_text(tx.origin_location_code)
+        # Clubbed Sender / Receiver pairing: a convoy's two ends are the
+        # single Sender (sender, else origin) and the single Receiver
+        # (receiver, else destination) of its tickets. Reading the raw
+        # origin / destination columns instead mixed the receiving
+        # terminal into the "origin" list, because a receiver ticket keeps
+        # the receiving terminal as its origin for location scoping.
+        origin = resolve_sender_location_code(tx)
         if origin and origin not in voyage["origin_location_codes"]:
             voyage["origin_location_codes"].append(origin)
 
-        destination = clean_optional_text(tx.destination_location_code)
+        destination = resolve_receiver_location_code(tx)
         if destination and destination not in voyage["destination_location_codes"]:
             voyage["destination_location_codes"].append(destination)
 

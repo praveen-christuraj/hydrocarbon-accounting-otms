@@ -15,7 +15,8 @@
     "lint:src": "eslint src",
     "test:bulk": "node scripts/test-bulk-io.mjs",
     "test:bulk:ui": "node scripts/test-bulk-ui.mjs",
-    "test:operation-entry-locations": "node scripts/test-operation-entry-locations.mjs"
+    "test:operation-entry-locations": "node scripts/test-operation-entry-locations.mjs",
+    "test:sender-receiver": "node scripts/test-sender-receiver-pairing.mjs"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",

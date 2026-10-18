@@ -1381,6 +1381,73 @@ def ensure_operation_transaction_indexes():
             connection.execute(text(statement))
 
 
+def ensure_sender_receiver_pairing_backfill():
+    """
+    Align historical operation transactions with the clubbed Sender /
+    Receiver dropdowns of the Operation Entry page.
+
+    The entry form now has one "Sender" dropdown (origin + sender) and one
+    "Receiver" dropdown (destination + receiver). The four columns are kept,
+    but from now on both columns of a pair hold the same value. Rows created
+    before the change only have one side populated, so this fills the blank
+    side from its partner - and nothing else:
+
+      * ``sender_location_code``       <- ``origin_location_code``
+      * ``origin_location_code``       <- ``sender_location_code``
+      * ``receiver_location_code``     <- ``destination_location_code``
+      * ``destination_location_code``  <- ``receiver_location_code``
+
+    Safety notes: only NULL / blank columns are written, never an existing
+    value; no row is inserted or deleted; the statements are idempotent, so
+    they can run on every start-up; and a failure is reported without
+    blocking start-up. Tracking modules also resolve the pair on read
+    (``app.services.location_pairing``), so this backfill is an additional
+    consistency net for queries that read a single column - the feature does
+    not depend on it.
+    """
+    inspector = inspect(engine)
+    if "operation_transactions" not in inspector.get_table_names():
+        return
+
+    statements = [
+        """
+        UPDATE operation_transactions
+           SET sender_location_code = origin_location_code
+         WHERE (sender_location_code IS NULL OR trim(sender_location_code) = '')
+           AND origin_location_code IS NOT NULL
+           AND trim(origin_location_code) <> ''
+        """,
+        """
+        UPDATE operation_transactions
+           SET origin_location_code = sender_location_code
+         WHERE (origin_location_code IS NULL OR trim(origin_location_code) = '')
+           AND sender_location_code IS NOT NULL
+           AND trim(sender_location_code) <> ''
+        """,
+        """
+        UPDATE operation_transactions
+           SET receiver_location_code = destination_location_code
+         WHERE (receiver_location_code IS NULL OR trim(receiver_location_code) = '')
+           AND destination_location_code IS NOT NULL
+           AND trim(destination_location_code) <> ''
+        """,
+        """
+        UPDATE operation_transactions
+           SET destination_location_code = receiver_location_code
+         WHERE (destination_location_code IS NULL OR trim(destination_location_code) = '')
+           AND receiver_location_code IS NOT NULL
+           AND trim(receiver_location_code) <> ''
+        """,
+    ]
+
+    try:
+        with engine.begin() as connection:
+            for statement in statements:
+                connection.execute(text(statement))
+    except Exception as error:  # pragma: no cover - start-up must not fail
+        print(f"[migrations] sender/receiver pairing backfill skipped: {error}")
+
+
 def ensure_asset_calibration_table_indexes():
     """Indexes for asset calibration table lookups.
 
