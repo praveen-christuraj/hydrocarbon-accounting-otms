@@ -14,6 +14,8 @@ the v1 implementation is kept under a versioned name.
 """
 
 from datetime import datetime
+import math
+
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -883,15 +885,24 @@ def build_multitank_comparison_json_v2(
     left_totals = pick_totals(l["totals"] or {})
     right_totals = pick_totals(r["totals"] or {})
 
-    def n(v):
+    def optional_number(value):
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
         try:
-            return float(v)
-        except Exception:
-            return 0.0
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if math.isfinite(number) else None
 
     delta_totals = {}
     for k in ["TOV", "FW", "GOV", "GSV", "BSW", "NSV", "LT", "MT"]:
-        delta_totals[k] = n(left_totals.get(k)) - n(right_totals.get(k))
+        left_value = optional_number(left_totals.get(k))
+        right_value = optional_number(right_totals.get(k))
+        delta_totals[k] = (
+            left_value - right_value
+            if left_value is not None and right_value is not None
+            else None
+        )
 
     seal_checks, seal_mismatch = build_multitank_seal_checks(left_payload, right_payload)
 

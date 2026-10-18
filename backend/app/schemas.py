@@ -785,6 +785,14 @@ class MovementMappingCreate(BaseModel):
     remarks: Optional[str] = None
 
 
+class MovementMappingUpdate(BaseModel):
+    mapping_type: Optional[str] = None
+    location_code: Optional[str] = None
+    reference_number: Optional[str] = None
+    product_name: Optional[str] = None
+    remarks: Optional[str] = None
+
+
 class MovementMappingItemAddRequest(BaseModel):
     role: str  # SOURCE / TARGET
     transaction_ids: list[int]
@@ -803,6 +811,7 @@ class MovementMappingItemResponse(BaseModel):
     operation_date: Optional[date] = None
 
     qty_bbl: Optional[float] = 0
+    gsv_bbl: Optional[float] = None
     water_bbl: Optional[float] = 0
     nsv_bbl: Optional[float] = 0
 
@@ -816,13 +825,21 @@ class MovementMappingComparisonResponse(BaseModel):
     mapping_id: int
 
     source_qty_bbl: Optional[float] = 0
+    source_gsv_bbl: Optional[float] = None
     source_water_bbl: Optional[float] = 0
     source_nsv_bbl: Optional[float] = 0
 
     target_qty_bbl: Optional[float] = 0
+    target_gsv_bbl: Optional[float] = None
     target_water_bbl: Optional[float] = 0
     target_nsv_bbl: Optional[float] = 0
 
+    diff_qty_bbl: Optional[float] = None
+    diff_qty_percent: Optional[float] = None
+    diff_gsv_bbl: Optional[float] = None
+    diff_gsv_percent: Optional[float] = None
+    diff_water_bbl: Optional[float] = None
+    diff_water_percent: Optional[float] = None
     diff_nsv_bbl: Optional[float] = 0
     diff_nsv_percent: Optional[float] = 0
 
@@ -846,6 +863,8 @@ class MovementMappingResponse(BaseModel):
     created_by: Optional[str] = None
     closed_by: Optional[str] = None
     closed_at: Optional[datetime] = None
+    archived_at: Optional[datetime] = None
+    archived_by: Optional[str] = None
 
     created_at: datetime
     updated_at: datetime

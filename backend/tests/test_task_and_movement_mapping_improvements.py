@@ -1,0 +1,166 @@
+from datetime import date
+from types import SimpleNamespace
+
+from sqlalchemy import create_engine, inspect, text
+
+from app.utils import db_migrations
+from app.models import MovementMapping, OperationTask, OperationTransaction, OperationTransactionValue, User
+from app.routers.movement_mappings import (
+    archive_movement_mapping,
+    create_movement_mapping,
+    extract_transaction_quantities,
+    list_movement_mappings,
+    restore_movement_mapping,
+    sum_optional,
+    update_movement_mapping,
+)
+from app.routers.operation_tasks import get_my_operation_tasks, resolve_effective_operation_task_status
+from app.schemas import MovementMappingCreate, MovementMappingUpdate
+
+
+def _admin(db):
+    user = User(
+        full_name="Test Administrator",
+        username="admin",
+        email="admin@example.test",
+        password_hash="test-only",
+        status="Active",
+        all_locations_access="Yes",
+    )
+    db.add(user)
+    db.flush()
+    return user
+
+
+def test_legacy_open_task_status_follows_approved_transaction(db):
+    task_state = SimpleNamespace(task_type="OPERATION_APPROVAL", status="Pending")
+    approved_state = SimpleNamespace(status="Approved")
+    submitted_state = SimpleNamespace(status="Submitted")
+
+    assert resolve_effective_operation_task_status(task_state, approved_state) == "Approved"
+    assert resolve_effective_operation_task_status(task_state, submitted_state) == "Pending"
+    assert resolve_effective_operation_task_status(
+        SimpleNamespace(task_type="OPERATION_APPROVAL", status="Rejected"), approved_state
+    ) == "Rejected"
+    assert resolve_effective_operation_task_status(
+        SimpleNamespace(task_type="PASSWORD_RESET_REQUEST", status="Pending"), approved_state
+    ) == "Pending"
+
+    admin = _admin(db)
+    transaction = OperationTransaction(
+        operation_number="TASK-APPROVED-001",
+        operation_type_code="SHUTTLE_MOVE",
+        primary_asset_code="SHUTTLE_01",
+        primary_asset_type_code="SHUTTLE",
+        origin_location_code="AGGE",
+        operation_date=date(2026, 10, 1),
+        status="Approved",
+    )
+    db.add(transaction)
+    db.flush()
+    task = OperationTask(
+        task_number="TASK-LEGACY-001",
+        task_type="OPERATION_APPROVAL",
+        transaction_id=transaction.id,
+        status="Pending",
+        priority="Normal",
+        assigned_user_ids_json=[],
+        assigned_role_ids_json=[],
+    )
+    db.add(task)
+    db.flush()
+
+    approved_rows = get_my_operation_tasks(status="Approved", current_user=admin, db=db)
+    pending_rows = get_my_operation_tasks(status="Pending", current_user=admin, db=db)
+    assert [row["id"] for row in approved_rows] == [task.id]
+    assert approved_rows[0]["status"] == "Approved"
+    assert pending_rows == []
+
+
+def test_movement_mapping_edit_archive_and_restore_preserve_record(db):
+    admin = _admin(db)
+    mapping = create_movement_mapping(
+        MovementMappingCreate(
+            mapping_type="BARGE_TO_SHUTTLE",
+            location_code="AGGE",
+            reference_number="CONVOY-01",
+            product_name="Crude",
+        ),
+        current_user=admin,
+        db=db,
+    )
+
+    updated = update_movement_mapping(
+        mapping["id"],
+        MovementMappingUpdate(product_name="Export crude", remarks="Reconciled"),
+        current_user=admin,
+        db=db,
+    )
+    assert updated["product_name"] == "Export crude"
+    assert updated["remarks"] == "Reconciled"
+
+    archived = archive_movement_mapping(mapping["id"], current_user=admin, db=db)
+    assert archived["archived_at"] is not None
+    assert db.query(MovementMapping).filter_by(id=mapping["id"]).one().reference_number == "CONVOY-01"
+    assert list_movement_mappings(current_user=admin, db=db) == []
+    assert [row["id"] for row in list_movement_mappings(archived=True, current_user=admin, db=db)] == [mapping["id"]]
+
+    restored = restore_movement_mapping(mapping["id"], current_user=admin, db=db)
+    assert restored["archived_at"] is None
+    assert restored["product_name"] == "Export crude"
+    assert [row["id"] for row in list_movement_mappings(current_user=admin, db=db)] == [mapping["id"]]
+
+
+def test_movement_mapping_gsv_is_kept_separate_and_incomplete_aggregate_is_null(db):
+    transaction = OperationTransaction(
+        operation_number="MM-GSV-001",
+        operation_type_code="SHUTTLE_MOVE",
+        primary_asset_code="SHUTTLE_01",
+        primary_asset_type_code="SHUTTLE",
+        origin_location_code="AGGE",
+        operation_date=date(2026, 10, 1),
+        status="Approved",
+    )
+    db.add(transaction)
+    db.flush()
+    db.add(OperationTransactionValue(
+        transaction_id=transaction.id,
+        field_code="shuttle_payload",
+        field_name="Shuttle payload",
+        data_type="JSON",
+        input_mode="System",
+        calculation_role="Input",
+        field_value={"calculated": {"net": {"TOV": 120, "FW": 8, "GSV": 112, "NSV": 104}}},
+    ))
+    db.flush()
+
+    assert extract_transaction_quantities(db, transaction) == (120, 8, 112, 104)
+    assert sum_optional([SimpleNamespace(gsv_bbl=112), SimpleNamespace(gsv_bbl=None)], "gsv_bbl") is None
+    assert sum_optional([SimpleNamespace(gsv_bbl=112), SimpleNamespace(gsv_bbl=108)], "gsv_bbl") == 220
+
+
+def test_movement_mapping_management_migration_is_additive_and_repeatable(monkeypatch):
+    migration_engine = create_engine("sqlite:///:memory:")
+    with migration_engine.begin() as connection:
+        connection.execute(text("CREATE TABLE movement_mappings (id INTEGER PRIMARY KEY, status VARCHAR(30))"))
+        connection.execute(text("CREATE TABLE movement_mapping_items (id INTEGER PRIMARY KEY, quantity_bbl FLOAT)"))
+        connection.execute(text("CREATE TABLE movement_mapping_comparisons (id INTEGER PRIMARY KEY, difference_bbl FLOAT)"))
+        connection.execute(text("INSERT INTO movement_mappings (id, status) VALUES (1, 'Open')"))
+        connection.execute(text("INSERT INTO movement_mapping_items (id, quantity_bbl) VALUES (1, 125.5)"))
+
+    monkeypatch.setattr(db_migrations, "engine", migration_engine)
+    db_migrations.ensure_movement_mapping_management_columns()
+    db_migrations.ensure_movement_mapping_management_columns()
+
+    inspector = inspect(migration_engine)
+    assert {"archived_at", "archived_by"}.issubset(
+        {column["name"] for column in inspector.get_columns("movement_mappings")}
+    )
+    assert "gsv_bbl" in {column["name"] for column in inspector.get_columns("movement_mapping_items")}
+    assert {"source_gsv_bbl", "target_gsv_bbl"}.issubset(
+        {column["name"] for column in inspector.get_columns("movement_mapping_comparisons")}
+    )
+    with migration_engine.connect() as connection:
+        assert connection.execute(text("SELECT status FROM movement_mappings WHERE id = 1")).scalar_one() == "Open"
+        assert connection.execute(text("SELECT quantity_bbl FROM movement_mapping_items WHERE id = 1")).scalar_one() == 125.5
+    migration_engine.dispose()

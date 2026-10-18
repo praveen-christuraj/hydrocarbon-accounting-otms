@@ -193,18 +193,40 @@ def close_operation_approval_tasks_for_transaction(
         )
 
 
+def resolve_effective_operation_task_status(task: OperationTask, transaction: OperationTransaction | None):
+    """Present legacy/open approval tasks consistently with their ticket status.
+
+    Older workflows or direct ticket status changes may leave a task Pending
+    after the linked transaction has already been approved/rejected. Open
+    approval tasks are projected to the authoritative transaction status; the
+    normal transaction status endpoint continues to persist task transitions.
+    """
+    if task.task_type != "OPERATION_APPROVAL" or task.status not in ("Pending", "In Progress"):
+        return task.status
+    if not transaction:
+        return task.status
+    return {
+        "Approved": "Approved",
+        "Rejected": "Rejected",
+        "Draft": "Cancelled",
+        "Cancelled": "Cancelled",
+    }.get(transaction.status, task.status)
+
+
 def build_operation_task_response(task: OperationTask, db: Session, include_transaction: bool = True):
     from app.routers.operation_transactions import build_operation_transaction_response
 
-    transaction_payload = None
-    if include_transaction:
+    transaction = None
+    if task.transaction_id:
         transaction = (
             db.query(OperationTransaction)
             .filter(OperationTransaction.id == task.transaction_id)
             .first()
         )
-        if transaction:
-            transaction_payload = build_operation_transaction_response(transaction, db)
+
+    transaction_payload = None
+    if include_transaction and transaction:
+        transaction_payload = build_operation_transaction_response(transaction, db)
 
     return {
         "id": task.id,
@@ -222,7 +244,7 @@ def build_operation_task_response(task: OperationTask, db: Session, include_tran
         "assigned_policy_id": task.assigned_policy_id,
         "assigned_role_ids_json": task.assigned_role_ids_json or [],
         "assigned_user_ids_json": task.assigned_user_ids_json or [],
-        "status": task.status,
+        "status": resolve_effective_operation_task_status(task, transaction),
         "priority": task.priority,
         "due_at": task.due_at,
         "taken_by_user_id": task.taken_by_user_id,
@@ -356,9 +378,11 @@ def get_my_operation_tasks(
     require_user_permission(current_user, "View My Tasks", db)
     query = apply_location_filter(db.query(OperationTask), OperationTask, current_user, db)
     query = query.order_by(OperationTask.created_at.desc(), OperationTask.id.desc())
+    # Status is applied after response construction because legacy tasks may
+    # still say Pending while their linked transaction is already Approved.
     query = apply_operation_task_filters(
         query,
-        status,
+        None,
         task_type,
         search,
         created_from,
@@ -372,7 +396,11 @@ def get_my_operation_tasks(
         if operation_task_is_within_location_scope(task, db, allowed_codes)
         and user_can_act_on_operation_task(db, current_user, task)
     ]
-    return [build_operation_task_response(task, db) for task in visible]
+    responses = [build_operation_task_response(task, db) for task in visible]
+    wanted_status = clean_optional_text(status)
+    if wanted_status and wanted_status.upper() != "ALL":
+        responses = [row for row in responses if row["status"] == wanted_status]
+    return responses
 
 
 @router.get("", response_model=list[OperationTaskResponse])
@@ -390,7 +418,7 @@ def get_operation_tasks(
     query = query.order_by(OperationTask.created_at.desc(), OperationTask.id.desc())
     query = apply_operation_task_filters(
         query,
-        status,
+        None,
         task_type,
         search,
         created_from,
@@ -403,7 +431,11 @@ def get_operation_tasks(
         for task in tasks
         if operation_task_is_within_location_scope(task, db, allowed_codes)
     ]
-    return [build_operation_task_response(task, db) for task in visible]
+    responses = [build_operation_task_response(task, db) for task in visible]
+    wanted_status = clean_optional_text(status)
+    if wanted_status and wanted_status.upper() != "ALL":
+        responses = [row for row in responses if row["status"] == wanted_status]
+    return responses
 
 
 @router.get("/{task_id}", response_model=OperationTaskResponse)

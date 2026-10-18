@@ -17,6 +17,7 @@ import AlertMessage from '../components/common/AlertMessage'
 import Modal from '../components/common/Modal'
 import CompanyPrintHeader from '../components/reports/CompanyPrintHeader'
 import CompanyPrintFooter from '../components/reports/CompanyPrintFooter'
+import BargeConvoyComparisonReport from '../components/reports/BargeConvoyComparisonReport'
 import { logUiAction } from '../utils/actionLogger'
 import { buildBargeMtrSampleRows } from '../utils/bargeMtrReport'
 import {
@@ -116,9 +117,12 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
     convoyNumber: '',
     assetCode: '',
     assetName: '',
+    senderLocationCode: '',
+    receiverLocationCode: '',
     comparison: null,
     events: [],
   })
+  const [convoyPrintOpen, setConvoyPrintOpen] = useState(false)
 
   const navigate = useNavigate()
   const location = useLocation()
@@ -288,6 +292,8 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
     setTracker(null)
     setTimeline(null)
     setTimelineWarning('')
+    setConvoyPrintOpen(false)
+    setPrintReport((current) => ({ ...current, open: false }))
     feedback.clear()
   }
 
@@ -707,26 +713,58 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
   }
 
   const formatNumber = (value, decimals = 3) => {
+    if (value === null || value === undefined || String(value).trim() === '') return '-'
     const n = Number(value)
-    if (!Number.isFinite(n)) return ''
+    if (!Number.isFinite(n)) return '-'
     return n.toFixed(decimals)
   }
 
   const openComparisonReport = (cmp, bargeEvents, assetCode, assetNameValue) => {
     const convoy = String(tracker?.convoy_number || convoyNumber || '').trim()
     if (!cmp) return
+    const senderTicket = ticketById[String(cmp.left_transaction_id)]
+    const receiverTicket = ticketById[String(cmp.right_transaction_id)]
+    const senderLocationCode = resolveSenderCode(senderTicket) || resolveSenderCode(receiverTicket)
+    const receiverLocationCode = resolveReceiverCode(receiverTicket) || resolveReceiverCode(senderTicket)
     logUiAction('Barge Tracking', 'Print Comparison Report', { comparisonId: cmp.id, convoyNumber: convoy, assetCode })
 
+    setConvoyPrintOpen(false)
     setPrintReport({
       open: true,
       convoyNumber: convoy,
       assetCode: String(assetCode || ''),
       assetName: String(assetNameValue || ''),
+      senderLocationCode,
+      receiverLocationCode,
       comparison: cmp,
       events: Array.isArray(bargeEvents) ? bargeEvents : [],
     })
 
     // Print after React renders the printable section
+    setTimeout(() => {
+      try {
+        window.print()
+      } catch {
+        // ignore
+      }
+    }, 250)
+  }
+
+  const openConvoyComparisonReport = () => {
+    const convoy = String(tracker?.convoy_number || convoyNumber || '').trim()
+    const comparisons = Array.isArray(timeline?.comparisons) ? timeline.comparisons : []
+    if (comparisons.length === 0) {
+      notifyError('No approved barge comparisons are available for this convoy yet.')
+      return
+    }
+
+    logUiAction('Barge Tracking', 'Print Convoy Comparison Report', {
+      convoyNumber: convoy,
+      comparisonCount: comparisons.length,
+      bargeCount: (tracker?.assets || []).length,
+    })
+    setPrintReport((current) => ({ ...current, open: false }))
+    setConvoyPrintOpen(true)
     setTimeout(() => {
       try {
         window.print()
@@ -742,6 +780,8 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
       convoyNumber: '',
       assetCode: '',
       assetName: '',
+      senderLocationCode: '',
+      receiverLocationCode: '',
       comparison: null,
       events: [],
     })
@@ -845,6 +885,10 @@ return (
                   <div className="barge-mtr-meta">
                     <span>Comparison Type</span>
                     <strong>{cmp.comparison_type || '-'}</strong>
+                    <span>Sender Location</span>
+                    <strong>{getLocationLabel(printReport.senderLocationCode) || '-'}</strong>
+                    <span>Receiver Location</span>
+                    <strong>{getLocationLabel(printReport.receiverLocationCode) || '-'}</strong>
                     <span>Report Date</span>
                     <strong>{new Date().toLocaleString()}</strong>
                     <span>Seal Result</span>
@@ -1168,6 +1212,21 @@ return (
         </div>
       )}
 
+      {convoyPrintOpen && (
+        <>
+          <BargeConvoyComparisonReport
+            convoyNumber={tracker?.convoy_number || convoyNumber}
+            comparisons={timeline?.comparisons || []}
+            bargeAssets={tracker?.assets || []}
+            locations={locations}
+            generatedBy={loggedInUser?.fullName || loggedInUser?.username || ''}
+          />
+          <div className="no-print" style={{ marginTop: 10 }}>
+            <button type="button" onClick={() => setConvoyPrintOpen(false)}>Close Report</button>
+          </div>
+        </>
+      )}
+
       <div className="screen-only">
       <div className="page-title">
         <div>
@@ -1366,6 +1425,15 @@ return (
 
             {timeline?.trip?.id && (
               <div className="form-actions" style={{ marginTop: 10 }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  disabled={loading || !(timeline?.comparisons || []).length}
+                  onClick={openConvoyComparisonReport}
+                  title={!(timeline?.comparisons || []).length ? 'No approved comparisons are available for this convoy yet' : 'Print dips and quantity comparisons for all barges in this convoy'}
+                >
+                  Print Convoy Comparison
+                </button>
                 <button
                   type="button"
                   disabled={loading || !mayCloseBargeMovement || !canCloseBargeMovement()}

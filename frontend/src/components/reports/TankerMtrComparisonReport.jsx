@@ -1,6 +1,12 @@
 import { useCompanyPrintProfile } from '../../hooks/useCompanyPrintProfile'
 import CompanyPrintHeader from './CompanyPrintHeader'
 import CompanyPrintFooter from './CompanyPrintFooter'
+import {
+  resolveReceiverCode,
+  resolveReceiverName,
+  resolveSenderCode,
+  resolveSenderName,
+} from '../../utils/senderReceiver'
 
 const SEAL_STATUS_LABELS = {
   MATCHED: 'Matched',
@@ -128,6 +134,20 @@ function TankerMtrComparisonReport({ group }) {
         <div className="mtr-report-meta">
           <span>Tracking Status</span>
           <strong>{text(group.trackingStatus)}</strong>
+          <span>Sender Location</span>
+          <strong>
+            {locationLabel(
+              resolveSenderCode(sender) || resolveSenderCode(receiver),
+              resolveSenderName(sender) || resolveSenderName(receiver)
+            )}
+          </strong>
+          <span>Receiver Location</span>
+          <strong>
+            {locationLabel(
+              resolveReceiverCode(sender) || resolveReceiverCode(receiver),
+              resolveReceiverName(sender) || resolveReceiverName(receiver)
+            )}
+          </strong>
           <span>Prime Mover</span>
           <strong>{text(group.primeMoverAssetName || group.primeMoverAssetCode)}</strong>
           <span>Product</span>

@@ -3544,3 +3544,696 @@ td.preset-result-error {
     padding: 0;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Task Manager + Movement Mapping refinements
+   ------------------------------------------------------------------------- */
+.operation-task-manager-page,
+.movement-mapping-page {
+  min-width: 0;
+}
+
+.operation-task-manager-page .task-status-tabs,
+.movement-mapping-page .movement-mapping-tabs {
+  margin-top: 12px;
+}
+
+.operation-task-manager-page .task-manager-filter-panel {
+  grid-template-columns: minmax(160px, 1fr) minmax(220px, 1.6fr) minmax(150px, 0.8fr) minmax(150px, 0.8fr) auto;
+  align-items: end;
+}
+
+.task-filter-actions {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px;
+}
+
+.task-date-warning {
+  margin: -4px 0 12px;
+}
+
+.task-bulk-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 12px 0;
+  padding: 12px 16px;
+  border: 1px solid var(--primary-soft-strong);
+  border-radius: var(--radius-panel);
+  background: var(--primary-soft);
+}
+
+.task-bulk-toolbar > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.task-bulk-toolbar > div:first-child span,
+.task-type-subtitle,
+.task-action-hint,
+.task-confirm-note,
+.task-event-note,
+.muted-table-text {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.task-bulk-toolbar .form-actions {
+  margin: 0;
+}
+
+.task-table-scroll,
+.task-history-table-scroll,
+.mapping-table-scroll,
+.mapping-comparison-table-scroll {
+  width: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.task-manager-table {
+  min-width: 1030px;
+}
+
+.task-manager-table .task-select-col {
+  width: 42px;
+  text-align: center;
+}
+
+.task-manager-table .task-select-col input[type='checkbox'] {
+  margin: 0;
+  width: 16px;
+  height: 16px;
+}
+
+.task-type-subtitle {
+  display: block;
+  margin-top: 3px;
+  white-space: nowrap;
+}
+
+.task-manager-detail-modal .app-modal-body {
+  padding: 16px 20px;
+}
+
+.task-details-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(340px, 0.85fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.task-details-main,
+.task-history-panel {
+  min-width: 0;
+}
+
+.task-detail-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.task-detail-summary-grid > div,
+.mapping-detail-metadata > div {
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+}
+
+.task-detail-summary-grid > div > span,
+.mapping-detail-metadata > div > span,
+.task-note-panel > span,
+.mapping-remarks > span {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.035em;
+}
+
+.task-detail-summary-grid strong,
+.mapping-detail-metadata strong {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.task-note-panel,
+.mapping-remarks {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+}
+
+.task-note-panel p,
+.mapping-remarks p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.task-ticket-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--primary-soft-strong);
+  border-radius: var(--radius-control);
+  background: var(--primary-soft);
+}
+
+.task-ticket-link span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.task-action-panel {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface-2);
+}
+
+.task-action-panel .compact-section-title,
+.task-history-panel .compact-section-title {
+  margin-top: 0;
+}
+
+.task-action-panel textarea,
+.bulk-approval-dialog textarea {
+  width: 100%;
+}
+
+.task-action-buttons {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.task-action-hint {
+  margin: 8px 0 0;
+}
+
+.task-history-panel {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface-2);
+}
+
+.task-history-table-scroll {
+  max-height: min(64vh, 680px);
+}
+
+.task-history-panel table {
+  min-width: 500px;
+}
+
+.task-event-note {
+  margin: 5px 0 0;
+  white-space: pre-wrap;
+}
+
+.bulk-approval-dialog .info-box {
+  margin-bottom: 14px;
+}
+
+.bulk-approval-list {
+  display: grid;
+  gap: 6px;
+  max-height: 230px;
+  overflow: auto;
+  margin-top: 12px;
+}
+
+.bulk-approval-list > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+}
+
+.bulk-approval-list span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.mapping-title-actions,
+.mapping-row-actions,
+.mapping-detail-toolbar,
+.mapping-detail-badges,
+.mapping-list-heading,
+.mapping-filter-header,
+.mapping-section-heading,
+.mapping-candidate-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.mapping-title-actions,
+.mapping-row-actions,
+.mapping-detail-badges {
+  flex-wrap: wrap;
+}
+
+.mapping-summary-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 14px 0 4px;
+}
+
+.mapping-summary-cards > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface-2);
+}
+
+.mapping-summary-cards span {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.035em;
+}
+
+.mapping-summary-cards strong {
+  font-size: 25px;
+  line-height: 1.1;
+}
+
+.mapping-summary-cards small {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.mapping-filter-card,
+.mapping-list-card,
+.mapping-side-card,
+.mapping-attach-panel,
+.mapping-candidate-card,
+.mapping-comparison-section {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+}
+
+.mapping-filter-card,
+.mapping-list-card,
+.mapping-attach-panel,
+.mapping-comparison-section {
+  margin-top: 14px;
+  padding: 15px 16px;
+}
+
+.mapping-filter-header {
+  margin-bottom: 12px;
+}
+
+.mapping-filter-header > div,
+.mapping-list-heading > div,
+.mapping-section-heading > div,
+.mapping-candidate-heading > div {
+  min-width: 0;
+}
+
+.mapping-filter-header strong,
+.mapping-filter-header span,
+.mapping-section-heading h3,
+.mapping-section-heading p,
+.mapping-candidate-heading h4,
+.mapping-candidate-heading p,
+.mapping-list-heading h3,
+.mapping-list-heading p {
+  display: block;
+}
+
+.mapping-filter-header span,
+.mapping-list-heading p,
+.mapping-section-heading p,
+.mapping-candidate-heading p {
+  margin: 3px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.mapping-filter-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) minmax(150px, 0.8fr) minmax(220px, 1.25fr);
+  gap: 12px;
+  align-items: end;
+}
+
+.mapping-filter-grid > div,
+.mapping-form-grid > div,
+.mapping-candidate-search-grid > div,
+.mapping-candidate-search-row > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.mapping-reference-filter {
+  min-width: 220px;
+}
+
+.mapping-list-heading {
+  margin-bottom: 12px;
+}
+
+.mapping-list-heading h3,
+.mapping-section-heading h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.mapping-result-count {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.movement-mapping-table {
+  min-width: 1050px;
+  margin: 0;
+}
+
+.movement-mapping-table th,
+.movement-mapping-table td,
+.mapping-ticket-table th,
+.mapping-ticket-table td,
+.mapping-candidate-table th,
+.mapping-candidate-table td,
+.mapping-comparison-table th,
+.mapping-comparison-table td {
+  vertical-align: middle;
+}
+
+.mapping-row-actions {
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.mapping-row-actions button,
+.task-action-buttons button {
+  flex-shrink: 0;
+}
+
+.mapping-progress {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border: 1px solid var(--warning-border);
+  border-radius: 999px;
+  background: var(--warning-soft);
+  color: var(--warning-text);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.mapping-progress.complete {
+  border-color: var(--success-border);
+  background: var(--success-soft);
+  color: var(--success-text);
+}
+
+.mapping-progress.pending {
+  border-color: var(--warning-border);
+  background: var(--warning-soft);
+  color: var(--warning-text);
+}
+
+.mapping-ticket-counts {
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.movement-mapping-detail-modal .app-modal-body {
+  padding: 14px 18px 18px;
+}
+
+.movement-mapping-detail {
+  display: grid;
+  gap: 13px;
+  min-width: 0;
+}
+
+.mapping-detail-toolbar {
+  flex-wrap: wrap;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.mapping-detail-badges {
+  justify-content: flex-start;
+}
+
+.mapping-detail-metadata {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mapping-remarks {
+  margin-top: 0;
+}
+
+.mapping-section-heading {
+  margin-bottom: 9px;
+  align-items: flex-start;
+}
+
+.mapping-comparison-status {
+  flex-shrink: 0;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.mapping-comparison-table,
+.mapping-ticket-table,
+.mapping-candidate-table {
+  min-width: 780px;
+  margin: 0;
+}
+
+.mapping-comparison-table td:first-child,
+.mapping-ticket-table td:first-child,
+.mapping-candidate-table td:first-child {
+  white-space: nowrap;
+}
+
+.mapping-empty-comparison {
+  padding: 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.mapping-data-note {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.mapping-side-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.mapping-side-card {
+  overflow: hidden;
+  padding: 13px;
+  background: var(--surface-2);
+}
+
+.mapping-side-card .mapping-ticket-table {
+  min-width: 790px;
+}
+
+.mapping-attach-panel {
+  padding: 15px;
+  background: var(--surface-2);
+}
+
+.mapping-candidate-card {
+  margin-top: 10px;
+  padding: 13px;
+}
+
+.mapping-candidate-heading {
+  margin-bottom: 10px;
+}
+
+.mapping-candidate-heading h4 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.mapping-candidate-search-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(140px, 1fr)) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.mapping-candidate-search-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 360px) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.mapping-candidate-action-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mapping-candidate-search-grid > button,
+.mapping-candidate-search-row button {
+  margin: 0;
+  min-height: var(--control-height);
+}
+
+.mapping-candidate-card .mapping-table-scroll {
+  margin-top: 10px;
+}
+
+.mapping-candidate-card .form-actions {
+  margin-top: 10px;
+}
+
+.mapping-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.mapping-form-wide {
+  grid-column: 1 / -1;
+}
+
+.field-help {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+@media (max-width: 1100px) {
+  .operation-task-manager-page .task-manager-filter-panel {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+  }
+
+  .mapping-summary-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mapping-filter-grid {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+  }
+
+  .task-details-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .task-history-table-scroll {
+    max-height: 360px;
+  }
+}
+
+@media (max-width: 720px) {
+  .task-bulk-toolbar,
+  .mapping-filter-header,
+  .mapping-list-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .task-bulk-toolbar .form-actions {
+    flex-wrap: wrap;
+  }
+
+  .task-detail-summary-grid,
+  .mapping-detail-metadata,
+  .mapping-side-grid,
+  .mapping-form-grid,
+  .mapping-candidate-search-grid,
+  .mapping-filter-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mapping-form-wide {
+    grid-column: auto;
+  }
+
+  .mapping-candidate-search-row {
+    grid-template-columns: 1fr;
+  }
+
+  .mapping-title-actions {
+    justify-content: flex-start;
+  }
+
+  .task-history-panel {
+    padding: 10px;
+  }
+}
+
+@media print {
+  .barge-convoy-mtr-report .barge-mtr-section {
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+
+  .barge-convoy-mtr-report .barge-mtr-table {
+    min-width: 0;
+    font-size: 8px;
+  }
+
+  .barge-convoy-mtr-report .barge-mtr-header {
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 0.7fr);
+  }
+
+  .barge-convoy-mtr-report tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}
