@@ -28,7 +28,8 @@ export const disableOwn2FA = async (currentPassword, code) => {
 }
 
 export const adminResetUserPassword = async (userId, payload) => {
-  return apiPost(`/users/${userId}/security/reset-password`, {
+  // Backend router is mounted at /auth (app/routers/auth.py → APIRouter(prefix="/auth")).
+  return apiPost(`/auth/users/${userId}/security/reset-password`, {
     new_password: payload.newPassword,
     force_password_change: Boolean(payload.forcePasswordChange),
     reset_2fa: Boolean(payload.reset2FA),

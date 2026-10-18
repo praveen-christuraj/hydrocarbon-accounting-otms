@@ -21,7 +21,7 @@ const buildQuery = (filters = {}) => {
 }
 
 export const listDashboardDataSources = async (filters = {}) => {
-  return apiGet(`/dashboard-data-sources${buildQuery(filters)}`)
+  return apiGet(`/dashboard/data-sources${buildQuery(filters)}`)
 }
 
 export const fetchDashboardData = async (body) => {
