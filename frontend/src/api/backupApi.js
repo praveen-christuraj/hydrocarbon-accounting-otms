@@ -96,12 +96,12 @@ const fromValidationApi = (row) => ({
 })
 
 export const getBackupSettings = async () => {
-  const data = await apiGet('/backup-settings')
+  const data = await apiGet('/backup/settings')
   return fromSettingsApi(data)
 }
 
 export const updateBackupSettings = async (payload) => {
-  const data = await apiPut('/backup-settings', toSettingsApi(payload))
+  const data = await apiPut('/backup/settings', toSettingsApi(payload))
   return fromSettingsApi(data)
 }
 
@@ -110,32 +110,32 @@ export const getBackupJobs = async (filters = {}) => {
   if (filters.status) params.append('status', filters.status)
   if (filters.backupType) params.append('backup_type', filters.backupType)
   const query = params.toString()
-  const data = await apiGet(query ? `/backups?${query}` : '/backups')
+  const data = await apiGet(query ? `/backup?${query}` : '/backup')
   return (data || []).map(fromJobApi)
 }
 
 export const createManualBackup = async (description) => {
-  const data = await apiPost('/backups/manual', {
+  const data = await apiPost('/backup/manual', {
     description,
   })
   return fromJobApi(data)
 }
 
 export const verifyBackupChecksum = async (backupId) => {
-  return apiPost(`/backups/${backupId}/verify-checksum`, {})
+  return apiPost(`/backup/${backupId}/verify-checksum`, {})
 }
 
 export const deleteBackup = async (backupId) => {
-  const data = await apiDelete(`/backups/${backupId}`)
+  const data = await apiDelete(`/backup/${backupId}`)
   return fromJobApi(data)
 }
 
 export const cleanupBackups = async () => {
-  return apiPost('/backups/cleanup', {})
+  return apiPost('/backup/cleanup', {})
 }
 
 export const downloadBackup = async (backupId, fallbackFileName = 'backup.dump') => {
-  await apiDownload(`/backups/${backupId}/download`, fallbackFileName)
+  await apiDownload(`/backup/${backupId}/download`, fallbackFileName)
 }
 
 export const getBackupRestoreRequests = async (filters = {}) => {
@@ -143,13 +143,13 @@ export const getBackupRestoreRequests = async (filters = {}) => {
   if (filters.status) params.append('status', filters.status)
   const query = params.toString()
   const data = await apiGet(
-    query ? `/backup-restore-requests?${query}` : '/backup-restore-requests'
+    query ? `/backup/restore-requests?${query}` : '/backup/restore-requests'
   )
   return (data || []).map(fromRestoreRequestApi)
 }
 
 export const createBackupRestoreRequest = async (payload) => {
-  const data = await apiPost('/backup-restore-requests', {
+  const data = await apiPost('/backup/restore-requests', {
     backup_job_id: payload.backupJobId,
     reason: payload.reason,
     business_impact: payload.businessImpact || null,
@@ -158,28 +158,28 @@ export const createBackupRestoreRequest = async (payload) => {
 }
 
 export const approveBackupRestoreRequest = async (requestId, remarks = '') => {
-  const data = await apiPost(`/backup-restore-requests/${requestId}/approve`, {
+  const data = await apiPost(`/backup/restore-requests/${requestId}/approve`, {
     remarks,
   })
   return fromRestoreRequestApi(data)
 }
 
 export const rejectBackupRestoreRequest = async (requestId, remarks = '') => {
-  const data = await apiPost(`/backup-restore-requests/${requestId}/reject`, {
+  const data = await apiPost(`/backup/restore-requests/${requestId}/reject`, {
     remarks,
   })
   return fromRestoreRequestApi(data)
 }
 
 export const cancelBackupRestoreRequest = async (requestId, remarks = '') => {
-  const data = await apiPost(`/backup-restore-requests/${requestId}/cancel`, {
+  const data = await apiPost(`/backup/restore-requests/${requestId}/cancel`, {
     remarks,
   })
   return fromRestoreRequestApi(data)
 }
 
 export const validateBackupRestoreRequest = async (requestId) => {
-  const data = await apiPost(`/backup-restore-requests/${requestId}/validate`, {})
+  const data = await apiPost(`/backup/restore-requests/${requestId}/validate`, {})
   return fromValidationApi(data)
 }
 
@@ -188,7 +188,7 @@ export const executeBackupRestoreRequest = async (
   confirmationText,
   remarks = ''
 ) => {
-  const data = await apiPost(`/backup-restore-requests/${requestId}/execute`, {
+  const data = await apiPost(`/backup/restore-requests/${requestId}/execute`, {
     confirmation_text: confirmationText,
     remarks,
   })
@@ -196,6 +196,6 @@ export const executeBackupRestoreRequest = async (
 }
 
 export const getBackupRestoreValidations = async (requestId) => {
-  const data = await apiGet(`/backup-restore-requests/${requestId}/validations`)
+  const data = await apiGet(`/backup/restore-requests/${requestId}/validations`)
   return (data || []).map(fromValidationApi)
 }

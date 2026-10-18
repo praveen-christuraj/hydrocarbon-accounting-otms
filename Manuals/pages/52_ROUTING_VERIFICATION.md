@@ -95,18 +95,49 @@ All 6 routing mismatches have been corrected in `frontend/src/api/`. The fix tab
 |----------|-------------|
 | `getOutTurnReport` | `/out-turn-report` → `/reports/out-turn-report/validation` |
 
+## Routing Mismatches Fixed (2026-10-18)
+
+Cross-checking every frontend API call against the live OpenAPI route table
+again surfaced three modules still calling paths without their backend router
+prefix — each answered with FastAPI's bare `404 Not Found`. The Task Manager's
+password-reset workflow was among them: completing a `PASSWORD_RESET_REQUEST`
+task through Profile & Security → *Admin Password Reset* called
+`/users/{id}/security/reset-password` while `auth.py` (prefix `/auth`) serves
+`/auth/users/{id}/security/reset-password`, so the admin only ever saw
+"Not Found".
+
+| API Module | Path Changed |
+|------------|-------------|
+| `securityApi.js` | `/users/{id}/security/reset-password` → `/auth/users/{id}/security/reset-password` |
+| `dashboardApi.js` | `/dashboard-configs/*` → `/dashboard/configs/*`; `/dashboard-versions/{id}` → `/dashboard/versions/{id}` |
+| `dashboardDataApi.js` | `/dashboard-data-sources` → `/dashboard/data-sources` |
+| `backupApi.js` | `/backup-settings` → `/backup/settings`; `/backups/*` → `/backup/*`; `/backup-restore-requests/*` → `/backup/restore-requests/*` |
+
+Two further breaks in the same password-reset workflow were fixed in
+`backend/app/routers/auth.py` (import paths only):
+`generate_operation_task_number` and `add_operation_task_event` are defined in
+`app.services.transaction_helpers`, not `app.utils.helpers` /
+`app.dependencies.permissions` — the lazy imports inside
+`request_password_reset_with_rate_limit` and `admin_reset_user_password` raised
+`ImportError`, so `POST /auth/forgot-password` failed with 500 and no
+Task Manager task was ever created.
+
+Regression lock: `backend/tests/test_frontend_route_contract.py` asserts every
+path the frontend API modules call is registered on the app, and
+`backend/tests/test_task_manager_http_flows.py` covers the Task Manager
+page-load / approval flow and the full password-reset task lifecycle.
+
 ## Unused Backend Routers (still no API calls to them)
 
 | Router Prefix | Router File | Notes |
 |---------------|-------------|-------|
 | `/reports` | reports.py | FSO report endpoint `/reports/fso/otr`, `/reports/fso/outturn`, `/reports/fso/otr/export/xlsx`, `/reports/fso/outturn/export/xlsx`, `/reports/fso/material-balance/export/xlsx`, `/reports/tank-stock-ledger/rebuild` still unused by frontend |
 | `/vessel-stock-ledger` | vessel_stock_ledger.py | No frontend API module calls it |
-| `/operation-tasks` | operation_tasks.py | No frontend API module calls it |
 
 ## Fix Summary
 
-**Date**: 2026-07-21
-**Files modified**: 6 frontend API modules (~19 endpoint paths corrected)
+**Date**: 2026-07-21 (initial) · 2026-10-18 (Task Manager password-reset + dashboard/backup)
+**Files modified**: 6 frontend API modules (~19 endpoint paths corrected) on 2026-07-21; 4 frontend API modules + `auth.py` lazy imports on 2026-10-18
 **Root cause**: Frontend API modules hardcoded endpoint paths without the backend's router prefix. Since `main.py` registers routers with `.include_router(router)`, prefixes ARE applied — these calls would have returned 404.
 **Fix applied**: Each mismatched API module now prepends the correct backend router prefix to every endpoint path.
 

@@ -466,8 +466,11 @@ def request_password_reset_with_rate_limit(
     db.add(reset_request)
     db.flush()
 
-    from app.utils.helpers import generate_operation_task_number
-    from app.dependencies.permissions import get_role_ids_with_permission, add_operation_task_event
+    from app.services.transaction_helpers import (
+        add_operation_task_event,
+        generate_operation_task_number,
+    )
+    from app.dependencies.permissions import get_role_ids_with_permission
 
     role_ids = get_role_ids_with_permission(db, "Reset User Password")
     task = OperationTask(
@@ -816,7 +819,7 @@ def admin_reset_user_password(
                 task.action_taken = "Password Reset Completed"
                 task.remarks = reset_request.action_notes
                 task.updated_at = datetime.now()
-                from app.dependencies.permissions import add_operation_task_event
+                from app.services.transaction_helpers import add_operation_task_event
                 add_operation_task_event(
                     db=db,
                     task=task,
