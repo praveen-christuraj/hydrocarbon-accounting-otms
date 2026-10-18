@@ -116,7 +116,7 @@ function FSOTrackingLayout({ entry, selectedAsset, handleValueChange, setEntryFi
 
     const netStock = closingStock - openingStock
     const netWater = closingWater - openingWater
-    const variance = vesselQty - Math.abs(netStock + netWater)
+    const variance = netStock + netWater - vesselQty
 
     return {
       openingStock,
@@ -150,7 +150,7 @@ function FSOTrackingLayout({ entry, selectedAsset, handleValueChange, setEntryFi
 
     const netStock = closingStock - openingStock
     const netWater = closingWater - openingWater
-    const variance = vesselQty - Math.abs(netStock + netWater)
+    const variance = netStock + netWater - vesselQty
 
     const payload = {
       meta: {
