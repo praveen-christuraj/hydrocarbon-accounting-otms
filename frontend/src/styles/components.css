@@ -3615,8 +3615,26 @@ td.preset-result-error {
   overscroll-behavior: contain;
 }
 
+.task-table-scroll {
+  max-height: min(68vh, 720px);
+  overflow-x: auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+}
+
 .task-manager-table {
   min-width: 1030px;
+  margin-bottom: 0;
+}
+
+.task-manager-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--table-head-bg);
+  color: var(--table-head-text);
 }
 
 .task-manager-table .task-select-col {

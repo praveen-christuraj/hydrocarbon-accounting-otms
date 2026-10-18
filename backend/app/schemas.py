@@ -324,6 +324,15 @@ class OperationTaskResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class OperationTaskPageResponse(BaseModel):
+    rows: list[OperationTaskResponse]
+    total_rows: int
+    page: int
+    page_size: int
+    has_more: bool
+    status_counts: dict[str, int] = Field(default_factory=dict)
+
+
 class OperationTaskEventResponse(BaseModel):
     id: int
     task_id: int

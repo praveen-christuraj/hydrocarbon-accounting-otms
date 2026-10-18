@@ -45,6 +45,8 @@ const buildQuery = (filters = {}) => {
   if (filters.search) params.append('search', filters.search)
   if (filters.createdFrom) params.append('created_from', filters.createdFrom)
   if (filters.createdTo) params.append('created_to', filters.createdTo)
+  if (filters.page) params.append('page', String(filters.page))
+  if (filters.pageSize) params.append('page_size', String(filters.pageSize))
   const qs = params.toString()
   return qs ? `?${qs}` : ''
 }
@@ -52,6 +54,18 @@ const buildQuery = (filters = {}) => {
 export const getMyOperationTasks = async (filters = {}) => {
   const data = await apiGet(`/operation-tasks/my${buildQuery(filters)}`)
   return (data || []).map(fromApi)
+}
+
+export const getMyOperationTasksPaged = async (filters = {}) => {
+  const data = await apiGet(`/operation-tasks/my/paged${buildQuery(filters)}`)
+  return {
+    rows: (data?.rows || []).map(fromApi),
+    totalRows: Number(data?.total_rows || 0),
+    page: Number(data?.page || filters.page || 1),
+    pageSize: Number(data?.page_size || filters.pageSize || 20),
+    hasMore: Boolean(data?.has_more),
+    statusCounts: data?.status_counts || {},
+  }
 }
 
 export const getOperationTasks = async (filters = {}) => {

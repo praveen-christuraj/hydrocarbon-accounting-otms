@@ -4,7 +4,7 @@ import {
   adminRejectApprovedRevokeTask,
   adminRevokeApprovedTransactionTask,
   approveOperationTask,
-  getMyOperationTasks,
+  getMyOperationTasksPaged,
   getOperationTask,
   getOperationTaskEvents,
   rejectOperationTask,
@@ -12,6 +12,7 @@ import {
   takeOperationTaskOwnership,
 } from '../api/operationTaskApi'
 import AlertMessage from '../components/common/AlertMessage'
+import PaginationControls, { usePageSize } from '../components/common/PaginationControls'
 import Modal from '../components/common/Modal'
 import useActionFeedback from '../hooks/useActionFeedback'
 
@@ -57,6 +58,10 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
   const canViewOperationTransaction = hasPermission('View Operation Transaction')
 
   const [tasks, setTasks] = useState([])
+  const [taskStatusCounts, setTaskStatusCounts] = useState({ ALL: 0 })
+  const [totalRows, setTotalRows] = useState(0)
+  const [page, setPage] = useState(1)
+  const pageSize = usePageSize()
   const [events, setEvents] = useState([])
   const [selectedTask, setSelectedTask] = useState(null)
   const [statusFilter, setStatusFilter] = useState('Pending')
@@ -71,40 +76,50 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
   const [bulkModal, setBulkModal] = useState(null)
   const [bulkProcessing, setBulkProcessing] = useState(false)
   const eventsRequestId = useRef(0)
+  const tasksRequestId = useRef(0)
   const feedback = useActionFeedback()
   const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
 
   const invalidDateRange = Boolean(dateFrom && dateTo && dateFrom > dateTo)
 
   const loadTasks = useCallback(async () => {
+    const requestId = ++tasksRequestId.current
     if (invalidDateRange) {
       setTasks([])
+      setTaskStatusCounts({ ALL: 0 })
+      setTotalRows(0)
+      setLoading(false)
       return
     }
 
     setLoading(true)
     try {
-      // Load all task statuses for the active search/date/type filters. Status
-      // tabs are filtered locally so stale legacy tasks (linked ticket already
-      // approved) appear under the correct tab rather than Pending.
-      const data = await getMyOperationTasks({
-        status: '',
+      const data = await getMyOperationTasksPaged({
+        status: statusFilter === 'ALL' ? '' : statusFilter,
         taskType: taskTypeFilter === 'ALL' ? '' : taskTypeFilter,
         search: search.trim(),
         createdFrom: dateFrom,
         createdTo: dateTo,
+        page,
+        pageSize,
       })
-      setTasks(data)
+      if (requestId !== tasksRequestId.current) return
+
+      setTasks(data.rows)
+      setTotalRows(data.totalRows)
+      setTaskStatusCounts(data.statusCounts)
       setSelectedTask((current) => {
         if (!current) return current
-        return data.find((task) => task.id === current.id) || current
+        return data.rows.find((task) => task.id === current.id) || current
       })
     } catch (error) {
-      notifyError(error.message || 'Unable to load assigned tasks')
+      if (requestId === tasksRequestId.current) {
+        notifyError(error.message || 'Unable to load assigned tasks')
+      }
     } finally {
-      setLoading(false)
+      if (requestId === tasksRequestId.current) setLoading(false)
     }
-  }, [dateFrom, dateTo, invalidDateRange, notifyError, search, taskTypeFilter])
+  }, [dateFrom, dateTo, invalidDateRange, notifyError, page, pageSize, search, statusFilter, taskTypeFilter])
 
   const loadEvents = useCallback(async (taskId) => {
     const requestId = ++eventsRequestId.current
@@ -126,16 +141,8 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
     return () => window.clearTimeout(timeoutId)
   }, [loadTasks])
 
-  const counts = useMemo(() => tasks.reduce((result, task) => {
-    result.ALL += 1
-    result[task.status] = (result[task.status] || 0) + 1
-    return result
-  }, { ALL: 0 }), [tasks])
-
-  const visibleTasks = useMemo(
-    () => tasks.filter((task) => statusFilter === 'ALL' || task.status === statusFilter),
-    [statusFilter, tasks]
-  )
+  const counts = taskStatusCounts
+  const visibleTasks = tasks
 
   const isOpenTask = (task) => ['Pending', 'In Progress'].includes(task?.status)
   const canBulkApprove = (task) =>
@@ -156,6 +163,7 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
     setDateFrom('')
     setDateTo('')
     setSelectedTaskIds([])
+    setPage(1)
   }
 
   const selectTask = async (task) => {
@@ -382,7 +390,7 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
             role="tab"
             aria-selected={statusFilter === status}
             className="list-tab"
-            onClick={() => { setSelectedTaskIds([]); setStatusFilter(status) }}
+            onClick={() => { setSelectedTaskIds([]); setPage(1); setStatusFilter(status) }}
           >
             {status === 'ALL' ? 'All tasks' : status}
             <span className="list-tab-count">{counts[status] || 0}</span>
@@ -396,7 +404,7 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
           <select
             id="task-type-filter"
             value={taskTypeFilter}
-            onChange={(event) => { setSelectedTaskIds([]); setTaskTypeFilter(event.target.value) }}
+            onChange={(event) => { setSelectedTaskIds([]); setPage(1); setTaskTypeFilter(event.target.value) }}
             disabled={loading}
           >
             <option value="ALL">All Task Types</option>
@@ -410,18 +418,18 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
           <input
             id="task-search"
             value={search}
-            onChange={(event) => { setSelectedTaskIds([]); setSearch(event.target.value) }}
+            onChange={(event) => { setSelectedTaskIds([]); setPage(1); setSearch(event.target.value) }}
             placeholder="Task, ticket, operation, asset, location"
             disabled={loading}
           />
         </div>
         <div>
           <label htmlFor="task-date-from">Submitted From</label>
-          <input id="task-date-from" type="date" value={dateFrom} onChange={(event) => { setSelectedTaskIds([]); setDateFrom(event.target.value) }} disabled={loading} />
+          <input id="task-date-from" type="date" value={dateFrom} onChange={(event) => { setSelectedTaskIds([]); setPage(1); setDateFrom(event.target.value) }} disabled={loading} />
         </div>
         <div>
           <label htmlFor="task-date-to">Submitted To</label>
-          <input id="task-date-to" type="date" value={dateTo} onChange={(event) => { setSelectedTaskIds([]); setDateTo(event.target.value) }} disabled={loading} />
+          <input id="task-date-to" type="date" value={dateTo} onChange={(event) => { setSelectedTaskIds([]); setPage(1); setDateTo(event.target.value) }} disabled={loading} />
         </div>
         <div className="filter-actions task-filter-actions">
           <button type="button" onClick={loadTasks} disabled={loading || invalidDateRange}>
@@ -463,7 +471,7 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
               <th className="task-select-col">
                 <input
                   type="checkbox"
-                  aria-label="Select all approvable tasks shown"
+                  aria-label="Select all approvable tasks on this page"
                   checked={allEligibleSelected}
                   disabled={!canApproveTransaction || bulkEligibleTasks.length === 0 || loading}
                   onChange={(event) => toggleSelectAll(event.target.checked)}
@@ -516,6 +524,15 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
           </tbody>
         </table>
       </div>
+      <PaginationControls
+        currentPage={page}
+        totalRows={totalRows}
+        pageSize={pageSize}
+        onPageChange={(nextPage) => {
+          if (nextPage !== page) setSelectedTaskIds([])
+          setPage(nextPage)
+        }}
+      />
 
       <Modal
         open={Boolean(selectedTask)}

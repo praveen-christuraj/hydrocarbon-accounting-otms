@@ -616,6 +616,32 @@ def ensure_operation_task_tables():
                 """
             )
         )
+        # The paged Task Manager filters on JSONB assignee arrays. GIN indexes
+        # keep those membership checks bounded as the task history grows.
+        connection.execute(
+            text(
+                """
+                CREATE INDEX IF NOT EXISTS ix_operation_tasks_assigned_role_ids_gin
+                ON operation_tasks USING GIN (assigned_role_ids_json);
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE INDEX IF NOT EXISTS ix_operation_tasks_assigned_user_ids_gin
+                ON operation_tasks USING GIN (assigned_user_ids_json);
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE INDEX IF NOT EXISTS ix_operation_tasks_created_at_id
+                ON operation_tasks (created_at DESC, id DESC);
+                """
+            )
+        )
 
 
 def ensure_operation_template_layout_columns():
