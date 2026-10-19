@@ -475,15 +475,12 @@ export const calculateTankQuantity = ({
     outputColumnName
   )
 
-  const freeWaterBbl =
-    parseNumber(waterLevelCm) <= 0
-      ? 0
-      : linearInterpolation(
-          calibrationRows,
-          waterLevelCm,
-          inputColumnName,
-          outputColumnName
-        )
+  const freeWaterBbl = linearInterpolation(
+    calibrationRows,
+    waterLevelCm,
+    inputColumnName,
+    outputColumnName
+  )
 
   const govBbl = Math.max(tovBbl - freeWaterBbl, 0)
 

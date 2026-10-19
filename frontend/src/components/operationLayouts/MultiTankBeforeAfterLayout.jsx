@@ -459,7 +459,8 @@ export default function MultiTankBeforeAfterLayout({
       const waterDip = d.water
 
       const tov = interpolate1D(tankPoints[tid], totalDip)
-      const fw = toNum(waterDip) > 0 ? interpolate1D(tankPoints[tid], waterDip) : 0
+      const hasWaterDip = String(waterDip ?? '').trim() !== ''
+      const fw = hasWaterDip ? interpolate1D(tankPoints[tid], waterDip) : 0
 
       const tovC = tov * ccf
       const fwC = fw * ccf
