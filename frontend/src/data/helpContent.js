@@ -17,9 +17,37 @@ export const helpContent = {
       'User Master is used to create and manage application users who will log in to the system.',
     points: [
       'Username must be unique. Duplicate usernames are not allowed.',
-      'Password is captured now only for frontend testing. Later, backend will store only hashed passwords.',
+      'Passwords are hashed on the server and must meet the 12-character policy; new users must change theirs at first sign-in.',
       'Status controls whether the user is available for role assignment.',
       'Only Active users can be assigned roles.',
+      'Lock state, 2FA coverage and password status are shown in the Security column; use Security to open the account in the Security Console.',
+    ],
+  },
+
+  '/profile-security': {
+    title: 'Profile & Security Help',
+    description:
+      'Manage your own password, authenticator app, recovery codes and security history.',
+    points: [
+      'Changing your password signs out every other session; this browser stays signed in.',
+      'The password checklist mirrors the server policy, including the last five passwords and your username/name.',
+      'Enabling 2FA shows ten one-time recovery codes. Store them offline; they cannot be retrieved later.',
+      'Reconfiguring or disabling 2FA requires your current password and a valid authenticator or recovery code.',
+      'If an administrator requires a password change or 2FA enrolment, the security screen blocks the application until it is completed.',
+      'Password reset requests you raised from the sign-in page appear here with their status and administrator notes.',
+    ],
+  },
+
+  '/security': {
+    title: 'Security Console Help',
+    description:
+      'Administrator view of account lock state, password status, two-factor coverage and the password reset queue.',
+    points: [
+      'The accounts tab lists every account in your location scope; the status filter exposes locked, expired and 2FA-gap accounts.',
+      'Open Manage on a row to lock/unlock, reset the password, reset the authenticator, revoke sessions or change the 2FA policy.',
+      'Generated temporary passwords are shown once. Share them through a secure channel.',
+      'Approving a reset request resets the password, unlocks the account, revokes sessions and closes the linked Task Manager task.',
+      'Only an administrator account can administer another administrator; nobody can administer their own account here.',
     ],
   },
 

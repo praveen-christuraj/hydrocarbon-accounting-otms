@@ -84,7 +84,7 @@ def test_update_user(client, db):
         "username": "updateme",
         "full_name": "New Name",
         "email": "update@test.com",
-        "password": "StrongPass123!",
+        "password": "NewStrongPass456!",
         "status": "Active",
     })
     assert response.status_code == 200

@@ -1,8 +1,8 @@
-from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from app.config import PASSWORD_EXPIRY_DAYS_DEFAULT
 from app.database import get_db
 from app.models import User, UserRole, Role
 from app.schemas import UserCreate, UserUpdate, UserResponse
@@ -15,9 +15,12 @@ from app.dependencies.permissions import (
     user_is_within_actor_location_scope,
 )
 from app.services.audit_service import create_audit_log
-from app.utils.security import hash_password
+from app.services.user_security_service import close_password_reset_requests
+from app.utils.password_policy import remember_password_hash, validate_password_policy
+from app.utils.security import generate_security_stamp, hash_password
 from app.utils.helpers import clean_optional_text
 from app.utils.pagination import paginate_query
+from app.utils.time import utcnow
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -111,16 +114,28 @@ def create_user(
             detail="Password is required",
         )
 
-    new_user = User(
+    # Build the candidate first so the policy can reject passwords that
+    # contain the user's own username / name (identity check).
+    candidate = User(
         full_name=user.full_name.strip(),
         username=user.username.strip(),
         email=user.email.strip(),
+    )
+    validate_password_policy(user.password, user=candidate)
+
+    new_user = User(
+        full_name=candidate.full_name,
+        username=candidate.username,
+        email=candidate.email,
         phone=clean_optional_text(user.phone),
         department=clean_optional_text(user.department),
         designation=clean_optional_text(user.designation),
         password_hash=hash_password(user.password),
-        password_changed_at=datetime.now(timezone.utc),
+        password_changed_at=utcnow(),
         force_password_change="Yes",
+        password_never_expires="No",
+        password_expiry_days=PASSWORD_EXPIRY_DAYS_DEFAULT,
+        security_stamp=generate_security_stamp(),
         status=user.status,
     )
 
@@ -222,10 +237,35 @@ def update_user(
     existing_user.designation = clean_optional_text(user.designation)
     existing_user.status = user.status
 
-    if user.password is not None and user.password.strip() != "":
+    if user.password is not None and str(user.password).strip() != "":
+        # Changing another user's password is a dedicated security capability,
+        # not a side effect of editing their profile. Self-service password
+        # changes must go through /auth/change-password so the current password
+        # is verified.
+        if existing_user.id == current_user.id:
+            raise HTTPException(
+                status_code=400,
+                detail="Use Profile & Security to change your own password (current password verification is required)",
+            )
+        require_user_permission(current_user, "Reset User Password", db)
+        validate_password_policy(user.password, user=existing_user)
+        remember_password_hash(existing_user, existing_user.password_hash)
         existing_user.password_hash = hash_password(user.password)
-        existing_user.password_changed_at = datetime.now(timezone.utc)
+        existing_user.password_changed_at = utcnow()
         existing_user.force_password_change = "Yes"
+        existing_user.failed_login_count = 0
+        existing_user.locked_until = None
+        existing_user.locked_reason = None
+        existing_user.locked_by_user_id = None
+        existing_user.security_stamp = generate_security_stamp()
+        close_password_reset_requests(
+            db,
+            current_user,
+            existing_user,
+            approved=True,
+            notes="Password reset from User Master",
+            request_path=f"/users/{user_id}",
+        )
         password_changed = True
 
     after_data = {
@@ -240,18 +280,19 @@ def update_user(
 
     create_audit_log(
         db=db,
-        module_name="User Master",
-        action="Update User",
+        module_name="User Security" if password_changed else "User Master",
+        action="Admin Reset User Password" if password_changed else "Update User",
         current_user=current_user,
         entity_type="User",
         entity_id=existing_user.id,
         entity_label=f"{existing_user.full_name} ({existing_user.username})",
-        remarks="User updated",
+        remarks="Password reset from User Master" if password_changed else "User updated",
         request_path=f"/users/{user_id}",
         details={
             "before": before_data,
             "after": after_data,
             "password_changed": password_changed,
+            "sessions_revoked": password_changed,
         },
     )
 

@@ -49,7 +49,12 @@ export const navigationItems = [
       {
         label: 'Profile & Security',
         path: '/profile-security',
-        permission: 'View Own Security Settings',
+        anyPermission: ['View Own Security Settings', 'View User Security'],
+      },
+      {
+        label: 'Security Console',
+        path: '/security',
+        permission: 'View User Security',
       },
       { label: 'Access Summary', path: '/access-summary', permission: 'View Access Summary' },
     ],

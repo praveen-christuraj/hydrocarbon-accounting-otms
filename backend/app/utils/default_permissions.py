@@ -102,8 +102,13 @@ PERMISSION_CATALOG = [
                 "permissions": [
                     _perm("View Own Security Settings", VIEW, "Can view own password and 2FA security settings"),
                     _perm("Edit Own Security Settings", EDIT, "Can change own password and manage own 2FA settings"),
+                    _perm("View User Security", VIEW, "Can view the user security registry, lock state, 2FA state and password reset requests"),
+                    _perm("Lock User Account", OTHER, "Can administratively lock a user account"),
+                    _perm("Unlock User Account", OTHER, "Can unlock a locked user account and clear failed sign-in attempts"),
+                    _perm("Revoke User Sessions", OTHER, "Can force a user to sign out everywhere by revoking their sessions"),
                     _perm("Reset User Password", OTHER, "Can hard reset another user's password"),
                     _perm("Reset User 2FA", OTHER, "Can reset another user's 2FA during an administrator password reset"),
+                    _perm("Approve Password Reset Requests", OTHER, "Can approve or reject self-service password reset requests"),
                 ],
             },
             {
@@ -612,6 +617,11 @@ LEGACY_PERMISSION_REPLACEMENTS = {
     "Manage User Location Assignment": ["Edit User Location Assignment", "Delete User Location Assignment"],
     "Manage Role Location Assignment": ["Edit Role Location Assignment"],
     "Manage Own Security Settings": ["Edit Own Security Settings"],
+    "Manage User Security": [
+        "View User Security", "Lock User Account", "Unlock User Account",
+        "Revoke User Sessions", "Reset User Password", "Reset User 2FA",
+        "Approve Password Reset Requests",
+    ],
     "Manage Location": ["Create Location", "Edit Location", "Delete Location"],
     "Manage Asset Type": ["Create Asset Type", "Edit Asset Type", "Delete Asset Type"],
     "Manage Asset": [

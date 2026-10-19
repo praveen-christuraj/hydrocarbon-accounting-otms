@@ -96,13 +96,14 @@ Create, update, and manage application users. This is where user accounts are pr
 - Token-based auth via `Authorization: Bearer` header added by apiClient
 
 ## User Lifecycle
-1. Admin creates user via UserMaster → `password_hash` stored in DB
-2. User logs in via LoginPage → JWT issued
-3. User assigned to Role via UserRoleAssignment
-4. User's permissions derive from Role via RolePermissionAssignment
-5. User can change own password via ProfileSecurity
-6. Admin can reset user password from ProfileSecurity
-7. User can be set to Inactive/Blocked to disable login
+1. Admin creates user via UserMaster → password policy is enforced server-side and `force_password_change` is set to `Yes`
+2. User logs in via LoginPage → JWT issued (or a 2FA challenge when TOTP is enabled)
+3. On first sign-in the blocking security gate requires the user to choose a new password (and enroll 2FA when mandatory)
+4. User assigned to Role via UserRoleAssignment
+5. User's permissions derive from Role via RolePermissionAssignment
+6. User changes own password / 2FA from Profile & Security (`/profile-security`)
+7. Admin resets passwords, unlocks accounts and resets 2FA from the Security Console (`/security`); User Master links each row to it
+8. User can be set to Inactive/Blocked to disable login; locked accounts are visible and unlockable in the Security Console
 
 ---
 

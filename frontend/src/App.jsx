@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   BrowserRouter,
   Routes,
@@ -41,6 +41,7 @@ import MaterialBalanceTemplateMaster from './pages/MaterialBalanceTemplateMaster
 import OperationTransactionDetail from './pages/OperationTransactionDetail'
 import LoginPage from './pages/LoginPage'
 import PermissionGuard from './components/PermissionGuard'
+import SecurityGate from './components/security/SecurityGate'
 import Table11FactorMaster from './pages/Table11FactorMaster'
 import CompanyReportProfileMaster from './pages/CompanyReportProfileMaster'
 import AuditLog from './pages/AuditLog'
@@ -60,6 +61,7 @@ import FlowmeterRecordEntry from './pages/FlowmeterRecordEntry'
 import OperationWorkflowPolicyMaster from './pages/OperationWorkflowPolicyMaster'
 import OperationTaskManager from './pages/OperationTaskManager'
 import ProfileSecurity from './pages/ProfileSecurity'
+import SecurityConsole from './pages/SecurityConsole'
 import SystemNotificationMaster from './pages/SystemNotificationMaster'
 import BackupRecovery from './pages/BackupRecovery'
 import DatabaseBrowser from './pages/DatabaseBrowser'
@@ -190,6 +192,7 @@ function LegacyPageDisabled({ title, description, primaryPath, primaryLabel }) {
 function AppContent({
   loggedInUser,
   onLogout,
+  onUserRefresh,
 
   users,
   setUsers,
@@ -430,10 +433,27 @@ function AppContent({
             element={
               <PermissionGuard
                 loggedInUser={loggedInUser}
-                requiredPermission="View Own Security Settings"
+                anyOfPermissions={['View Own Security Settings', 'View User Security']}
                 fallbackMessage="You do not have permission to view profile security settings."
               >
-                <ProfileSecurity loggedInUser={loggedInUser} users={users} />
+                <ProfileSecurity
+                  loggedInUser={loggedInUser}
+                  users={users}
+                  onUserRefresh={onUserRefresh}
+                />
+              </PermissionGuard>
+            }
+          />
+
+          <Route
+            path="/security"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View User Security"
+                fallbackMessage="You do not have permission to open the security console."
+              >
+                <SecurityConsole loggedInUser={loggedInUser} />
               </PermissionGuard>
             }
           />
@@ -1208,6 +1228,25 @@ function App() {
 
   const [loggedInUser, setLoggedInUser] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
+  const loggedInUserRef = useRef(null)
+
+  useEffect(() => {
+    const handleSessionExpired = () => {
+      const hadSession = Boolean(loggedInUserRef.current)
+      setActionLogUser(null)
+      setLoggedInUser(null)
+      setOperationEntries([])
+      setOperationTransactions([])
+      if (hadSession) {
+        toast.error('Your session ended. Sign in again to continue.', {
+          title: 'Session ended',
+        })
+      }
+    }
+    window.addEventListener('auth:session-expired', handleSessionExpired)
+    return () => window.removeEventListener('auth:session-expired', handleSessionExpired)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     const handleWheel = (event) => {
@@ -1231,6 +1270,17 @@ function App() {
       setLoggedInUser(null)
     } finally {
       setAuthLoading(false)
+    }
+  }
+
+  const refreshLoggedInUser = async () => {
+    try {
+      const currentUser = await getCurrentUser()
+      if (currentUser) setLoggedInUser(currentUser)
+      return currentUser
+    } catch (error) {
+      console.error(error)
+      return null
     }
   }
   const reloadUsers = async () => {
@@ -1425,6 +1475,7 @@ function App() {
   }
 
   useEffect(() => {
+    loggedInUserRef.current = loggedInUser
     setActionLogUser(loggedInUser)
     if (loggedInUser) {
       logUiAction('Session', 'Login', { username: loggedInUser.username })
@@ -1437,6 +1488,13 @@ useEffect(() => {
 
 useEffect(() => {
   if (!loggedInUser) {
+    return
+  }
+
+  // While a security prerequisite is outstanding the API only serves the
+  // password / 2FA endpoints; loading business data would just raise 403s.
+  const security = loggedInUser.security || {}
+  if (security.passwordChangeRequired || security.twoFactorEnrollmentRequired) {
     return
   }
 
@@ -1527,12 +1585,30 @@ useEffect(() => {
     return <LoginPage onLogin={setLoggedInUser} />
   }
 
+  const security = loggedInUser.security || {}
+  const blockedBySecurity =
+    security.passwordChangeRequired || security.twoFactorEnrollmentRequired
+
+  if (blockedBySecurity) {
+    return (
+      <AuthProvider value={{ loggedInUser }}>
+        <SecurityGate
+          mode={security.passwordChangeRequired ? 'password' : '2fa'}
+          loggedInUser={loggedInUser}
+          onRefresh={refreshLoggedInUser}
+          onLogout={handleLogout}
+        />
+      </AuthProvider>
+    )
+  }
+
   return (
     <AuthProvider value={{ loggedInUser }}>
       <BrowserRouter>
         <AppContent
         loggedInUser={loggedInUser}
         onLogout={handleLogout}
+        onUserRefresh={refreshLoggedInUser}
 
         users={users}
         setUsers={setUsers}

@@ -91,3 +91,34 @@ def test_backup_module_routes():
     _assert_route("POST", "/backup/restore-requests/{request_id}/validate")
     _assert_route("POST", "/backup/restore-requests/{request_id}/execute")
     _assert_route("GET", "/backup/restore-requests/{request_id}/validations")
+
+
+def test_profile_and_security_module_routes():
+    """frontend/src/api/securityApi.js paths (self-service + administrator console)."""
+    # Self-service password management
+    _assert_route("POST", "/auth/change-password")
+    _assert_route("GET", "/auth/password-policy")
+    _assert_route("GET", "/auth/my/reset-requests")
+    _assert_route("POST", "/auth/my/reset-requests/{request_id}/cancel")
+    _assert_route("GET", "/auth/my/security-activity")
+
+    # Self-service two-factor authentication
+    _assert_route("POST", "/auth/2fa/setup/start")
+    _assert_route("POST", "/auth/2fa/setup/verify")
+    _assert_route("POST", "/auth/2fa/backup-codes/regenerate")
+    _assert_route("POST", "/auth/2fa/disable")
+
+    # Administrator security console
+    _assert_route("GET", "/security/overview")
+    _assert_route("GET", "/security/users")
+    _assert_route("GET", "/security/users/{user_id}")
+    _assert_route("GET", "/security/users/{user_id}/history")
+    _assert_route("POST", "/security/users/{user_id}/lock")
+    _assert_route("POST", "/security/users/{user_id}/unlock")
+    _assert_route("POST", "/security/users/{user_id}/reset-2fa")
+    _assert_route("POST", "/security/users/{user_id}/revoke-sessions")
+    _assert_route("POST", "/security/users/{user_id}/require-password-change")
+    _assert_route("POST", "/security/users/{user_id}/two-factor-policy")
+    _assert_route("GET", "/security/password-reset-requests")
+    _assert_route("POST", "/security/password-reset-requests/{request_id}/approve")
+    _assert_route("POST", "/security/password-reset-requests/{request_id}/reject")

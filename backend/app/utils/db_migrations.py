@@ -1,3 +1,5 @@
+import secrets
+
 from sqlalchemy import func, inspect, text
 from sqlalchemy.orm import Session
 
@@ -21,6 +23,9 @@ def ensure_user_security_columns():
         return
 
     cols = {c["name"] for c in inspector.get_columns("users")}
+    # JSONB is PostgreSQL-specific; other dialects (SQLite test/desktop
+    # deployments) must use the generic JSON type.
+    json_column_type = "JSONB" if engine.dialect.name == "postgresql" else "JSON"
     column_sql = {
         "password_changed_at": "ALTER TABLE users ADD COLUMN password_changed_at TIMESTAMP;",
         "force_password_change": "ALTER TABLE users ADD COLUMN force_password_change VARCHAR(20) DEFAULT 'No';",
@@ -34,7 +39,14 @@ def ensure_user_security_columns():
         "totp_secret_encrypted": "ALTER TABLE users ADD COLUMN totp_secret_encrypted TEXT;",
         "totp_confirmed_at": "ALTER TABLE users ADD COLUMN totp_confirmed_at TIMESTAMP;",
         "force_2fa": "ALTER TABLE users ADD COLUMN force_2fa VARCHAR(20) DEFAULT 'No';",
-        "backup_codes_hash_json": "ALTER TABLE users ADD COLUMN backup_codes_hash_json JSONB;",
+        "backup_codes_hash_json": f"ALTER TABLE users ADD COLUMN backup_codes_hash_json {json_column_type};",
+        "pending_totp_secret_encrypted": "ALTER TABLE users ADD COLUMN pending_totp_secret_encrypted TEXT;",
+        "totp_setup_started_at": "ALTER TABLE users ADD COLUMN totp_setup_started_at TIMESTAMP;",
+        "totp_last_used_step": "ALTER TABLE users ADD COLUMN totp_last_used_step INTEGER;",
+        "security_stamp": "ALTER TABLE users ADD COLUMN security_stamp VARCHAR(64);",
+        "password_history_json": f"ALTER TABLE users ADD COLUMN password_history_json {json_column_type};",
+        "locked_reason": "ALTER TABLE users ADD COLUMN locked_reason VARCHAR(255);",
+        "locked_by_user_id": "ALTER TABLE users ADD COLUMN locked_by_user_id INTEGER;",
     }
 
     with engine.begin() as connection:
@@ -47,6 +59,31 @@ def ensure_user_security_columns():
         connection.execute(text("UPDATE users SET failed_login_count = 0 WHERE failed_login_count IS NULL;"))
         connection.execute(text("UPDATE users SET totp_enabled = 'No' WHERE totp_enabled IS NULL;"))
         connection.execute(text("UPDATE users SET force_2fa = 'No' WHERE force_2fa IS NULL;"))
+        # Give every existing account a session-revocation stamp. JWTs issued
+        # before this upgrade have no stamp claim and are left to expire; every
+        # token issued afterwards is revocable by rotating this value.
+        existing_ids = connection.execute(
+            text("SELECT id FROM users WHERE security_stamp IS NULL OR TRIM(security_stamp) = ''")
+        ).fetchall()
+        for (user_id,) in existing_ids:
+            connection.execute(
+                text("UPDATE users SET security_stamp = :stamp WHERE id = :user_id"),
+                {"stamp": secrets.token_hex(32), "user_id": user_id},
+            )
+
+
+def ensure_auth_login_challenge_columns():
+    """Attempt tracking for 2FA challenges (added after the original table)."""
+    inspector = inspect(engine)
+    if "auth_login_challenges" not in inspector.get_table_names():
+        return
+    cols = {c["name"] for c in inspector.get_columns("auth_login_challenges")}
+    with engine.begin() as connection:
+        if "attempt_count" not in cols:
+            connection.execute(text("ALTER TABLE auth_login_challenges ADD COLUMN attempt_count INTEGER DEFAULT 0;"))
+        if "last_attempt_at" not in cols:
+            connection.execute(text("ALTER TABLE auth_login_challenges ADD COLUMN last_attempt_at TIMESTAMP;"))
+        connection.execute(text("UPDATE auth_login_challenges SET attempt_count = 0 WHERE attempt_count IS NULL;"))
 
 
 def ensure_operation_ticket_number_column():

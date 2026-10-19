@@ -1,5 +1,7 @@
 import base64
 import hashlib
+import secrets
+import string
 
 import bcrypt
 from cryptography.fernet import Fernet
@@ -21,6 +23,44 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         )
     except Exception:
         return False
+
+
+def generate_secure_password(length: int = 16) -> str:
+    """Generate a password that satisfies the policy by construction.
+
+    Used when an administrator chooses "generate secure temporary password"
+    instead of typing one. The result always contains uppercase, lowercase,
+    digit and special characters.
+    """
+    length = max(16, int(length or 16))
+    alphabet = string.ascii_letters + string.digits + "!@#$%&*+-_=?"
+    while True:
+        # Guarantee one character from each required class, then fill randomly.
+        characters = [
+            secrets.choice(string.ascii_uppercase),
+            secrets.choice(string.ascii_lowercase),
+            secrets.choice(string.digits),
+            secrets.choice("!@#$%&*+-_=?"),
+        ]
+        characters.extend(secrets.choice(alphabet) for _ in range(length - len(characters)))
+        secrets.SystemRandom().shuffle(characters)
+        password = "".join(characters)
+        if (
+            any(ch.isupper() for ch in password)
+            and any(ch.islower() for ch in password)
+            and any(ch.isdigit() for ch in password)
+            and any(not ch.isalnum() for ch in password)
+        ):
+            return password
+
+
+def generate_security_stamp() -> str:
+    """Opaque value embedded in JWTs to revoke every existing session.
+
+    Rotating it invalidates all access and refresh tokens that carry the old
+    stamp (password changes, administrator reset, forced sign-out).
+    """
+    return secrets.token_hex(32)
 
 
 def get_fernet():

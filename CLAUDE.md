@@ -31,7 +31,7 @@
 
 ### Permission model (read before gating any control)
 
-* **Single source of truth:** `backend/app/utils/default_permissions.py` – 194 permissions in
+* **Single source of truth:** `backend/app/utils/default_permissions.py` – 207 permissions in
   8 categories that mirror the top menu: User Management, Master Data Management, Configurations,
   Operations, Operation Tracking, Export Operations, Reporting, Administration.
 * Per module the catalog defines **View / Create / Edit / Delete** plus named workflow actions
@@ -108,6 +108,27 @@ Rules:
 - If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+
+## Recent Changes (2026-10-19) - Profile & Security Module Rebuild (backend changes explicitly authorised)
+
+### Why
+The product owner reported that password management and 2FA were not functioning: locked accounts were invisible to administrators, administrators could not reset another user's password, 2FA failed at login/setup, and the reset-request workflow had no usable queue. This module was therefore explicitly carved out of rule 0 (backend/database frozen) for this change only.
+
+### What changed
+* **Locked-account visibility** – `GET /security/overview` + `GET /security/users` return lock state, reason, expiry, actor and failed-attempt counts; User Master and the Security Console show them and provide Lock / Unlock.
+* **Administrator password reset** – generated or manual password, policy + history enforcement, force-change, optional 2FA reset, unlock, full session revocation via a new `security_stamp` claim, request/task closure, audit. `POST /auth/users/{id}/security/reset-password` kept for the historical UI contract.
+* **2FA repaired** – naive-UTC comparisons in the login challenge (the original `TypeError`), persistent `AuthLoginChallenge` attempts, pending-secret enrolment (cannot disable an active authenticator by starting setup), TOTP replay protection, SHA-256 recovery codes, mandatory-enrolment policy, QR + manual secret.
+* **Password reset workflow** – request numbering, Task Manager task linkage, self-service status/cancel, admin queue with approve/reject and audit.
+* **Blocking gate** – server-side `security_change_required` allow-list plus `SecurityGate` in the SPA; business data is never served to a user with an expired/temporary password or unfulfilled mandatory 2FA.
+* **UI/UX** – new `SecurityConsole` (`/security`), rebuilt `ProfileSecurity`, shared `SecurityPrimitives`, password-policy checklist on every password field, light/dark token-based CSS, exact permission gating, no emojis, dialogs only via `Modal`/`ConfirmDialog`.
+
+### Permissions added (catalog now serves these to Role Permission Assignment)
+`View User Security`, `Lock User Account`, `Unlock User Account`, `Reset User 2FA`, `Revoke User Sessions`, `Reset User Password`, `Approve Password Reset Requests`, `Edit Own Security Settings`.
+
+### Key files
+`backend/app/routers/auth.py`, `backend/app/routers/user_security.py`, `backend/app/services/user_security_service.py`, `backend/app/utils/{time,password_policy,security,totp}.py`, `backend/app/dependencies/auth.py`, `backend/app/models.py`, `backend/app/utils/db_migrations.py`;
+`frontend/src/pages/{ProfileSecurity,SecurityConsole,UserMaster}.jsx`, `frontend/src/components/security/*`, `frontend/src/api/securityApi.js`, `frontend/src/App.jsx`, `frontend/src/data/navigationItems.js`, `frontend/src/index.css`.
+Docs: `Manuals/pages/08_ProfileSecurity.md`. Tests: `backend/tests/test_user_security.py`, `backend/tests/test_frontend_route_contract.py`.
 
 ## Recent Changes (2026-10-18) - Operation Entry: Two Clubbed Location Dropdowns + Payload Operation Date
 
