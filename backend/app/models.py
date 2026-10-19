@@ -42,6 +42,7 @@ class AuthLoginChallenge(Base):
     challenge_id = Column(String(120), nullable=False, unique=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     status = Column(String(30), nullable=False, default="Pending")
+    attempt_count = Column(Integer, nullable=False, default=0)
     expires_at = Column(DateTime, nullable=False, index=True)
     ip_address = Column(String(80), nullable=True)
     user_agent = Column(Text, nullable=True)

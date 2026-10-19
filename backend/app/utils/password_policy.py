@@ -6,10 +6,16 @@ from app.models import User
 from app.utils.helpers import normalize_yes_no
 
 
-def validate_password_policy(new_password: str, current_password: str | None = None):
+def validate_password_policy(
+    new_password: str,
+    current_password: str | None = None,
+    username: str | None = None,
+):
     password = str(new_password or "")
     if len(password) < 12:
         raise HTTPException(status_code=400, detail="Password must be at least 12 characters long")
+    if len(password) > 128:
+        raise HTTPException(status_code=400, detail="Password must be at most 128 characters long")
     if current_password is not None and password == current_password:
         raise HTTPException(status_code=400, detail="New password must be different from current password")
     if not any(ch.isupper() for ch in password):
@@ -20,6 +26,9 @@ def validate_password_policy(new_password: str, current_password: str | None = N
         raise HTTPException(status_code=400, detail="Password must contain at least one number")
     if not any(not ch.isalnum() for ch in password):
         raise HTTPException(status_code=400, detail="Password must contain at least one special character")
+    cleaned_username = str(username or "").strip()
+    if len(cleaned_username) >= 3 and cleaned_username.casefold() in password.casefold():
+        raise HTTPException(status_code=400, detail="Password must not contain the username")
 
 
 def is_password_expired(user: User):

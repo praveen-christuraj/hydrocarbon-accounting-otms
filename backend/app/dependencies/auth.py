@@ -81,4 +81,21 @@ def get_current_user_from_token(
             detail="User is not Active",
         )
 
+    # Tokens issued before the user's last password change are revoked. This
+    # ends every open session when an administrator resets a password or the
+    # user rotates it (change-password hands back a fresh token pair).
+    # Legacy tokens without an "iat" claim are tolerated until they expire.
+    token_issued_at = payload.get("iat")
+    password_changed_at = getattr(user, "password_changed_at", None)
+    if token_issued_at is not None and password_changed_at is not None:
+        if password_changed_at.tzinfo is None:
+            changed_ts = password_changed_at.replace(tzinfo=timezone.utc).timestamp()
+        else:
+            changed_ts = password_changed_at.timestamp()
+        if float(token_issued_at) + 60 < changed_ts:
+            raise HTTPException(
+                status_code=401,
+                detail="Credentials changed since this session started. Please sign in again.",
+            )
+
     return user

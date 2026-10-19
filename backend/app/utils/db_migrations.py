@@ -49,6 +49,23 @@ def ensure_user_security_columns():
         connection.execute(text("UPDATE users SET force_2fa = 'No' WHERE force_2fa IS NULL;"))
 
 
+def ensure_auth_login_challenge_columns():
+    """Add the 2FA brute-force counter to existing auth_login_challenges tables."""
+    inspector = inspect(engine)
+    if "auth_login_challenges" not in inspector.get_table_names():
+        return
+
+    cols = {c["name"] for c in inspector.get_columns("auth_login_challenges")}
+    with engine.begin() as connection:
+        if "attempt_count" not in cols:
+            connection.execute(
+                text("ALTER TABLE auth_login_challenges ADD COLUMN attempt_count INTEGER DEFAULT 0;")
+            )
+        connection.execute(
+            text("UPDATE auth_login_challenges SET attempt_count = 0 WHERE attempt_count IS NULL;")
+        )
+
+
 def ensure_operation_ticket_number_column():
     with engine.begin() as connection:
         connection.execute(

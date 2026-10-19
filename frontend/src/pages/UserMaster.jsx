@@ -137,9 +137,10 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
       }
     }
 
-    if (editId !== null && user.password && editId === loggedInUser?.id) {
-      errors.password = 'You are changing your own password. Make sure you remember the new one.'
-    }
+    // Changing your own password here is allowed – it must never block the
+    // save. A non-blocking caution is rendered next to the field instead
+    // (this used to be pushed into `errors`, which made it impossible for an
+    // administrator to update their own password from User Master).
 
     const usernameAlreadyExists = users.some((item) => {
       return (
@@ -426,6 +427,12 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
           {user.password.length > 0 && !fieldErrors.password && (
             <small style={{ color: 'var(--text-muted)', marginTop: 4 }}>
               Minimum 12 characters with uppercase, lowercase, number &amp; special character
+            </small>
+          )}
+          {editId !== null && editId === loggedInUser?.id && user.password.length > 0 && (
+            <small style={{ color: 'var(--warning-text)', marginTop: 4, display: 'block' }}>
+              You are changing your own password. For security, all of your sessions are signed
+              out after the change - sign in again with the new password.
             </small>
           )}
         </div>

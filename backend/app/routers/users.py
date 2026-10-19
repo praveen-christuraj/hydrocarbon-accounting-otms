@@ -17,6 +17,7 @@ from app.dependencies.permissions import (
 from app.services.audit_service import create_audit_log
 from app.utils.security import hash_password
 from app.utils.helpers import clean_optional_text
+from app.utils.password_policy import validate_password_policy
 from app.utils.pagination import paginate_query
 
 router = APIRouter(prefix="/users", tags=["Users"])
@@ -111,6 +112,8 @@ def create_user(
             detail="Password is required",
         )
 
+    validate_password_policy(user.password, username=user.username)
+
     new_user = User(
         full_name=user.full_name.strip(),
         username=user.username.strip(),
@@ -119,7 +122,7 @@ def create_user(
         department=clean_optional_text(user.department),
         designation=clean_optional_text(user.designation),
         password_hash=hash_password(user.password),
-        password_changed_at=datetime.now(timezone.utc),
+        password_changed_at=datetime.now(timezone.utc).replace(tzinfo=None),
         force_password_change="Yes",
         status=user.status,
     )
@@ -223,9 +226,12 @@ def update_user(
     existing_user.status = user.status
 
     if user.password is not None and user.password.strip() != "":
+        validate_password_policy(user.password, username=existing_user.username)
         existing_user.password_hash = hash_password(user.password)
-        existing_user.password_changed_at = datetime.now(timezone.utc)
-        existing_user.force_password_change = "Yes"
+        existing_user.password_changed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        existing_user.force_password_change = "No" if existing_user.id == current_user.id else "Yes"
+        existing_user.failed_login_count = 0
+        existing_user.locked_until = None
         password_changed = True
 
     after_data = {
