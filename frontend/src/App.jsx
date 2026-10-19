@@ -885,8 +885,17 @@ function AppContent({
             element={
               <PermissionGuard
                 loggedInUser={loggedInUser}
-                requiredPermission="View My Tasks"
-                fallbackMessage="You do not have permission to view assigned tasks."
+                anyOfPermissions={[
+                  'View My Tasks',
+                  'Act On Operation Task',
+                  'Supervise Operation Tasks',
+                  'Approve Operation Transaction',
+                  'Reject Operation Transaction',
+                  'Cancel Operation Transaction',
+                  'Request Approved Transaction Correction',
+                  'Admin Revoke Approved Transaction',
+                ]}
+                fallbackMessage="You do not have permission to view operation tasks."
               >
                 <OperationTaskManager
                   reloadOperationTransactions={reloadOperationTransactions}

@@ -11,12 +11,16 @@ import {
   releaseOperationTask,
   takeOperationTaskOwnership,
 } from '../api/operationTaskApi'
+import {
+  createOperationTransactionCorrectionRequest,
+  updateOperationTransactionStatus,
+} from '../api/operationTransactionApi'
 import AlertMessage from '../components/common/AlertMessage'
 import PaginationControls, { usePageSize } from '../components/common/PaginationControls'
 import Modal from '../components/common/Modal'
 import useActionFeedback from '../hooks/useActionFeedback'
 
-const STATUS_TABS = ['Pending', 'In Progress', 'Approved', 'Rejected', 'ALL']
+const STATUS_TABS = ['Pending', 'In Progress', 'Approved', 'Rejected', 'Cancelled', 'ALL']
 
 const TASK_TYPE_LABELS = {
   OPERATION_APPROVAL: 'Operation approval',
@@ -49,11 +53,13 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
   // the UI so an approval/rejection button is never offered to an account that
   // the transaction route will reject for missing permissions.
   const canApproveTransaction =
-    canActOnOperationTask &&
     hasPermission('Approve Operation Transaction') &&
     hasPermission('Review Operation Transaction')
-  const canRejectTransaction =
-    canActOnOperationTask && hasPermission('Reject Operation Transaction')
+  const canRejectTransaction = hasPermission('Reject Operation Transaction')
+  const canCancelTransaction = hasPermission('Cancel Operation Transaction')
+  const canRequestCorrection =
+    hasPermission('Request Approved Transaction Correction') ||
+    hasPermission('Approve Operation Transaction')
   const canSupervise = hasPermission('Supervise Operation Tasks')
   const canViewOperationTransaction = hasPermission('View Operation Transaction')
 
@@ -75,6 +81,11 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
   const [selectedTaskIds, setSelectedTaskIds] = useState([])
   const [bulkModal, setBulkModal] = useState(null)
   const [bulkProcessing, setBulkProcessing] = useState(false)
+  const [correctionForm, setCorrectionForm] = useState({
+    requestType: 'Data Correction',
+    suggestedAction: 'Reopen for Edit',
+    reason: '',
+  })
   const eventsRequestId = useRef(0)
   const tasksRequestId = useRef(0)
   const feedback = useActionFeedback()
@@ -171,6 +182,11 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
     setSelectedTask(task)
     setEvents([])
     setRemarks('')
+    setCorrectionForm({
+      requestType: 'Data Correction',
+      suggestedAction: 'Reopen for Edit',
+      reason: '',
+    })
     clearError()
     await loadEvents(task.id)
   }
@@ -187,6 +203,7 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
     switch (action) {
       case 'approve': return 'Approve the linked operation ticket?'
       case 'reject': return 'Reject the linked operation ticket?'
+      case 'cancel': return 'Cancel the rejected operation ticket? This is a final ticket status.'
       case 'admin-revoke-approved': return 'Admin revoke will move the approved ticket back to Submitted and reverse derived ledger rows. Continue?'
       case 'admin-reject-revoke': return 'Reject this approved-transaction revoke request?'
       default: return ''
@@ -219,11 +236,15 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
       return
     }
     if (action === 'approve' && !canApproveTransaction) {
-      notifyError('Approval requires Act On Operation Task, Approve Operation Transaction and Review Operation Transaction permissions')
+      notifyError('Approval requires Approve Operation Transaction and Review Operation Transaction permissions')
       return
     }
     if (action === 'reject' && !canRejectTransaction) {
-      notifyError('Rejection requires Act On Operation Task and Reject Operation Transaction permissions')
+      notifyError('Rejection requires Reject Operation Transaction permission')
+      return
+    }
+    if (action === 'cancel' && !canCancelTransaction) {
+      notifyError('Cancellation requires Cancel Operation Transaction permission')
       return
     }
     if (['admin-revoke-approved', 'admin-reject-revoke'].includes(action) && !canAdminRevokeApprovedTransaction) {
@@ -245,6 +266,13 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
       } else if (action === 'reject') {
         await rejectOperationTask(taskId, remarks || 'Rejected from Task Manager')
         notifySuccess('Operation ticket rejected.')
+      } else if (action === 'cancel') {
+        await updateOperationTransactionStatus(
+          selectedTask.transactionId,
+          'Cancelled',
+          remarks || 'Cancelled from Task Manager'
+        )
+        notifySuccess('Operation ticket cancelled.')
       } else if (action === 'admin-revoke-approved') {
         await adminRevokeApprovedTransactionTask(
           taskId,
@@ -269,6 +297,32 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
       setRemarks('')
     } catch (error) {
       notifyError(error.message || 'Task action could not be completed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const submitCorrectionRequest = async () => {
+    if (!selectedTask?.transactionId || !canRequestCorrection) return
+    if (!correctionForm.reason.trim()) {
+      notifyError('Enter a reason for the approved transaction correction request')
+      return
+    }
+
+    setLoading(true)
+    try {
+      await createOperationTransactionCorrectionRequest(
+        selectedTask.transactionId,
+        correctionForm
+      )
+      notifySuccess('Approved transaction correction request sent to admin.')
+      setCorrectionForm((current) => ({ ...current, reason: '' }))
+      await loadTasks()
+      if (typeof reloadOperationTransactions === 'function') {
+        await reloadOperationTransactions()
+      }
+    } catch (error) {
+      notifyError(error.message || 'Correction request could not be submitted')
     } finally {
       setLoading(false)
     }
@@ -346,8 +400,19 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
   }
 
   const selectedTaskOpen = isOpenTask(selectedTask)
+  const selectedIsOperationApproval = selectedTask?.taskType === 'OPERATION_APPROVAL'
   const canActOnSelectedApproval =
-    canActOnOperationTask && selectedTask?.taskType === 'OPERATION_APPROVAL' && selectedTaskOpen
+    selectedIsOperationApproval &&
+    selectedTaskOpen &&
+    (canActOnOperationTask || canApproveTransaction || canRejectTransaction)
+  const canCancelSelectedApproval =
+    selectedIsOperationApproval &&
+    selectedTask?.status === 'Rejected' &&
+    canCancelTransaction
+  const canRequestCorrectionForSelected =
+    selectedIsOperationApproval &&
+    selectedTask?.status === 'Approved' &&
+    canRequestCorrection
   const canActOnSelectedRevoke =
     canAdminRevokeApprovedTransaction &&
     selectedTask?.taskType === 'APPROVED_TRANSACTION_REVOKE_REQUEST' &&
@@ -371,14 +436,14 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
       <AlertMessage tone="success" message={feedback.successMsg} onDismiss={clearSuccess} />
       <AlertMessage tone="error" message={feedback.errorMsg} onDismiss={clearError} />
 
-      {!canActOnOperationTask && !canAdminRevokeApprovedTransaction && (
+      {!canActOnOperationTask && !canApproveTransaction && !canRejectTransaction && !canCancelTransaction && !canRequestCorrection && !canAdminRevokeApprovedTransaction && (
         <div className="info-box">
-          You have view-only access. Assign <strong>Act On Operation Task</strong> to take/release and approve/reject assigned tickets, or <strong>Admin Revoke Approved Transaction</strong> to manage approved-ticket correction requests.
+          You have view-only access to assigned tasks.
         </div>
       )}
-      {canActOnOperationTask && !canApproveTransaction && (
+      {canActOnOperationTask && !canApproveTransaction && !canRejectTransaction && (
         <div className="info-box">
-          You can manage task ownership, but approval requires <strong>Approve Operation Transaction</strong> and <strong>Review Operation Transaction</strong>. Rejection requires <strong>Reject Operation Transaction</strong>.
+          You can manage task ownership. Approval and rejection remain controlled by their operation transaction permissions.
         </div>
       )}
 
@@ -577,7 +642,7 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
                 <div className="info-box">This task is not linked to an operation ticket. Use its relevant admin workflow to complete the request.</div>
               )}
 
-              {(canActOnSelectedApproval || canActOnSelectedRevoke) && (
+              {(canActOnSelectedApproval || canCancelSelectedApproval || canActOnSelectedRevoke) && (
                 <section className="task-action-panel">
                   <div className="section-title compact-section-title">
                     <h3>{canActOnSelectedRevoke ? 'Admin review' : 'Review action'}</h3>
@@ -595,11 +660,14 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
                   <div className="form-actions task-action-buttons">
                     {canActOnSelectedApproval && (
                       <>
-                        <button type="button" className="btn-secondary" onClick={() => runAction('take')} disabled={loading || !canActOnOperationTask}>Take Ownership</button>
-                        <button type="button" className="btn-secondary" onClick={() => runAction('release')} disabled={loading || !canReleaseSelectedTask}>Release</button>
-                        <button type="button" onClick={() => runAction('approve')} disabled={loading || !canApproveTransaction}>Approve</button>
-                        <button type="button" className="btn-danger" onClick={() => runAction('reject')} disabled={loading || !canRejectTransaction}>Reject</button>
+                        {canActOnOperationTask && <button type="button" className="btn-secondary" onClick={() => runAction('take')} disabled={loading}>Take Ownership</button>}
+                        {canActOnOperationTask && <button type="button" className="btn-secondary" onClick={() => runAction('release')} disabled={loading || !canReleaseSelectedTask}>Release</button>}
+                        {canApproveTransaction && <button type="button" onClick={() => runAction('approve')} disabled={loading}>Approve</button>}
+                        {canRejectTransaction && <button type="button" className="btn-danger" onClick={() => runAction('reject')} disabled={loading}>Reject</button>}
                       </>
+                    )}
+                    {canCancelSelectedApproval && (
+                      <button type="button" className="btn-danger" onClick={() => runAction('cancel')} disabled={loading}>Cancel Ticket</button>
                     )}
                     {canActOnSelectedRevoke && (
                       <>
@@ -614,8 +682,57 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
                 </section>
               )}
 
-              {selectedTask.taskType === 'OPERATION_APPROVAL' && selectedTaskOpen && !canActOnOperationTask && (
-                <div className="info-box">This approval task is assigned to you for viewing, but your role does not include <strong>Act On Operation Task</strong>.</div>
+              {canRequestCorrectionForSelected && (
+                <section className="task-action-panel">
+                  <div className="section-title compact-section-title">
+                    <h3>Request approved transaction correction</h3>
+                    <p>The admin review task will be created after submission.</p>
+                  </div>
+                  <label htmlFor="task-correction-type">Correction type</label>
+                  <select
+                    id="task-correction-type"
+                    value={correctionForm.requestType}
+                    onChange={(event) => setCorrectionForm((current) => ({ ...current, requestType: event.target.value }))}
+                    disabled={loading}
+                  >
+                    <option>Data Correction</option>
+                    <option>Quantity Correction</option>
+                    <option>Wrong Asset / Location</option>
+                    <option>Wrong Date / Time</option>
+                    <option>Duplicate / Soft Delete Required</option>
+                    <option>Other</option>
+                  </select>
+                  <label htmlFor="task-correction-action">Suggested action</label>
+                  <select
+                    id="task-correction-action"
+                    value={correctionForm.suggestedAction}
+                    onChange={(event) => setCorrectionForm((current) => ({ ...current, suggestedAction: event.target.value }))}
+                    disabled={loading}
+                  >
+                    <option>Reopen for Edit</option>
+                    <option>Reopen for Cancellation</option>
+                    <option>Reopen for Re-approval</option>
+                    <option>Operational Review Required</option>
+                  </select>
+                  <label htmlFor="task-correction-reason">Reason</label>
+                  <textarea
+                    id="task-correction-reason"
+                    rows="3"
+                    value={correctionForm.reason}
+                    onChange={(event) => setCorrectionForm((current) => ({ ...current, reason: event.target.value }))}
+                    placeholder="Explain why this approved ticket needs correction"
+                    disabled={loading}
+                  />
+                  <div className="form-actions task-action-buttons">
+                    <button type="button" onClick={submitCorrectionRequest} disabled={loading || !correctionForm.reason.trim()}>
+                      Send to Admin
+                    </button>
+                  </div>
+                </section>
+              )}
+
+              {selectedTask.taskType === 'OPERATION_APPROVAL' && selectedTaskOpen && !canActOnSelectedApproval && (
+                <div className="info-box">Your role does not include an action available for this pending approval task.</div>
               )}
             </div>
 

@@ -49,7 +49,16 @@ function SystemNotificationCenter({ loggedInUser, toplineContainer = null }) {
   }, [inboxNotifications])
 
   const canViewTaskManager = useMemo(
-    () => isAdminUser(loggedInUser) || userHasPermission(loggedInUser, 'View My Tasks'),
+    () => isAdminUser(loggedInUser) || [
+      'View My Tasks',
+      'Act On Operation Task',
+      'Supervise Operation Tasks',
+      'Approve Operation Transaction',
+      'Reject Operation Transaction',
+      'Cancel Operation Transaction',
+      'Request Approved Transaction Correction',
+      'Admin Revoke Approved Transaction',
+    ].some((permission) => userHasPermission(loggedInUser, permission)),
     [loggedInUser]
   )
 

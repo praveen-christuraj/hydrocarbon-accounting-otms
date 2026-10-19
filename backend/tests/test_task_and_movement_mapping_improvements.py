@@ -13,6 +13,7 @@ from app.models import (
     Role,
     RolePermission,
     User,
+    UserLocation,
     UserRole,
 )
 from app.routers.movement_mappings import (
@@ -25,11 +26,19 @@ from app.routers.movement_mappings import (
     update_movement_mapping,
 )
 from app.routers.operation_tasks import (
+    close_operation_approval_tasks_for_transaction,
+    create_operation_approval_task_for_transaction,
     get_my_operation_tasks,
     get_my_operation_tasks_paged,
+    reject_operation_task,
     resolve_effective_operation_task_status,
 )
-from app.schemas import MovementMappingCreate, MovementMappingUpdate, OperationTaskPageResponse
+from app.schemas import (
+    MovementMappingCreate,
+    MovementMappingUpdate,
+    OperationTaskActionRequest,
+    OperationTaskPageResponse,
+)
 
 
 def _admin(db):
@@ -200,6 +209,205 @@ def test_task_manager_paged_query_filters_by_user_and_role_assignments(db):
         "TASK-ASSIGNED-USER",
     }
     assert page["total_rows"] == 2
+
+
+def test_approver_can_open_task_manager_without_view_permission_or_destination_scope(db):
+    role = Role(role_name="Origin Approver", status="Active")
+    permission = Permission(
+        permission_name="Approve Operation Transaction",
+        module_name="Operations",
+        status="Active",
+    )
+    db.add_all([role, permission])
+    db.flush()
+    db.add(RolePermission(role_id=role.id, permission_id=permission.id))
+    user = User(
+        full_name="Origin Approver",
+        username="origin-approver",
+        email="origin-approver@example.test",
+        password_hash="test-only",
+        status="Active",
+        all_locations_access="No",
+    )
+    db.add(user)
+    db.flush()
+    db.add_all([
+        UserRole(user_id=user.id, role_id=role.id),
+        UserLocation(user_id=user.id, location_code="AGGE"),
+    ])
+
+    transaction = OperationTransaction(
+        operation_number="TASK-ORIGIN-SCOPE-001",
+        operation_type_code="BARGE_LOADING",
+        primary_asset_code="BARGE_01",
+        primary_asset_type_code="BARGE",
+        origin_location_code="AGGE",
+        destination_location_code="BONNY",
+        operation_date=date(2026, 10, 1),
+        status="Submitted",
+    )
+    db.add(transaction)
+    db.flush()
+    task = OperationTask(
+        task_number="TASK-ORIGIN-SCOPE-001",
+        task_type="OPERATION_APPROVAL",
+        transaction_id=transaction.id,
+        location_code="AGGE",
+        status="Pending",
+        priority="Normal",
+        assigned_user_ids_json=[],
+        assigned_role_ids_json=[],
+    )
+    db.add(task)
+    db.flush()
+
+    page = get_my_operation_tasks_paged(current_user=user, db=db)
+
+    assert [row["id"] for row in page["rows"]] == [task.id]
+    assert page["status_counts"] == {"Pending": 1, "ALL": 1}
+
+
+def test_approval_task_assigns_all_operation_decision_roles(db):
+    role_ids = set()
+    for index, permission_name in enumerate((
+        "Approve Operation Transaction",
+        "Reject Operation Transaction",
+        "Cancel Operation Transaction",
+        "Request Approved Transaction Correction",
+    )):
+        role = Role(role_name=f"Decision Role {index}", status="Active")
+        permission = Permission(
+            permission_name=permission_name,
+            module_name="Operations",
+            status="Active",
+        )
+        db.add_all([role, permission])
+        db.flush()
+        db.add(RolePermission(role_id=role.id, permission_id=permission.id))
+        role_ids.add(role.id)
+
+    submitter = User(
+        full_name="Submitter",
+        username="task-submitter",
+        email="task-submitter@example.test",
+        password_hash="test-only",
+        status="Active",
+    )
+    transaction = OperationTransaction(
+        operation_number="TASK-ASSIGN-DECISIONS",
+        operation_type_code="BARGE_LOADING",
+        primary_asset_code="BARGE_02",
+        primary_asset_type_code="BARGE",
+        origin_location_code="AGGE",
+        operation_date=date(2026, 10, 1),
+        status="Submitted",
+    )
+    db.add_all([submitter, transaction])
+    db.flush()
+
+    task = create_operation_approval_task_for_transaction(db, transaction, submitter)
+
+    assert set(task.assigned_role_ids_json) == role_ids
+
+
+def test_cancelling_rejected_ticket_moves_task_to_cancelled_tab(db):
+    admin = _admin(db)
+    transaction = OperationTransaction(
+        operation_number="TASK-CANCEL-REJECTED",
+        operation_type_code="BARGE_LOADING",
+        primary_asset_code="BARGE_03",
+        primary_asset_type_code="BARGE",
+        origin_location_code="AGGE",
+        operation_date=date(2026, 10, 1),
+        status="Cancelled",
+    )
+    db.add(transaction)
+    db.flush()
+    task = OperationTask(
+        task_number="TASK-CANCEL-REJECTED",
+        task_type="OPERATION_APPROVAL",
+        transaction_id=transaction.id,
+        location_code="AGGE",
+        status="Rejected",
+        priority="Normal",
+        assigned_user_ids_json=[],
+        assigned_role_ids_json=[],
+    )
+    db.add(task)
+    db.flush()
+
+    close_operation_approval_tasks_for_transaction(
+        db=db,
+        transaction=transaction,
+        current_user=admin,
+        task_status="Cancelled",
+        action_taken="Cancelled",
+        notes="Cancelled after rejection",
+    )
+
+    assert task.status == "Cancelled"
+    assert task.action_taken == "Cancelled"
+
+
+def test_reject_permission_can_act_without_unrelated_task_action_permission(db):
+    role = Role(role_name="Transaction Rejector", status="Active")
+    permission = Permission(
+        permission_name="Reject Operation Transaction",
+        module_name="Operations",
+        status="Active",
+    )
+    user = User(
+        full_name="Transaction Rejector",
+        username="transaction-rejector",
+        email="transaction-rejector@example.test",
+        password_hash="test-only",
+        status="Active",
+        all_locations_access="Yes",
+    )
+    db.add_all([role, permission, user])
+    db.flush()
+    db.add_all([
+        RolePermission(role_id=role.id, permission_id=permission.id),
+        UserRole(user_id=user.id, role_id=role.id),
+    ])
+    transaction = OperationTransaction(
+        operation_number="TASK-REJECT-PERMISSION",
+        operation_type_code="TANK_TRANSFER",
+        primary_asset_code="TANK_01",
+        primary_asset_type_code="TANK",
+        origin_location_code="AGGE",
+        operation_date=date(2026, 10, 1),
+        status="Submitted",
+    )
+    db.add(transaction)
+    db.flush()
+    task = OperationTask(
+        task_number="TASK-REJECT-PERMISSION",
+        task_type="OPERATION_APPROVAL",
+        transaction_id=transaction.id,
+        location_code="AGGE",
+        status="Pending",
+        priority="Normal",
+        assigned_user_ids_json=[],
+        assigned_role_ids_json=[],
+    )
+    db.add(task)
+    db.flush()
+
+    reject_operation_task(
+        task_id=task.id,
+        payload=OperationTaskActionRequest(remarks="Rejected from Task Manager"),
+        current_user=user,
+        db=db,
+    )
+
+    db.refresh(task)
+    assert transaction.status == "Rejected"
+    assert task.status == "Rejected"
+    rejected_page = get_my_operation_tasks_paged(
+        status="Rejected", current_user=user, db=db
+    )
+    assert [row["id"] for row in rejected_page["rows"]] == [task.id]
 
 
 def test_movement_mapping_edit_archive_and_restore_preserve_record(db):

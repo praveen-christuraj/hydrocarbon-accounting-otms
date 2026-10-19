@@ -31,7 +31,9 @@ from app.dependencies.permissions import (
     normalize_location_code,
     user_has_permission,
     require_user_permission,
+    require_any_user_permission,
     get_role_ids_with_permission,
+    get_user_permissions,
     get_user_role_ids,
     is_admin_user,
     user_can_act_on_operation_task,
@@ -52,6 +54,22 @@ from app.services.transaction_helpers import (
 router = APIRouter(prefix="/operation-tasks", tags=["Operation Tasks"])
 
 
+TASK_MANAGER_ACCESS_PERMISSIONS = (
+    "View My Tasks",
+    "Act On Operation Task",
+    "Supervise Operation Tasks",
+    "Approve Operation Transaction",
+    "Reject Operation Transaction",
+    "Cancel Operation Transaction",
+    "Request Approved Transaction Correction",
+    "Admin Revoke Approved Transaction",
+)
+
+
+def require_task_manager_access(current_user: User, db: Session):
+    return require_any_user_permission(current_user, TASK_MANAGER_ACCESS_PERMISSIONS, db)
+
+
 def create_operation_approval_task_for_transaction(
     db: Session,
     transaction: OperationTransaction,
@@ -69,36 +87,48 @@ def create_operation_approval_task_for_transaction(
     if existing:
         return existing
 
-    policy = find_matching_operation_workflow_policy(
-        db=db,
-        action_code="APPROVE",
-        operation_type_code=clean_optional_text(transaction.operation_type_code),
-        operation_template_id=transaction.operation_template_id,
-        asset_type_code=clean_optional_text(transaction.primary_asset_type_code),
-        location_code=clean_optional_text(transaction.origin_location_code),
-    )
-
-    assigned_role_ids = []
-    assigned_user_ids = []
-    if policy:
-        assigned_role_ids = [
-            row.role_id
-            for row in db.query(OperationWorkflowPolicyRole)
-            .filter(OperationWorkflowPolicyRole.policy_id == policy.id)
-            .all()
-        ]
-        assigned_user_ids = [
-            row.user_id
-            for row in db.query(OperationWorkflowPolicyUser)
-            .filter(
-                OperationWorkflowPolicyUser.policy_id == policy.id,
-                OperationWorkflowPolicyUser.mode == "ALLOW",
+    policy = None
+    assigned_role_ids = set()
+    assigned_user_ids = set()
+    for action_code, permission_name in (
+        ("APPROVE", "Approve Operation Transaction"),
+        ("REJECT", "Reject Operation Transaction"),
+        ("CANCEL", "Cancel Operation Transaction"),
+    ):
+        action_policy = find_matching_operation_workflow_policy(
+            db=db,
+            action_code=action_code,
+            operation_type_code=clean_optional_text(transaction.operation_type_code),
+            operation_template_id=transaction.operation_template_id,
+            asset_type_code=clean_optional_text(transaction.primary_asset_type_code),
+            location_code=clean_optional_text(transaction.origin_location_code),
+        )
+        if action_code == "APPROVE":
+            policy = action_policy
+        if action_policy:
+            assigned_role_ids.update(
+                row.role_id
+                for row in db.query(OperationWorkflowPolicyRole)
+                .filter(OperationWorkflowPolicyRole.policy_id == action_policy.id)
+                .all()
             )
-            .all()
-        ]
+            assigned_user_ids.update(
+                row.user_id
+                for row in db.query(OperationWorkflowPolicyUser)
+                .filter(
+                    OperationWorkflowPolicyUser.policy_id == action_policy.id,
+                    OperationWorkflowPolicyUser.mode == "ALLOW",
+                )
+                .all()
+            )
+        else:
+            assigned_role_ids.update(get_role_ids_with_permission(db, permission_name))
 
-    if not assigned_role_ids and not assigned_user_ids:
-        assigned_role_ids = get_role_ids_with_permission(db, "Approve Operation Transaction")
+    assigned_role_ids.update(
+        get_role_ids_with_permission(db, "Request Approved Transaction Correction")
+    )
+    assigned_role_ids = sorted(assigned_role_ids)
+    assigned_user_ids = sorted(assigned_user_ids)
 
     task = OperationTask(
         task_number=generate_operation_task_number(db),
@@ -143,12 +173,15 @@ def close_operation_approval_tasks_for_transaction(
     action_taken: str,
     notes: str | None = None,
 ):
+    closable_statuses = ["Pending", "In Progress"]
+    if task_status == "Cancelled":
+        closable_statuses.append("Rejected")
     tasks = (
         db.query(OperationTask)
         .filter(
             OperationTask.transaction_id == transaction.id,
             OperationTask.task_type == "OPERATION_APPROVAL",
-            OperationTask.status.in_(["Pending", "In Progress"]),
+            OperationTask.status.in_(closable_statuses),
         )
         .all()
     )
@@ -342,23 +375,45 @@ def operation_task_is_within_location_scope(
     task_location = normalize_location_code(task.location_code)
     if task_location is None or task_location not in allowed_codes:
         return False
-    if not task.transaction_id:
-        return True
-    transaction = db.query(OperationTransaction).filter(
-        OperationTransaction.id == task.transaction_id
-    ).first()
-    if not transaction:
-        return True
-    for field_name in (
-        "origin_location_code",
-        "destination_location_code",
-        "sender_location_code",
-        "receiver_location_code",
-    ):
-        location_code = normalize_location_code(getattr(transaction, field_name, None))
-        if location_code is not None and location_code not in allowed_codes:
-            return False
     return True
+
+
+def user_can_view_operation_task(db: Session, current_user: User, task: OperationTask) -> bool:
+    if is_admin_user(current_user, db) or user_has_permission(
+        current_user, "Supervise Operation Tasks", db
+    ):
+        return True
+    if user_can_act_on_operation_task(db, current_user, task):
+        return True
+    if task.task_type != "OPERATION_APPROVAL":
+        return False
+
+    transaction = None
+    if task.transaction_id:
+        transaction = db.query(OperationTransaction).filter(
+            OperationTransaction.id == task.transaction_id
+        ).first()
+    effective_status = resolve_effective_operation_task_status(task, transaction)
+    permissions = get_user_permissions(current_user, db)
+    if effective_status in ("Pending", "In Progress"):
+        return bool(
+            {"Approve Operation Transaction", "Reject Operation Transaction"} & permissions
+        )
+    if effective_status == "Approved":
+        return bool(
+            {
+                "Approve Operation Transaction",
+                "Request Approved Transaction Correction",
+            }
+            & permissions
+        )
+    if effective_status == "Rejected":
+        return bool(
+            {"Reject Operation Transaction", "Cancel Operation Transaction"} & permissions
+        )
+    if effective_status == "Cancelled":
+        return "Cancel Operation Transaction" in permissions
+    return False
 
 
 def ensure_operation_task_location_scope(task: OperationTask, current_user: User, db: Session):
@@ -472,7 +527,7 @@ def get_my_operation_tasks_paged(
     db: Session = Depends(get_db),
 ):
     """Load one bounded page of assigned tasks and aggregate status counts."""
-    require_user_permission(current_user, "View My Tasks", db)
+    require_task_manager_access(current_user, db)
 
     page = max(int(page or 1), 1)
     page_size = min(max(int(page_size or 20), 1), 100)
@@ -510,25 +565,6 @@ def get_my_operation_tasks_paged(
             query = query.filter(
                 func.lower(func.trim(OperationTask.location_code)).in_(normalized_codes)
             )
-            # Preserve the Task Manager's stricter scope rule: the task's
-            # location and every populated party location on its linked ticket
-            # must remain inside the user's assigned locations.
-            for field_name in (
-                "origin_location_code",
-                "destination_location_code",
-                "sender_location_code",
-                "receiver_location_code",
-            ):
-                transaction_location = getattr(OperationTransaction, field_name)
-                query = query.filter(
-                    or_(
-                        OperationTransaction.id.is_(None),
-                        transaction_location.is_(None),
-                        func.trim(transaction_location) == "",
-                        func.lower(func.trim(transaction_location)).in_(normalized_codes),
-                    )
-                )
-
     if not is_admin_user(current_user, db):
         user_role_ids = get_user_role_ids(db, current_user)
         assignment_conditions = [
@@ -547,7 +583,54 @@ def get_my_operation_tasks_paged(
         )
         if assigned_roles is not None:
             assignment_conditions.append(assigned_roles)
-        query = query.filter(or_(*assignment_conditions))
+        permissions = get_user_permissions(current_user, db)
+        if user_has_permission(current_user, "Supervise Operation Tasks", db):
+            permission_visibility = None
+        else:
+            permission_visibility_conditions = []
+            if {"Approve Operation Transaction", "Reject Operation Transaction"} & permissions:
+                permission_visibility_conditions.append(
+                    and_(
+                        OperationTask.task_type == "OPERATION_APPROVAL",
+                        status_expression.in_(["Pending", "In Progress"]),
+                    )
+                )
+            if {
+                "Approve Operation Transaction",
+                "Request Approved Transaction Correction",
+            } & permissions:
+                permission_visibility_conditions.append(
+                    and_(
+                        OperationTask.task_type == "OPERATION_APPROVAL",
+                        status_expression == "Approved",
+                    )
+                )
+            if {"Reject Operation Transaction", "Cancel Operation Transaction"} & permissions:
+                permission_visibility_conditions.append(
+                    and_(
+                        OperationTask.task_type == "OPERATION_APPROVAL",
+                        status_expression == "Rejected",
+                    )
+                )
+            if "Cancel Operation Transaction" in permissions:
+                permission_visibility_conditions.append(
+                    and_(
+                        OperationTask.task_type == "OPERATION_APPROVAL",
+                        status_expression == "Cancelled",
+                    )
+                )
+            permission_visibility = (
+                or_(*permission_visibility_conditions)
+                if permission_visibility_conditions
+                else None
+            )
+        visibility_conditions = [condition for condition in assignment_conditions if condition is not None]
+        if permission_visibility is not None:
+            visibility_conditions.append(permission_visibility)
+        if visibility_conditions:
+            query = query.filter(or_(*visibility_conditions))
+        else:
+            query = query.filter(false())
 
     grouped_counts = (
         query.with_entities(
@@ -608,7 +691,7 @@ def get_my_operation_tasks(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "View My Tasks", db)
+    require_task_manager_access(current_user, db)
     query = apply_location_filter(db.query(OperationTask), OperationTask, current_user, db)
     query = query.order_by(OperationTask.created_at.desc(), OperationTask.id.desc())
     # Status is applied after response construction because legacy tasks may
@@ -627,7 +710,7 @@ def get_my_operation_tasks(
         task
         for task in tasks
         if operation_task_is_within_location_scope(task, db, allowed_codes)
-        and user_can_act_on_operation_task(db, current_user, task)
+        and user_can_view_operation_task(db, current_user, task)
     ]
     responses = [build_operation_task_response(task, db) for task in visible]
     wanted_status = clean_optional_text(status)
@@ -677,12 +760,12 @@ def get_operation_task(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "View My Tasks", db)
+    require_task_manager_access(current_user, db)
     task = db.query(OperationTask).filter(OperationTask.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Operation task not found")
     ensure_operation_task_location_scope(task, current_user, db)
-    if not user_can_act_on_operation_task(db, current_user, task) and not user_has_permission(current_user, "Supervise Operation Tasks", db):
+    if not user_can_view_operation_task(db, current_user, task):
         raise HTTPException(status_code=403, detail="You are not assigned to this task")
     return build_operation_task_response(task, db)
 
@@ -834,14 +917,14 @@ def approve_operation_task(
 ):
     from app.routers.operation_transactions import update_operation_transaction_status
 
-    require_user_permission(current_user, "Act On Operation Task", db)
+    require_task_manager_access(current_user, db)
     task = db.query(OperationTask).filter(OperationTask.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Operation task not found")
     ensure_operation_task_location_scope(task, current_user, db)
     if task.status not in ["Pending", "In Progress"]:
         raise HTTPException(status_code=400, detail="Only open tasks can be approved")
-    if not user_can_act_on_operation_task(db, current_user, task):
+    if not user_can_view_operation_task(db, current_user, task):
         raise HTTPException(status_code=403, detail="You are not assigned to this task")
 
     return update_operation_transaction_status(
@@ -865,14 +948,14 @@ def reject_operation_task(
 ):
     from app.routers.operation_transactions import update_operation_transaction_status
 
-    require_user_permission(current_user, "Act On Operation Task", db)
+    require_task_manager_access(current_user, db)
     task = db.query(OperationTask).filter(OperationTask.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Operation task not found")
     ensure_operation_task_location_scope(task, current_user, db)
     if task.status not in ["Pending", "In Progress"]:
         raise HTTPException(status_code=400, detail="Only open tasks can be rejected")
-    if not user_can_act_on_operation_task(db, current_user, task):
+    if not user_can_view_operation_task(db, current_user, task):
         raise HTTPException(status_code=403, detail="You are not assigned to this task")
 
     return update_operation_transaction_status(

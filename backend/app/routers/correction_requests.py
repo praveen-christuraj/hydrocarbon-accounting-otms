@@ -190,7 +190,6 @@ def create_approved_transaction_correction_request(
     if not transaction:
         raise HTTPException(status_code=404, detail="Operation transaction not found")
     ensure_location_in_user_scope(current_user, db, transaction.origin_location_code, "Origin location")
-    ensure_location_in_user_scope(current_user, db, transaction.destination_location_code, "Destination location")
     if transaction.status != APPROVED_TRANSACTION_STATUS:
         raise HTTPException(
             status_code=400,
