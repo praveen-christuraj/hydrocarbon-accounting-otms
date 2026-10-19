@@ -39,7 +39,9 @@ def verify_totp_or_backup_code(user: User, code: str):
     normalized = "".join(ch for ch in str(code or "").strip() if ch.isdigit())
     if secret and len(normalized) == 6:
         totp = pyotp.TOTP(secret)
-        if totp.verify(normalized, valid_window=0):
+        # valid_window=1 tolerates one 30-second step of clock drift between
+        # the server and the authenticator device (same tolerance as setup).
+        if totp.verify(normalized, valid_window=1):
             return True
     return verify_backup_code(user, code)
 
@@ -56,11 +58,15 @@ def build_totp_qr_data_url(provisioning_uri: str):
 
 
 def create_login_challenge(db: Session, user: User, ip_address: str | None = None):
+    # Stored naive in UTC to match the TIMESTAMP (without time zone) column, so
+    # expiry comparisons never mix naive and aware datetimes.
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).replace(tzinfo=None)
     challenge = AuthLoginChallenge(
         challenge_id=secrets.token_urlsafe(32),
         user_id=user.id,
         status="Pending",
-        expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+        attempt_count=0,
+        expires_at=expires_at,
         ip_address=ip_address,
     )
     db.add(challenge)

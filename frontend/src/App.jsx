@@ -60,6 +60,7 @@ import FlowmeterRecordEntry from './pages/FlowmeterRecordEntry'
 import OperationWorkflowPolicyMaster from './pages/OperationWorkflowPolicyMaster'
 import OperationTaskManager from './pages/OperationTaskManager'
 import ProfileSecurity from './pages/ProfileSecurity'
+import ForcePasswordChange from './pages/ForcePasswordChange'
 import SystemNotificationMaster from './pages/SystemNotificationMaster'
 import BackupRecovery from './pages/BackupRecovery'
 import DatabaseBrowser from './pages/DatabaseBrowser'
@@ -190,6 +191,7 @@ function LegacyPageDisabled({ title, description, primaryPath, primaryLabel }) {
 function AppContent({
   loggedInUser,
   onLogout,
+  refreshLoggedInUser,
 
   users,
   setUsers,
@@ -433,7 +435,10 @@ function AppContent({
                 requiredPermission="View Own Security Settings"
                 fallbackMessage="You do not have permission to view profile security settings."
               >
-                <ProfileSecurity loggedInUser={loggedInUser} users={users} />
+                <ProfileSecurity
+                  loggedInUser={loggedInUser}
+                  onLoggedInUserRefresh={refreshLoggedInUser}
+                />
               </PermissionGuard>
             }
           />
@@ -1233,6 +1238,19 @@ function App() {
       setAuthLoading(false)
     }
   }
+
+  // Re-pull the logged-in user (fresh security flags after a password change
+  // or 2FA enrolment) without logging out.
+  const refreshLoggedInUser = async () => {
+    try {
+      const currentUser = await getCurrentUser()
+      if (currentUser) {
+        setLoggedInUser(currentUser)
+      }
+    } catch (error) {
+      console.error('refreshLoggedInUser failed:', error)
+    }
+  }
   const reloadUsers = async () => {
     try {
       const usersFromApi = await getUsers({ limit: 200 })
@@ -1527,12 +1545,25 @@ useEffect(() => {
     return <LoginPage onLogin={setLoggedInUser} />
   }
 
+  // Enterprise policy gate: a flagged or expired password must be replaced
+  // before anything else in the application is reachable.
+  if (loggedInUser.security?.force_password_change || loggedInUser.security?.password_expired) {
+    return (
+      <ForcePasswordChange
+        loggedInUser={loggedInUser}
+        onComplete={refreshLoggedInUser}
+        onLogout={handleLogout}
+      />
+    )
+  }
+
   return (
     <AuthProvider value={{ loggedInUser }}>
       <BrowserRouter>
         <AppContent
         loggedInUser={loggedInUser}
         onLogout={handleLogout}
+        refreshLoggedInUser={refreshLoggedInUser}
 
         users={users}
         setUsers={setUsers}

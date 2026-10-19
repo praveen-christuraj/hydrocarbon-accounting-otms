@@ -17,7 +17,7 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None):
         expire = now + expires_delta
 
     token_data.update(
-        {"exp": expire, "token_type": "access", "jti": secrets.token_urlsafe(16)}
+        {"exp": expire, "iat": now, "token_type": "access", "jti": secrets.token_urlsafe(16)}
     )
 
     encoded_jwt = jwt.encode(
@@ -39,7 +39,7 @@ def create_refresh_token(data: dict, expires_delta: timedelta | None = None):
         expire = now + expires_delta
 
     token_data.update(
-        {"exp": expire, "token_type": "refresh", "jti": secrets.token_urlsafe(16)}
+        {"exp": expire, "iat": now, "token_type": "refresh", "jti": secrets.token_urlsafe(16)}
     )
 
     encoded_jwt = jwt.encode(

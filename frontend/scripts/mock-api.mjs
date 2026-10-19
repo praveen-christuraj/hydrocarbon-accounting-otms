@@ -364,6 +364,64 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
+  /* ------------------------------------ profile & security module */
+  if (pathname === '/auth/users/security-overview') {
+    const items = db.users.map((user) => ({
+      id: user.id,
+      full_name: user.full_name,
+      username: user.username,
+      email: user.email,
+      department: user.department || null,
+      designation: user.designation || null,
+      status: user.status,
+      is_locked: false,
+      locked_until: null,
+      failed_login_count: 0,
+      totp_enabled: false,
+      force_2fa: false,
+      force_password_change: false,
+      password_expired: false,
+      password_changed_at: null,
+      password_never_expires: false,
+      password_expiry_days: 30,
+      last_login_at: null,
+      last_login_ip: null,
+      pending_reset_requests: 0,
+    }))
+    sendJson(res, 200, {
+      items,
+      total: items.length,
+      locked_count: 0,
+      pending_reset_requests: 0,
+      two_fa_enabled_count: 0,
+    })
+    return
+  }
+
+  if (pathname === '/auth/password-reset-requests') {
+    sendJson(res, 200, { items: [], total: 0, pending_count: 0 })
+    return
+  }
+
+  if (pathname === '/auth/change-password') {
+    sendJson(res, 200, {
+      message: 'Password changed successfully',
+      access_token: 'mock-token',
+      refresh_token: 'mock-refresh-token',
+    })
+    return
+  }
+
+  if (pathname.match(/^\/auth\/users\/\d+\/security\/(reset-password|unlock|reset-2fa|require-password-change)$/)) {
+    sendJson(res, 200, { message: 'Done (mock)' })
+    return
+  }
+
+  if (pathname.startsWith('/auth/2fa/')) {
+    sendJson(res, 400, { detail: '2FA is not available in the mock API - run the real backend.' })
+    return
+  }
+
   if (pathname === '/permissions/catalog') {
     sendJson(res, 200, { categories: [] })
     return

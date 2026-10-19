@@ -1,6 +1,9 @@
 import hashlib
 from datetime import datetime, timedelta, timezone
-from fastapi import APIRouter, Depends, HTTPException, Header, Request
+
+import pyotp
+from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -26,11 +29,13 @@ from app.schemas import (
     TwoFADisableRequest,
     RefreshTokenRequest,
     LogoutRequest,
+    DeclinePasswordResetRequest,
 )
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import require_user_permission
 from app.services.audit_service import create_audit_log
 from app.utils.security import hash_password, verify_password, encrypt_security_value
+from app.utils.password_policy import build_security_flags, is_password_expired
 from app.utils.totp import (
     generate_backup_codes,
     hash_backup_codes,
@@ -45,6 +50,52 @@ from app.utils.password_policy import validate_password_policy
 
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+
+
+# ---------------------------------------------------------------------------
+# Account lockout / 2FA brute-force policy (enterprise defaults)
+# ---------------------------------------------------------------------------
+MAX_FAILED_LOGIN_ATTEMPTS = 5
+ACCOUNT_LOCK_MINUTES = 15
+MAX_2FA_ATTEMPTS_PER_CHALLENGE = 5
+
+
+def utc_now_naive() -> datetime:
+    """Current UTC time as a naive datetime, matching the TIMESTAMP columns."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def as_naive_utc(value: datetime | None) -> datetime | None:
+    """Normalize a possibly timezone-aware datetime to naive UTC for safe comparison."""
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
+def lock_remaining_minutes(locked_until: datetime | None) -> int:
+    locked = as_naive_utc(locked_until)
+    if not locked:
+        return 0
+    remaining = (locked - utc_now_naive()).total_seconds()
+    return max(1, int(remaining // 60) + (1 if remaining % 60 else 0)) if remaining > 0 else 0
+
+
+def user_entity_label(user: User) -> str:
+    return f"{user.full_name} ({user.username})" if user.full_name else user.username
+
+
+def ensure_actor_may_administer_target(current_user: User, target: User, db: Session):
+    """Shared guard for all admin security actions on another user's account."""
+    from app.dependencies.permissions import ensure_user_in_actor_location_scope, is_admin_user
+
+    ensure_user_in_actor_location_scope(current_user, target, db)
+    if is_admin_user(target, db) and not is_admin_user(current_user, db):
+        raise HTTPException(
+            status_code=403,
+            detail="Only an administrator can manage an administrator account's security",
+        )
 
 
 def generate_password_reset_request_number(db: Session):
@@ -95,7 +146,8 @@ def login_user(
             detail="User is not Active",
         )
 
-    if user.locked_until and user.locked_until > datetime.now(timezone.utc).replace(tzinfo=None):
+    if as_naive_utc(user.locked_until) and as_naive_utc(user.locked_until) > utc_now_naive():
+        remaining = lock_remaining_minutes(user.locked_until)
         create_audit_log(
             db=db,
             module_name="Authentication",
@@ -103,34 +155,66 @@ def login_user(
             current_user=user,
             entity_type="User",
             entity_id=user.id,
-            entity_label=f"{user.full_name} ({user.username})" if user.full_name else user.username,
+            entity_label=user_entity_label(user),
             remarks="User account temporarily locked",
             request_path="/auth/login",
             details={"username": user.username, "locked_until": user.locked_until.isoformat()},
         )
         db.commit()
-        raise HTTPException(status_code=423, detail="Account is temporarily locked. Please try again later.")
+        raise HTTPException(
+            status_code=423,
+            detail=(
+                f"Account is temporarily locked after too many failed sign-in attempts. "
+                f"Try again in about {remaining} minute(s) or contact an administrator to unlock it."
+            ),
+        )
 
     if not verify_password(login_request.password, user.password_hash):
         user.failed_login_count = int(user.failed_login_count or 0) + 1
-        if user.failed_login_count >= 5:
-            user.locked_until = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=15)
+        account_locked_now = user.failed_login_count >= MAX_FAILED_LOGIN_ATTEMPTS
+        if account_locked_now:
+            user.locked_until = utc_now_naive() + timedelta(minutes=ACCOUNT_LOCK_MINUTES)
         create_audit_log(
             db=db,
             module_name="Authentication",
-            action="Login Failed",
+            action="Account Locked" if account_locked_now else "Login Failed",
             current_user=user,
             entity_type="User",
             entity_id=user.id,
-            entity_label=f"{user.full_name} ({user.username})" if user.full_name else user.username,
-            remarks="Invalid password",
+            entity_label=user_entity_label(user),
+            remarks=(
+                f"Account locked for {ACCOUNT_LOCK_MINUTES} minutes after "
+                f"{user.failed_login_count} failed sign-in attempts"
+                if account_locked_now
+                else "Invalid password"
+            ),
             request_path="/auth/login",
-            details={"username": user.username, "failed_login_count": user.failed_login_count},
+            details={
+                "username": user.username,
+                "failed_login_count": user.failed_login_count,
+                "locked_until": user.locked_until.isoformat() if account_locked_now else None,
+            },
         )
         db.commit()
+        if account_locked_now:
+            raise HTTPException(
+                status_code=423,
+                detail=(
+                    f"Account locked for {ACCOUNT_LOCK_MINUTES} minutes after too many failed "
+                    f"sign-in attempts. Contact an administrator if you need it unlocked sooner."
+                ),
+            )
+        remaining_attempts = MAX_FAILED_LOGIN_ATTEMPTS - user.failed_login_count
         raise HTTPException(
             status_code=401,
-            detail="Invalid username or password",
+            detail=(
+                "Invalid username or password"
+                + (
+                    f". {remaining_attempts} attempt(s) remaining before the account is locked."
+                    if remaining_attempts <= 2
+                    else ""
+                )
+            ),
         )
 
     user.failed_login_count = 0
@@ -177,7 +261,7 @@ def login_user(
         }
     )
 
-    user.last_login_at = datetime.now(timezone.utc)
+    user.last_login_at = utc_now_naive()
     user.last_login_ip = client_ip
 
     create_audit_log(
@@ -187,7 +271,7 @@ def login_user(
         current_user=user,
         entity_type="User",
         entity_id=user.id,
-        entity_label=f"{user.full_name} ({user.username})" if user.full_name else user.username,
+        entity_label=user_entity_label(user),
         remarks="User login successful",
         request_path="/auth/login",
         details={
@@ -197,6 +281,7 @@ def login_user(
     )
     db.commit()
 
+    security_flags = logged_in_user.get("security") or {}
     return {
         "message": "Login successful",
         "requires_2fa": False,
@@ -207,6 +292,9 @@ def login_user(
         "role": logged_in_user["role"],
         "roles": logged_in_user["roles"],
         "permissions": logged_in_user["permissions"],
+        "must_change_password": bool(
+            security_flags.get("force_password_change") or security_flags.get("password_expired")
+        ),
     }
 
 
@@ -222,14 +310,26 @@ def verify_login_2fa(
         .filter(AuthLoginChallenge.challenge_id == verify_request.challenge_id)
         .first()
     )
-    if not challenge or challenge.status != "Pending" or challenge.expires_at < datetime.now(timezone.utc):
-        raise HTTPException(status_code=401, detail="Invalid or expired 2FA challenge")
+    if (
+        not challenge
+        or challenge.status != "Pending"
+        or as_naive_utc(challenge.expires_at) is None
+        or as_naive_utc(challenge.expires_at) < utc_now_naive()
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or expired 2FA challenge. Please sign in again.",
+        )
 
     user = db.query(User).filter(User.id == challenge.user_id).first()
     if not user or user.status != "Active":
         raise HTTPException(status_code=401, detail="Invalid 2FA challenge")
 
     if not verify_totp_or_backup_code(user, verify_request.code):
+        challenge.attempt_count = int(getattr(challenge, "attempt_count", 0) or 0) + 1
+        challenge_exhausted = challenge.attempt_count >= MAX_2FA_ATTEMPTS_PER_CHALLENGE
+        if challenge_exhausted:
+            challenge.status = "Expired"
         create_audit_log(
             db=db,
             module_name="Authentication",
@@ -237,17 +337,25 @@ def verify_login_2fa(
             current_user=user,
             entity_type="User",
             entity_id=user.id,
-            entity_label=f"{user.full_name} ({user.username})" if user.full_name else user.username,
-            remarks="Invalid 2FA code",
+            entity_label=user_entity_label(user),
+            remarks="Invalid 2FA code" + (" - challenge exhausted" if challenge_exhausted else ""),
             request_path="/auth/2fa/verify",
-            details={"challenge_id": challenge.challenge_id},
+            details={
+                "challenge_id": challenge.challenge_id,
+                "attempt_count": challenge.attempt_count,
+            },
         )
         db.commit()
+        if challenge_exhausted:
+            raise HTTPException(
+                status_code=401,
+                detail="Too many incorrect authentication codes. Please sign in again.",
+            )
         raise HTTPException(status_code=401, detail="Invalid authentication code")
 
     challenge.status = "Verified"
-    challenge.verified_at = datetime.now(timezone.utc)
-    user.last_login_at = datetime.now(timezone.utc)
+    challenge.verified_at = utc_now_naive()
+    user.last_login_at = utc_now_naive()
     user.last_login_ip = client_ip
     user.failed_login_count = 0
     user.locked_until = None
@@ -281,6 +389,7 @@ def verify_login_2fa(
     )
     db.commit()
 
+    security_flags = logged_in_user.get("security") or {}
     return {
         "message": "Login successful",
         "requires_2fa": False,
@@ -291,6 +400,9 @@ def verify_login_2fa(
         "role": logged_in_user["role"],
         "roles": logged_in_user["roles"],
         "permissions": logged_in_user["permissions"],
+        "must_change_password": bool(
+            security_flags.get("force_password_change") or security_flags.get("password_expired")
+        ),
     }
 
 
@@ -374,15 +486,19 @@ def change_own_password(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "Edit Own Security Settings", db)
+    # Changing your own password is an inherent right of every authenticated
+    # account (identity is re-verified with the current password). It is NOT
+    # gated behind "Edit Own Security Settings": new users are created with
+    # force_password_change="Yes" before any role is assigned, and must be
+    # able to satisfy that policy.
     if payload.new_password != payload.confirm_password:
         raise HTTPException(status_code=400, detail="New password and confirmation do not match")
-    validate_password_policy(payload.new_password, payload.current_password)
+    validate_password_policy(payload.new_password, payload.current_password, username=current_user.username)
     if not verify_password(payload.current_password, current_user.password_hash):
         raise HTTPException(status_code=401, detail="Current password is incorrect")
 
     current_user.password_hash = hash_password(payload.new_password)
-    current_user.password_changed_at = datetime.now(timezone.utc)
+    current_user.password_changed_at = utc_now_naive()
     current_user.force_password_change = "No"
     current_user.failed_login_count = 0
     current_user.locked_until = None
@@ -401,7 +517,18 @@ def change_own_password(
         details={"password_changed": True},
     )
     db.commit()
-    return {"message": "Password changed successfully"}
+
+    # Rotating the password invalidates every token issued before the change
+    # (see get_current_user_from_token). Hand the caller a fresh token pair so
+    # the current session continues without interruption.
+    access_token = create_access_token(data={"user_id": current_user.id, "username": current_user.username})
+    refresh_token = create_refresh_token(data={"user_id": current_user.id, "username": current_user.username})
+    return {
+        "message": "Password changed successfully",
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+    }
 
 
 # Rate-limiting: track forgot-password requests per IP in last 15 minutes
@@ -411,7 +538,7 @@ FORGOT_PASSWORD_MAX_PER_WINDOW = 3
 
 def _check_forgot_password_rate_limit(request: Request, db: Session):
     client_ip = request.client.host if request.client else "unknown"
-    cutoff = datetime.now(timezone.utc) - FORGOT_PASSWORD_WINDOW
+    cutoff = utc_now_naive() - FORGOT_PASSWORD_WINDOW
     recent_count = (
         db.query(PasswordResetRequest)
         .filter(
@@ -597,6 +724,22 @@ def refresh_access_token(
     if not user or user.status != "Active":
         raise HTTPException(status_code=401, detail="User not found or inactive")
 
+    # A locked account must not silently keep its session alive via refresh.
+    if as_naive_utc(user.locked_until) and as_naive_utc(user.locked_until) > utc_now_naive():
+        raise HTTPException(status_code=401, detail="Account is temporarily locked")
+
+    # Refresh tokens issued before the last password change are revoked
+    # (administrator reset or user-initiated change ends old sessions).
+    token_issued_at = decoded.get("iat")
+    password_changed = as_naive_utc(user.password_changed_at)
+    if token_issued_at is not None and password_changed is not None:
+        changed_ts = password_changed.replace(tzinfo=timezone.utc).timestamp()
+        if float(token_issued_at) + 60 < changed_ts:
+            raise HTTPException(
+                status_code=401,
+                detail="Credentials changed since this session started. Please sign in again.",
+            )
+
     new_access_token = create_access_token(
         data={"user_id": user.id, "username": user.username},
     )
@@ -627,7 +770,6 @@ def start_2fa_setup(
     db: Session = Depends(get_db),
 ):
     require_user_permission(current_user, "Edit Own Security Settings", db)
-    import pyotp
     secret = pyotp.random_base32()
     current_user.totp_secret_encrypted = encrypt_security_value(secret)
     current_user.totp_enabled = "No"
@@ -654,6 +796,10 @@ def start_2fa_setup(
     return {
         "message": "2FA setup started",
         "qr_code_data_url": build_totp_qr_data_url(provisioning_uri),
+        # Secret for manual entry when the QR code cannot be scanned.
+        "secret": secret,
+        "issuer": "Hydrocarbon Accounting System",
+        "account": current_user.username,
     }
 
 
@@ -674,7 +820,7 @@ def verify_2fa_setup(
 
     backup_codes = generate_backup_codes()
     current_user.totp_enabled = "Yes"
-    current_user.totp_confirmed_at = datetime.now(timezone.utc)
+    current_user.totp_confirmed_at = utc_now_naive()
     current_user.backup_codes_hash_json = hash_backup_codes(backup_codes)
     current_user.updated_at = datetime.now()
     create_audit_log(
@@ -767,9 +913,10 @@ def admin_reset_user_password(
     target = db.query(User).filter(User.id == user_id).first()
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
-    validate_password_policy(payload.new_password)
+    ensure_actor_may_administer_target(current_user, target, db)
+    validate_password_policy(payload.new_password, username=target.username)
     target.password_hash = hash_password(payload.new_password)
-    target.password_changed_at = datetime.now(timezone.utc)
+    target.password_changed_at = utc_now_naive()
     target.force_password_change = "Yes" if payload.force_password_change else "No"
     target.failed_login_count = 0
     target.locked_until = None
@@ -807,7 +954,7 @@ def admin_reset_user_password(
     for reset_request in pending_requests:
         reset_request.status = "Completed"
         reset_request.acted_by_user_id = current_user.id
-        reset_request.acted_at = datetime.now(timezone.utc)
+        reset_request.acted_at = utc_now_naive()
         reset_request.action_notes = payload.remarks or "Password reset completed by administrator"
         if reset_request.task_id:
             task = db.query(OperationTask).filter(OperationTask.id == reset_request.task_id).first()
@@ -846,3 +993,337 @@ def admin_reset_user_password(
                 )
     db.commit()
     return {"message": "Password reset successfully"}
+
+# ---------------------------------------------------------------------------
+# Enterprise security administration
+# ---------------------------------------------------------------------------
+
+def _serialize_user_security(user: User, pending_reset_count: int = 0) -> dict:
+    """Security posture of one account, for the administrator console."""
+    locked_until = as_naive_utc(user.locked_until)
+    is_locked = bool(locked_until and locked_until > utc_now_naive())
+    password_changed_at = as_naive_utc(user.password_changed_at)
+    return {
+        "id": user.id,
+        "full_name": user.full_name,
+        "username": user.username,
+        "email": user.email,
+        "department": user.department,
+        "designation": user.designation,
+        "status": user.status,
+        "is_locked": is_locked,
+        "locked_until": locked_until.isoformat() if is_locked else None,
+        "failed_login_count": int(user.failed_login_count or 0),
+        "totp_enabled": normalize_yes_no(getattr(user, "totp_enabled", "No")) == "Yes",
+        "force_2fa": normalize_yes_no(getattr(user, "force_2fa", "No")) == "Yes",
+        "force_password_change": normalize_yes_no(getattr(user, "force_password_change", "No")) == "Yes",
+        "password_expired": is_password_expired(user),
+        "password_changed_at": password_changed_at.isoformat() if password_changed_at else None,
+        "password_never_expires": normalize_yes_no(getattr(user, "password_never_expires", "No")) == "Yes",
+        "password_expiry_days": int(getattr(user, "password_expiry_days", 30) or 30),
+        "last_login_at": as_naive_utc(user.last_login_at).isoformat() if user.last_login_at else None,
+        "last_login_ip": user.last_login_ip,
+        "pending_reset_requests": int(pending_reset_count or 0),
+    }
+
+
+@router.get("/users/security-overview")
+def get_users_security_overview(
+    current_user: User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db),
+):
+    """Account security posture of every user the actor may administer.
+
+    Shows locked accounts, failed sign-in counters, 2FA status, password age
+    and pending reset requests so an administrator can act from one place.
+    """
+    from app.dependencies.permissions import (
+        get_user_location_codes,
+        user_has_any_permission,
+        user_is_within_actor_location_scope,
+        is_admin_user,
+    )
+
+    if not is_admin_user(current_user, db) and not user_has_any_permission(
+        current_user, ["Reset User Password", "Reset User 2FA"], db
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Permission required: Reset User Password",
+        )
+
+    users = db.query(User).order_by(User.full_name, User.id).all()
+    allowed_codes = get_user_location_codes(current_user, db)
+    if allowed_codes is not None:
+        users = [
+            target
+            for target in users
+            if user_is_within_actor_location_scope(current_user, target, db)
+        ]
+
+    pending_counts: dict[int, int] = {}
+    for row in (
+        db.query(PasswordResetRequest.user_id, func.count(PasswordResetRequest.id))
+        .filter(PasswordResetRequest.status == "Pending")
+        .group_by(PasswordResetRequest.user_id)
+        .all()
+    ):
+        pending_counts[row[0]] = row[1]
+
+    items = [_serialize_user_security(user, pending_counts.get(user.id, 0)) for user in users]
+    return {
+        "items": items,
+        "total": len(items),
+        "locked_count": sum(1 for item in items if item["is_locked"]),
+        "pending_reset_requests": sum(item["pending_reset_requests"] for item in items),
+        "two_fa_enabled_count": sum(1 for item in items if item["totp_enabled"]),
+    }
+
+
+@router.post("/users/{user_id}/security/unlock")
+def admin_unlock_user_account(
+    user_id: int,
+    current_user: User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db),
+):
+    """Clear a temporary lockout and the failed sign-in counter."""
+    require_user_permission(current_user, "Reset User Password", db)
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    ensure_actor_may_administer_target(current_user, target, db)
+
+    was_locked = bool(as_naive_utc(target.locked_until) and as_naive_utc(target.locked_until) > utc_now_naive())
+    previous_failed = int(target.failed_login_count or 0)
+    target.locked_until = None
+    target.failed_login_count = 0
+    target.updated_at = datetime.now()
+
+    create_audit_log(
+        db=db,
+        module_name="User Security",
+        action="Unlock User Account",
+        current_user=current_user,
+        entity_type="User",
+        entity_id=target.id,
+        entity_label=user_entity_label(target),
+        remarks="Account unlocked by administrator",
+        request_path=f"/auth/users/{user_id}/security/unlock",
+        details={
+            "target_username": target.username,
+            "was_locked": was_locked,
+            "previous_failed_login_count": previous_failed,
+        },
+    )
+    db.commit()
+    return {
+        "message": f"Account for {target.username} unlocked successfully",
+        "user": _serialize_user_security(target),
+    }
+
+
+@router.post("/users/{user_id}/security/reset-2fa")
+def admin_reset_user_2fa(
+    user_id: int,
+    current_user: User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db),
+):
+    """Remove a user's 2FA enrolment (lost device) without touching the password."""
+    require_user_permission(current_user, "Reset User 2FA", db)
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    ensure_actor_may_administer_target(current_user, target, db)
+    if normalize_yes_no(getattr(target, "totp_enabled", "No")) != "Yes" and not target.totp_secret_encrypted:
+        raise HTTPException(status_code=400, detail="2FA is not enabled for this user")
+
+    target.totp_enabled = "No"
+    target.totp_secret_encrypted = None
+    target.totp_confirmed_at = None
+    target.backup_codes_hash_json = None
+    target.updated_at = datetime.now()
+
+    create_audit_log(
+        db=db,
+        module_name="User Security",
+        action="Admin Reset User 2FA",
+        current_user=current_user,
+        entity_type="User",
+        entity_id=target.id,
+        entity_label=user_entity_label(target),
+        remarks="2FA reset by administrator",
+        request_path=f"/auth/users/{user_id}/security/reset-2fa",
+        details={"target_username": target.username},
+    )
+    db.commit()
+    return {
+        "message": f"2FA reset for {target.username}. The user can enrol again from Profile & Security.",
+        "user": _serialize_user_security(target),
+    }
+
+
+@router.post("/users/{user_id}/security/require-password-change")
+def admin_require_password_change(
+    user_id: int,
+    current_user: User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db),
+):
+    """Flag an account so the user must set a new password at next sign-in."""
+    require_user_permission(current_user, "Reset User Password", db)
+    target = db.query(User).filter(User.id == user_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    ensure_actor_may_administer_target(current_user, target, db)
+    if target.id == current_user.id:
+        raise HTTPException(status_code=400, detail="Use Change Password to rotate your own password")
+
+    target.force_password_change = "Yes"
+    target.updated_at = datetime.now()
+    create_audit_log(
+        db=db,
+        module_name="User Security",
+        action="Require Password Change",
+        current_user=current_user,
+        entity_type="User",
+        entity_id=target.id,
+        entity_label=user_entity_label(target),
+        remarks="User must change password at next sign-in",
+        request_path=f"/auth/users/{user_id}/security/require-password-change",
+        details={"target_username": target.username},
+    )
+    db.commit()
+    return {
+        "message": f"{target.username} must change their password at next sign-in",
+        "user": _serialize_user_security(target),
+    }
+
+
+def _serialize_reset_request(reset_request: PasswordResetRequest, user: User | None) -> dict:
+    return {
+        "id": reset_request.id,
+        "request_number": reset_request.request_number,
+        "user_id": reset_request.user_id,
+        "username": reset_request.username,
+        "full_name": user.full_name if user else None,
+        "user_status": user.status if user else None,
+        "user_is_locked": bool(
+            user
+            and as_naive_utc(user.locked_until)
+            and as_naive_utc(user.locked_until) > utc_now_naive()
+        ),
+        "status": reset_request.status,
+        "reason": reset_request.reason,
+        "reset_2fa": normalize_yes_no(reset_request.reset_2fa) == "Yes",
+        "requested_at": as_naive_utc(reset_request.requested_at).isoformat() if reset_request.requested_at else None,
+        "requested_by_ip": reset_request.requested_by_ip,
+        "task_id": reset_request.task_id,
+        "acted_by_user_id": reset_request.acted_by_user_id,
+        "acted_at": as_naive_utc(reset_request.acted_at).isoformat() if reset_request.acted_at else None,
+        "action_notes": reset_request.action_notes,
+    }
+
+
+@router.get("/password-reset-requests")
+def list_password_reset_requests(
+    status: str | None = Query(None),
+    current_user: User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db),
+):
+    """Queue of self-service password reset requests for administrators."""
+    require_user_permission(current_user, "Reset User Password", db)
+    from app.dependencies.permissions import (
+        get_user_location_codes,
+        user_is_within_actor_location_scope,
+    )
+
+    query = db.query(PasswordResetRequest, User).outerjoin(
+        User, User.id == PasswordResetRequest.user_id
+    )
+    cleaned_status = clean_optional_text(status)
+    if cleaned_status and cleaned_status.lower() != "all":
+        query = query.filter(PasswordResetRequest.status.ilike(cleaned_status))
+    rows = query.order_by(PasswordResetRequest.requested_at.desc(), PasswordResetRequest.id.desc()).all()
+
+    allowed_codes = get_user_location_codes(current_user, db)
+    items = []
+    for reset_request, user in rows:
+        if (
+            allowed_codes is not None
+            and user is not None
+            and not user_is_within_actor_location_scope(current_user, user, db)
+        ):
+            continue
+        items.append(_serialize_reset_request(reset_request, user))
+    return {
+        "items": items,
+        "total": len(items),
+        "pending_count": sum(1 for item in items if item["status"] == "Pending"),
+    }
+
+
+@router.post("/password-reset-requests/{request_id}/decline")
+def decline_password_reset_request(
+    request_id: int,
+    payload: DeclinePasswordResetRequest,
+    current_user: User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db),
+):
+    """Close a pending reset request without changing the user's password."""
+    require_user_permission(current_user, "Reset User Password", db)
+    reset_request = (
+        db.query(PasswordResetRequest).filter(PasswordResetRequest.id == request_id).first()
+    )
+    if not reset_request:
+        raise HTTPException(status_code=404, detail="Password reset request not found")
+    if reset_request.status != "Pending":
+        raise HTTPException(status_code=400, detail="Only pending requests can be declined")
+
+    target = db.query(User).filter(User.id == reset_request.user_id).first()
+    if target:
+        ensure_actor_may_administer_target(current_user, target, db)
+
+    reset_request.status = "Declined"
+    reset_request.acted_by_user_id = current_user.id
+    reset_request.acted_at = utc_now_naive()
+    reset_request.action_notes = clean_optional_text(payload.notes) or "Declined by administrator"
+
+    if reset_request.task_id:
+        task = db.query(OperationTask).filter(OperationTask.id == reset_request.task_id).first()
+        if task and task.status in ["Pending", "In Progress"]:
+            old_status = task.status
+            task.status = "Closed"
+            task.acted_by_user_id = current_user.id
+            task.acted_at = datetime.now()
+            task.action_taken = "Password Reset Declined"
+            task.remarks = reset_request.action_notes
+            task.updated_at = datetime.now()
+            from app.services.transaction_helpers import add_operation_task_event
+
+            add_operation_task_event(
+                db=db,
+                task=task,
+                event_type="Password Reset Declined",
+                current_user=current_user,
+                old_status=old_status,
+                new_status=task.status,
+                notes=task.remarks,
+                details={"password_reset_request_id": reset_request.id},
+            )
+
+    create_audit_log(
+        db=db,
+        module_name="User Security",
+        action="Decline Password Reset Request",
+        current_user=current_user,
+        entity_type="PasswordResetRequest",
+        entity_id=reset_request.id,
+        entity_label=reset_request.request_number,
+        remarks=reset_request.action_notes,
+        request_path=f"/auth/password-reset-requests/{request_id}/decline",
+        details={"target_username": reset_request.username},
+    )
+    db.commit()
+    return {
+        "message": f"Password reset request {reset_request.request_number} declined",
+        "request": _serialize_reset_request(reset_request, target),
+    }

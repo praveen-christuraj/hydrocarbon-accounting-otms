@@ -52,6 +52,10 @@ class DevResetPasswordRequest(BaseModel):
     new_password: str = Field(min_length=12)
 
 
+class DeclinePasswordResetRequest(BaseModel):
+    notes: Optional[str] = None
+
+
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
 

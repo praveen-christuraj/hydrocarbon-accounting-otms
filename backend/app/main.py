@@ -40,6 +40,7 @@ from app.models import (
 
 from app.utils.db_migrations import (
     ensure_user_security_columns,
+    ensure_auth_login_challenge_columns,
     ensure_operation_ticket_number_column,
     ensure_operation_template_layout_columns,
     ensure_tank_stock_ledger_accounting_columns,
@@ -69,6 +70,7 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     ensure_user_role_multi_role_constraint()
     ensure_user_security_columns()
+    ensure_auth_login_challenge_columns()
     ensure_operation_ticket_number_column()
     ensure_operation_template_layout_columns()
     ensure_tank_stock_ledger_accounting_columns()
