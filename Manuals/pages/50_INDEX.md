@@ -16,7 +16,7 @@
 | 53 | [53_PermissionPresets.md](53_PermissionPresets.md) | rolePermissionApi, permissionApi | role_permissions.py | RolePermission (presets stored in the browser) |
 | 06 | [06_UserRoleAssignment.md](06_UserRoleAssignment.md) | userRoleApi | user_roles.py | UserRole |
 | 07 | [07_AccessSummary.md](07_AccessSummary.md) | (composite) | (composite) | (composite) |
-| 08 | [08_ProfileSecurity.md](08_ProfileSecurity.md) | securityApi | auth.py | User |
+| 08 | [08_ProfileSecurity.md](08_ProfileSecurity.md) | securityApi | auth.py + user_security.py | User, PasswordResetRequest, AuthLoginChallenge |
 
 ## Master Data
 | # | Page | API Module | Backend Router | Model |

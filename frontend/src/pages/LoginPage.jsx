@@ -129,7 +129,7 @@ function LoginPage({ onLogin }) {
       setLoading(true)
       const response = await requestPasswordReset(targetUsername, resetReason, reset2FA)
       setError('')
-      setSuccessMsg(response.message || 'Password reset request submitted. Check your email or contact administrator.')
+      setSuccessMsg(response.message || 'If the account exists, an administrator will review the reset request. You can track it from Profile & Security after signing in.')
       setShowReset(false)
       setResetUsername('')
       setResetReason('')
@@ -354,8 +354,8 @@ function LoginPage({ onLogin }) {
                     </div>
                     <div style={{ display: 'flex', gap: 6 }}>
                       <label className="login-checkbox-label" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#5b6b7f', fontWeight: 500 }}>
-                        <input type="checkbox" checked={reset2FA} onChange={(e) => setReset2FA(e.target.checked)} style={{ accentColor: '#12315f', width: 16, height: 16 }} />
-                        Require 2FA verification
+                        <input type="checkbox" checked={reset2FA} onChange={(e) => setReset2FA(e.target.checked)} style={{ accentColor: 'var(--primary)', width: 16, height: 16 }} />
+                        Also reset 2FA
                       </label>
                       <div style={{ flex: 1 }} />
                       <button type="button" onClick={() => setShowReset(false)} className="login-btn-secondary" style={{ padding: '8px 14px', fontSize: 13 }}>Cancel</button>

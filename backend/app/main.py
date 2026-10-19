@@ -40,6 +40,7 @@ from app.models import (
 
 from app.utils.db_migrations import (
     ensure_user_security_columns,
+    ensure_auth_login_challenge_columns,
     ensure_operation_ticket_number_column,
     ensure_operation_template_layout_columns,
     ensure_tank_stock_ledger_accounting_columns,
@@ -69,6 +70,7 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     ensure_user_role_multi_role_constraint()
     ensure_user_security_columns()
+    ensure_auth_login_challenge_columns()
     ensure_operation_ticket_number_column()
     ensure_operation_template_layout_columns()
     ensure_tank_stock_ledger_accounting_columns()
@@ -120,7 +122,7 @@ from app.routers import (
     operation_tasks, operation_templates, operation_transactions, operation_types,
     permissions, prime_mover_tanker_links, reports, role_locations, role_permissions, roles,
     shuttle_fso_voyages, system_notifications, table11_factors, tank_operations,
-    tank_operation_summary, tank_stock_ledger, tanker_tracking, tracking_module_configs, user_locations, user_roles, users, vessel_operations,
+    tank_operation_summary, tank_stock_ledger, tanker_tracking, tracking_module_configs, user_locations, user_roles, user_security, users, vessel_operations,
     vessel_stock_ledger, workflow_policies,
     out_turn_summary,
 )
@@ -168,6 +170,7 @@ app.include_router(tanker_tracking.router)
 app.include_router(tracking_module_configs.router)
 app.include_router(user_locations.router)
 app.include_router(user_roles.router)
+app.include_router(user_security.router)
 app.include_router(users.router)
 app.include_router(vessel_operations.router)
 app.include_router(vessel_stock_ledger.router)

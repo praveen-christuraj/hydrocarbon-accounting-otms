@@ -28,6 +28,16 @@ const readResponseData = async (response) => {
   return null
 }
 
+// Notify the SPA when the stored credentials can no longer be refreshed (for
+// example after an administrator resets the password or revokes sessions).
+// App.jsx listens for this and returns to the sign-in screen instead of
+// leaving the user on a half-broken page.
+const notifySessionExpired = () => {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('auth:session-expired'))
+  }
+}
+
 const formatApiError = (data) => {
   if (!data) return 'API request failed'
   if (typeof data.detail === 'string') return data.detail
@@ -78,6 +88,7 @@ const tryRefreshAndRetry = async (endpoint, options) => {
   const refreshed = await refreshPromise
   if (!refreshed) {
     clearAccessToken()
+    notifySessionExpired()
     throw new Error('Session expired. Please login again.')
   }
 
@@ -89,6 +100,10 @@ const tryRefreshAndRetry = async (endpoint, options) => {
 
   const retryData = await readResponseData(retryResponse)
   if (!retryResponse.ok) {
+    if (retryResponse.status === 401) {
+      clearAccessToken()
+      notifySessionExpired()
+    }
     throw new Error(formatApiError(retryData))
   }
   return retryData
@@ -182,6 +197,7 @@ export const apiDownload = async (endpoint, filename) => {
         }
       }
       clearAccessToken()
+      notifySessionExpired()
       throw new Error('Session expired. Please login again.')
     }
 

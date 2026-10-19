@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { createUser, deleteUser, getUsers, updateUser } from '../api/userApi'
 import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
 import DataTableToolbar from '../components/common/DataTableToolbar'
@@ -8,6 +9,7 @@ import { usePermissions } from '../hooks/usePermissions'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
 import { logUiAction } from '../utils/actionLogger'
+import { PasswordPolicyChecklist, SecurityPill } from '../components/security/SecurityPrimitives'
 
 const FETCH_CHUNK = 200
 const MAX_USERS = 10000
@@ -51,6 +53,7 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
   const [page, setPage] = useState(1)
   const pageSize = usePageSize()
   const confirm = useConfirm()
+  const navigate = useNavigate()
 
   const columns = useAutoColumns(users, {
     exclude: ['password'],
@@ -65,8 +68,11 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
   const canCreate = hasPermission('Create User')
   const canEdit = hasPermission('Edit User')
   const canDelete = hasPermission('Delete User')
+  const canViewSecurity = hasPermission('View User Security')
   const canWriteUser = canCreate || canEdit
   const isSelfEdit = editId !== null && editId === loggedInUser?.id
+  const hasRowActions = canEdit || canDelete || canViewSecurity
+  const tableColumnCount = 6 + (canViewSecurity ? 1 : 0) + (hasRowActions ? 1 : 0)
 
   const pwStrength = useMemo(() => calcPasswordStrength(user.password), [user.password])
 
@@ -137,8 +143,8 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
       }
     }
 
-    if (editId !== null && user.password && editId === loggedInUser?.id) {
-      errors.password = 'You are changing your own password. Make sure you remember the new one.'
+    if (editId !== null && editId === loggedInUser?.id && user.password) {
+      errors.password = 'Use Profile & Security to change your own password.'
     }
 
     const usernameAlreadyExists = users.some((item) => {
@@ -398,39 +404,62 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
         </div>
 
         <div>
-          <label>Password {editId !== null ? '(leave blank to keep same)' : ''}</label>
-          <div className="password-input-wrapper">
-            <input
-              name="password"
-              type="password"
-              value={user.password}
-              onChange={handleChange}
-              placeholder={editId !== null ? 'New password (optional)' : 'Enter password'}
-              aria-invalid={fieldErrors.password ? 'true' : undefined}
-            />
-          </div>
-          {fieldErrors.password && (
-            <small className="field-error">{fieldErrors.password}</small>
-          )}
-          {user.password.length > 0 && (
-            <div className="password-strength">
-              <div
-                className="password-strength-bar"
-                style={{ width: `${pwStrength.pct}%`, background: pwStrength.color }}
-              />
-              <div className={`password-strength-text ${pwStrength.level}`}>
-                {pwStrength.label}
-              </div>
+          <label>Password {editId !== null && !isSelfEdit ? '(leave blank to keep same)' : ''}</label>
+          {isSelfEdit ? (
+            <div className="security-muted-text">
+              Your own password is managed from{' '}
+              <button
+                type="button"
+                className="btn-ghost btn-compact"
+                onClick={() => navigate('/profile-security')}
+              >
+                Profile &amp; Security
+              </button>
+              . Changing it here would sign you out of this session.
             </div>
-          )}
-          {user.password.length > 0 && !fieldErrors.password && (
-            <small style={{ color: 'var(--text-muted)', marginTop: 4 }}>
-              Minimum 12 characters with uppercase, lowercase, number &amp; special character
-            </small>
+          ) : (
+            <>
+              <div className="password-input-wrapper">
+                <input
+                  name="password"
+                  type="password"
+                  value={user.password}
+                  onChange={handleChange}
+                  placeholder={editId !== null ? 'New password (optional)' : 'Enter password'}
+                  aria-invalid={fieldErrors.password ? 'true' : undefined}
+                />
+              </div>
+              {fieldErrors.password && (
+                <small className="field-error">{fieldErrors.password}</small>
+              )}
+              {user.password.length > 0 && (
+                <div className="password-strength">
+                  <div
+                    className="password-strength-bar"
+                    style={{ width: `${pwStrength.pct}%`, background: pwStrength.color }}
+                  />
+                  <div className={`password-strength-text ${pwStrength.level}`}>
+                    {pwStrength.label}
+                  </div>
+                </div>
+              )}
+              {user.password.length > 0 && (
+                <PasswordPolicyChecklist
+                  password={user.password}
+                  user={{ username: user.username, fullName: user.fullName }}
+                />
+              )}
+              {editId !== null && user.password.length === 0 && (
+                <small className="security-muted-text">
+                  Leave blank to keep the existing password. For an existing user, prefer Reset
+                  password in the Security console.
+                </small>
+              )}
+            </>
           )}
         </div>
 
-        {user.password.length > 0 && (
+        {!isSelfEdit && user.password.length > 0 && (
           <div>
             <label>Confirm Password</label>
             <input
@@ -508,20 +537,21 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
             <th>Department</th>
             <th>Designation</th>
             <th>Status</th>
-            {(canEdit || canDelete) && <th>Actions</th>}
+            {canViewSecurity && <th>Security</th>}
+            {hasRowActions && <th>Actions</th>}
           </tr>
         </thead>
 
         <tbody>
           {listLoading && users.length === 0 ? (
             <tr>
-              <td colSpan={canEdit || canDelete ? 7 : 6} className="empty-table">
+              <td colSpan={tableColumnCount} className="empty-table">
                 Loading users…
               </td>
             </tr>
           ) : filters.filteredRows.length === 0 ? (
             <tr>
-              <td colSpan={canEdit || canDelete ? 7 : 6} className="empty-table">
+              <td colSpan={tableColumnCount} className="empty-table">
                 {users.length > 0 ? 'No users match the current filters.' : 'No users found.'}
               </td>
             </tr>
@@ -538,7 +568,31 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
                     {item.status}
                   </span>
                 </td>
-                {(canEdit || canDelete) && (
+                {canViewSecurity && (
+                <td>
+                  <div className="security-cell-stack">
+                    {item.isLocked ? (
+                      <SecurityPill tone="locked" icon="lock">Locked</SecurityPill>
+                    ) : (
+                      <SecurityPill tone={item.status === 'Active' ? 'active' : 'inactive'}>
+                        {item.lockState || 'Unlocked'}
+                      </SecurityPill>
+                    )}
+                    <SecurityPill
+                      tone={item.totpEnabled ? 'enabled' : item.force2FA ? 'warning' : 'disabled'}
+                      icon="shieldCheck"
+                    >
+                      {item.totpEnabled ? '2FA' : item.force2FA ? '2FA required' : 'No 2FA'}
+                    </SecurityPill>
+                    {(item.passwordExpired || item.forcePasswordChange) && (
+                      <SecurityPill tone="warning" icon="key">
+                        {item.passwordExpired ? 'Password expired' : 'Change password'}
+                      </SecurityPill>
+                    )}
+                  </div>
+                </td>
+                )}
+                {hasRowActions && (
                   <td>
                     {canEdit && (
                       <button
@@ -547,6 +601,18 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
                         disabled={loading}
                       >
                         Edit
+                      </button>
+                    )}
+
+                    {canViewSecurity && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          navigate(`/security?user_id=${item.id}`)
+                        }
+                        disabled={loading}
+                      >
+                        Security
                       </button>
                     )}
 

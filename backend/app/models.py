@@ -29,10 +29,43 @@ class User(Base):
     totp_confirmed_at = Column(DateTime, nullable=True)
     force_2fa = Column(String(20), nullable=False, default="No")
     backup_codes_hash_json = Column(JSONB, nullable=True)
+    # Pending TOTP secret (2FA setup or re-enrolment). Keeping the candidate
+    # secret separate means starting setup can never disable an active 2FA.
+    pending_totp_secret_encrypted = Column(Text, nullable=True)
+    totp_setup_started_at = Column(DateTime, nullable=True)
+    totp_last_used_step = Column(Integer, nullable=True)
+    # Opaque stamp embedded in JWTs. Rotating it revokes every existing
+    # access/refresh token for the account (password reset, forced sign-out).
+    security_stamp = Column(String(64), nullable=True, index=True)
+    password_history_json = Column(JSONB, nullable=True)
+    locked_reason = Column(String(255), nullable=True)
+    locked_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     status = Column(String(20), nullable=False, default="Active")
     all_locations_access = Column(String(20), nullable=False, default="No")
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    @property
+    def is_locked(self) -> bool:
+        """True while the account is inside a temporary or administrative lock."""
+        lock_value = getattr(self, "locked_until", None)
+        if not lock_value:
+            return False
+        from app.utils.time import to_utc_naive, utcnow
+        return to_utc_naive(lock_value) > utcnow()
+
+    @property
+    def password_expired(self) -> bool:
+        from app.utils.password_policy import is_password_expired
+        return is_password_expired(self)
+
+    @property
+    def lock_state(self) -> str:
+        if self.is_locked:
+            return "Locked"
+        if str(self.status or "").strip().lower() != "active":
+            return str(self.status or "Inactive")
+        return "Unlocked"
 
 
 class AuthLoginChallenge(Base):
@@ -45,6 +78,8 @@ class AuthLoginChallenge(Base):
     expires_at = Column(DateTime, nullable=False, index=True)
     ip_address = Column(String(80), nullable=True)
     user_agent = Column(Text, nullable=True)
+    attempt_count = Column(Integer, nullable=False, default=0)
+    last_attempt_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     verified_at = Column(DateTime, nullable=True)
 

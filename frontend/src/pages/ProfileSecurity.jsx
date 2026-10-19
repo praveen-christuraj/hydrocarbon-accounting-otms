@@ -1,422 +1,67 @@
-import { useMemo, useState } from 'react'
-import Icon from '../components/common/Icon'
+import { useCallback, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import PageHeader from '../components/common/PageHeader'
 import AlertMessage from '../components/common/AlertMessage'
-import useActionFeedback from '../hooks/useActionFeedback'
-import {
-  adminResetUserPassword,
-  changeOwnPassword,
-  disableOwn2FA,
-  regenerate2FABackupCodes,
-  start2FASetup,
-  verify2FASetup,
-} from '../api/securityApi'
+import Icon from '../components/common/Icon'
+import usePermissions from '../hooks/usePermissions'
+import MySecurityPanel from '../components/security/MySecurityPanel'
 
-const calcPasswordStrength = (pw) => {
-  let score = 0
-  if (pw.length >= 8) score += 1
-  if (pw.length >= 12) score += 1
-  if (/[a-z]/.test(pw)) score += 1
-  if (/[A-Z]/.test(pw)) score += 1
-  if (/[0-9]/.test(pw)) score += 1
-  if (/[^a-zA-Z0-9]/.test(pw)) score += 1
-  if (score <= 2) return { level: 'weak', label: 'Weak', pct: 25, color: '#dc2626' }
-  if (score <= 3) return { level: 'fair', label: 'Fair', pct: 50, color: '#ea580c' }
-  if (score <= 5) return { level: 'good', label: 'Good', pct: 75, color: '#ca8a04' }
-  return { level: 'strong', label: 'Strong', pct: 100, color: '#16a34a' }
-}
-
-function ProfileSecurity({ loggedInUser, users = [] }) {
-  const [passwordForm, setPasswordForm] = useState({
-    currentPassword: '',
-    newPassword: '',
-    confirmPassword: '',
-  })
-  const [setupData, setSetupData] = useState(null)
-  const [setupCode, setSetupCode] = useState('')
-  const [backupCodes, setBackupCodes] = useState([])
-  const [disableForm, setDisableForm] = useState({ currentPassword: '', code: '' })
-  const [adminForm, setAdminForm] = useState({
-    userId: '',
-    newPassword: '',
-    forcePasswordChange: true,
-    reset2FA: false,
-    remarks: '',
-  })
-  const [loading, setLoading] = useState(false)
-  // Action feedback: little pop-up (toast) + inline message near the action
-  // area (owner rule 8). Aliased to the page's existing variable names.
-  const feedback = useActionFeedback()
-  const {
-    successMsg: success,
-    errorMsg: error,
-    notifySuccess: setSuccess,
-    notifyError: setError,
-    clearSuccess,
-    clearError,
-  } = feedback
-  const [confirmAction, setConfirmAction] = useState(null)
-  const [showPassword, setShowPassword] = useState({})
-  const [fieldErrors, setFieldErrors] = useState({})
-
-  const isAdminBootstrap =
-    loggedInUser?.isAdmin === true ||
-    String(loggedInUser?.username || '').trim().toLowerCase() === 'admin' ||
-    (Array.isArray(loggedInUser?.roles) && loggedInUser.roles.some((role) =>
-      String(role?.role_name || role?.roleName || '').trim().toLowerCase() === 'admin'
-    ))
-
-  const hasPermission = (permissionName) => {
-    if (isAdminBootstrap) return true
-    return (loggedInUser?.permissions || []).some(
-      (permission) => permission.permissionName === permissionName
-    )
-  }
+/**
+ * Profile & Security – the signed-in user's own security page.
+ *
+ * Owner permissions:
+ *   View Own Security Settings / Edit Own Security Settings
+ * Administrator console (other users) lives on /security.
+ */
+function ProfileSecurity({ loggedInUser, users = [], onUserRefresh }) {
+  const { hasPermission } = usePermissions(loggedInUser)
+  const navigate = useNavigate()
+  const [expiryDismissed, setExpiryDismissed] = useState(false)
 
   const security = loggedInUser?.security || {}
-  const pwStrength = useMemo(() => calcPasswordStrength(passwordForm.newPassword), [passwordForm.newPassword])
+  const canViewConsole = hasPermission('View User Security')
+  const passwordExpired = Boolean(security.passwordExpired)
+  const forcePasswordChange = Boolean(security.forcePasswordChange)
 
-  const clearMessages = () => { clearError(); clearSuccess() }
-  const clearConfirm = () => setConfirmAction(null)
-
-  const submitPasswordChange = async (e) => {
-    e.preventDefault()
-    clearMessages()
-    setFieldErrors({})
-
-    const errors = {}
-    if (!passwordForm.currentPassword.trim()) errors.currentPassword = 'Current password is required'
-    if (!passwordForm.newPassword.trim()) errors.newPassword = 'New password is required'
-    if (passwordForm.newPassword !== passwordForm.confirmPassword) errors.confirmPassword = 'Passwords do not match'
-    if (Object.keys(errors).length) { setFieldErrors(errors); return }
-
-    setLoading(true)
-    try {
-      const res = await changeOwnPassword(passwordForm)
-      setSuccess(res.message || 'Password changed successfully')
-      setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' })
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
+  const refreshUser = useCallback(async () => {
+    if (onUserRefresh) {
+      await onUserRefresh()
     }
-  }
-
-  const begin2FASetup = async () => {
-    clearMessages()
-    setLoading(true)
-    try {
-      const data = await start2FASetup()
-      setSetupData(data)
-      setSetupCode('')
-      setBackupCodes([])
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const submit2FASetup = async (e) => {
-    e.preventDefault()
-    clearMessages()
-    if (!setupCode.trim()) { setError('Authentication code is required'); return }
-
-    setLoading(true)
-    try {
-      const data = await verify2FASetup(setupCode)
-      setBackupCodes(data.backup_codes || [])
-      setSetupData(null)
-      setSetupCode('')
-      setSuccess(data.message || '2FA enabled')
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleRegenerateCodes = async () => {
-    clearMessages()
-    setLoading(true)
-    try {
-      const data = await regenerate2FABackupCodes()
-      setBackupCodes(data.backup_codes || [])
-      setSuccess(data.message || 'Backup codes regenerated')
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const submitDisable2FA = async (e) => {
-    e.preventDefault()
-    clearMessages()
-    setFieldErrors({})
-
-    const errors = {}
-    if (!disableForm.currentPassword.trim()) errors.currentPassword = 'Current password is required'
-    if (!disableForm.code.trim()) errors.code = '2FA code is required'
-    if (Object.keys(errors).length) { setFieldErrors(errors); return }
-
-    setLoading(true)
-    try {
-      const data = await disableOwn2FA(disableForm.currentPassword, disableForm.code)
-      setSuccess(data.message || '2FA disabled')
-      setDisableForm({ currentPassword: '', code: '' })
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const submitAdminReset = async (e) => {
-    e.preventDefault()
-    clearMessages()
-
-    if (!adminForm.userId) { setError('Select a user'); return }
-
-    setLoading(true)
-    try {
-      const data = await adminResetUserPassword(Number(adminForm.userId), adminForm)
-      setSuccess(data.message || 'Password reset successfully')
-      setAdminForm({
-        userId: '',
-        newPassword: '',
-        forcePasswordChange: true,
-        reset2FA: false,
-        remarks: '',
-      })
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const toggleShowPassword = (field) => {
-    setShowPassword({ ...showPassword, [field]: !showPassword[field] })
-  }
+  }, [onUserRefresh])
 
   return (
     <div>
-      <div className="page-title">
-        <div>
-          <h2>Profile & Security</h2>
-          <p>Manage your password, 2FA, and account recovery controls.</p>
-        </div>
-      </div>
-
-      <AlertMessage tone="success" message={success} onDismiss={clearSuccess} />
-      <AlertMessage tone="error" message={error} onDismiss={clearError} />
-
-      <div className="info-box">
-        User: {loggedInUser?.fullName} ({loggedInUser?.username}) | 2FA:{' '}
-        {security.totp_enabled ? 'Enabled' : 'Disabled'}
-      </div>
-
-      <div className="section-title">
-        <h3>Change Password</h3>
-      </div>
-      <form onSubmit={submitPasswordChange}>
-        <div>
-          <label>Current Password</label>
-          <div className="password-input-wrapper">
-            <input
-              type={showPassword.currentPassword ? 'text' : 'password'}
-              value={passwordForm.currentPassword}
-              onChange={(e) => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })}
-              aria-invalid={fieldErrors.currentPassword ? 'true' : undefined}
-            />
-            <button type="button" className="password-toggle" onClick={() => toggleShowPassword('currentPassword')} tabIndex={-1} aria-label={showPassword.currentPassword ? 'Hide password' : 'Show password'}>
-              <Icon name={showPassword.currentPassword ? 'eyeOff' : 'eye'} size={16} />
+      <PageHeader
+        title="Profile & Security"
+        description="Your password, two-factor authentication, recovery codes and account security history."
+        actions={
+          canViewConsole ? (
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => navigate('/security')}
+            >
+              <Icon name="shieldCheck" size={15} />
+              Security console
             </button>
-          </div>
-          {fieldErrors.currentPassword && <small className="field-error">{fieldErrors.currentPassword}</small>}
-        </div>
-        <div>
-          <label>New Password</label>
-          <div className="password-input-wrapper">
-            <input
-              type={showPassword.newPassword ? 'text' : 'password'}
-              value={passwordForm.newPassword}
-              onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
-              aria-invalid={fieldErrors.newPassword ? 'true' : undefined}
-            />
-            <button type="button" className="password-toggle" onClick={() => toggleShowPassword('newPassword')} tabIndex={-1} aria-label={showPassword.newPassword ? 'Hide password' : 'Show password'}>
-              <Icon name={showPassword.newPassword ? 'eyeOff' : 'eye'} size={16} />
-            </button>
-          </div>
-          {fieldErrors.newPassword && <small className="field-error">{fieldErrors.newPassword}</small>}
-          {passwordForm.newPassword.length > 0 && (
-            <div className="password-strength">
-              <div className="password-strength-bar" style={{ width: `${pwStrength.pct}%`, background: pwStrength.color }} />
-              <div className={`password-strength-text ${pwStrength.level}`}>{pwStrength.label}</div>
-            </div>
-          )}
-        </div>
-        <div>
-          <label>Confirm Password</label>
-          <div className="password-input-wrapper">
-            <input
-              type={showPassword.confirmPassword ? 'text' : 'password'}
-              value={passwordForm.confirmPassword}
-              onChange={(e) => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })}
-              aria-invalid={fieldErrors.confirmPassword ? 'true' : undefined}
-            />
-            <button type="button" className="password-toggle" onClick={() => toggleShowPassword('confirmPassword')} tabIndex={-1} aria-label={showPassword.confirmPassword ? 'Hide password' : 'Show password'}>
-              <Icon name={showPassword.confirmPassword ? 'eyeOff' : 'eye'} size={16} />
-            </button>
-          </div>
-          {fieldErrors.confirmPassword && <small className="field-error">{fieldErrors.confirmPassword}</small>}
-        </div>
-        <div className="form-actions">
-          <button type="submit" disabled={loading}>Change Password</button>
-        </div>
-      </form>
+          ) : null
+        }
+      />
 
-      <div className="section-title">
-        <h3>Two-Factor Authentication</h3>
-      </div>
-      {!security.totp_enabled && (
-        <div className="form-actions">
-          <button type="button" onClick={begin2FASetup} disabled={loading}>Start 2FA Setup</button>
-        </div>
+      {!expiryDismissed && (forcePasswordChange || passwordExpired) && (
+        <AlertMessage
+          tone={passwordExpired ? 'error' : 'warning'}
+          title={passwordExpired ? 'Your password has expired' : 'Password change required'}
+          message={
+            passwordExpired
+              ? 'Change your password now. Only this page, sign-out and two-factor recovery remain available until you do.'
+              : 'Your administrator requires a new password before you continue using the system.'
+          }
+          onDismiss={() => setExpiryDismissed(true)}
+        />
       )}
 
-      {setupData && (
-        <form onSubmit={submit2FASetup}>
-          <div className="full-width-field">
-            <label>Scan QR Code</label>
-            <img src={setupData.qr_code_data_url} alt="2FA QR Code" width="220" />
-            <small>Manual code: {setupData.secret}</small>
-          </div>
-          <div>
-            <label>Authentication Code</label>
-            <input value={setupCode} onChange={(e) => setSetupCode(e.target.value)} placeholder="6-digit code" />
-          </div>
-          <div className="form-actions">
-            <button type="submit" disabled={loading}>Verify & Enable</button>
-          </div>
-        </form>
-      )}
-
-      {security.totp_enabled && (
-        <>
-          <div className="form-actions">
-            {confirmAction === 'regenerateCodes' ? (
-              <span>
-                <button type="button" onClick={() => { clearConfirm(); handleRegenerateCodes() }} disabled={loading} style={{ background: 'var(--warning)', color: 'var(--text-inverse)' }}>
-                  {loading ? 'Working...' : 'Confirm Regenerate'}
-                </button>
-                <button className="btn-secondary" type="button" onClick={clearConfirm} disabled={loading}>Cancel</button>
-              </span>
-            ) : (
-              <button type="button" onClick={() => setConfirmAction('regenerateCodes')} disabled={loading}>Regenerate Backup Codes</button>
-            )}
-          </div>
-          <form onSubmit={submitDisable2FA}>
-            <div>
-              <label>Current Password</label>
-              <div className="password-input-wrapper">
-                <input
-                  type={showPassword.disablePassword ? 'text' : 'password'}
-                  value={disableForm.currentPassword}
-                  onChange={(e) => setDisableForm({ ...disableForm, currentPassword: e.target.value })}
-                  aria-invalid={fieldErrors.currentPassword ? 'true' : undefined}
-                />
-                <button type="button" className="password-toggle" onClick={() => toggleShowPassword('disablePassword')} tabIndex={-1} aria-label={showPassword.disablePassword ? 'Hide password' : 'Show password'}>
-                  <Icon name={showPassword.disablePassword ? 'eyeOff' : 'eye'} size={16} />
-                </button>
-              </div>
-              {fieldErrors.currentPassword && <small className="field-error">{fieldErrors.currentPassword}</small>}
-            </div>
-            <div>
-              <label>2FA Code or Backup Code</label>
-              <input value={disableForm.code} onChange={(e) => setDisableForm({ ...disableForm, code: e.target.value })} aria-invalid={fieldErrors.code ? 'true' : undefined} />
-              {fieldErrors.code && <small className="field-error">{fieldErrors.code}</small>}
-            </div>
-            <div className="form-actions">
-              {confirmAction === 'disable2FA' ? (
-                <span>
-                  <button className="btn-danger" type="submit" disabled={loading}>{loading ? 'Working...' : 'Confirm Disable'}</button>
-                  <button className="btn-secondary" type="button" onClick={clearConfirm} disabled={loading}>Cancel</button>
-                </span>
-              ) : (
-                <button type="button" onClick={() => setConfirmAction('disable2FA')} disabled={loading}>Disable 2FA</button>
-              )}
-            </div>
-          </form>
-        </>
-      )}
-
-      {backupCodes.length > 0 && (
-        <div className="info-box">
-          <strong>Backup Codes</strong>
-          <p>Store these now. They are shown only after generation.</p>
-          <pre>{backupCodes.join('\n')}</pre>
-        </div>
-      )}
-
-      {hasPermission('Reset User Password') && (
-        <>
-          <div className="section-title">
-            <h3>Admin Password Reset</h3>
-          </div>
-          <AlertMessage tone="error" message={error} onDismiss={clearError} />
-          <form onSubmit={submitAdminReset}>
-            <div>
-              <label>User</label>
-              <select value={adminForm.userId} onChange={(e) => setAdminForm({ ...adminForm, userId: e.target.value })}>
-                <option value="">Select User</option>
-                {users.map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {user.fullName || user.full_name} ({user.username})
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label>New Password</label>
-              <div className="password-input-wrapper">
-                <input
-                  type={showPassword.adminPassword ? 'text' : 'password'}
-                  value={adminForm.newPassword}
-                  onChange={(e) => setAdminForm({ ...adminForm, newPassword: e.target.value })}
-                />
-                <button type="button" className="password-toggle" onClick={() => toggleShowPassword('adminPassword')} tabIndex={-1} aria-label={showPassword.adminPassword ? 'Hide password' : 'Show password'}>
-                  <Icon name={showPassword.adminPassword ? 'eyeOff' : 'eye'} size={16} />
-                </button>
-              </div>
-            </div>
-            <label>
-              <input type="checkbox" checked={adminForm.forcePasswordChange} onChange={(e) => setAdminForm({ ...adminForm, forcePasswordChange: e.target.checked })} />{' '}
-              Force password change on next login
-            </label>
-            {hasPermission('Reset User 2FA') && (
-              <label>
-                <input type="checkbox" checked={adminForm.reset2FA} onChange={(e) => setAdminForm({ ...adminForm, reset2FA: e.target.checked })} />{' '}
-                Reset 2FA
-              </label>
-            )}
-            <div className="full-width-field">
-              <label>Remarks</label>
-              <textarea value={adminForm.remarks} onChange={(e) => setAdminForm({ ...adminForm, remarks: e.target.value })} rows="3" />
-            </div>
-            <div className="form-actions">
-              {confirmAction === 'adminReset' ? (
-                <span>
-                  <button type="submit" disabled={loading} style={{ background: 'var(--warning)', color: 'var(--text-inverse)' }}>{loading ? 'Working...' : 'Confirm Reset'}</button>
-                  <button className="btn-secondary" type="button" onClick={clearConfirm} disabled={loading}>Cancel</button>
-                </span>
-              ) : (
-                <button type="button" onClick={() => setConfirmAction('adminReset')} disabled={loading}>Reset Password</button>
-              )}
-            </div>
-          </form>
-        </>
-      )}
+      <MySecurityPanel loggedInUser={loggedInUser} onUserRefresh={refreshUser} users={users} />
     </div>
   )
 }

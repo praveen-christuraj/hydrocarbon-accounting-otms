@@ -13,6 +13,19 @@ const convertUserFromApi = (user) => {
     status: user.status,
     createdAt: user.created_at,
     updatedAt: user.updated_at,
+    failedLoginCount: Number(user.failed_login_count || 0),
+    lockedUntil: user.locked_until || null,
+    lastLoginAt: user.last_login_at || null,
+    lastLoginIp: user.last_login_ip || '',
+    totpEnabled: String(user.totp_enabled || '').trim().toLowerCase() === 'yes',
+    force2FA: String(user.force_2fa || '').trim().toLowerCase() === 'yes',
+    forcePasswordChange: String(user.force_password_change || '').trim().toLowerCase() === 'yes',
+    passwordNeverExpires: String(user.password_never_expires || '').trim().toLowerCase() === 'yes',
+    passwordExpiryDays: Number(user.password_expiry_days || 0),
+    passwordChangedAt: user.password_changed_at || null,
+    passwordExpired: user.password_expired === true,
+    isLocked: user.is_locked === true,
+    lockState: user.lock_state || 'Unlocked',
   }
 }
 

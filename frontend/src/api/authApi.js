@@ -7,6 +7,27 @@ import {
   saveRefreshToken,
 } from './authToken'
 
+const yesNo = (value) => String(value || '').trim().toLowerCase() === 'yes'
+
+const convertSecurityFlags = (security = {}) => ({
+  forcePasswordChange: security.force_password_change === true,
+  passwordExpired: security.password_expired === true,
+  passwordChangeRequired: security.password_change_required === true,
+  passwordChangedAt: security.password_changed_at || null,
+  passwordExpiresAt: security.password_expires_at || null,
+  passwordDaysRemaining: security.password_days_remaining ?? null,
+  passwordNeverExpires: security.password_never_expires === true || yesNo(security.password_never_expires),
+  totpEnabled: security.totp_enabled === true || yesNo(security.totp_enabled),
+  force2FA: security.force_2fa === true || yesNo(security.force_2fa),
+  twoFactorEnrollmentRequired: security.two_factor_enrollment_required === true,
+  twoFactorConfirmedAt: security.two_factor_confirmed_at || null,
+  backupCodesRemaining: Number(security.backup_codes_remaining || 0),
+  failedLoginCount: Number(security.failed_login_count || 0),
+  lockedUntil: security.locked_until || null,
+  isLocked: security.is_locked === true,
+  lastLoginAt: security.last_login_at || null,
+})
+
 const convertLoggedInUserFromApi = (data) => {
   const user = data.user || data
   const backendRoles = Array.isArray(user.roles) ? user.roles : []
@@ -41,7 +62,7 @@ const convertLoggedInUserFromApi = (data) => {
     designation: user.designation || '',
     status: user.status,
     isAdmin: user.is_admin === true,
-    security: user.security || {},
+    security: convertSecurityFlags(data.security || user.security || {}),
     role: primaryRole,
     roles: mappedRoles,
     roleName: primaryRole?.roleName || '',

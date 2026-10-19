@@ -32,19 +32,67 @@ class ForgotPasswordRequest(BaseModel):
 
 
 class AdminResetPasswordRequest(BaseModel):
-    new_password: str = Field(min_length=12)
+    new_password: str | None = Field(default=None, min_length=12)
+    generate_password: bool = False
     force_password_change: bool = True
     reset_2fa: bool = False
+    unlock_account: bool = True
     remarks: str | None = None
+
+
+class TwoFASetupStartRequest(BaseModel):
+    # Required only when re-configuring an already-enabled authenticator.
+    current_password: str | None = None
+    code: str | None = None
 
 
 class TwoFASetupVerifyRequest(BaseModel):
     code: str
 
 
+class TwoFARegenerateBackupCodesRequest(BaseModel):
+    current_password: str
+    code: str
+
+
 class TwoFADisableRequest(BaseModel):
     current_password: str
     code: str
+
+
+class UserAccountLockRequest(BaseModel):
+    reason: str | None = None
+    # Omit for an indefinite lock (until an administrator unlocks).
+    duration_minutes: int | None = Field(default=None, ge=1, le=525600)
+
+
+class UserAccountUnlockRequest(BaseModel):
+    reason: str | None = None
+
+
+class ResetUser2FARequest(BaseModel):
+    reason: str | None = None
+
+
+class UserTwoFactorPolicyRequest(BaseModel):
+    required: bool
+    reason: str | None = None
+
+
+class RevokeUserSessionsRequest(BaseModel):
+    reason: str | None = None
+
+
+class PasswordResetApproveRequest(BaseModel):
+    new_password: str | None = Field(default=None, min_length=12)
+    generate_password: bool = True
+    force_password_change: bool = True
+    reset_2fa: bool | None = None
+    remarks: str | None = None
+
+
+class PasswordResetRejectRequest(BaseModel):
+    remarks: str = Field(min_length=3, max_length=2000)
 
 
 class DevResetPasswordRequest(BaseModel):
@@ -86,6 +134,23 @@ class UserResponse(UserBase):
     id: int
     created_at: datetime
     updated_at: datetime
+
+    # Non-sensitive security state so User Master / the security console can
+    # show locked accounts, forced password changes and 2FA coverage without a
+    # second round-trip. Secrets and password hashes are never exposed.
+    failed_login_count: int = 0
+    locked_until: Optional[datetime] = None
+    last_login_at: Optional[datetime] = None
+    last_login_ip: Optional[str] = None
+    totp_enabled: str = "No"
+    force_2fa: str = "No"
+    force_password_change: str = "No"
+    password_never_expires: str = "No"
+    password_expiry_days: int = 30
+    password_changed_at: Optional[datetime] = None
+    is_locked: bool = False
+    password_expired: bool = False
+    lock_state: str = "Unlocked"
 
     model_config = ConfigDict(from_attributes=True)
 
