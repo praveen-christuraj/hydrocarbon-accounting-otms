@@ -462,9 +462,11 @@ function OperationLayoutRenderer({
     return (
       <>
         <ShuttleTrackingLayout
+          key={`shuttle-tracking-${editId ?? 'new'}-${entry.operationTemplateId}-${entry.primaryAssetCode}`}
           entry={entry}
           selectedAsset={selectedAsset}
           handleValueChange={handleValueChange}
+          setEntryField={setEntryField}
         />
 
         <OperationTemplateFields
@@ -483,6 +485,7 @@ function OperationLayoutRenderer({
     return (
       <>
         <FSOTrackingLayout
+          key={`fso-tracking-${editId ?? 'new'}-${entry.operationTemplateId}-${entry.primaryAssetCode}`}
           entry={entry}
           selectedAsset={selectedAsset}
           handleValueChange={handleValueChange}
@@ -1465,6 +1468,21 @@ function OperationEntry({
     return missing
   }
 
+  const validateVesselPayloadDate = (payload, label) => {
+    // FSO / Shuttle payloads keep their operation date inside the payload,
+    // like every other asset-specific layout. Payloads saved before the date
+    // field existed are completed by the layout, so the check is safe for
+    // existing tickets too.
+    if (!payload) return null
+
+    const inputs = payload.inputs || {}
+    if (isBlank(inputs.operation_date)) {
+      return `${label} Date is required.`
+    }
+
+    return null
+  }
+
   const validateTankerMandatory = (tankerPayload) => {
     const inputs = tankerPayload?.inputs || {}
 
@@ -1495,10 +1513,24 @@ function OperationEntry({
       const tankPayloadRaw = entryValues.find((v) => v.fieldCode === 'tank_gauging_payload')?.fieldValue
       const multiTankPayloadRaw = entryValues.find((v) => v.fieldCode === 'multi_tank_payload')?.fieldValue
       const tankerPayloadRaw = entryValues.find((v) => v.fieldCode === 'tanker_payload')?.fieldValue
+      const shuttlePayloadRaw = entryValues.find((v) => v.fieldCode === 'shuttle_payload')?.fieldValue
+      const fsoPayloadRaw = entryValues.find((v) => v.fieldCode === 'fso_payload')?.fieldValue
 
       const tankPayload = parseFieldObject(tankPayloadRaw)
       const multiTankPayload = parseFieldObject(multiTankPayloadRaw)
       const tankerPayload = parseFieldObject(tankerPayloadRaw)
+      const shuttlePayload = parseFieldObject(shuttlePayloadRaw)
+      const fsoPayload = parseFieldObject(fsoPayloadRaw)
+
+    const shuttleDateError = validateVesselPayloadDate(shuttlePayload, 'Shuttle')
+    if (shuttleDateError) {
+      return shuttleDateError
+    }
+
+    const fsoDateError = validateVesselPayloadDate(fsoPayload, 'FSO')
+    if (fsoDateError) {
+      return fsoDateError
+    }
 
     if (tankPayload) {
       const missing = validateTankGaugingMandatory(tankPayload)

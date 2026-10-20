@@ -1,8 +1,13 @@
-from sqlalchemy import func, inspect, text
+import json
+
+from sqlalchemy import func, inspect, select, text
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.database import engine, SessionLocal
 from app.models import (
+    OperationTransaction,
+    OperationTransactionValue,
     OperationType,
     OperationTemplate,
     OperationTemplateField,
@@ -1529,6 +1534,128 @@ def ensure_sender_receiver_pairing_backfill():
                 connection.execute(text(statement))
     except Exception as error:  # pragma: no cover - start-up must not fail
         print(f"[migrations] sender/receiver pairing backfill skipped: {error}")
+
+
+FSO_SHUTTLE_PAYLOAD_FIELD_CODES = ("fso_payload", "shuttle_payload")
+
+
+def ensure_fso_shuttle_payload_operation_date():
+    """Add the operation date to FSO / Shuttle payloads that predate it.
+
+    The Operation Date input was removed from the Operation Entry metadata
+    section and the date now lives inside each asset-specific payload, exactly
+    like the tank gauging date, the tanker transaction date and the multi-tank
+    before/after dates. The FSO and Shuttle payloads used to carry only the
+    event time, so this migration completes them:
+
+      * it only ADDS ``inputs.operation_date`` to ``fso_payload`` and
+        ``shuttle_payload`` rows that do not have it yet;
+      * the value comes from the ticket's own ``operation_transactions.
+        operation_date`` column - the date every report already uses - so no
+        displayed / reported value changes;
+      * an existing payload date is never overwritten, no key is removed, no
+        quantity is recalculated, and no row is inserted or deleted;
+      * it is idempotent, so it can run on every start-up, and a failure is
+        reported without blocking start-up.
+
+    ``operation_transactions.operation_date`` stays the authoritative column:
+    the payload date is the copy the entry layout edits, and both are kept in
+    sync when a draft ticket is saved.
+    """
+    inspector = inspect(engine)
+    table_names = set(inspector.get_table_names())
+    if (
+        "operation_transactions" not in table_names
+        or "operation_transaction_values" not in table_names
+    ):
+        return
+
+    session = SessionLocal()
+    try:
+        # Read first (streamed in batches, column based so no ORM objects are
+        # kept in the identity map), write afterwards.
+        statement = (
+            select(
+                OperationTransactionValue.id,
+                OperationTransactionValue.field_value,
+                OperationTransaction.operation_date,
+            )
+            .join(
+                OperationTransaction,
+                OperationTransaction.id == OperationTransactionValue.transaction_id,
+            )
+            .where(
+                OperationTransactionValue.field_code.in_(
+                    FSO_SHUTTLE_PAYLOAD_FIELD_CODES
+                ),
+                OperationTransaction.operation_date.isnot(None),
+            )
+            .order_by(OperationTransactionValue.id)
+            .execution_options(yield_per=500)
+        )
+
+        completed = []
+
+        result = session.execute(statement)
+        try:
+            for value_id, payload, operation_date in result:
+                # Payloads are JSONB objects. A string-encoded payload is
+                # parsed before it is completed; anything else is untouched.
+                if isinstance(payload, str):
+                    try:
+                        payload = json.loads(payload)
+                    except (TypeError, ValueError):
+                        continue
+
+                if not isinstance(payload, dict):
+                    continue
+
+                existing_inputs = payload.get("inputs")
+                if existing_inputs is None:
+                    inputs = {}
+                elif isinstance(existing_inputs, dict):
+                    inputs = dict(existing_inputs)
+                else:
+                    # Unexpected shape - do not rewrite it.
+                    continue
+
+                if str(inputs.get("operation_date") or "").strip():
+                    continue
+
+                date_text = (
+                    operation_date.isoformat()
+                    if hasattr(operation_date, "isoformat")
+                    else str(operation_date).strip()
+                )
+
+                if not date_text:
+                    continue
+
+                inputs["operation_date"] = date_text[:10]
+                completed.append((value_id, {**payload, "inputs": inputs}))
+        finally:
+            result.close()
+
+        updated = 0
+        for value_id, payload in completed:
+            value = session.get(OperationTransactionValue, value_id)
+            if value is None:
+                continue
+            value.field_value = payload
+            flag_modified(value, "field_value")
+            updated += 1
+
+        if updated:
+            session.commit()
+            print(
+                f"[migrations] fso/shuttle payload operation date added to "
+                f"{updated} row(s)"
+            )
+    except Exception as error:  # pragma: no cover - start-up must not fail
+        session.rollback()
+        print(f"[migrations] fso/shuttle payload date backfill skipped: {error}")
+    finally:
+        session.close()
 
 
 def ensure_asset_calibration_table_indexes():
