@@ -22,6 +22,27 @@ The primary data entry page for recording hydrocarbon operations. This is the mo
 | FSO Tracking | `FSOTrackingLayout` | FSO operations |
 | Flowmeter Reading | `FlowmeterReadingLayout` | Meter readings |
 
+## Operation Date Inside the Payloads
+The Operation Date / Start Date-Time / End Date-Time inputs were removed from the
+metadata section. Each asset-specific layout captures its own date inside its
+payload (JSONB), and `resolveOperationDate()` in
+`frontend/src/utils/operationDate.js` derives the mandatory
+`operation_transactions.operation_date` column from it:
+
+| Layout | Payload date key |
+|--------|------------------|
+| Tank Gauging | `inputs.gaugingDate` |
+| Multi-Tank Before/After (barges) | `inputs.before.date` / `inputs.after.date` |
+| Tanker Loading | `inputs.tankerTransactionDate` |
+| Flowmeter Reading | `inputs.reading_date` (mirrored as `inputs.operation_date`) |
+| Shuttle Tracking | `inputs.operation_date` |
+| FSO Tracking | `inputs.operation_date` |
+
+Legacy FSO / Shuttle payloads that were saved before the date field existed are
+completed on read by the layout and by the
+`ensure_fso_shuttle_payload_operation_date()` startup migration, which only adds
+the missing key from the ticket date and never rewrites existing values.
+
 ## API Endpoints Used
 | Method | Endpoint | Purpose |
 |--------|----------|---------|

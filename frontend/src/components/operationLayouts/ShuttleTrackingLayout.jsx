@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getVesselOperations } from '../../api/vesselOperationApi'
+import { todayDateOnly } from '../../utils/operationDate'
 import { useToast } from '../common/Toast'
 
 const parseObject = (value) => {
@@ -20,13 +21,19 @@ const safeNumber = (v) => {
   return Number.isFinite(n) ? n : 0
 }
 
-function ShuttleTrackingLayout({ entry, selectedAsset, handleValueChange }) {
+function ShuttleTrackingLayout({
+  entry,
+  selectedAsset,
+  handleValueChange,
+  setEntryField,
+}) {
   const toast = useToast()
   const [ops, setOps] = useState([])
   const [loadingOps, setLoadingOps] = useState(false)
 
   const [form, setForm] = useState({
     vessel_operation_code: '',
+    operation_date: '', // shuttle operation date (captured in the payload)
     event_time: '',
     opening_stock_bbl: '',
     opening_water_bbl: '',
@@ -44,13 +51,19 @@ function ShuttleTrackingLayout({ entry, selectedAsset, handleValueChange }) {
   }, [entry.values])
 
   useEffect(() => {
-    if (!currentPayload) return
+    const meta = currentPayload?.meta || {}
+    const inputs = currentPayload?.inputs || {}
 
-    const meta = currentPayload.meta || {}
-    const inputs = currentPayload.inputs || {}
+    // The operation date belongs to the payload (as it does for the tank,
+    // tanker and barge payloads). Legacy shuttle payloads created before the
+    // date field existed have no `operation_date`, so fall back to the date
+    // already stored on the ticket and finally to today.
+    const payloadDate = String(inputs.operation_date || '').trim().slice(0, 10)
+    const entryDate = String(entry.operationDate || '').trim().slice(0, 10)
 
     setForm({
       vessel_operation_code: meta.vessel_operation_code || '',
+      operation_date: payloadDate || entryDate || todayDateOnly(),
       event_time: inputs.event_time || '',
       opening_stock_bbl: inputs.opening_stock_bbl ?? '',
       opening_water_bbl: inputs.opening_water_bbl ?? '',
@@ -61,6 +74,28 @@ function ShuttleTrackingLayout({ entry, selectedAsset, handleValueChange }) {
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Legacy shuttle payloads saved before the payload carried its own date:
+  // add the missing `operation_date` key (only that key) so the ticket date
+  // and the payload date stay in sync without touching any saved value.
+  useEffect(() => {
+    if (!currentPayload) return
+
+    const inputs = currentPayload.inputs || {}
+    if (String(inputs.operation_date || '').trim()) return
+
+    const date = String(form.operation_date || '').trim().slice(0, 10)
+    if (!date) return
+
+    handleValueChange('shuttle_payload', {
+      ...currentPayload,
+      inputs: {
+        ...inputs,
+        operation_date: date,
+      },
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPayload, form.operation_date])
 
   useEffect(() => {
     const locationCode = String(entry.originLocationCode || '').trim()
@@ -132,6 +167,8 @@ function ShuttleTrackingLayout({ entry, selectedAsset, handleValueChange }) {
     const netStock = closingStock - openingStock
     const netWater = closingWater - openingWater
 
+    const existingMeta = currentPayload?.meta || {}
+
     const payload = {
       meta: {
         schema: 'shuttle_payload_v2',
@@ -139,13 +176,18 @@ function ShuttleTrackingLayout({ entry, selectedAsset, handleValueChange }) {
         shuttle_number: shuttleNumber,
         shuttle_asset_code: shuttleAssetCode,
 
+        // Keep the saved operation labels when the (async) vessel operation
+        // list has not loaded yet, so editing only the date cannot blank them.
         vessel_operation_code: nextForm.vessel_operation_code || '',
-        vessel_operation_label: selectedOp?.operation_label || '',
-        vessel_operation_category: selectedOp?.operation_category || '',
-        vessel_operation_sign: selectedOp?.operation_sign || '',
+        vessel_operation_label:
+          selectedOp?.operation_label || existingMeta.vessel_operation_label || '',
+        vessel_operation_category:
+          selectedOp?.operation_category || existingMeta.vessel_operation_category || '',
+        vessel_operation_sign:
+          selectedOp?.operation_sign || existingMeta.vessel_operation_sign || '',
       },
       inputs: {
-        operation_date: String(entry.operationDate || '').trim() || null,
+        operation_date: String(nextForm.operation_date || '').trim() || null,
         event_time: String(nextForm.event_time || '').trim() || null,
 
         opening_stock_bbl: openingStock,
@@ -176,6 +218,9 @@ function ShuttleTrackingLayout({ entry, selectedAsset, handleValueChange }) {
     const { name, value } = e.target
     const next = { ...form, [name]: value }
     setForm(next)
+    if (name === 'operation_date' && typeof setEntryField === 'function') {
+      setEntryField('operationDate', value)
+    }
     updatePayload(next)
   }
 
@@ -201,6 +246,16 @@ function ShuttleTrackingLayout({ entry, selectedAsset, handleValueChange }) {
               </option>
             ))}
           </select>
+        </div>
+
+        <div>
+          <label>Date *</label>
+          <input
+            name="operation_date"
+            type="date"
+            value={form.operation_date}
+            onChange={onChange}
+          />
         </div>
 
         <div>

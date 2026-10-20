@@ -374,6 +374,7 @@ function FsoCalculatedSummary({ payload }) {
 
       <div className="info-box">
         <strong>Operation:</strong> {opLabel} &nbsp; | &nbsp;{' '}
+        <strong>Date:</strong> {inputs.operation_date || '-'} &nbsp; | &nbsp;{' '}
         <strong>Event Time:</strong> {inputs.event_time || '-'} &nbsp; | &nbsp;{' '}
         <strong>Shuttle:</strong> {inputs.shuttle_number || '-'}
       </div>
@@ -782,7 +783,9 @@ function ShuttleCalculatedSummary({ payload }) {
       </div>
 
       <div className="info-box">
-        <strong>Operation:</strong> {opLabel} &nbsp; | &nbsp; <strong>Time:</strong> {time}
+        <strong>Operation:</strong> {opLabel} &nbsp; | &nbsp;{' '}
+        <strong>Date:</strong> {inputs.operation_date || '-'} &nbsp; | &nbsp;{' '}
+        <strong>Time:</strong> {time}
       </div>
 
       <div className="live-calculation-grid tank-live-grid">

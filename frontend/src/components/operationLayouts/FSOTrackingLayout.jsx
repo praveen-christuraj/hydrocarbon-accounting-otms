@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getVesselOperations } from '../../api/vesselOperationApi'
 import { getShuttleTracking } from '../../api/shuttleTrackingApi'
+import { todayDateOnly } from '../../utils/operationDate'
 import { useToast } from '../common/Toast'
 
 const parseObject = (value) => {
@@ -29,6 +30,7 @@ function FSOTrackingLayout({ entry, selectedAsset, handleValueChange, setEntryFi
 
   const [form, setForm] = useState({
     operation_code: '', // vessel operation code (soft-coded)
+    operation_date: '', // FSO operation date (captured in the payload)
     event_time: '',
     shuttle_number: '', // ✅ payload field (manual)
     vessel_name: '',
@@ -46,13 +48,19 @@ function FSOTrackingLayout({ entry, selectedAsset, handleValueChange, setEntryFi
   }, [entry.values])
 
   useEffect(() => {
-    if (!currentPayload) return
+    const meta = currentPayload?.meta || {}
+    const inputs = currentPayload?.inputs || {}
 
-    const meta = currentPayload.meta || {}
-    const inputs = currentPayload.inputs || {}
+    // The date belongs to the payload (like the tank gauging date and the
+    // tanker transaction date). Legacy FSO payloads stored before the date
+    // field existed have no `operation_date`, so fall back to the date already
+    // stored on the ticket and finally to today - nothing is lost.
+    const payloadDate = String(inputs.operation_date || '').trim().slice(0, 10)
+    const entryDate = String(entry.operationDate || '').trim().slice(0, 10)
 
     setForm({
       operation_code: meta.operation_code || '',
+      operation_date: payloadDate || entryDate || todayDateOnly(),
       event_time: inputs.event_time || '',
       shuttle_number: inputs.shuttle_number || meta.shuttle_number || '',
       vessel_name: inputs.vessel_name || '',
@@ -65,6 +73,29 @@ function FSOTrackingLayout({ entry, selectedAsset, handleValueChange, setEntryFi
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Legacy FSO payloads saved before the payload carried its own date: add the
+  // missing `operation_date` key to the stored payload (only that key) so the
+  // ticket date and the payload date stay in sync without touching any other
+  // saved value.
+  useEffect(() => {
+    if (!currentPayload) return
+
+    const inputs = currentPayload.inputs || {}
+    if (String(inputs.operation_date || '').trim()) return
+
+    const date = String(form.operation_date || '').trim().slice(0, 10)
+    if (!date) return
+
+    handleValueChange('fso_payload', {
+      ...currentPayload,
+      inputs: {
+        ...inputs,
+        operation_date: date,
+      },
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPayload, form.operation_date])
 
   // Load vessel operations (soft-coded) for FSO asset type
   useEffect(() => {
@@ -152,16 +183,23 @@ function FSOTrackingLayout({ entry, selectedAsset, handleValueChange, setEntryFi
     const netWater = closingWater - openingWater
     const variance = vesselQty - Math.abs(netStock + netWater)
 
+    const existingMeta = currentPayload?.meta || {}
+
     const payload = {
       meta: {
         schema: 'fso_payload_v2',
         location_code: locationCode,
         fso_asset_code: fsoAssetCode,
 
+        // Keep the saved operation labels when the (async) vessel operation
+        // list has not loaded yet, so editing only the date cannot blank them.
         operation_code: operationCode,
-        operation_label: selectedOp?.operation_label || '',
-        operation_category: selectedOp?.operation_category || '',
-        operation_sign: selectedOp?.operation_sign || '',
+        operation_label:
+          selectedOp?.operation_label || existingMeta.operation_label || '',
+        operation_category:
+          selectedOp?.operation_category || existingMeta.operation_category || '',
+        operation_sign:
+          selectedOp?.operation_sign || existingMeta.operation_sign || '',
 
         // ✅ store shuttle reference in payload meta too
         shuttle_number: shuttleNumber || null,
@@ -169,7 +207,7 @@ function FSOTrackingLayout({ entry, selectedAsset, handleValueChange, setEntryFi
         ...extraMeta
       },
       inputs: {
-        operation_date: String(entry.operationDate || '').trim() || null,
+        operation_date: String(nextForm.operation_date || '').trim() || null,
         event_time: String(nextForm.event_time || '').trim() || null,
 
         // ✅ shuttle number is payload field (manual)
@@ -201,6 +239,9 @@ function FSOTrackingLayout({ entry, selectedAsset, handleValueChange, setEntryFi
     const { name, value } = e.target
     const next = { ...form, [name]: value }
     setForm(next)
+    if (name === 'operation_date' && typeof setEntryField === 'function') {
+      setEntryField('operationDate', value)
+    }
     if (name === 'shuttle_number' && typeof setEntryField === 'function') {
       setEntryField('convoyNumber', value)
     }
@@ -289,6 +330,16 @@ function FSOTrackingLayout({ entry, selectedAsset, handleValueChange, setEntryFi
               </option>
             ))}
           </select>
+        </div>
+
+        <div>
+          <label>Date *</label>
+          <input
+            name="operation_date"
+            type="date"
+            value={form.operation_date}
+            onChange={onChange}
+          />
         </div>
 
         <div>
