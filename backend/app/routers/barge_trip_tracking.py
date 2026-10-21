@@ -763,9 +763,7 @@ def get_trip_timeline_by_convoy(
     convoy_transactions = db.query(OperationTransaction).filter(
         OperationTransaction.convoy_number.ilike(convoy)
     ).all()
-    for transaction in convoy_transactions:
-        ensure_barge_transaction_location_scope(transaction, current_user, db)
-
+    
     trip, timeline_changed = _ensure_barge_trip_timeline(
         db=db,
         convoy_number=convoy,
