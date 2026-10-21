@@ -747,7 +747,6 @@ def build_dynamic_material_balance_tank_rows(
         key = (
             row.location_code,
             row.tank_asset_code,
-            row.product_name or "",
         )
 
         if key not in grouped_rows:
@@ -758,7 +757,7 @@ def build_dynamic_material_balance_tank_rows(
     report_rows = []
 
     for key, rows in grouped_rows.items():
-        location_code, tank_asset_code, product_name_value = key
+        location_code, tank_asset_code = key
         location = get_location_by_code(location_code, db)
 
         sorted_rows = sorted(
@@ -771,9 +770,11 @@ def build_dynamic_material_balance_tank_rows(
         )
 
         tank_asset_name = ""
+        product_name_value = ""
 
         if sorted_rows:
             tank_asset_name = sorted_rows[-1].tank_asset_name or ""
+            product_name_value = sorted_rows[-1].product_name or ""
 
         previous_closing_snapshot = {
             "gsv": 0,
