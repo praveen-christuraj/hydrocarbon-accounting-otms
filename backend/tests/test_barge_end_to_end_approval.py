@@ -23,6 +23,7 @@ from app.models import (
     LocationOperationAvailability,
     OperationTemplate,
     OperationTemplateField,
+    OperationTransaction,
     OperationType,
     Permission,
     Role,
@@ -310,3 +311,63 @@ def test_barge_e2e_entry_submit_approve_lists_open_voyage(client, db):
     timeline = client.get("/barge-trip/trips/by-convoy/CNV-E2E-001", headers=operator_headers)
     assert timeline.status_code == 200, timeline.text
     print("TIMELINE:", timeline.json()["trip"]["status"], [e["event_type"] for e in timeline.json()["events"]])
+
+
+def test_receiver_scope_can_come_from_related_ticket_in_same_barge_movement(client, db):
+    _seed_master_data(db)
+    sender = OperationTransaction(
+        operation_number="OP-BARGE-SENDER-LEGACY",
+        operation_ticket_number="TKT-BARGE-SENDER-LEGACY",
+        operation_type_code="BARGE_LOAD",
+        primary_asset_code="BARGE_01",
+        primary_asset_type_code="BARGE",
+        convoy_number="CNV-RELATED-RECEIVER",
+        origin_location_code="AGGE",
+        sender_location_code="AGGE",
+        operation_date=date(2026, 10, 20),
+        product_name="Crude Oil",
+        status="Approved",
+    )
+    receiver = OperationTransaction(
+        operation_number="OP-BARGE-RECEIVER-DRAFT",
+        operation_ticket_number="TKT-BARGE-RECEIVER-DRAFT",
+        operation_type_code="BARGE_LOAD",
+        primary_asset_code="BARGE_01",
+        primary_asset_type_code="BARGE",
+        convoy_number="CNV-RELATED-RECEIVER",
+        origin_location_code="UTP",
+        receiver_location_code="UTP",
+        operation_date=date(2026, 10, 21),
+        product_name="Crude Oil",
+        status="Draft",
+    )
+    db.add_all([sender, receiver])
+    db.commit()
+
+    receiver_headers, _ = _make_user(
+        db,
+        client,
+        "related_ticket_receiver",
+        ["View Barge Tracking"],
+        all_locations=False,
+        locations=["UTP"],
+    )
+
+    voyages = client.get("/barge-trip/voyages?tab=OPEN", headers=receiver_headers)
+    assert voyages.status_code == 200, voyages.text
+    assert "CNV-RELATED-RECEIVER" in [
+        row["convoy_number"] for row in voyages.json()["rows"]
+    ]
+
+    tracker = client.get(
+        "/barge-trip/convoy-tracker?convoy_number=CNV-RELATED-RECEIVER",
+        headers=receiver_headers,
+    )
+    assert tracker.status_code == 200, tracker.text
+    assert tracker.json()["total_tickets"] == 1
+
+    timeline = client.get(
+        "/barge-trip/trips/by-convoy/CNV-RELATED-RECEIVER",
+        headers=receiver_headers,
+    )
+    assert timeline.status_code == 200, timeline.text

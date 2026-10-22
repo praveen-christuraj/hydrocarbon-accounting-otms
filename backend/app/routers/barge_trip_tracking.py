@@ -25,14 +25,12 @@ from app.schemas import (
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
     TRANSACTION_PARTY_LOCATION_FIELDS,
-    apply_transaction_party_scope_filter,
     ensure_location_in_user_scope,
-    ensure_transaction_in_user_party_scope,
     ensure_user_is_party_to_location_codes,
     get_user_location_codes,
     require_user_permission,
     require_any_user_permission,
-    user_is_party_to_transaction,
+    user_is_party_to_location_codes,
 )
 from app.services.audit_service import create_audit_log
 from app.services.location_pairing import (
@@ -90,30 +88,41 @@ class TripStatusUpdateRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def ensure_barge_transaction_location_scope(transaction: OperationTransaction, current_user: User, db: Session):
-    """
-    A barge movement connects a sender end and a receiver end. A
-    location-scoped user may view / act on the ticket when they are a party
-    to the movement: at least one end (origin, destination, sender or
-    receiver location) is inside their assigned scope. Unrestricted users
-    (admin / all-locations) are never blocked, and tickets without any
-    populated location stay visible (legacy rows).
+def ensure_barge_movement_location_scope(
+    transactions: list[OperationTransaction],
+    current_user: User,
+    db: Session,
+):
+    """Authorize a convoy when any location on any of its barge tickets is in scope.
 
-    Requiring every end to be in scope hid approved cross-location barge
-    tickets from the receiving terminal, which is exactly the side that must
-    acknowledge the receipt and unload the barge.
-
-    The rule itself lives in app/dependencies/permissions.py (single source of
-    truth for every tracking module - see PERMISSION_CRITERIA_MODEL.md).
+    Sender and receiver details can live on different tickets in the same
+    convoy. Checking each ticket independently blocks the receiver from the
+    movement when the approved sender ticket predates the receiver fields.
     """
-    ensure_transaction_in_user_party_scope(
-        current_user, db, transaction, "barge ticket"
+    party_location_codes = [
+        getattr(transaction, field_name, None)
+        for transaction in transactions
+        for field_name in TRANSACTION_PARTY_LOCATION_FIELDS
+    ]
+    ensure_user_is_party_to_location_codes(
+        current_user,
+        db,
+        party_location_codes,
+        "barge movement",
     )
 
 
-def barge_transaction_in_user_scope(transaction: OperationTransaction, current_user: User, db: Session) -> bool:
-    """True when the user may see the ticket (any of its four locations in scope)."""
-    return user_is_party_to_transaction(current_user, db, transaction)
+def barge_movement_in_user_scope(
+    transactions: list[OperationTransaction],
+    current_user: User,
+    db: Session,
+) -> bool:
+    party_location_codes = [
+        getattr(transaction, field_name, None)
+        for transaction in transactions
+        for field_name in TRANSACTION_PARTY_LOCATION_FIELDS
+    ]
+    return user_is_party_to_location_codes(current_user, db, party_location_codes)
 
 
 def barge_ticket_movement_role(
@@ -223,29 +232,31 @@ def get_convoy_tracker(
     if convoy is None:
         raise HTTPException(status_code=400, detail="convoy_number is required")
 
-    approved = (
+    convoy_transactions = (
         db.query(OperationTransaction)
         .filter(
             OperationTransaction.convoy_number.ilike(convoy),
-            OperationTransaction.status == APPROVED_TRANSACTION_STATUS,
         )
         .order_by(OperationTransaction.operation_date.asc(), OperationTransaction.id.asc())
         .all()
     )
-    barge_transactions = [tx for tx in approved if is_barge_transaction(db, tx)]
-
-    transactions = [
-        tx for tx in barge_transactions
-        if barge_transaction_in_user_scope(tx, current_user, db)
+    barge_transactions = [
+        tx for tx in convoy_transactions if is_barge_transaction(db, tx)
     ]
-    if barge_transactions and not transactions:
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                "This barge ticket does not involve any location in your assigned "
-                "scope (origin, destination, sender or receiver)."
-            ),
+    approved_barge_transactions = [
+        tx
+        for tx in barge_transactions
+        if tx.status == APPROVED_TRANSACTION_STATUS
+    ]
+
+    if approved_barge_transactions:
+        ensure_barge_movement_location_scope(
+            barge_transactions,
+            current_user,
+            db,
         )
+
+    transactions = approved_barge_transactions
 
     receiver_by_sender = get_receiver_links_for_convoy(db, convoy)
 
@@ -353,22 +364,46 @@ def get_barge_voyages(
         OperationTransaction.convoy_number.isnot(None),
         OperationTransaction.status == APPROVED_TRANSACTION_STATUS,
     )
-
-    # A barge voyage connects two terminals (origin -> destination). A
-    # location-scoped user must see the voyage when EITHER end is inside
-    # their scope: the sender tracks the loading leg from the loading
-    # terminal, the receiver tracks the incoming barge from the discharge
-    # terminal. Filtering on the origin alone hid approved barge tickets
-    # from the receiving side until their own unload ticket was approved.
-    # The query filter is the shared party filter (single source of truth -
-    # see PERMISSION_CRITERIA_MODEL.md).
-    base_query = apply_transaction_party_scope_filter(
-        base_query, OperationTransaction, current_user, db
-    )
-    transactions = base_query.order_by(
+    approved_transactions = base_query.order_by(
         OperationTransaction.operation_date.asc(),
         OperationTransaction.id.asc(),
     ).all()
+
+    approved_barge_transactions = [
+        tx for tx in approved_transactions if is_barge_transaction(db, tx)
+    ]
+    convoy_keys = {
+        str(tx.convoy_number or "").strip().lower()
+        for tx in approved_barge_transactions
+        if clean_optional_text(tx.convoy_number)
+    }
+    related_transactions = (
+        db.query(OperationTransaction)
+        .filter(func.lower(func.trim(OperationTransaction.convoy_number)).in_(convoy_keys))
+        .all()
+        if convoy_keys
+        else []
+    )
+    related_barge_transactions = [
+        tx for tx in related_transactions if is_barge_transaction(db, tx)
+    ]
+    scope_rows_by_convoy = {}
+    for tx in related_barge_transactions:
+        key = str(tx.convoy_number or "").strip().lower()
+        scope_rows_by_convoy.setdefault(key, []).append(tx)
+
+    transactions = [
+        tx
+        for tx in approved_barge_transactions
+        if barge_movement_in_user_scope(
+            scope_rows_by_convoy.get(
+                str(tx.convoy_number or "").strip().lower(),
+                [tx],
+            ),
+            current_user,
+            db,
+        )
+    ]
 
     voyages = {}
     asset_name_cache = {}
@@ -512,7 +547,17 @@ def create_trip_event(
         )
         if not tx:
             raise HTTPException(status_code=404, detail="Operation transaction not found")
-        ensure_barge_transaction_location_scope(tx, current_user, db)
+        movement_transactions = db.query(OperationTransaction).filter(
+            OperationTransaction.convoy_number.ilike(convoy)
+        ).all()
+        scoped_movement_transactions = [
+            row for row in movement_transactions if is_barge_transaction(db, row)
+        ]
+        ensure_barge_movement_location_scope(
+            scoped_movement_transactions or [tx],
+            current_user,
+            db,
+        )
 
         if str(tx.primary_asset_code or "").strip().lower() != asset_code.lower():
             raise HTTPException(
@@ -763,7 +808,17 @@ def get_trip_timeline_by_convoy(
     convoy_transactions = db.query(OperationTransaction).filter(
         OperationTransaction.convoy_number.ilike(convoy)
     ).all()
-    
+    barge_convoy_transactions = [
+        transaction
+        for transaction in convoy_transactions
+        if is_barge_transaction(db, transaction)
+    ]
+    if barge_convoy_transactions:
+        ensure_barge_movement_location_scope(
+            barge_convoy_transactions,
+            current_user,
+            db,
+        )
     trip, timeline_changed = _ensure_barge_trip_timeline(
         db=db,
         convoy_number=convoy,
@@ -926,8 +981,11 @@ def create_trip_comparison(
 
     if not left_tx or not right_tx:
         raise HTTPException(status_code=404, detail="Left or Right transaction not found")
-    ensure_barge_transaction_location_scope(left_tx, current_user, db)
-    ensure_barge_transaction_location_scope(right_tx, current_user, db)
+    ensure_barge_movement_location_scope(
+        [left_tx, right_tx],
+        current_user,
+        db,
+    )
 
     require_approved_transaction_for_tracking(left_tx, "barge sender/receiver comparison", db=db)
     require_approved_transaction_for_tracking(right_tx, "barge sender/receiver comparison", db=db)
