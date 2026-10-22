@@ -96,6 +96,24 @@ const getMultiTankSubmitSealCheck = (multiTankPayload) => {
 
 const isBlank = (v) => String(v ?? '').trim() === ''
 
+// Which observed parameter the operator entered for one multi-tank stage.
+// The review previews must show that parameter ONLY (never both) and follow
+// it with the calculated API @ 60 and VCF, because the entered observed
+// parameter is what produces them.
+const stageUsesObservedApi = (stage) => {
+  const mode = String(stage?.obsMode || '').trim().toLowerCase()
+  if (mode.includes('api')) return true
+  if (mode.includes('density')) return false
+  return !isBlank(stage?.obsApi)
+}
+
+const stageUsesObservedDensity = (stage) => {
+  const mode = String(stage?.obsMode || '').trim().toLowerCase()
+  if (mode.includes('density')) return true
+  if (mode.includes('api')) return false
+  return !isBlank(stage?.obsDensity)
+}
+
   const getTankGaugingMandatoryMissing = (tankPayload) => {
     const inputs = tankPayload?.inputs || {}
     const missing = []
@@ -395,27 +413,50 @@ function FsoCalculatedSummary({ payload }) {
   )
 }
 
-function MultiTankInputReview({ payload }) {
+export function MultiTankInputReview({ payload }) {
   if (!payload) return null
 
   const inputs = payload.inputs || {}
   const before = inputs.before || {}
   const after = inputs.after || {}
+  const calculated = payload.calculated || {}
+  const beforeCalc = calculated.before || {}
+  const afterCalc = calculated.after || {}
+
+  // Show ONLY the observed parameter the operator entered for each stage
+  // (tank transactions work the same way) - never both - and show the
+  // calculated API @ 60 and VCF right after it.
+  const showObservedApiRow =
+    stageUsesObservedApi(before) || stageUsesObservedApi(after)
+  const showObservedDensityRow =
+    stageUsesObservedDensity(before) || stageUsesObservedDensity(after)
 
   const rows = [
     { key: 'date', label: 'Date', text: true },
     { key: 'time', label: 'Time', text: true },
     { key: 'obsMode', label: 'Observed Input Mode', text: true },
-    { key: 'obsApi', label: 'Observed API', dp: 2 },
-    { key: 'obsDensity', label: 'Observed Density', dp: 4 },
+    ...(showObservedApiRow
+      ? [{ key: 'obsApi', label: 'Observed API', dp: 2, used: stageUsesObservedApi }]
+      : []),
+    ...(showObservedDensityRow
+      ? [{ key: 'obsDensity', label: 'Observed Density', dp: 4, used: stageUsesObservedDensity }]
+      : []),
+    { key: 'API60', label: 'API @ 60°F', dp: 2, fromCalculated: true },
+    { key: 'VCF', label: 'VCF', dp: 5, fromCalculated: true },
     { key: 'tankTemp', label: 'Tank Temperature', dp: 2, unitKey: 'tankTempUnit' },
     { key: 'sampleTemp', label: 'Sample Temperature', dp: 2, unitKey: 'sampleTempUnit' },
     { key: 'bswPct', label: 'BS&W %', dp: 3 },
     { key: 'ccf', label: 'CCF', dp: 4 },
   ]
 
-  const cell = (stage, row) => {
-    const value = stage?.[row.key]
+  const cell = (stage, calc, row) => {
+    // An unused observed parameter is never shown - only the one the
+    // operator entered.
+    if (row.used && !row.used(stage)) {
+      return '-'
+    }
+
+    const value = row.fromCalculated ? calc?.[row.key] : stage?.[row.key]
 
     if (value === null || value === undefined || String(value).trim() === '') {
       return '-'
@@ -451,8 +492,8 @@ function MultiTankInputReview({ payload }) {
           {rows.map((row) => (
             <tr key={row.label}>
               <td><strong>{row.label}</strong></td>
-              <td>{cell(before, row)}</td>
-              <td>{cell(after, row)}</td>
+              <td>{cell(before, beforeCalc, row)}</td>
+              <td>{cell(after, afterCalc, row)}</td>
             </tr>
           ))}
         </tbody>
@@ -1506,6 +1547,57 @@ function PrintableMultiTankReport({
               <td>{beforeInputs.obsMode || '-'}</td>
               <th>Observed Mode (After)</th>
               <td>{afterInputs.obsMode || '-'}</td>
+            </tr>
+
+            {/* Only the observed parameter the operator entered is printed -
+                never both - followed by the calculated API @ 60 and VCF. */}
+            {(stageUsesObservedApi(beforeInputs) || stageUsesObservedApi(afterInputs)) && (
+              <tr>
+                <th>Observed API (Before)</th>
+                <td>
+                  {stageUsesObservedApi(beforeInputs)
+                    ? formatValue(beforeInputs.obsApi, 2)
+                    : '-'}
+                </td>
+                <th>Observed API (After)</th>
+                <td>
+                  {stageUsesObservedApi(afterInputs)
+                    ? formatValue(afterInputs.obsApi, 2)
+                    : '-'}
+                </td>
+              </tr>
+            )}
+
+            {(stageUsesObservedDensity(beforeInputs) ||
+              stageUsesObservedDensity(afterInputs)) && (
+              <tr>
+                <th>Observed Density (Before)</th>
+                <td>
+                  {stageUsesObservedDensity(beforeInputs)
+                    ? formatValue(beforeInputs.obsDensity, 4)
+                    : '-'}
+                </td>
+                <th>Observed Density (After)</th>
+                <td>
+                  {stageUsesObservedDensity(afterInputs)
+                    ? formatValue(afterInputs.obsDensity, 4)
+                    : '-'}
+                </td>
+              </tr>
+            )}
+
+            <tr>
+              <th>API @ 60F (Before)</th>
+              <td>{formatValue(before.API60, 2)}</td>
+              <th>API @ 60F (After)</th>
+              <td>{formatValue(after.API60, 2)}</td>
+            </tr>
+
+            <tr>
+              <th>VCF (Before)</th>
+              <td>{formatValue(before.VCF, 5)}</td>
+              <th>VCF (After)</th>
+              <td>{formatValue(after.VCF, 5)}</td>
             </tr>
 
             <tr>

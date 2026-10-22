@@ -45,6 +45,32 @@ const emptyTankerInput = {
   remarks: '',
 }
 
+// Copy the observed quality from a sender reference keeping ONLY the
+// parameter its observed input type refers to - the unused one is cleared so
+// both never end up in the payload (the preview shows the entered parameter
+// only).
+const resolveObservedQuality = (senderReference, current) => {
+  const observedInputType =
+    senderReference.observedInputType || current.observedInputType
+  const typeText = String(observedInputType || '')
+  const sayApi = /api/i.test(typeText) && !/density/i.test(typeText)
+  const sayDensity = /density/i.test(typeText)
+  const copyOrKeep = (senderValue, currentValue) =>
+    senderValue !== null && senderValue !== undefined
+      ? String(senderValue)
+      : currentValue
+
+  return {
+    observedInputType,
+    observedApi: sayDensity
+      ? ''
+      : copyOrKeep(senderReference.observedApi, current.observedApi),
+    observedDensity: sayApi
+      ? ''
+      : copyOrKeep(senderReference.observedDensity, current.observedDensity),
+  }
+}
+
 const getExistingTankerPayload = (entry) => {
   const payloadValue = (entry.values || []).find((item) => {
     return item.fieldCode === 'tanker_payload'
@@ -836,6 +862,18 @@ function TankerTruckLayout({
   const handleTankerInputChange = (e) => {
     const { name, value } = e.target
 
+    if (name === 'observedInputType') {
+      // Only the entered parameter is kept - the unused one is cleared so the
+      // preview never shows both (tank gauging behaves the same way).
+      setTankerInput((current) => ({
+        ...current,
+        observedInputType: value,
+        observedApi: '',
+        observedDensity: '',
+      }))
+      return
+    }
+
     setTankerInput((current) => ({
       ...current,
       [name]: value,
@@ -883,18 +921,7 @@ function TankerTruckLayout({
         senderReference.sampleTemperature !== undefined
           ? String(senderReference.sampleTemperature)
           : current.sampleTemperature,
-      observedInputType:
-        senderReference.observedInputType || current.observedInputType,
-      observedApi:
-        senderReference.observedApi !== null &&
-        senderReference.observedApi !== undefined
-          ? String(senderReference.observedApi)
-          : current.observedApi,
-      observedDensity:
-        senderReference.observedDensity !== null &&
-        senderReference.observedDensity !== undefined
-          ? String(senderReference.observedDensity)
-          : current.observedDensity,
+      ...resolveObservedQuality(senderReference, current),
     }))
   }
 
@@ -983,18 +1010,7 @@ function TankerTruckLayout({
         senderReference.sampleTemperature !== undefined
           ? String(senderReference.sampleTemperature)
           : current.sampleTemperature,
-      observedInputType:
-        senderReference.observedInputType || current.observedInputType,
-      observedApi:
-        senderReference.observedApi !== null &&
-        senderReference.observedApi !== undefined
-          ? String(senderReference.observedApi)
-          : current.observedApi,
-      observedDensity:
-        senderReference.observedDensity !== null &&
-        senderReference.observedDensity !== undefined
-          ? String(senderReference.observedDensity)
-          : current.observedDensity,
+      ...resolveObservedQuality(senderReference, current),
       sealC1: senderReference.sealC1 || current.sealC1,
       sealC2: senderReference.sealC2 || current.sealC2,
       sealM1: senderReference.sealM1 || current.sealM1,
