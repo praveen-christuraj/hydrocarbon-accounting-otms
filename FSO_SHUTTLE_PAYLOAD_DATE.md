@@ -38,10 +38,16 @@ The date is part of the payload, exactly like the other layouts:
 | **FSO Tracking** | **`inputs.operation_date`** |
 | **Shuttle Tracking** | **`inputs.operation_date`** (same key the Shuttle Tracking page already used) |
 
-`operation_transactions.operation_date` stays the authoritative database column.
 `resolveOperationDate()` (`frontend/src/utils/operationDate.js`) already ranks
 `operation_date` inside a payload, so the ticket column is derived from the
 payload when a draft is saved — no new resolver logic was needed.
+
+> **Update (2026-10-22):** the payload date/time is now the only authoritative
+> operation moment for every calculation and report, resolved server-side by
+> `backend/app/services/operation_datetime.py`; the `operation_date` column is
+> a derived cache kept equal to the payload date by the write path and the
+> `ensure_payload_operation_dates()` backfill. See
+> `PAYLOAD_OPERATION_DATETIME.md`.
 
 ## 2. Frontend changes
 
@@ -81,8 +87,7 @@ with the new field the startup migration
 * is idempotent (a second run changes nothing) and a failure is reported
   without blocking startup.
 
-Existing payloads keep working untouched; reports continue to filter on
-`operation_transactions.operation_date`; and when a draft's date is edited in
+Existing payloads keep working untouched; when a draft's date is edited in
 Operation Entry, the payload date and the ticket column are updated together by
 the normal `PUT /operation-entries/{id}` path (the ticket number is not
 regenerated).

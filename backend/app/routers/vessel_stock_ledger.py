@@ -14,6 +14,7 @@ from app.models import (
     User,
 )
 from app.schemas import VesselStockLedgerResponse
+from app.services.operation_datetime import resolve_transaction_operation_date
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
     apply_location_filter,
@@ -148,7 +149,18 @@ def create_or_update_vessel_stock_ledger_from_approved_transaction(
     ledger.vessel_asset_name = asset.asset_name
     ledger.vessel_asset_type_code = asset.asset_type_code
 
-    ledger.operation_date = transaction.operation_date
+    # Operation date from the ticket's entered values when they carry one;
+    # Stock Movement / Vessel Cycle values usually do not, in which case
+    # the ticket date (itself derived from the payload on save) stands.
+    all_values = (
+        db.query(OperationTransactionValue)
+        .filter(OperationTransactionValue.transaction_id == transaction.id)
+        .all()
+    )
+    ledger.operation_date = (
+        resolve_transaction_operation_date(transaction, values=all_values)
+        or transaction.operation_date
+    )
     ledger.product_name = transaction.product_name
 
     ledger.movement_reference = movement_reference

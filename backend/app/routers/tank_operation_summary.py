@@ -1,4 +1,4 @@
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -30,6 +30,7 @@ from app.utils.helpers import (
     get_asset_by_code,
     get_location_by_code,
 )
+from app.services.operation_datetime import resolve_transaction_accounting
 from app.services.transaction_helpers import parse_date_filter
 from app.config import APPROVED_TRANSACTION_STATUS
 from app.utils.pagination import (
@@ -186,6 +187,7 @@ def build_tank_operation_summary_row(
     all_columns: list[str],
     location=_UNSET,
     asset=_UNSET,
+    resolved=_UNSET,
 ):
     # ``location`` / ``asset`` may be prefetched (bulk) by the list builder;
     # an explicit None means "prefetched and not found" (no per-row query).
@@ -194,14 +196,21 @@ def build_tank_operation_summary_row(
     if asset is _UNSET:
         asset = get_asset_by_code(transaction.primary_asset_code, db)
 
+    # Operation date/time come from the gauging payload; the accounting
+    # date is that moment under the origin location's accounting-day
+    # setting. ``resolved`` lets the list builder share one setting cache.
+    if resolved is _UNSET:
+        resolved = resolve_transaction_accounting(db, transaction, payload=payload)
+    operation_date, _operation_time, _operation_datetime, accounting_date = resolved
+
     extracted = extract_tank_gauging_columns(payload)
 
     row = {
         "transaction_id": transaction.id,
         "ticket_number": get_transaction_ticket_number(transaction),
         "operation_number": transaction.operation_number,
-        "operation_date": transaction.operation_date,
-        "accounting_date": transaction.operation_date,
+        "operation_date": operation_date or transaction.operation_date,
+        "accounting_date": accounting_date or operation_date or transaction.operation_date,
         "location_code": transaction.origin_location_code,
         "location_name": location.location_name if location else "",
         "tank_asset_code": transaction.primary_asset_code,
@@ -236,9 +245,14 @@ def get_filtered_tank_operation_summary_rows(
     Bounded loading: when the caller does not supply ``date_from`` only the
     most recent ``DEFAULT_REPORT_WINDOW_DAYS`` (relative to the newest
     matching ticket) are loaded; older data is fetched by passing an
-    explicit date range. Rows are paginated in SQL (default page size
-    ``DEFAULT_REPORT_PAGE_SIZE``) -- pass ``unbounded=True`` only from the
-    CSV export, which is an explicit request for the full filtered set.
+    explicit date range. Candidate rows are bounded in SQL by the ticket
+    ``operation_date`` (kept equal to the payload date by the write path),
+    then each row's operation/accounting dates are resolved from its
+    gauging payload + the location's accounting-day setting, filtered on
+    the accounting date, ordered chronologically by the payload date/time
+    and paginated (default page size ``DEFAULT_REPORT_PAGE_SIZE``) -- pass
+    ``unbounded=True`` only from the CSV export, which is an explicit
+    request for the full filtered set.
     """
     query = (
         db.query(OperationTransaction)
@@ -278,7 +292,8 @@ def get_filtered_tank_operation_summary_rows(
             OperationTransaction.product_name.ilike(cleaned_product_name)
         )
 
-    date_from_value = parse_date_filter(date_from, "Date From")
+    explicit_date_from = parse_date_filter(date_from, "Date From")
+    date_from_value = explicit_date_from
     date_to_value = parse_date_filter(date_to, "Date To")
 
     default_window_applied = False
@@ -295,10 +310,13 @@ def get_filtered_tank_operation_summary_rows(
         query = query.filter(OperationTransaction.operation_date >= date_from_value)
 
     if date_to_value:
-        query = query.filter(OperationTransaction.operation_date <= date_to_value)
+        # One extra candidate day: an operation in the early hours of
+        # ``date_to + 1`` can belong to accounting date ``date_to``.
+        query = query.filter(
+            OperationTransaction.operation_date <= date_to_value + timedelta(days=1)
+        )
 
-    # Only transactions that actually carry a gauging payload produce rows,
-    # so paginate over exactly those (keeps total_rows honest).
+    # Only transactions that actually carry a gauging payload produce rows.
     payload_query = query.join(
         OperationTransactionValue,
         and_(
@@ -308,29 +326,7 @@ def get_filtered_tank_operation_summary_rows(
         ),
     )
 
-    total_rows = payload_query.count()
-
-    ordered_query = payload_query.order_by(
-        OperationTransaction.operation_date.asc(),
-        OperationTransaction.id.asc(),
-    )
-
-    safe_page = clamp_page(page) if page is not None else 1
-    safe_page_size = clamp_limit(
-        page_size, DEFAULT_REPORT_PAGE_SIZE, MAX_REPORT_PAGE_SIZE
-    )
-
-    if unbounded:
-        transactions = ordered_query.all()
-        safe_page = 1
-        safe_page_size = total_rows
-    else:
-        transactions = (
-            ordered_query
-            .offset((safe_page - 1) * safe_page_size)
-            .limit(safe_page_size)
-            .all()
-        )
+    transactions = payload_query.order_by(OperationTransaction.id.asc()).all()
 
     all_columns = get_all_possible_columns(
         db,
@@ -350,20 +346,63 @@ def get_filtered_tank_operation_summary_rows(
         _key(row.asset_code): row for row in db.query(Asset).all()
     }
 
-    results = []
+    setting_cache = {}
+    sortable_results = []
     for tx in transactions:
         payload = payload_map.get(tx.id)
-        if payload:
-            results.append(
-                build_tank_operation_summary_row(
-                    tx,
-                    payload,
-                    db,
-                    all_columns,
-                    location=locations_by_code.get(_key(tx.origin_location_code)),
-                    asset=assets_by_code.get(_key(tx.primary_asset_code)),
-                )
+        if not payload:
+            continue
+
+        resolved = resolve_transaction_accounting(
+            db, tx, payload=payload, setting_cache=setting_cache
+        )
+        _op_date, _op_time, operation_datetime, accounting_date = resolved
+        effective_accounting_date = accounting_date or tx.operation_date
+
+        # An explicit range selects by accounting date. The default
+        # recency window keeps the candidate set it has always returned
+        # (bounded by operation date in SQL above).
+        if explicit_date_from is not None and effective_accounting_date < explicit_date_from:
+            continue
+        if date_to_value is not None and effective_accounting_date > date_to_value:
+            continue
+
+        row = build_tank_operation_summary_row(
+            tx,
+            payload,
+            db,
+            all_columns,
+            location=locations_by_code.get(_key(tx.origin_location_code)),
+            asset=assets_by_code.get(_key(tx.primary_asset_code)),
+            resolved=resolved,
+        )
+        sortable_results.append(
+            (
+                effective_accounting_date or date.min,
+                operation_datetime or datetime.min,
+                tx.id,
+                row,
             )
+        )
+
+    sortable_results.sort(key=lambda item: (item[0], item[1], item[2]))
+
+    total_rows = len(sortable_results)
+
+    safe_page = clamp_page(page) if page is not None else 1
+    safe_page_size = clamp_limit(
+        page_size, DEFAULT_REPORT_PAGE_SIZE, MAX_REPORT_PAGE_SIZE
+    )
+
+    if unbounded:
+        safe_page = 1
+        safe_page_size = total_rows
+        page_items = sortable_results
+    else:
+        start = (safe_page - 1) * safe_page_size
+        page_items = sortable_results[start : start + safe_page_size]
+
+    results = [item[3] for item in page_items]
 
     meta = {
         "total_rows": total_rows,

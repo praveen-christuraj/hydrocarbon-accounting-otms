@@ -60,6 +60,7 @@ from app.utils.db_migrations import (
     ensure_movement_mapping_management_columns,
     ensure_sender_receiver_pairing_backfill,
     ensure_fso_shuttle_payload_operation_date,
+    ensure_payload_operation_dates,
     migrate_boolean_columns,
     seed_default_permissions,
     seed_admin_role,
@@ -91,6 +92,7 @@ async def lifespan(app: FastAPI):
     ensure_movement_mapping_management_columns()
     ensure_sender_receiver_pairing_backfill()
     ensure_fso_shuttle_payload_operation_date()
+    ensure_payload_operation_dates()
     seed_default_permissions()
     seed_admin_role()
 

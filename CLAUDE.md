@@ -109,6 +109,46 @@ Rules:
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
 
+## Recent Changes (2026-10-22) - Operation Date/Time Comes From The Payload Only
+
+**Rule (product owner):** a ticket's operation date/time is the value entered
+inside its operation type payload (gauging / tanker transaction / multi-tank
+before / reading / FSO-Shuttle operation date+time) — never the removed
+Operation Entry metadata. Every calculation and report applies the
+**respective location's** Location Accounting Day Setting to that payload
+moment and orders chronologically by payload date **and time**. Full detail:
+`PAYLOAD_OPERATION_DATETIME.md`.
+
+- **Single resolver:** `backend/app/services/operation_datetime.py`
+  (`get_payload_operation_parts`, `resolve_transaction_accounting`, …).
+  Payload first; legacy metadata (`operation_start_datetime`, then
+  `operation_date`) only when a payload carries no date (Stock Movement /
+  Vessel Cycle). Multi-tank = *before* date/time, matching
+  `frontend/src/utils/operationDate.js`.
+- **Blunders fixed:** ledger creation on approval preferred the metadata
+  start over the gauging date/time; Tank Operation Summary / Out-Turn
+  Summary / transaction Out-Turn Report used `accounting_date =
+  operation_date` and ignored the location setting (out-turn chains
+  ordered same-day tickets by id, not gauging time); FSO reports used the
+  metadata date + payload time; the daily stock summary ordered within a
+  day by `accounting_day_start` (= by id); barge trip events used metadata
+  start or `now()`.
+- **Write path:** `create_operation_entry` / `update_operation_entry`
+  derive the stored `operation_date` from the payload server-side
+  (`apply_payload_operation_date`), so column-based filters (register,
+  dashboard, voyage lists) keep working on the true payload date.
+- **Previous entries:** start-up backfill `ensure_payload_operation_dates()`
+  aligns `operation_transactions.operation_date`, `tank_stock_ledger`
+  operation/accounting dates (+ window, setting, rebuilt balances) and
+  `vessel_stock_ledger.operation_date` with the payload. Idempotent,
+  payloads and ticket numbers untouched. Explicit report date ranges now
+  filter on the resolved **accounting date** (candidates widened +1 day
+  at the top end); ranges filter after chain building so previous-stock
+  values are unchanged.
+- **Tests:** `backend/tests/test_payload_operation_datetime.py` (10 tests);
+  one existing integrity test now backdates its history ticket in the
+  payload instead of the metadata.
+
 ## Recent Changes (2026-10-18) - Operation Entry: Two Clubbed Location Dropdowns + Payload Operation Date
 
 ### The change (product owner, 2026-10-18)

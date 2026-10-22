@@ -29,6 +29,7 @@ from app.services.material_balance_helpers import (
     calculate_book_closing_from_eligible_ledger_rows,
 )
 from app.config import APPROVED_TRANSACTION_STATUS
+from app.services.operation_datetime import get_payload_operation_datetime
 from app.services.transaction_helpers import parse_date_filter
 
 router = APIRouter(prefix="/tank-stock-ledger", tags=["Tank Stock Ledger"])
@@ -136,15 +137,20 @@ def get_filtered_tank_stock_ledger_rows(
     if cleaned_status:
         query = query.filter(TankStockLedger.status == cleaned_status)
 
-    return (
-        query.order_by(
-            TankStockLedger.location_code.asc(),
-            TankStockLedger.tank_asset_code.asc(),
-            TankStockLedger.accounting_date.asc(),
-            TankStockLedger.operation_date.asc(),
-            TankStockLedger.id.asc(),
-        )
-        .all()
+    rows = query.all()
+
+    # Chronological order inside an accounting day comes from the operation
+    # date/time entered in the ticket payload, never from row ids or the
+    # (identical for the whole day) accounting-day window start.
+    return sorted(
+        rows,
+        key=lambda row: (
+            row.location_code or "",
+            row.tank_asset_code or "",
+            row.accounting_date or date.min,
+            get_ledger_operation_datetime(row) or datetime.min,
+            row.id,
+        ),
     )
 
 
@@ -250,15 +256,17 @@ def get_tank_stock_rows_for_daily_summary(
             TankStockLedger.tank_asset_code.ilike(cleaned_tank_asset_code)
         )
 
-    return (
-        query.order_by(
-            TankStockLedger.location_code.asc(),
-            TankStockLedger.tank_asset_code.asc(),
-            TankStockLedger.accounting_date.asc(),
-            TankStockLedger.operation_date.asc(),
-            TankStockLedger.id.asc(),
-        )
-        .all()
+    rows = query.all()
+
+    return sorted(
+        rows,
+        key=lambda row: (
+            row.location_code or "",
+            row.tank_asset_code or "",
+            row.accounting_date or date.min,
+            get_ledger_operation_datetime(row) or datetime.min,
+            row.id,
+        ),
     )
 
 
@@ -283,15 +291,15 @@ def get_stock_snapshot_values(row: TankStockLedger):
 
 
 def get_ledger_operation_datetime(row: TankStockLedger):
+    # The operation moment is the date/time entered inside the ticket
+    # payload (kept on the ledger row as ``source_payload``) - for every
+    # payload type, and also when only a date was entered. The stored
+    # accounting-day window / operation date are legacy fallbacks for rows
+    # whose payload carries no date at all.
     try:
-        payload = row.source_payload or {}
-        inputs = payload.get("inputs") or {}
-
-        gauging_date = clean_optional_text(inputs.get("gaugingDate"))
-        gauging_time = clean_optional_text(inputs.get("gaugingTime"))
-
-        if gauging_date and gauging_time:
-            return datetime.fromisoformat(f"{gauging_date}T{gauging_time}")
+        payload_datetime = get_payload_operation_datetime(row.source_payload)
+        if payload_datetime is not None:
+            return payload_datetime
     except Exception:
         pass
 
@@ -432,8 +440,7 @@ def build_tank_stock_daily_summary_rows(
             rows,
             key=lambda row: (
                 row.accounting_date or date.min,
-                row.accounting_day_start or datetime.min,
-                row.operation_date or date.min,
+                get_ledger_operation_datetime(row) or datetime.min,
                 row.id,
             ),
         )
@@ -475,8 +482,7 @@ def build_tank_stock_daily_summary_rows(
             day_rows = sorted(
                 day_rows,
                 key=lambda row: (
-                    row.accounting_day_start or datetime.min,
-                    row.operation_date or date.min,
+                    get_ledger_operation_datetime(row) or datetime.min,
                     row.id,
                 ),
             )

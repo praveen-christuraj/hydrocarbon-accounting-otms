@@ -21,6 +21,7 @@ from app.dependencies.permissions import (
     require_user_permission,
 )
 from app.services.audit_service import create_audit_log
+from app.services.operation_datetime import resolve_transaction_operation_date
 from app.utils.helpers import safe_float, clean_optional_text, get_current_user_display_name
 from app.config import APPROVED_TRANSACTION_STATUS
 from app.services.transaction_helpers import approved_transaction_not_on_correction_hold
@@ -705,7 +706,14 @@ def get_flowmeter_records(
                 ),
                 "stream_name": payload_stream_name,
                 "meter_label": str(meter_label_value or ""),
-                "reading_date": transaction.operation_date,
+                # Reading date entered in the flowmeter payload, not the
+                # ticket metadata date.
+                "reading_date": (
+                    resolve_transaction_operation_date(
+                        transaction, payload=payload
+                    )
+                    or transaction.operation_date
+                ),
                 "opening_reading": to_float(opening_reading),
                 "closing_reading": to_float(closing_reading),
                 "gross_observed": gross_observed,

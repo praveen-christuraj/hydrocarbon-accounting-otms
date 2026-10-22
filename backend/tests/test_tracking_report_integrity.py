@@ -29,6 +29,17 @@ def test_out_turn_history_ignores_product_and_lower_date_filter(db):
     first = db.query(OperationTransaction).filter_by(operation_number="OP-0001").one()
     first.operation_date = date(2026, 8, 10)
     first.product_name = "Old grade"
+    # The operation moment lives in the gauging payload, so the history
+    # ticket is backdated there (the metadata date alone no longer moves
+    # a ticket in the chronological chain).
+    first_payload_row = (
+        db.query(OperationTransactionValue)
+        .filter_by(transaction_id=first.id, field_code="tank_gauging_payload")
+        .one()
+    )
+    first_payload = deepcopy(first_payload_row.field_value)
+    first_payload["inputs"]["gaugingDate"] = "2026-08-10"
+    first_payload_row.field_value = first_payload
     second = _add_transaction(db, number="SNAP-2", asset_code=first.primary_asset_code,
                               asset_type="TANK", op_date=date(2026, 8, 11))
     second.operation_template_id = first.operation_template_id

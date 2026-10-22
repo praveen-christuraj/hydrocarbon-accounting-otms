@@ -1658,6 +1658,200 @@ def ensure_fso_shuttle_payload_operation_date():
         session.close()
 
 
+def ensure_payload_operation_dates():
+    """Align stored operation/accounting dates with the payload date/time.
+
+    The Operation Date metadata input was removed from Operation Entry: a
+    ticket's operation date/time is the value entered inside its operation
+    type payload (gauging date/time, tanker transaction date/time,
+    multi-tank before date/time, reading date/time, FSO/Shuttle operation
+    date + event time). Tickets recorded while the metadata date still
+    existed may carry a metadata ``operation_date`` (and a Tank Stock
+    Ledger accounting day derived from the metadata start date/time) that
+    disagrees with their payload.
+
+    This backfill makes the payload win, everywhere the old dates were
+    copied:
+
+      * ``operation_transactions.operation_date`` is set to the payload
+        operation date (ticket numbers are never regenerated);
+      * ``tank_stock_ledger.operation_date`` follows the payload kept in
+        ``source_payload`` and its accounting date / day window / setting
+        are recomputed from the payload moment under the location's
+        Location Accounting Day Setting, after which the affected
+        (location, tank) running balances are rebuilt chronologically;
+      * ``vessel_stock_ledger.operation_date`` follows its ticket's
+        corrected operation date.
+
+    Payloads themselves are never modified, no row is inserted or deleted,
+    quantities are never recalculated (only dates and the date-derived
+    ledger ordering/balances), and the whole pass is idempotent - a
+    second run finds every date already equal to its payload date and
+    changes nothing. A failure is reported without blocking start-up.
+    """
+    inspector = inspect(engine)
+    table_names = set(inspector.get_table_names())
+    if (
+        "operation_transactions" not in table_names
+        or "operation_transaction_values" not in table_names
+    ):
+        return
+
+    from app.services.operation_datetime import (
+        PAYLOAD_FIELD_CODES,
+        get_payload_operation_parts,
+        operation_parts_from_values,
+    )
+
+    session = SessionLocal()
+    try:
+        # --- 1. operation_transactions.operation_date -------------------
+        statement = (
+            select(
+                OperationTransactionValue.transaction_id,
+                OperationTransactionValue.field_code,
+                OperationTransactionValue.field_value,
+            )
+            .where(
+                OperationTransactionValue.field_code.in_(PAYLOAD_FIELD_CODES),
+                OperationTransactionValue.field_value.isnot(None),
+            )
+            .order_by(OperationTransactionValue.id)
+        )
+
+        values_by_transaction = {}
+        result = session.execute(statement)
+        try:
+            for transaction_id, field_code, field_value in result:
+                values_by_transaction.setdefault(transaction_id, []).append(
+                    {"field_code": field_code, "field_value": field_value}
+                )
+        finally:
+            result.close()
+
+        updated_transactions = 0
+        corrected_operation_dates = {}
+        for transaction_id, values in values_by_transaction.items():
+            payload_date, _payload_time = operation_parts_from_values(values)
+            if payload_date is None:
+                continue
+
+            transaction = session.get(OperationTransaction, transaction_id)
+            if transaction is None:
+                continue
+
+            if transaction.operation_date != payload_date:
+                transaction.operation_date = payload_date
+                updated_transactions += 1
+            corrected_operation_dates[transaction_id] = payload_date
+
+        # --- 2. tank_stock_ledger dates + accounting day ----------------
+        updated_ledger_rows = 0
+        affected_groups = set()
+        if "tank_stock_ledger" in table_names:
+            from app.models import TankStockLedger
+            from app.routers.reports import (
+                get_location_accounting_day_for_transaction,
+                resolve_transaction_datetime_for_accounting_day,
+            )
+
+            ledger_rows = session.query(TankStockLedger).all()
+
+            for row in ledger_rows:
+                payload_date, payload_time = get_payload_operation_parts(
+                    row.source_payload
+                )
+                if payload_date is None or payload_time is None:
+                    continue
+
+                transaction = session.get(
+                    OperationTransaction, row.transaction_id
+                )
+
+                try:
+                    transaction_datetime = (
+                        resolve_transaction_datetime_for_accounting_day(
+                            transaction=transaction,
+                            payload=row.source_payload or {},
+                        )
+                    )
+                    accounting_day = get_location_accounting_day_for_transaction(
+                        db=session,
+                        location_code=row.location_code,
+                        transaction_datetime=transaction_datetime,
+                    )
+                except Exception:
+                    # No effective accounting-day setting for this moment:
+                    # leave the stored window exactly as it is.
+                    continue
+
+                changed = (
+                    row.operation_date != payload_date
+                    or row.accounting_date != accounting_day["accounting_date"]
+                    or row.accounting_day_start
+                    != accounting_day["accounting_day_start"]
+                    or row.accounting_day_end != accounting_day["accounting_day_end"]
+                    or row.accounting_day_setting_id != accounting_day["setting_id"]
+                )
+                if not changed:
+                    continue
+
+                row.operation_date = payload_date
+                row.accounting_date = accounting_day["accounting_date"]
+                row.accounting_day_start = accounting_day["accounting_day_start"]
+                row.accounting_day_end = accounting_day["accounting_day_end"]
+                row.accounting_day_setting_id = accounting_day["setting_id"]
+                updated_ledger_rows += 1
+                affected_groups.add((row.location_code, row.tank_asset_code))
+
+            if affected_groups:
+                session.flush()
+                from app.routers.reports import rebuild_tank_stock_running_balances
+
+                for location_code, tank_asset_code in sorted(affected_groups):
+                    try:
+                        rebuild_tank_stock_running_balances(
+                            db=session,
+                            location_code=location_code,
+                            tank_asset_code=tank_asset_code,
+                            product_name=None,
+                        )
+                    except Exception as error:  # pragma: no cover
+                        print(
+                            "[migrations] payload operation date rebuild "
+                            f"skipped for {location_code}/{tank_asset_code}: {error}"
+                        )
+
+        # --- 3. vessel_stock_ledger.operation_date ----------------------
+        updated_vessel_rows = 0
+        if "vessel_stock_ledger" in table_names and corrected_operation_dates:
+            from app.models import VesselStockLedger
+
+            for vessel_row in session.query(VesselStockLedger).all():
+                payload_date = corrected_operation_dates.get(
+                    vessel_row.transaction_id
+                )
+                if payload_date is None:
+                    continue
+                if vessel_row.operation_date != payload_date:
+                    vessel_row.operation_date = payload_date
+                    updated_vessel_rows += 1
+
+        if updated_transactions or updated_ledger_rows or updated_vessel_rows:
+            session.commit()
+            print(
+                "[migrations] payload operation dates applied: "
+                f"{updated_transactions} transaction(s), "
+                f"{updated_ledger_rows} tank stock ledger row(s), "
+                f"{updated_vessel_rows} vessel stock ledger row(s)"
+            )
+    except Exception as error:  # pragma: no cover - start-up must not fail
+        session.rollback()
+        print(f"[migrations] payload operation date backfill skipped: {error}")
+    finally:
+        session.close()
+
+
 def ensure_asset_calibration_table_indexes():
     """Indexes for asset calibration table lookups.
 
