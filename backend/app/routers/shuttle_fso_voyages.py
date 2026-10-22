@@ -36,6 +36,10 @@ from app.dependencies.permissions import (
     require_user_permission,
 )
 from app.services.audit_service import create_audit_log
+from app.services.operation_datetime import (
+    get_payload_operation_date,
+    resolve_transaction_operation_datetime,
+)
 from app.utils.helpers import (
     clean_optional_text,
     get_transaction_ticket_number,
@@ -644,7 +648,10 @@ def get_shuttle_tracking(
             "shuttle_asset_code": tx.primary_asset_code,
             "shuttle_asset_name": asset.asset_name if asset else "",
             "product_name": tx.product_name,
-            "operation_date": tx.operation_date,
+            "operation_date": (
+                get_payload_operation_date(payload, "shuttle_payload")
+                or tx.operation_date
+            ),
             "event_time": event_time,
             "opening_stock_bbl": opening_stock,
             "opening_water_bbl": opening_water,
@@ -754,8 +761,11 @@ def export_shuttle_voyage_xlsx(
         raise HTTPException(status_code=404, detail="No approved shuttle tickets found for this voyage")
 
     txs.sort(key=lambda tx: (
-        tx.operation_date or date.min,
-        str((get_shuttle_payload_for_transaction(db, tx.id) or {}).get("inputs", {}).get("event_time") or ""),
+        resolve_transaction_operation_datetime(
+            tx,
+            payload=get_shuttle_payload_for_transaction(db, tx.id) or {},
+            field_code="shuttle_payload",
+        ) or datetime.min,
         tx.id,
     ))
     loc = get_location_by_code(loc_code, db)
@@ -797,7 +807,10 @@ def export_shuttle_voyage_xlsx(
         last_closing_water = closing_water
 
         rows.append({
-            "date": str(tx.operation_date),
+            "date": str(
+                get_payload_operation_date(payload, "shuttle_payload")
+                or tx.operation_date
+            ),
             "time": event_time,
             "operation": op_label or op_code,
             "sign": op_sign,
@@ -1269,7 +1282,10 @@ def get_fso_tracking(
             "fso_asset_code": fso_code,
             "fso_asset_name": groups[k]["fso_asset_name"],
             "product_name": tx.product_name,
-            "operation_date": tx.operation_date,
+            "operation_date": (
+                get_payload_operation_date(payload, "fso_payload")
+                or tx.operation_date
+            ),
             "event_time": input_value("event_time"),
             "operation_label": op_label,
             "vessel_name": input_value("vessel_name"),

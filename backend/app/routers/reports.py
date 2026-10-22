@@ -56,6 +56,14 @@ from app.routers.tank_stock_ledger import (
     build_tank_stock_daily_summary_rows,
     get_out_turn_report_rows,
 )
+from app.services.operation_datetime import (
+    get_payload_operation_date,
+    get_payload_operation_datetime,
+    get_payload_operation_parts,
+    resolve_transaction_accounting,
+    resolve_transaction_operation_date,
+    resolve_transaction_operation_datetime,
+)
 from app.services.transaction_helpers import parse_date_filter
 from app.services.material_balance_helpers import (
     normalize_material_balance_category,
@@ -166,18 +174,34 @@ def _build_out_turn_transaction_payload_map(db: Session, transaction_ids: list[i
 
 
 def _parse_operation_datetime(operation_date: date, payload: dict):
-    inputs = payload.get("inputs") or {}
-
-    gauging_date = clean_optional_text(inputs.get("gaugingDate"))
-    gauging_time = clean_optional_text(inputs.get("gaugingTime"))
-
-    if gauging_date and gauging_time:
-        try:
-            return datetime.fromisoformat(f"{gauging_date}T{gauging_time}")
-        except Exception:
-            pass
+    # The operation moment is the date/time entered inside the payload (tank
+    # gauging, multi-tank before/after, ...). The ticket's metadata
+    # ``operation_date`` is only the fallback for payloads without a date.
+    payload_datetime = get_payload_operation_datetime(payload)
+    if payload_datetime is not None:
+        return payload_datetime
 
     return datetime.combine(operation_date, datetime_time(0, 0))
+
+
+def _out_turn_accounting_date(
+    db: Session | None,
+    transaction: OperationTransaction,
+    payload: dict,
+    setting_cache: dict | None = None,
+):
+    """Accounting date of an out-turn row: payload moment + location setting."""
+    if db is not None:
+        _, _, _, accounting_date = resolve_transaction_accounting(
+            db,
+            transaction,
+            payload=payload,
+            setting_cache=setting_cache,
+        )
+        return accounting_date
+
+    payload_date = get_payload_operation_date(payload)
+    return payload_date or transaction.operation_date
 
 
 def _extract_out_turn_values_from_transaction(db: Session, transaction: OperationTransaction):
@@ -196,18 +220,23 @@ def _extract_out_turn_values_from_transaction(db: Session, transaction: Operatio
     payloads = payload_map.get(transaction.id, {})
 
     if layout == "tank gauging":
-        return _extract_tank_gauging_out_turn(transaction, payloads.get("tank_gauging_payload") or {})
+        return _extract_tank_gauging_out_turn(transaction, payloads.get("tank_gauging_payload") or {}, db=db)
     elif layout == "multi-tank before/after":
-        return _extract_multi_tank_out_turn(transaction, payloads.get("multi_tank_payload") or {})
+        return _extract_multi_tank_out_turn(transaction, payloads.get("multi_tank_payload") or {}, db=db)
     elif layout == "stock movement":
-        return _extract_stock_movement_out_turn(transaction, payloads.get("net_nsv"))
+        return _extract_stock_movement_out_turn(transaction, payloads.get("net_nsv"), db=db)
     elif layout == "vessel cycle":
-        return _extract_stock_movement_out_turn(transaction, payloads.get("net_nsv"))
+        return _extract_stock_movement_out_turn(transaction, payloads.get("net_nsv"), db=db)
 
     return []
 
 
-def _extract_tank_gauging_out_turn(transaction: OperationTransaction, payload: dict):
+def _extract_tank_gauging_out_turn(
+    transaction: OperationTransaction,
+    payload: dict,
+    db: Session | None = None,
+    setting_cache: dict | None = None,
+):
     calculated = payload.get("calculated") or {}
     inputs = payload.get("inputs") or {}
 
@@ -220,13 +249,14 @@ def _extract_tank_gauging_out_turn(transaction: OperationTransaction, payload: d
         return []
 
     operation_datetime = _parse_operation_datetime(transaction.operation_date, payload)
+    accounting_date = _out_turn_accounting_date(db, transaction, payload, setting_cache)
 
     return [
         {
             "transaction_id": transaction.id,
             "ticket_number": get_transaction_ticket_number(transaction),
             "operation_number": transaction.operation_number,
-            "accounting_date": transaction.operation_date,
+            "accounting_date": accounting_date,
             "operation_datetime": operation_datetime,
             "location_code": transaction.origin_location_code,
             "tank_asset_code": transaction.primary_asset_code,
@@ -244,7 +274,12 @@ def _extract_tank_gauging_out_turn(transaction: OperationTransaction, payload: d
     ]
 
 
-def _extract_multi_tank_out_turn(transaction: OperationTransaction, payload: dict):
+def _extract_multi_tank_out_turn(
+    transaction: OperationTransaction,
+    payload: dict,
+    db: Session | None = None,
+    setting_cache: dict | None = None,
+):
     per_tank_after = ((payload.get("perTank") or {}).get("after") or {})
     inputs = payload.get("inputs") or {}
 
@@ -252,6 +287,7 @@ def _extract_multi_tank_out_turn(transaction: OperationTransaction, payload: dic
         return []
 
     operation_datetime = _parse_operation_datetime(transaction.operation_date, payload)
+    accounting_date = _out_turn_accounting_date(db, transaction, payload, setting_cache)
 
     results = []
 
@@ -272,7 +308,7 @@ def _extract_multi_tank_out_turn(transaction: OperationTransaction, payload: dic
                 "transaction_id": transaction.id,
                 "ticket_number": get_transaction_ticket_number(transaction),
                 "operation_number": transaction.operation_number,
-                "accounting_date": transaction.operation_date,
+                "accounting_date": accounting_date,
                 "operation_datetime": operation_datetime,
                 "location_code": transaction.origin_location_code,
                 "tank_asset_code": tank_key,
@@ -292,22 +328,38 @@ def _extract_multi_tank_out_turn(transaction: OperationTransaction, payload: dic
     return results
 
 
-def _extract_stock_movement_out_turn(transaction: OperationTransaction, net_nsv_value):
+def _extract_stock_movement_out_turn(
+    transaction: OperationTransaction,
+    net_nsv_value,
+    db: Session | None = None,
+    setting_cache: dict | None = None,
+):
     nsv = safe_float(net_nsv_value)
 
     if nsv == 0:
         return []
 
+    # Stock Movement / Vessel Cycle payloads carry no date/time of their
+    # own, so the legacy ticket metadata is the only available moment.
     operation_datetime = transaction.operation_start_datetime
     if operation_datetime is None:
         operation_datetime = datetime.combine(transaction.operation_date, datetime_time(0, 0))
+
+    accounting_date = transaction.operation_date
+    if db is not None:
+        _, _, _, resolved_accounting_date = resolve_transaction_accounting(
+            db,
+            transaction,
+            setting_cache=setting_cache,
+        )
+        accounting_date = resolved_accounting_date or accounting_date
 
     return [
         {
             "transaction_id": transaction.id,
             "ticket_number": get_transaction_ticket_number(transaction),
             "operation_number": transaction.operation_number,
-            "accounting_date": transaction.operation_date,
+            "accounting_date": accounting_date,
             "operation_datetime": operation_datetime,
             "location_code": transaction.origin_location_code,
             "tank_asset_code": transaction.primary_asset_code,
@@ -378,7 +430,13 @@ def get_out_turn_report_rows_from_transactions(
         query = query.filter(OperationTransaction.operation_date >= date_from_value)
 
     if date_to_value:
-        query = query.filter(OperationTransaction.operation_date <= date_to_value)
+        # One extra day of candidates: an operation in the early hours of
+        # ``date_to + 1`` still belongs to accounting date ``date_to`` under
+        # a location accounting-day window that starts after midnight.
+        # Rows are filtered on their resolved accounting date at the end.
+        query = query.filter(
+            OperationTransaction.operation_date <= date_to_value + timedelta(days=1)
+        )
 
     transactions = query.order_by(
         OperationTransaction.operation_date.asc(),
@@ -407,27 +465,34 @@ def get_out_turn_report_rows_from_transactions(
         visible_transactions = transactions
         predecessor_candidates = []
 
-    # Latest pre-window ticket per (location, tank) seeds the chain.
-    latest_predecessor_by_group: dict[tuple[str, str], OperationTransaction] = {}
+    # Latest pre-window ticket per (location, tank) seeds the chain. The
+    # chronologically latest predecessor is decided by the payload
+    # date/time, so every candidate on the group's latest pre-window
+    # operation date is kept and ranked after extraction below.
+    predecessor_candidates_by_group: dict[tuple[str, str], list] = {}
+    latest_predecessor_date_by_group: dict[tuple[str, str], date] = {}
     predecessor_tx_count_by_group: dict[tuple[str, str], int] = {}
     for tx in predecessor_candidates:
         group = (tx.origin_location_code or "", tx.primary_asset_code or "")
         predecessor_tx_count_by_group[group] = (
             predecessor_tx_count_by_group.get(group, 0) + 1
         )
-        current = latest_predecessor_by_group.get(group)
-        if current is None or (tx.operation_date, tx.id) > (
-            current.operation_date,
-            current.id,
-        ):
-            latest_predecessor_by_group[group] = tx
+        latest_date = latest_predecessor_date_by_group.get(group)
+        if latest_date is None or tx.operation_date > latest_date:
+            latest_predecessor_date_by_group[group] = tx.operation_date
+            predecessor_candidates_by_group[group] = [tx]
+        elif tx.operation_date == latest_date:
+            predecessor_candidates_by_group[group].append(tx)
 
     tx_ids = [tx.id for tx in visible_transactions] + [
-        tx.id for tx in latest_predecessor_by_group.values()
+        tx.id
+        for group_candidates in predecessor_candidates_by_group.values()
+        for tx in group_candidates
     ]
     payload_map = _build_out_turn_transaction_payload_map(db, tx_ids)
 
     template_cache = {}
+    setting_cache = {}
 
     def _extract_rows(tx_list):
         rows_for_tx = []
@@ -453,15 +518,30 @@ def get_out_turn_report_rows_from_transactions(
 
             if entry_layout == "tank gauging":
                 rows_for_tx.extend(
-                    _extract_tank_gauging_out_turn(tx, payloads.get("tank_gauging_payload") or {})
+                    _extract_tank_gauging_out_turn(
+                        tx,
+                        payloads.get("tank_gauging_payload") or {},
+                        db=db,
+                        setting_cache=setting_cache,
+                    )
                 )
             elif entry_layout == "multi-tank before/after":
                 rows_for_tx.extend(
-                    _extract_multi_tank_out_turn(tx, payloads.get("multi_tank_payload") or {})
+                    _extract_multi_tank_out_turn(
+                        tx,
+                        payloads.get("multi_tank_payload") or {},
+                        db=db,
+                        setting_cache=setting_cache,
+                    )
                 )
             elif entry_layout in ("stock movement", "vessel cycle"):
                 rows_for_tx.extend(
-                    _extract_stock_movement_out_turn(tx, payloads.get("net_nsv"))
+                    _extract_stock_movement_out_turn(
+                        tx,
+                        payloads.get("net_nsv"),
+                        db=db,
+                        setting_cache=setting_cache,
+                    )
                 )
 
         return rows_for_tx
@@ -473,8 +553,8 @@ def get_out_turn_report_rows_from_transactions(
     seed_previous_by_group: dict[tuple[str, str], dict] = {}
     seed_sequence_by_group: dict[tuple[str, str], int] = {}
 
-    for group, predecessor_tx in latest_predecessor_by_group.items():
-        predecessor_rows = _extract_rows([predecessor_tx])
+    for group, group_candidates in predecessor_candidates_by_group.items():
+        predecessor_rows = _extract_rows(group_candidates)
         if not predecessor_rows:
             continue
 
@@ -581,6 +661,24 @@ def get_out_turn_report_rows_from_transactions(
             r["transaction_id"] or 0,
         )
     )
+
+    # The requested range selects rows by their resolved accounting date
+    # (payload moment + location accounting-day setting). Filtering only
+    # after the chain is built keeps previous-stock values correct for the
+    # first visible row of each tank.
+    if date_from_value is not None or date_to_value is not None:
+        per_tank_rows = [
+            row
+            for row in per_tank_rows
+            if (
+                date_from_value is None
+                or (row["accounting_date"] or date.min) >= date_from_value
+            )
+            and (
+                date_to_value is None
+                or (row["accounting_date"] or date.max) <= date_to_value
+            )
+        ]
 
     # Product is reference data only. Filter the already-calculated rows so
     # every tank snapshot still participates in chronological out-turn logic.
@@ -2093,9 +2191,15 @@ def build_fso_otr_report(
         src_discharge = float(safe_float(meta.get("source_shuttle_discharge_bbl")))
         compare_var = src_discharge - movement_qty if op_sign == "IN" and src_discharge > 0 else 0.0
 
-        setting = get_active_location_day_setting(db, loc_code, tx.operation_date)
+        # Operation date/time come from the payload, not the ticket
+        # metadata (tickets recorded before the metadata date was removed
+        # may carry a different metadata date).
+        payload_operation_date = (
+            get_payload_operation_date(payload, "fso_payload") or tx.operation_date
+        )
+        setting = get_active_location_day_setting(db, loc_code, payload_operation_date)
         day_start = setting.day_start_time if setting else datetime_time(0, 0)
-        acc_date = compute_accounting_date(tx.operation_date, event_time, day_start)
+        acc_date = compute_accounting_date(payload_operation_date, event_time, day_start)
         if not date_from <= acc_date <= date_to:
             continue
 
@@ -2103,7 +2207,7 @@ def build_fso_otr_report(
             "transaction_id": tx.id,
             "ticket_number": get_transaction_ticket_number(tx),
             "accounting_date": acc_date,
-            "operation_date": tx.operation_date,
+            "operation_date": payload_operation_date,
             "event_time": event_time,
             "location_code": loc_code,
             "fso_asset_code": asset_code,
@@ -2171,9 +2275,12 @@ def build_fso_material_balance(
         inputs = payload.get("inputs") or {}
         net = ((payload.get("calculated") or {}).get("net") or {})
 
-        setting = get_active_location_day_setting(db, loc_code, tx.operation_date)
+        payload_operation_date = (
+            get_payload_operation_date(payload, "fso_payload") or tx.operation_date
+        )
+        setting = get_active_location_day_setting(db, loc_code, payload_operation_date)
         day_start = setting.day_start_time if setting else datetime_time(0, 0)
-        acc_date = compute_accounting_date(tx.operation_date, inputs.get("event_time"), day_start)
+        acc_date = compute_accounting_date(payload_operation_date, inputs.get("event_time"), day_start)
 
         buckets.setdefault(acc_date, []).append((tx, meta, inputs, net))
 
@@ -2186,8 +2293,10 @@ def build_fso_material_balance(
 
         def sort_key(item):
             tx, meta, inputs, net = item
-            t = inputs.get("event_time") or "00:00"
-            return (str(tx.operation_date), str(t), tx.id)
+            payload_datetime = resolve_transaction_operation_datetime(
+                tx, payload={"inputs": inputs}, field_code="fso_payload"
+            )
+            return (payload_datetime or datetime.min, tx.id)
 
         items = sorted(items, key=sort_key)
 
@@ -2280,9 +2389,12 @@ def build_fso_outturn_report(
 
         event_time = inputs.get("event_time")
 
-        setting = get_active_location_day_setting(db, loc_code, tx.operation_date)
+        payload_operation_date = (
+            get_payload_operation_date(payload, "fso_payload") or tx.operation_date
+        )
+        setting = get_active_location_day_setting(db, loc_code, payload_operation_date)
         day_start = setting.day_start_time if setting else datetime_time(0, 0)
-        acc_date = compute_accounting_date(tx.operation_date, event_time, day_start)
+        acc_date = compute_accounting_date(payload_operation_date, event_time, day_start)
         if not date_from <= acc_date <= date_to:
             continue
 
@@ -2735,13 +2847,18 @@ def resolve_transaction_datetime_for_accounting_day(
     transaction: OperationTransaction,
     payload: dict,
 ):
-    if transaction.operation_start_datetime is not None:
+    # The payload date/time is the operation moment. The legacy metadata
+    # Operation Start Date/Time is only consulted when the payload carries
+    # no complete date/time of its own (tickets recorded before the
+    # metadata inputs were removed may hold a *different* metadata start,
+    # and it must never override the payload).
+    payload_date, payload_time = get_payload_operation_parts(payload)
+
+    if payload_date is not None and payload_time is not None:
+        return datetime.combine(payload_date, payload_time)
+
+    if transaction is not None and transaction.operation_start_datetime is not None:
         return transaction.operation_start_datetime
-
-    payload_datetime = parse_payload_gauging_datetime(payload)
-
-    if payload_datetime is not None:
-        return payload_datetime
 
     raise HTTPException(
         status_code=400,
@@ -2875,13 +2992,10 @@ def get_location_accounting_day_for_transaction(
 
 
 def get_ledger_sort_datetime(ledger: TankStockLedger):
-    if ledger.accounting_day_start is not None:
-        return ledger.accounting_day_start
-
-    if ledger.operation_date is not None:
-        return datetime.combine(ledger.operation_date, datetime_time(0, 0))
-
-    return datetime.min
+    # Chronological order is the payload operation moment (see
+    # ``get_ledger_operation_datetime``); the accounting-day window start
+    # is identical for every row of a day and must not order rows.
+    return get_ledger_operation_datetime(ledger) or datetime.min
 
 
 def get_previous_active_ledger_row(
@@ -2906,20 +3020,7 @@ def get_previous_active_ledger_row(
     previous_rows = []
 
     for row in candidate_rows:
-        row_datetime = row.accounting_day_start
-
-        try:
-            payload = row.source_payload or {}
-            payload_inputs = payload.get("inputs") or {}
-            gauging_date = clean_optional_text(payload_inputs.get("gaugingDate"))
-            gauging_time = clean_optional_text(payload_inputs.get("gaugingTime"))
-
-            if gauging_date and gauging_time:
-                row_datetime = datetime.fromisoformat(
-                    f"{gauging_date}T{gauging_time}"
-                )
-        except Exception:
-            row_datetime = None
+        row_datetime = get_ledger_operation_datetime(row)
 
         if row_datetime is None:
             row_datetime = datetime.combine(row.operation_date, datetime_time(0, 0))
@@ -3064,20 +3165,7 @@ def rebuild_tank_stock_running_balances(
     sortable_rows = []
 
     for row in ledger_rows:
-        row_datetime = row.accounting_day_start
-
-        try:
-            payload = row.source_payload or {}
-            payload_inputs = payload.get("inputs") or {}
-            gauging_date = clean_optional_text(payload_inputs.get("gaugingDate"))
-            gauging_time = clean_optional_text(payload_inputs.get("gaugingTime"))
-
-            if gauging_date and gauging_time:
-                row_datetime = datetime.fromisoformat(
-                    f"{gauging_date}T{gauging_time}"
-                )
-        except Exception:
-            row_datetime = None
+        row_datetime = get_ledger_operation_datetime(row)
 
         if row_datetime is None:
             row_datetime = datetime.combine(row.operation_date, datetime_time(0, 0))
@@ -3089,35 +3177,46 @@ def rebuild_tank_stock_running_balances(
     previous_row = None
 
     for row_datetime, _row_id, row in sortable_rows:
-        if (
-            row.accounting_date is None
-            or row.accounting_day_start is None
-            or row.accounting_day_end is None
-            or row.accounting_day_setting_id is None
-        ):
-            try:
-                payload = row.source_payload or {}
+        # Re-derive the operation/accounting dates from the payload on
+        # every rebuild, not only when they are missing: rows created while
+        # the metadata date/time still took precedence may carry an
+        # accounting day computed from the wrong moment, and a rebuild is
+        # the operator's tool to correct exactly that. Rows whose payload
+        # has no usable date/time (or whose location has no effective
+        # setting) keep their stored values untouched.
+        try:
+            payload = row.source_payload or {}
 
-                transaction_datetime = resolve_transaction_datetime_for_accounting_day(
-                    transaction=db.query(OperationTransaction)
-                    .filter(OperationTransaction.id == row.transaction_id)
-                    .first(),
-                    payload=payload,
-                )
+            transaction = (
+                db.query(OperationTransaction)
+                .filter(OperationTransaction.id == row.transaction_id)
+                .first()
+            )
 
-                accounting_day = get_location_accounting_day_for_transaction(
-                    db=db,
-                    location_code=row.location_code,
-                    transaction_datetime=transaction_datetime,
-                )
+            transaction_datetime = resolve_transaction_datetime_for_accounting_day(
+                transaction=transaction,
+                payload=payload,
+            )
 
-                row.accounting_date = accounting_day["accounting_date"]
-                row.accounting_day_start = accounting_day["accounting_day_start"]
-                row.accounting_day_end = accounting_day["accounting_day_end"]
-                row.accounting_day_setting_id = accounting_day["setting_id"]
+            accounting_day = get_location_accounting_day_for_transaction(
+                db=db,
+                location_code=row.location_code,
+                transaction_datetime=transaction_datetime,
+            )
 
-            except Exception:
-                pass
+            payload_operation_date = resolve_transaction_operation_date(
+                transaction, payload=payload
+            )
+            if payload_operation_date is not None:
+                row.operation_date = payload_operation_date
+
+            row.accounting_date = accounting_day["accounting_date"]
+            row.accounting_day_start = accounting_day["accounting_day_start"]
+            row.accounting_day_end = accounting_day["accounting_day_end"]
+            row.accounting_day_setting_id = accounting_day["setting_id"]
+
+        except Exception:
+            pass
 
         current_gsv_bbl = safe_float(row.stock_gsv_bbl)
         current_nsv_bbl = safe_float(row.stock_nsv_bbl)
@@ -3292,7 +3391,12 @@ def create_tank_stock_ledger_from_approved_transaction(
         location_code=transaction.origin_location_code,
         tank_asset_code=transaction.primary_asset_code,
         tank_asset_name=tank_asset_name,
-        operation_date=transaction.operation_date,
+        # Operation date is the date entered in the payload; the ticket
+        # metadata date of an older ticket may legitimately differ.
+        operation_date=(
+            resolve_transaction_operation_date(transaction, payload=payload)
+            or transaction.operation_date
+        ),
         product_name=clean_optional_text(transaction.product_name),
         accounting_date=accounting_day["accounting_date"],
         accounting_day_start=accounting_day["accounting_day_start"],

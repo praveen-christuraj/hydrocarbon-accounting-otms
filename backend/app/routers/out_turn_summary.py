@@ -1,4 +1,4 @@
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -32,6 +32,7 @@ from app.utils.pagination import (
 )
 from app.schemas import OutTurnSummaryConfigUpdate
 from app.services.audit_service import create_audit_log
+from app.services.operation_datetime import resolve_transaction_accounting
 from app.services.transaction_helpers import parse_date_filter, approved_transaction_not_on_correction_hold
 from app.utils.helpers import (
     clean_optional_text,
@@ -499,6 +500,7 @@ def _build_row(
     previous: dict,
     location=_UNSET,
     asset=_UNSET,
+    resolved=_UNSET,
 ):
     # ``location`` / ``asset`` may be prefetched (bulk) by the list builder;
     # an explicit None means "prefetched and not found" (no per-row query).
@@ -506,6 +508,13 @@ def _build_row(
         location = get_location_by_code(transaction.origin_location_code, db)
     if asset is _UNSET:
         asset = get_asset_by_code(transaction.primary_asset_code, db)
+
+    # Operation date/time come from the gauging payload; the accounting
+    # date is that moment under the origin location's accounting-day
+    # setting. ``resolved`` lets the list builder share one setting cache.
+    if resolved is _UNSET:
+        resolved = resolve_transaction_accounting(db, transaction, payload=payload)
+    operation_date, _operation_time, _operation_datetime, accounting_date = resolved
 
     extracted = _extract_payload_columns(payload)
 
@@ -528,8 +537,8 @@ def _build_row(
         "transaction_id": transaction.id,
         "ticket_number": get_transaction_ticket_number(transaction),
         "operation_number": transaction.operation_number,
-        "operation_date": transaction.operation_date,
-        "accounting_date": transaction.operation_date,
+        "operation_date": operation_date or transaction.operation_date,
+        "accounting_date": accounting_date or operation_date or transaction.operation_date,
         "location_code": transaction.origin_location_code,
         "location_name": location.location_name if location else "",
         "tank_asset_code": transaction.primary_asset_code,
@@ -640,13 +649,26 @@ def get_out_turn_summary_rows(
     # so a label change cannot remove an intermediate stock snapshot from the
     # out-turn calculation. The optional product filter is applied to the
     # finished display rows below.
+    #
+    # One extra candidate day at the top end: an operation in the early
+    # hours of ``date_to + 1`` can belong to accounting date ``date_to``
+    # under the location's accounting-day window. Rows are filtered on
+    # their resolved accounting date after the chain is built.
+    explicit_date_from = parse_date_filter(date_from, "Date From")
+    explicit_date_to = parse_date_filter(date_to, "Date To")
+    visible_date_to = (
+        (explicit_date_to + timedelta(days=1)).isoformat()
+        if explicit_date_to is not None
+        else date_to
+    )
+
     visible_transactions = (
         _get_transaction_query(
             db,
             location_code=location_code,
             tank_asset_code=tank_asset_code,
             date_from=effective_date_from,
-            date_to=date_to,
+            date_to=visible_date_to,
             current_user=current_user,
         )
         .order_by(
@@ -659,6 +681,28 @@ def get_out_turn_summary_rows(
     if not visible_transactions:
         return []
 
+    payload_map = get_tank_gauging_payload_map(
+        db, [tx.id for tx in visible_transactions]
+    )
+
+    # Resolve every ticket's operation moment from its payload once; the
+    # chain below is chronological by that moment (date *and* time), not
+    # by metadata date / row id.
+    setting_cache = {}
+    resolved_by_tx = {
+        tx.id: resolve_transaction_accounting(
+            db,
+            tx,
+            payload=payload_map.get(tx.id) or {},
+            setting_cache=setting_cache,
+        )
+        for tx in visible_transactions
+    }
+
+    def _tx_sort_key(tx):
+        _op_date, _op_time, operation_datetime, _acc_date = resolved_by_tx[tx.id]
+        return (operation_datetime or datetime.min, tx.id)
+
     grouped: dict[tuple[str, str], list] = {}
 
     for tx in visible_transactions:
@@ -667,10 +711,6 @@ def get_out_turn_summary_rows(
             tx.primary_asset_code or "",
         )
         grouped.setdefault(key, []).append(tx)
-
-    payload_map = get_tank_gauging_payload_map(
-        db, [tx.id for tx in visible_transactions]
-    )
 
     def _key(code):
         return str(code or "").strip().lower()
@@ -685,15 +725,22 @@ def get_out_turn_summary_rows(
     rows = []
 
     for group_key in sorted(grouped.keys()):
-        group_transactions = grouped[group_key]
-        first_tx = group_transactions[0]
+        group_transactions = sorted(grouped[group_key], key=_tx_sort_key)
+
+        # The chain is anchored on the first row-producing ticket in
+        # payload-chronological order.
+        first_tx = next(
+            (tx for tx in group_transactions if payload_map.get(tx.id)),
+            group_transactions[0],
+        )
+        first_sort_key = _tx_sort_key(first_tx)
 
         # --- seed the chain from history before the visible window -------
         history_query = _get_transaction_query(
             db,
             location_code=location_code,
             tank_asset_code=tank_asset_code,
-            date_to=date_to,
+            date_to=visible_date_to,
             current_user=current_user,
         ).filter(
             OperationTransaction.origin_location_code.ilike(group_key[0] or "%"),
@@ -709,33 +756,85 @@ def get_out_turn_summary_rows(
 
         previous = {"nsv": 0.0, "gsv": 0.0, "lt": 0.0, "mt": 0.0}
 
-        # Latest payload-bearing snapshot before the window (1 row).
-        predecessor = (
-            history_query.join(
+        # Latest payload-bearing snapshot before the window, latest by the
+        # payload date/time (a same-day predecessor entered later but
+        # gauged earlier must still seed the chain). Candidate payloads
+        # are loaded one operation date at a time, newest first, until an
+        # eligible predecessor is found.
+        predecessor_candidates = (
+            _get_transaction_query(
+                db,
+                location_code=location_code,
+                tank_asset_code=tank_asset_code,
+                date_to=visible_date_to,
+                current_user=current_user,
+            )
+            .join(
                 OperationTransactionValue,
                 (OperationTransactionValue.transaction_id == OperationTransaction.id)
                 & (OperationTransactionValue.field_code == "tank_gauging_payload")
                 & (OperationTransactionValue.field_value.isnot(None)),
             )
+            .filter(
+                OperationTransaction.origin_location_code.ilike(group_key[0] or "%"),
+                OperationTransaction.primary_asset_code.ilike(group_key[1] or "%"),
+                OperationTransaction.operation_date <= first_tx.operation_date,
+                OperationTransaction.id != first_tx.id,
+            )
+            .with_entities(
+                OperationTransaction.id,
+                OperationTransaction.operation_date,
+                OperationTransaction.operation_start_datetime,
+                OperationTransaction.origin_location_code,
+            )
             .order_by(
                 OperationTransaction.operation_date.desc(),
                 OperationTransaction.id.desc(),
             )
-            .first()
+            .all()
         )
 
-        if predecessor is not None:
-            payload = get_tank_gauging_payload_map(db, [predecessor.id]).get(
-                predecessor.id
+        predecessor_payload = None
+        candidates_by_date: dict[date, list] = {}
+        for candidate in predecessor_candidates:
+            candidates_by_date.setdefault(candidate.operation_date, []).append(candidate)
+
+        for candidate_date in sorted(candidates_by_date.keys(), reverse=True):
+            day_candidates = candidates_by_date[candidate_date]
+            day_payload_map = get_tank_gauging_payload_map(
+                db, [candidate.id for candidate in day_candidates]
             )
-            if payload:
-                extracted = _extract_payload_columns(payload)
-                previous = {
-                    "nsv": safe_float(extracted.get("calc_nsvBbl")),
-                    "gsv": safe_float(extracted.get("calc_gsvBbl")),
-                    "lt": safe_float(extracted.get("calc_lt")),
-                    "mt": safe_float(extracted.get("calc_mt")),
-                }
+
+            eligible = []
+            for candidate in day_candidates:
+                candidate_payload = day_payload_map.get(candidate.id)
+                if not candidate_payload:
+                    continue
+                _c_date, _c_time, candidate_datetime, _c_acc = (
+                    resolve_transaction_accounting(
+                        db,
+                        candidate,
+                        payload=candidate_payload,
+                        setting_cache=setting_cache,
+                    )
+                )
+                candidate_key = (candidate_datetime or datetime.min, candidate.id)
+                if candidate_key < first_sort_key:
+                    eligible.append((candidate_key, candidate_payload))
+
+            if eligible:
+                eligible.sort(key=lambda item: item[0])
+                predecessor_payload = eligible[-1][1]
+                break
+
+        if predecessor_payload:
+            extracted = _extract_payload_columns(predecessor_payload)
+            previous = {
+                "nsv": safe_float(extracted.get("calc_nsvBbl")),
+                "gsv": safe_float(extracted.get("calc_gsvBbl")),
+                "lt": safe_float(extracted.get("calc_lt")),
+                "mt": safe_float(extracted.get("calc_mt")),
+            }
 
         # Sequence numbers continue from the count of earlier tickets for
         # this tank (payload-bearing in practice; gauging tickets without a
@@ -756,6 +855,7 @@ def get_out_turn_summary_rows(
                 previous=previous,
                 location=locations_by_code.get(_key(tx.origin_location_code)),
                 asset=assets_by_code.get(_key(tx.primary_asset_code)),
+                resolved=resolved_by_tx[tx.id],
             )
 
             rows.append(row)
@@ -770,6 +870,23 @@ def get_out_turn_summary_rows(
             }
 
             sequence += 1
+
+    # An explicit range selects rows by their resolved accounting date,
+    # applied only now so the chronological chain (previous-stock values)
+    # is computed over the complete sequence first.
+    if explicit_date_from is not None or explicit_date_to is not None:
+        rows = [
+            row
+            for row in rows
+            if (
+                explicit_date_from is None
+                or (row.get("accounting_date") or date.min) >= explicit_date_from
+            )
+            and (
+                explicit_date_to is None
+                or (row.get("accounting_date") or date.max) <= explicit_date_to
+            )
+        ]
 
     cleaned_product_name = clean_optional_text(product_name)
     if cleaned_product_name:

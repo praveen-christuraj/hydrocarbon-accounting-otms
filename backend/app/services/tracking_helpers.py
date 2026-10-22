@@ -31,6 +31,9 @@ from app.models import (
     User,
 )
 from app.schemas import TripEventCreate
+from app.services.operation_datetime import (
+    resolve_transaction_operation_datetime_from_db as _resolve_payload_operation_datetime,
+)
 from app.utils.helpers import (
     clean_optional_text,
     get_transaction_ticket_number,
@@ -316,7 +319,11 @@ def ensure_trip_event_for_transaction(
     """
     asset_code = str(transaction.primary_asset_code or "").strip()
     location_code = clean_optional_text(transaction.origin_location_code)
-    event_datetime = transaction.operation_start_datetime or datetime.now()
+    # Timeline moment = date/time entered in the ticket payload (multi-tank
+    # before date/time for barges); legacy metadata / now only as fallback.
+    event_datetime = (
+        _resolve_payload_operation_datetime(db, transaction) or datetime.now()
+    )
 
     linked_sender_id = get_linked_sender_transaction_id(db, transaction.id)
 

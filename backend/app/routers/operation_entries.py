@@ -52,10 +52,28 @@ from app.services.tracking_links import (
 )
 from app.services.asset_family import operation_type_is_barge
 from app.services.location_pairing import apply_sender_receiver_pairing
+from app.services.operation_datetime import operation_date_from_value_map
 from app.services.tracking_config import MODULE_BARGE
 from app.utils.pagination import clamp_limit
 
 router = APIRouter(prefix="/operation-entries", tags=["Operation Entries"])
+
+
+def apply_payload_operation_date(entry, value_map) -> None:
+    """Derive the ticket ``operation_date`` from the data-entry payload.
+
+    The Operation Date metadata input was removed from Operation Entry:
+    the operation date is the date typed inside the respective operation
+    type's payload (gauging date, tanker transaction date, multi-tank
+    before date, reading date, FSO/Shuttle operation date). Deriving it
+    server-side keeps the stored column - still used for ticket numbers,
+    list filters and range bounds - always equal to the payload date,
+    whatever date a client happens to send in the metadata. Payloads
+    without any date keep the submitted metadata date.
+    """
+    payload_date = operation_date_from_value_map(value_map)
+    if payload_date is not None:
+        entry.transaction.operation_date = payload_date
 
 
 def _parse_linked_id(value):
@@ -530,6 +548,9 @@ def create_operation_entry(
         transaction_operation_type_code,
     ) = validate_operation_entry(entry, db)
 
+    # Payload-first operation date (see apply_payload_operation_date).
+    apply_payload_operation_date(entry, value_map)
+
     ensure_operation_type_available_for_location(
         db=db,
         location_code=entry.transaction.origin_location_code,
@@ -743,6 +764,9 @@ def update_operation_entry(
         value_map,
         transaction_operation_type_code,
     ) = validate_operation_entry(entry, db)
+
+    # Payload-first operation date (see apply_payload_operation_date).
+    apply_payload_operation_date(entry, value_map)
 
     ensure_operation_type_available_for_location(
         db=db,

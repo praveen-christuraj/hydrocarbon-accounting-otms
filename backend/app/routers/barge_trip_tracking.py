@@ -33,6 +33,9 @@ from app.dependencies.permissions import (
     user_is_party_to_location_codes,
 )
 from app.services.audit_service import create_audit_log
+from app.services.operation_datetime import (
+    resolve_transaction_operation_datetime_from_db as resolve_payload_operation_datetime,
+)
 from app.services.location_pairing import (
     resolve_receiver_location_code,
     resolve_sender_location_code,
@@ -680,7 +683,7 @@ def create_trip_event(
 
     event_datetime = (
         request.event_datetime
-        or (tx.operation_start_datetime if tx else None)
+        or (resolve_payload_operation_datetime(db, tx) if tx else None)
         or datetime.now()
     )
 
