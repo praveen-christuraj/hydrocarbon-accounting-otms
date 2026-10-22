@@ -6,6 +6,7 @@ from io import BytesIO
 import openpyxl
 from app.models import OperationTransactionValue
 from app.routers.out_turn_summary import get_out_turn_summary_rows
+from app.routers.reports import get_out_turn_report_rows_from_transactions
 from app.routers.tanker_tracking import build_tanker_quantity_comparison, build_tanker_tracking_ticket
 from app.services.tracking_helpers import build_multitank_comparison_json_v2
 from tests.test_barge_voyages_and_fso_variance import (
@@ -54,6 +55,13 @@ def test_out_turn_history_ignores_product_and_lower_date_filter(db):
     rows = get_out_turn_summary_rows(db, product_name="Old grade", date_from="2026-08-11")
     assert rows[0]["previous_nsv"] == 900
     assert rows[0]["net_receipt_nsv"] == 50
+
+    report_rows = get_out_turn_report_rows_from_transactions(
+        db, product_name="Old grade", date_from="2026-08-11"
+    )
+    assert len(report_rows) == 1
+    assert report_rows[0]["previous_nsv"] == 900
+    assert report_rows[0]["signed_net_nsv"] == 50
 
 
 def _seed_shuttle(db):

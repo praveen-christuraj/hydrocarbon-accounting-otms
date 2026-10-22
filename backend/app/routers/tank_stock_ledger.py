@@ -240,8 +240,6 @@ def get_tank_stock_rows_for_daily_summary(
     if cleaned_location_code and current_user is not None:
         ensure_location_in_user_scope(current_user, db, cleaned_location_code, "Location")
     cleaned_tank_asset_code = clean_optional_text(tank_asset_code)
-    cleaned_product_name = clean_optional_text(product_name)
-
     if cleaned_location_code:
         query = query.filter(
             TankStockLedger.location_code.ilike(cleaned_location_code)
@@ -252,16 +250,10 @@ def get_tank_stock_rows_for_daily_summary(
             TankStockLedger.tank_asset_code.ilike(cleaned_tank_asset_code)
         )
 
-    if cleaned_product_name:
-        query = query.filter(
-            TankStockLedger.product_name.ilike(cleaned_product_name)
-        )
-
     return (
         query.order_by(
             TankStockLedger.location_code.asc(),
             TankStockLedger.tank_asset_code.asc(),
-            TankStockLedger.product_name.asc(),
             TankStockLedger.accounting_date.asc(),
             TankStockLedger.operation_date.asc(),
             TankStockLedger.id.asc(),
@@ -371,7 +363,6 @@ def get_out_turn_report_rows(
     if cleaned_location_code and current_user is not None:
         ensure_location_in_user_scope(current_user, db, cleaned_location_code, "Location")
     cleaned_tank_asset_code = clean_optional_text(tank_asset_code)
-    cleaned_product_name = clean_optional_text(product_name)
     cleaned_status = clean_optional_text(status)
 
     if cleaned_status:
@@ -385,11 +376,6 @@ def get_out_turn_report_rows(
     if cleaned_tank_asset_code:
         query = query.filter(
             TankStockLedger.tank_asset_code.ilike(cleaned_tank_asset_code)
-        )
-
-    if cleaned_product_name:
-        query = query.filter(
-            TankStockLedger.product_name.ilike(cleaned_product_name)
         )
 
     date_from_value = parse_date_filter(date_from, "Date From")
@@ -410,7 +396,6 @@ def get_out_turn_report_rows(
             get_ledger_operation_datetime(row) or datetime.min,
             row.location_code or "",
             row.tank_asset_code or "",
-            row.product_name or "",
             row.id,
         ),
     )
@@ -429,11 +414,7 @@ def build_tank_stock_daily_summary_rows(
     grouped_rows = {}
 
     for row in ledger_rows:
-        key = (
-            row.location_code,
-            row.tank_asset_code,
-            row.product_name or "",
-        )
+        key = (row.location_code, row.tank_asset_code)
 
         if key not in grouped_rows:
             grouped_rows[key] = []
@@ -443,7 +424,7 @@ def build_tank_stock_daily_summary_rows(
     daily_summary_rows = []
 
     for key, rows in grouped_rows.items():
-        location_code, tank_asset_code, product_name_value = key
+        location_code, tank_asset_code = key
 
         location = get_location_by_code(location_code, db)
 
@@ -458,8 +439,10 @@ def build_tank_stock_daily_summary_rows(
         )
 
         tank_asset_name = ""
+        product_name_value = ""
         if sorted_rows:
             tank_asset_name = sorted_rows[-1].tank_asset_name or ""
+            product_name_value = sorted_rows[-1].product_name or ""
 
         previous_closing_gsv = 0
         previous_closing_nsv = 0
@@ -639,7 +622,6 @@ def build_tank_stock_daily_summary_rows(
             row["accounting_date"],
             row["location_code"],
             row["tank_asset_code"],
-            row["product_name"] or "",
         ),
     )
 
@@ -672,7 +654,6 @@ def get_material_balance_rows_for_continuity(
 
     cleaned_location_code = clean_optional_text(location_code)
     cleaned_tank_asset_code = clean_optional_text(tank_asset_code)
-    cleaned_product_name = clean_optional_text(product_name)
     cleaned_status = clean_optional_text(status)
 
     if cleaned_status:
@@ -688,11 +669,6 @@ def get_material_balance_rows_for_continuity(
             TankStockLedger.tank_asset_code.ilike(cleaned_tank_asset_code)
         )
 
-    if cleaned_product_name:
-        query = query.filter(
-            TankStockLedger.product_name.ilike(cleaned_product_name)
-        )
-
     rows = query.all()
 
     return sorted(
@@ -700,7 +676,6 @@ def get_material_balance_rows_for_continuity(
         key=lambda row: (
             row.location_code or "",
             row.tank_asset_code or "",
-            row.product_name or "",
             row.accounting_date or date.min,
             get_ledger_operation_datetime(row) or datetime.min,
             row.id,
@@ -932,6 +907,18 @@ def build_dynamic_material_balance_tank_rows(
                     "values": values,
                     "rows_count": len(day_rows),
                     "last_ticket_number": last_ticket_number,
+                    "_opening_value": opening_value,
+                    "_actual_closing_value": actual_closing_value,
+                    "_first_operation_datetime": (
+                        get_ledger_operation_datetime(day_rows[0])
+                        if day_rows
+                        else None
+                    ),
+                    "_last_operation_datetime": (
+                        get_ledger_operation_datetime(day_rows[-1])
+                        if day_rows
+                        else None
+                    ),
                 }
             )
 
@@ -963,7 +950,6 @@ def consolidate_dynamic_material_balance_rows_by_location(
         key = (
             row["accounting_date"],
             row["location_code"],
-            row["product_name"] or "",
         )
 
         if key not in consolidated_map:
@@ -973,10 +959,17 @@ def consolidate_dynamic_material_balance_rows_by_location(
                 "location_name": row["location_name"],
                 "tank_asset_code": None,
                 "tank_asset_name": "All Tanks",
-                "product_name": row["product_name"],
+                "product_name": None,
                 "values": {},
                 "rows_count": 0,
                 "last_ticket_number": None,
+                "_tank_asset_codes": set(),
+                "_tank_asset_names": set(),
+                "_product_names": set(),
+                "_opening_value": None,
+                "_actual_closing_value": None,
+                "_opening_datetime": None,
+                "_closing_datetime": None,
             }
 
             for column in columns:
@@ -984,22 +977,125 @@ def consolidate_dynamic_material_balance_rows_by_location(
 
         target = consolidated_map[key]
 
+        tank_asset_code = clean_optional_text(row.get("tank_asset_code"))
+        tank_asset_name = clean_optional_text(row.get("tank_asset_name"))
+        product_name = clean_optional_text(row.get("product_name"))
+        if tank_asset_code:
+            target["_tank_asset_codes"].add(tank_asset_code)
+        if tank_asset_name:
+            target["_tank_asset_names"].add(tank_asset_name)
+        if product_name:
+            target["_product_names"].add(product_name)
+
         for column in columns:
+            if normalize_material_balance_code_value(column.column_type) != "MOVEMENT":
+                continue
             column_key = column.column_key
             target["values"][column_key] = safe_float(
                 target["values"].get(column_key)
             ) + safe_float(row["values"].get(column_key))
 
-        target["rows_count"] += int(row.get("rows_count") or 0)
+        first_operation_datetime = row.get("_first_operation_datetime")
+        if (
+            target["_opening_value"] is None
+            or (
+                first_operation_datetime is not None
+                and (
+                    target["_opening_datetime"] is None
+                    or first_operation_datetime < target["_opening_datetime"]
+                )
+            )
+        ):
+            target["_opening_value"] = safe_float(row.get("_opening_value"))
+            target["_opening_datetime"] = first_operation_datetime
 
-        if row.get("last_ticket_number"):
+        last_operation_datetime = row.get("_last_operation_datetime")
+        if (
+            target["_actual_closing_value"] is None
+            or (
+                last_operation_datetime is not None
+                and (
+                    target["_closing_datetime"] is None
+                    or last_operation_datetime > target["_closing_datetime"]
+                )
+            )
+        ):
+            target["_actual_closing_value"] = safe_float(
+                row.get("_actual_closing_value")
+            )
+            target["_closing_datetime"] = last_operation_datetime
             target["last_ticket_number"] = row.get("last_ticket_number")
+
+        target["rows_count"] += int(row.get("rows_count") or 0)
 
     consolidated_rows = []
 
     for row in consolidated_map.values():
+        opening_value = safe_float(row.pop("_opening_value"))
+        actual_closing_value = safe_float(row.pop("_actual_closing_value"))
+        row.pop("_opening_datetime", None)
+        row.pop("_closing_datetime", None)
+
+        tank_asset_codes = sorted(row.pop("_tank_asset_codes"))
+        tank_asset_names = sorted(row.pop("_tank_asset_names"))
+        product_names = sorted(row.pop("_product_names"))
+        if len(tank_asset_codes) == 1:
+            row["tank_asset_code"] = tank_asset_codes[0]
+            row["tank_asset_name"] = (
+                tank_asset_names[0] if len(tank_asset_names) == 1 else ""
+            )
+        row["product_name"] = product_names[0] if len(product_names) == 1 else None
+
+        eligible_in_total = 0
+        eligible_out_total = 0
         for column in columns:
             column_key = column.column_key
+            column_type = normalize_material_balance_code_value(column.column_type)
+            if column_type == "OPENING":
+                row["values"][column_key] = opening_value
+            elif column_type == "MOVEMENT":
+                movement_value = safe_float(row["values"].get(column_key))
+                include_in_material_balance = (
+                    normalize_material_balance_code_value(
+                        column.include_in_material_balance
+                    )
+                    == "YES"
+                )
+                include_in_book_closing = (
+                    normalize_material_balance_code_value(
+                        column.include_in_book_closing
+                    )
+                    == "YES"
+                )
+                is_internal_transfer = (
+                    normalize_material_balance_code_value(column.is_internal_transfer)
+                    == "YES"
+                )
+                if (
+                    include_in_material_balance
+                    and include_in_book_closing
+                    and not is_internal_transfer
+                ):
+                    direction = normalize_material_balance_code_value(
+                        column.movement_direction
+                    )
+                    if direction == "IN":
+                        eligible_in_total += movement_value
+                    elif direction == "OUT":
+                        eligible_out_total += movement_value
+
+        book_closing_value = opening_value + eligible_in_total - eligible_out_total
+        loss_gain_value = actual_closing_value - book_closing_value
+
+        for column in columns:
+            column_key = column.column_key
+            column_type = normalize_material_balance_code_value(column.column_type)
+            if column_type == "BOOK_CLOSING":
+                row["values"][column_key] = book_closing_value
+            elif column_type == "ACTUAL_CLOSING":
+                row["values"][column_key] = actual_closing_value
+            elif column_type == "LOSS_GAIN":
+                row["values"][column_key] = loss_gain_value
             row["values"][column_key] = round(
                 safe_float(row["values"].get(column_key)),
                 3,
@@ -1012,12 +1108,8 @@ def consolidate_dynamic_material_balance_rows_by_location(
         key=lambda row: (
             row["accounting_date"],
             row["location_code"],
-            row["product_name"] or "",
         ),
     )
-
-
-
 
 
 @router.get("", response_model=list[TankStockLedgerResponse])
@@ -1255,11 +1347,7 @@ def validate_out_turn_report_tank_sequence(
     grouped_rows = {}
 
     for row in continuity_rows:
-        key = (
-            row.location_code,
-            row.tank_asset_code,
-            row.product_name or "",
-        )
+        key = (row.location_code, row.tank_asset_code)
 
         if key not in grouped_rows:
             grouped_rows[key] = []
@@ -1271,7 +1359,7 @@ def validate_out_turn_report_tank_sequence(
     issues = []
 
     for key, group_rows in grouped_rows.items():
-        location, tank, product = key
+        location, tank = key
 
         sorted_group_rows = sorted(
             group_rows,
@@ -1301,7 +1389,7 @@ def validate_out_turn_report_tank_sequence(
                             "ticket_number": row.ticket_number,
                             "location_code": location,
                             "tank_asset_code": tank,
-                            "product_name": product or None,
+                            "product_name": row.product_name,
                             "expected_previous_nsv_bbl": round(
                                 expected_previous_nsv,
                                 3,
@@ -1312,7 +1400,7 @@ def validate_out_turn_report_tank_sequence(
                             ),
                             "message": (
                                 "Previous stock does not match previous row "
-                                "of the same tank/product sequence. Run ledger rebuild."
+                                "of the same tank sequence. Run ledger rebuild."
                             ),
                         }
                     )
@@ -1387,7 +1475,7 @@ def get_material_balance_report(
         db=db,
         location_code=cleaned_location_code,
         tank_asset_code=tank_asset_code,
-        product_name=product_name,
+        product_name=None,
         date_to_value=date_to_value,
     )
 
@@ -1400,15 +1488,10 @@ def get_material_balance_report(
         unit_key=unit_key,
     )
 
-    cleaned_tank_asset_code = clean_optional_text(tank_asset_code)
-
-    if cleaned_tank_asset_code:
-        report_rows = tank_rows
-    else:
-        report_rows = consolidate_dynamic_material_balance_rows_by_location(
-            tank_rows=tank_rows,
-            columns=columns,
-        )
+    report_rows = consolidate_dynamic_material_balance_rows_by_location(
+        tank_rows=tank_rows,
+        columns=columns,
+    )
 
     return {
         "template": {

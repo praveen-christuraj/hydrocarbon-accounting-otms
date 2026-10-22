@@ -43,10 +43,6 @@ const buildQueryString = (filters = {}) => {
     params.append('tank_asset_code', filters.tankAssetCode)
   }
 
-  if (filters.productName) {
-    params.append('product_name', filters.productName)
-  }
-
   if (filters.dateFrom) {
     params.append('date_from', filters.dateFrom)
   }

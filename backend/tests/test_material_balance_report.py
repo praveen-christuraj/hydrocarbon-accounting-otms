@@ -1,10 +1,13 @@
-from datetime import date
+from datetime import date, datetime
 from types import SimpleNamespace
 
 from app.routers.reports import (
     build_dynamic_material_balance_tank_rows,
     consolidate_dynamic_material_balance_rows_by_location,
+    get_material_balance_rows_for_continuity,
+    rebuild_tank_stock_running_balances,
 )
+from app.models import OperationTransaction, TankStockLedger
 
 
 def _column(key, column_type, direction=None, codes=None):
@@ -124,3 +127,63 @@ def test_material_balance_has_one_accounting_date_and_sums_only_movements(db):
         "CLOSING": 106.0,
         "LOSS_GAIN": -10.0,
     }
+
+
+def test_material_balance_product_is_reference_only(db):
+    accounting_date = date(2026, 10, 20)
+    for index, product_name in enumerate(("Crude A", "Crude B"), start=1):
+        transaction = OperationTransaction(
+            operation_number=f"MB-PRODUCT-{index}",
+            operation_type_code="TANK_OPS",
+            primary_asset_code="TANK-1",
+            primary_asset_type_code="TANK",
+            origin_location_code="UTP",
+            operation_date=accounting_date,
+            product_name=product_name,
+            status="Approved",
+        )
+        db.add(transaction)
+        db.flush()
+        db.add(
+            TankStockLedger(
+                transaction_id=transaction.id,
+                ticket_number=f"MB-TKT-{index}",
+                operation_number=transaction.operation_number,
+                location_code="UTP",
+                tank_asset_code="TANK-1",
+                operation_date=accounting_date,
+                product_name=product_name,
+                accounting_date=accounting_date,
+                accounting_day_start=datetime(2026, 10, 20, 6 + index),
+                accounting_day_end=datetime(2026, 10, 21, 6),
+                accounting_day_setting_id=999,
+                tank_operation_code="REC_OP",
+                tank_operation_label="Receipt",
+                tank_operation_category="RECEIPT",
+                tank_operation_sign="IN",
+                movement_nsv_bbl=index,
+                stock_nsv_bbl=100 + index,
+                status="Active",
+            )
+        )
+    db.commit()
+
+    rows = get_material_balance_rows_for_continuity(
+        db=db,
+        location_code="UTP",
+        tank_asset_code="TANK-1",
+        product_name="Crude A",
+        date_to_value=accounting_date,
+    )
+
+    assert [row.product_name for row in rows] == ["Crude A", "Crude B"]
+
+    rebuild_tank_stock_running_balances(
+        db=db,
+        location_code="UTP",
+        tank_asset_code="TANK-1",
+        product_name="Crude A",
+    )
+
+    assert rows[1].previous_stock_nsv_bbl == 101
+    assert rows[1].movement_nsv_bbl == 1

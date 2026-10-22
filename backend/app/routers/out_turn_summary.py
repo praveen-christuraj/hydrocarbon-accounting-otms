@@ -636,12 +636,15 @@ def get_out_turn_summary_rows(
         current_user=current_user,
     )
 
+    # Product is descriptive metadata. Load the complete tank sequence first
+    # so a label change cannot remove an intermediate stock snapshot from the
+    # out-turn calculation. The optional product filter is applied to the
+    # finished display rows below.
     visible_transactions = (
         _get_transaction_query(
             db,
             location_code=location_code,
             tank_asset_code=tank_asset_code,
-            product_name=product_name,
             date_from=effective_date_from,
             date_to=date_to,
             current_user=current_user,
@@ -767,6 +770,15 @@ def get_out_turn_summary_rows(
             }
 
             sequence += 1
+
+    cleaned_product_name = clean_optional_text(product_name)
+    if cleaned_product_name:
+        product_key = cleaned_product_name.casefold()
+        rows = [
+            row
+            for row in rows
+            if str(row.get("product_name") or "").casefold() == product_key
+        ]
 
     return rows
 

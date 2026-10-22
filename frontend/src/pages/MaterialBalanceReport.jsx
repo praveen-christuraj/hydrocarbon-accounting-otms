@@ -12,7 +12,6 @@ function MaterialBalanceReport({ locations, assets }) {
   const emptyFilters = {
     locationCode: '',
     tankAssetCode: '',
-    productName: '',
     dateFrom: '',
     dateTo: '',
     status: 'Active',
@@ -388,18 +387,6 @@ function MaterialBalanceReport({ locations, assets }) {
         </div>
 
         <div>
-          <label>Product</label>
-          <input
-            name="productName"
-            type="text"
-            value={filters.productName}
-            onChange={handleFilterChange}
-            placeholder="Example: Crude Oil"
-            disabled={loading}
-          />
-        </div>
-
-        <div>
           <label>Status</label>
           <select
             name="status"
@@ -542,10 +529,6 @@ function MaterialBalanceReport({ locations, assets }) {
 
           <span>
             <strong>Tank:</strong> {filters.tankAssetCode || 'All Tanks'}
-          </span>
-
-          <span>
-            <strong>Product:</strong> {filters.productName || 'All Products'}
           </span>
 
           <span>

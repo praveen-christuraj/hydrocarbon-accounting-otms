@@ -81,14 +81,14 @@ def reverse_tank_stock_ledger_for_revoked_transaction(
     for row in rows:
         row.status = "Reversed"
         row.updated_at = datetime.now()
-        group_keys.add((row.location_code, row.tank_asset_code, row.product_name))
+        group_keys.add((row.location_code, row.tank_asset_code))
 
-    for location_code, tank_asset_code, product_name in group_keys:
+    for location_code, tank_asset_code in group_keys:
         _rebuild_tank_stock_running_balances(
             db=db,
             location_code=location_code,
             tank_asset_code=tank_asset_code,
-            product_name=product_name,
+            product_name=None,
         )
 
     return {
@@ -114,14 +114,14 @@ def set_tank_stock_ledger_correction_hold(
     for row in rows:
         row.status = "Correction Hold"
         row.updated_at = datetime.now()
-        group_keys.add((row.location_code, row.tank_asset_code, row.product_name))
+        group_keys.add((row.location_code, row.tank_asset_code))
 
-    for location_code, tank_asset_code, product_name in group_keys:
+    for location_code, tank_asset_code in group_keys:
         _rebuild_tank_stock_running_balances(
             db=db,
             location_code=location_code,
             tank_asset_code=tank_asset_code,
-            product_name=product_name,
+            product_name=None,
         )
 
     return {
@@ -147,14 +147,14 @@ def restore_tank_stock_ledger_from_correction_hold(
     for row in rows:
         row.status = "Active"
         row.updated_at = datetime.now()
-        group_keys.add((row.location_code, row.tank_asset_code, row.product_name))
+        group_keys.add((row.location_code, row.tank_asset_code))
 
-    for location_code, tank_asset_code, product_name in group_keys:
+    for location_code, tank_asset_code in group_keys:
         _rebuild_tank_stock_running_balances(
             db=db,
             location_code=location_code,
             tank_asset_code=tank_asset_code,
-            product_name=product_name,
+            product_name=None,
         )
 
     return {
