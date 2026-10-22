@@ -841,7 +841,18 @@ export default function MultiTankBeforeAfterLayout({
             <label>Observed</label>
             <select
               value={stage.obsMode}
-              onChange={(e) => setStage((s) => ({ ...s, obsMode: e.target.value }))}
+              onChange={(e) => {
+                const mode = e.target.value
+                // Only the entered parameter is kept - the unused one is
+                // cleared so the preview never shows both (tank gauging
+                // behaves the same way).
+                setStage((s) => ({
+                  ...s,
+                  obsMode: mode,
+                  obsApi: '',
+                  obsDensity: '',
+                }))
+              }}
             >
               <option>Observed API</option>
               <option>Observed Density</option>

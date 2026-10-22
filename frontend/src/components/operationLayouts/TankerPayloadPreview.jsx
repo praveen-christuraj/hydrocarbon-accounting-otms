@@ -40,6 +40,16 @@ const getValue = (...values) => {
   return '-'
 }
 
+const firstNonBlank = (...values) => {
+  for (const value of values) {
+    if (value !== null && value !== undefined && String(value).trim() !== '') {
+      return value
+    }
+  }
+
+  return ''
+}
+
 const numberOrDash = (value, decimals = 3) => {
   if (value === null || value === undefined || String(value).trim() === '') {
     return '-'
@@ -99,6 +109,23 @@ function TankerPayloadPreview({
 
   const primeMoverAsset = tankerPayload.prime_mover_asset || {}
   const senderReference = tankerPayload.sender_reference || {}
+
+  // Show ONLY the observed parameter the operator entered (tank transactions
+  // work the same way) - never both - and follow it with the calculated
+  // API @ 60 and VCF, because the entered observed parameter produces them.
+  const observedInputType = String(
+    inputs.observedInputType || calculated.observedInputType || ''
+  ).trim()
+  const modeSaysApi = /api/i.test(observedInputType)
+  const modeSaysDensity = /density/i.test(observedInputType)
+  const observedApiValue = firstNonBlank(inputs.observedApi, calculated.observedApi)
+  const observedDensityValue = firstNonBlank(
+    inputs.observedDensity,
+    calculated.observedDensity
+  )
+  const showObservedApi = modeSaysApi || (!modeSaysDensity && observedApiValue !== '')
+  const showObservedDensity =
+    modeSaysDensity || (!modeSaysApi && observedDensityValue !== '')
 
   return (
     <div className="tanker-preview-panel">
@@ -240,20 +267,28 @@ function TankerPayloadPreview({
             )}`}
           />
 
+          {showObservedApi && (
+            <PreviewItem
+              label="Observed API"
+              value={numberOrDash(observedApiValue, 2)}
+            />
+          )}
+
+          {showObservedDensity && (
+            <PreviewItem
+              label="Observed Density"
+              value={numberOrDash(observedDensityValue, 4)}
+            />
+          )}
+
           <PreviewItem
-            label="Observed API"
-            value={numberOrDash(
-              getValue(inputs.observedApi, calculated.observedApi, ''),
-              2
-            )}
+            label="API @ 60"
+            value={numberOrDash(calculated.api60, 2)}
           />
 
           <PreviewItem
-            label="Observed Density"
-            value={numberOrDash(
-              getValue(inputs.observedDensity, calculated.observedDensity, ''),
-              4
-            )}
+            label="VCF"
+            value={numberOrDash(calculated.vcf, 6)}
           />
         </PreviewCard>
 
@@ -280,11 +315,6 @@ function TankerPayloadPreview({
           />
 
           <PreviewItem
-            label="VCF"
-            value={numberOrDash(calculated.vcf, 6)}
-          />
-
-          <PreviewItem
             label="GSV"
             value={`${numberOrDash(calculated.gsvBbl, 3)} bbl`}
           />
@@ -300,11 +330,6 @@ function TankerPayloadPreview({
           <PreviewItem
             label="NSV"
             value={`${numberOrDash(calculated.nsvBbl, 3)} bbl`}
-          />
-
-          <PreviewItem
-            label="API @ 60"
-            value={numberOrDash(calculated.api60, 2)}
           />
 
           <PreviewItem label="LT Factor" value={numberOrDash(calculated.ltFactor, 6)} />

@@ -16,6 +16,7 @@
     "test:bulk": "node scripts/test-bulk-io.mjs",
     "test:bulk:ui": "node scripts/test-bulk-ui.mjs",
     "test:operation-entry-locations": "node scripts/test-operation-entry-locations.mjs",
+    "test:observed-preview": "node scripts/test-observed-quality-preview.mjs",
     "test:sender-receiver": "node scripts/test-sender-receiver-pairing.mjs"
   },
   "dependencies": {
