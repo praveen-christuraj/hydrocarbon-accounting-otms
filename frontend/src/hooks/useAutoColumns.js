@@ -57,7 +57,7 @@ const isScalar = (value) =>
   value instanceof Date
 
 export const inferColumns = (rows, options = {}) => {
-  const { exclude = [], include, labels = {}, types = {}, sample = 100, maxColumns = 40 } = options
+  const { exclude = [], include, labels = {}, types = {}, sample = 100, maxColumns = 200 } = options
   const safeRows = Array.isArray(rows) ? rows : []
   const excluded = new Set([...DEFAULT_EXCLUDE, ...exclude])
   const order = []

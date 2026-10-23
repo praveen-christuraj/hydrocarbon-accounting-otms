@@ -10,7 +10,7 @@ from openpyxl.utils import get_column_letter
 
 from app.database import get_db
 from app.models import (
-    Asset, Location,
+    Asset, Location, TankOperation,
     TankStockLedger, LocationAccountingDaySetting, MaterialBalanceTemplate,
     MaterialBalanceTemplateColumn, OperationTransaction, OperationTransactionValue,
     MovementMapping, MovementMappingItem, MovementMappingComparison, User,
@@ -55,11 +55,21 @@ from app.routers.tank_stock_ledger import (
     build_out_turn_report_response,
     build_tank_stock_daily_summary_rows,
     get_out_turn_report_rows,
+    get_material_balance_rows_for_continuity as _shared_get_mb_rows_for_continuity,
+    build_dynamic_material_balance_columns_response as _shared_build_mb_columns_response,
+    build_dynamic_material_balance_tank_rows as _shared_build_mb_tank_rows,
+    consolidate_dynamic_material_balance_rows_by_location as _shared_consolidate_mb_rows,
+    get_tank_stock_ledger_summary as _shared_get_ledger_summary,
+    validate_out_turn_report_tank_sequence as _shared_validate_otr_sequence,
 )
 from app.services.operation_datetime import (
+    calculate_window_from_setting_parts,
+    coerce_payload_dict,
+    format_time_hhmm,
     get_payload_operation_date,
     get_payload_operation_datetime,
     get_payload_operation_parts,
+    resolve_location_accounting_window,
     resolve_transaction_accounting,
     resolve_transaction_operation_date,
     resolve_transaction_operation_datetime,
@@ -166,17 +176,17 @@ def _build_out_turn_transaction_payload_map(db: Session, transaction_ids: list[i
         if row.transaction_id not in payload_map:
             payload_map[row.transaction_id] = {}
 
-        payload_map[row.transaction_id][row.field_code] = (
-            row.field_value if isinstance(row.field_value, dict) else {}
-        )
+        if row.field_code == "net_nsv":
+            payload_map[row.transaction_id][row.field_code] = row.field_value
+        else:
+            payload_map[row.transaction_id][row.field_code] = coerce_payload_dict(
+                row.field_value
+            )
 
     return payload_map
 
 
 def _parse_operation_datetime(operation_date: date, payload: dict):
-    # The operation moment is the date/time entered inside the payload (tank
-    # gauging, multi-tank before/after, ...). The ticket's metadata
-    # ``operation_date`` is only the fallback for payloads without a date.
     payload_datetime = get_payload_operation_datetime(payload)
     if payload_datetime is not None:
         return payload_datetime
@@ -202,6 +212,42 @@ def _out_turn_accounting_date(
 
     payload_date = get_payload_operation_date(payload)
     return payload_date or transaction.operation_date
+
+
+def _resolve_tank_op_meta(
+    transaction: OperationTransaction,
+    inputs: dict,
+    tank_ops_by_code: dict | None = None,
+    tank_ops_by_id: dict | None = None,
+):
+    op_code = clean_optional_text(inputs.get("tankOperationCode")) or ""
+    op_label = clean_optional_text(inputs.get("tankOperationLabel")) or ""
+    op_cat = clean_optional_text(inputs.get("tankOperationCategory")) or ""
+    op_sign = clean_optional_text(inputs.get("tankOperationSign")) or ""
+
+    loc_key = str(transaction.origin_location_code or "").strip().lower()
+    tank_op = None
+    if tank_ops_by_code and op_code:
+        tank_op = tank_ops_by_code.get((loc_key, op_code.lower())) or tank_ops_by_code.get(
+            op_code.lower()
+        )
+    if tank_op is None and tank_ops_by_id:
+        op_id_raw = inputs.get("tankOperationId")
+        if op_id_raw not in (None, ""):
+            try:
+                tank_op = tank_ops_by_id.get(int(op_id_raw))
+            except (TypeError, ValueError):
+                tank_op = None
+        if tank_op is None and getattr(transaction, "tank_operation_id", None):
+            tank_op = tank_ops_by_id.get(transaction.tank_operation_id)
+
+    if tank_op is not None:
+        op_code = op_code or (tank_op.operation_code or "")
+        op_label = op_label or (tank_op.operation_label or "")
+        op_cat = op_cat or (tank_op.operation_category or "")
+        op_sign = op_sign or (tank_op.operation_sign or "")
+
+    return op_code, op_label, op_cat, op_sign
 
 
 def _extract_out_turn_values_from_transaction(db: Session, transaction: OperationTransaction):
@@ -236,20 +282,37 @@ def _extract_tank_gauging_out_turn(
     payload: dict,
     db: Session | None = None,
     setting_cache: dict | None = None,
+    tank_ops_by_code: dict | None = None,
+    tank_ops_by_id: dict | None = None,
 ):
+    payload = coerce_payload_dict(payload)
     calculated = payload.get("calculated") or {}
     inputs = payload.get("inputs") or {}
 
-    nsv = safe_float(calculated.get("nsvBbl"))
-    gsv = safe_float(calculated.get("gsvBbl"))
+    nsv = safe_float(
+        calculated.get("nsvBbl")
+        if calculated.get("nsvBbl") not in (None, "")
+        else calculated.get("nsv")
+    )
+    gsv = safe_float(
+        calculated.get("gsvBbl")
+        if calculated.get("gsvBbl") not in (None, "")
+        else calculated.get("gsv")
+    )
     lt = safe_float(calculated.get("lt"))
     mt = safe_float(calculated.get("mt"))
 
     if nsv == 0 and gsv == 0:
         return []
 
+    gauging_date, gauging_time = get_payload_operation_parts(
+        payload, "tank_gauging_payload"
+    )
     operation_datetime = _parse_operation_datetime(transaction.operation_date, payload)
     accounting_date = _out_turn_accounting_date(db, transaction, payload, setting_cache)
+    op_code, op_label, op_cat, op_sign = _resolve_tank_op_meta(
+        transaction, inputs, tank_ops_by_code, tank_ops_by_id
+    )
 
     return [
         {
@@ -257,14 +320,16 @@ def _extract_tank_gauging_out_turn(
             "ticket_number": get_transaction_ticket_number(transaction),
             "operation_number": transaction.operation_number,
             "accounting_date": accounting_date,
+            "gauging_date": gauging_date or transaction.operation_date,
+            "gauging_time": format_time_hhmm(gauging_time) if gauging_time else None,
             "operation_datetime": operation_datetime,
             "location_code": transaction.origin_location_code,
             "tank_asset_code": transaction.primary_asset_code,
             "product_name": transaction.product_name,
-            "tank_operation_code": clean_optional_text(inputs.get("tankOperationCode")) or "",
-            "tank_operation_label": clean_optional_text(inputs.get("tankOperationLabel")) or "",
-            "tank_operation_category": clean_optional_text(inputs.get("tankOperationCategory")) or "",
-            "tank_operation_sign": clean_optional_text(inputs.get("tankOperationSign")) or "",
+            "tank_operation_code": op_code,
+            "tank_operation_label": op_label,
+            "tank_operation_category": op_cat,
+            "tank_operation_sign": op_sign,
             "gsv": gsv,
             "nsv": nsv,
             "lt": lt,
@@ -279,15 +344,24 @@ def _extract_multi_tank_out_turn(
     payload: dict,
     db: Session | None = None,
     setting_cache: dict | None = None,
+    tank_ops_by_code: dict | None = None,
+    tank_ops_by_id: dict | None = None,
 ):
+    payload = coerce_payload_dict(payload)
     per_tank_after = ((payload.get("perTank") or {}).get("after") or {})
     inputs = payload.get("inputs") or {}
 
     if not per_tank_after:
         return []
 
+    gauging_date, gauging_time = get_payload_operation_parts(
+        payload, "multi_tank_payload"
+    )
     operation_datetime = _parse_operation_datetime(transaction.operation_date, payload)
     accounting_date = _out_turn_accounting_date(db, transaction, payload, setting_cache)
+    op_code, op_label, op_cat, op_sign = _resolve_tank_op_meta(
+        transaction, inputs, tank_ops_by_code, tank_ops_by_id
+    )
 
     results = []
 
@@ -309,14 +383,16 @@ def _extract_multi_tank_out_turn(
                 "ticket_number": get_transaction_ticket_number(transaction),
                 "operation_number": transaction.operation_number,
                 "accounting_date": accounting_date,
+                "gauging_date": gauging_date or transaction.operation_date,
+                "gauging_time": format_time_hhmm(gauging_time) if gauging_time else None,
                 "operation_datetime": operation_datetime,
                 "location_code": transaction.origin_location_code,
                 "tank_asset_code": tank_key,
                 "product_name": transaction.product_name,
-                "tank_operation_code": clean_optional_text(inputs.get("tankOperationCode")) or "",
-                "tank_operation_label": clean_optional_text(inputs.get("tankOperationLabel")) or "",
-                "tank_operation_category": clean_optional_text(inputs.get("tankOperationCategory")) or "",
-                "tank_operation_sign": clean_optional_text(inputs.get("tankOperationSign")) or "",
+                "tank_operation_code": op_code,
+                "tank_operation_label": op_label,
+                "tank_operation_category": op_cat,
+                "tank_operation_sign": op_sign,
                 "gsv": gsv,
                 "nsv": nsv,
                 "lt": lt,
@@ -339,8 +415,6 @@ def _extract_stock_movement_out_turn(
     if nsv == 0:
         return []
 
-    # Stock Movement / Vessel Cycle payloads carry no date/time of their
-    # own, so the legacy ticket metadata is the only available moment.
     operation_datetime = transaction.operation_start_datetime
     if operation_datetime is None:
         operation_datetime = datetime.combine(transaction.operation_date, datetime_time(0, 0))
@@ -360,6 +434,8 @@ def _extract_stock_movement_out_turn(
             "ticket_number": get_transaction_ticket_number(transaction),
             "operation_number": transaction.operation_number,
             "accounting_date": accounting_date,
+            "gauging_date": transaction.operation_date,
+            "gauging_time": None,
             "operation_datetime": operation_datetime,
             "location_code": transaction.origin_location_code,
             "tank_asset_code": transaction.primary_asset_code,
@@ -386,11 +462,17 @@ def get_out_turn_report_rows_from_transactions(
     date_to: str | None = None,
     current_user: User | None = None,
 ):
+    from app.services.transaction_helpers import approved_transaction_not_on_correction_hold
+
+    date_from_value = parse_date_filter(date_from, "Date From")
+    date_to_value = parse_date_filter(date_to, "Date To")
+
     query = (
         db.query(OperationTransaction)
         .join(OperationTemplate, OperationTransaction.operation_template_id == OperationTemplate.id)
         .filter(
             OperationTransaction.status == APPROVED_TRANSACTION_STATUS,
+            approved_transaction_not_on_correction_hold(db),
             func.lower(func.trim(OperationTemplate.entry_layout_type)).in_([
                 "tank gauging",
                 "multi-tank before/after",
@@ -401,10 +483,6 @@ def get_out_turn_report_rows_from_transactions(
     )
 
     if current_user is not None:
-        # Cross-location record: party rule (PERMISSION_CRITERIA_MODEL.md).
-        # Tank gauging / stock movement / multi-tank / vessel cycle tickets of
-        # the movements the user took part in stay visible - origin-only
-        # scoping hid the receiving terminal's own movement rows.
         query = apply_transaction_party_scope_filter(
             query, OperationTransaction, current_user, db
         )
@@ -423,191 +501,113 @@ def get_out_turn_report_rows_from_transactions(
             OperationTransaction.primary_asset_code.ilike(cleaned_tank_asset_code)
         )
 
-    date_from_value = parse_date_filter(date_from, "Date From")
-    date_to_value = parse_date_filter(date_to, "Date To")
+    transactions = query.order_by(OperationTransaction.id.asc()).all()
+    if not transactions:
+        return []
 
-    if date_from_value:
-        query = query.filter(OperationTransaction.operation_date >= date_from_value)
-
-    if date_to_value:
-        # One extra day of candidates: an operation in the early hours of
-        # ``date_to + 1`` still belongs to accounting date ``date_to`` under
-        # a location accounting-day window that starts after midnight.
-        # Rows are filtered on their resolved accounting date at the end.
-        query = query.filter(
-            OperationTransaction.operation_date <= date_to_value + timedelta(days=1)
-        )
-
-    transactions = query.order_by(
-        OperationTransaction.operation_date.asc(),
-        OperationTransaction.id.asc(),
-    ).all()
-
-    # Bounded loading: without an explicit ``date_from`` only the most
-    # recent DEFAULT_REPORT_WINDOW_DAYS (relative to the newest matching
-    # ticket) are reported. Each tank's previous-stock chain is seeded
-    # from its latest pre-window ticket so values match a full-history
-    # run; older rows load by passing an explicit date range.
-    window_start = None
-    if date_from_value is None and transactions:
-        window_start = default_window_start(
-            max(tx.operation_date for tx in transactions)
-        )
-
-    if window_start is not None:
-        visible_transactions = [
-            tx for tx in transactions if tx.operation_date >= window_start
-        ]
-        predecessor_candidates = [
-            tx for tx in transactions if tx.operation_date < window_start
-        ]
-    else:
-        visible_transactions = transactions
-        predecessor_candidates = []
-
-    # Latest pre-window ticket per (location, tank) seeds the chain. The
-    # chronologically latest predecessor is decided by the payload
-    # date/time, so every candidate on the group's latest pre-window
-    # operation date is kept and ranked after extraction below.
-    predecessor_candidates_by_group: dict[tuple[str, str], list] = {}
-    latest_predecessor_date_by_group: dict[tuple[str, str], date] = {}
-    predecessor_tx_count_by_group: dict[tuple[str, str], int] = {}
-    for tx in predecessor_candidates:
-        group = (tx.origin_location_code or "", tx.primary_asset_code or "")
-        predecessor_tx_count_by_group[group] = (
-            predecessor_tx_count_by_group.get(group, 0) + 1
-        )
-        latest_date = latest_predecessor_date_by_group.get(group)
-        if latest_date is None or tx.operation_date > latest_date:
-            latest_predecessor_date_by_group[group] = tx.operation_date
-            predecessor_candidates_by_group[group] = [tx]
-        elif tx.operation_date == latest_date:
-            predecessor_candidates_by_group[group].append(tx)
-
-    tx_ids = [tx.id for tx in visible_transactions] + [
-        tx.id
-        for group_candidates in predecessor_candidates_by_group.values()
-        for tx in group_candidates
-    ]
-    payload_map = _build_out_turn_transaction_payload_map(db, tx_ids)
+    payload_map = _build_out_turn_transaction_payload_map(
+        db, [tx.id for tx in transactions]
+    )
+    all_tank_ops = db.query(TankOperation).all()
+    tank_ops_by_code = {}
+    for op in all_tank_ops:
+        c = str(op.operation_code or "").strip().lower()
+        loc = str(op.location_code or "").strip().lower()
+        tank_ops_by_code[(loc, c)] = op
+        tank_ops_by_code.setdefault(c, op)
+    tank_ops_by_id = {op.id: op for op in all_tank_ops}
 
     template_cache = {}
     setting_cache = {}
+    extracted_rows = []
 
-    def _extract_rows(tx_list):
-        rows_for_tx = []
-
-        for tx in tx_list:
-            if tx.operation_template_id is None:
-                continue
-
-            if tx.operation_template_id not in template_cache:
-                template_cache[tx.operation_template_id] = (
-                    db.query(OperationTemplate)
-                    .filter(OperationTemplate.id == tx.operation_template_id)
-                    .first()
-                )
-
-            template = template_cache[tx.operation_template_id]
-
-            if not template:
-                continue
-
-            payloads = payload_map.get(tx.id, {})
-            entry_layout = normalize_entry_layout_type(template.entry_layout_type)
-
-            if entry_layout == "tank gauging":
-                rows_for_tx.extend(
-                    _extract_tank_gauging_out_turn(
-                        tx,
-                        payloads.get("tank_gauging_payload") or {},
-                        db=db,
-                        setting_cache=setting_cache,
-                    )
-                )
-            elif entry_layout == "multi-tank before/after":
-                rows_for_tx.extend(
-                    _extract_multi_tank_out_turn(
-                        tx,
-                        payloads.get("multi_tank_payload") or {},
-                        db=db,
-                        setting_cache=setting_cache,
-                    )
-                )
-            elif entry_layout in ("stock movement", "vessel cycle"):
-                rows_for_tx.extend(
-                    _extract_stock_movement_out_turn(
-                        tx,
-                        payloads.get("net_nsv"),
-                        db=db,
-                        setting_cache=setting_cache,
-                    )
-                )
-
-        return rows_for_tx
-
-    extracted_rows = _extract_rows(visible_transactions)
-
-    # Seed previous-stock values (and approximate sequence offsets, counted
-    # in pre-window tickets) from the latest pre-window ticket per tank.
-    seed_previous_by_group: dict[tuple[str, str], dict] = {}
-    seed_sequence_by_group: dict[tuple[str, str], int] = {}
-
-    for group, group_candidates in predecessor_candidates_by_group.items():
-        predecessor_rows = _extract_rows(group_candidates)
-        if not predecessor_rows:
+    for tx in transactions:
+        if tx.operation_template_id is None:
             continue
 
-        predecessor_rows.sort(
-            key=lambda item: (
-                item["accounting_date"] or date.min,
-                item["operation_datetime"] or datetime.min,
-                item["transaction_id"],
+        if tx.operation_template_id not in template_cache:
+            template_cache[tx.operation_template_id] = (
+                db.query(OperationTemplate)
+                .filter(OperationTemplate.id == tx.operation_template_id)
+                .first()
             )
-        )
-        last_row = predecessor_rows[-1]
-        seed_key = (last_row["location_code"], last_row["tank_asset_code"])
-        seed_previous_by_group[seed_key] = {
-            "gsv": safe_float(last_row["gsv"]),
-            "nsv": safe_float(last_row["nsv"]),
-            "lt": safe_float(last_row["lt"]),
-            "mt": safe_float(last_row["mt"]),
-        }
-        seed_sequence_by_group[seed_key] = predecessor_tx_count_by_group.get(
-            group, 0
-        )
+
+        template = template_cache[tx.operation_template_id]
+        if not template:
+            continue
+
+        payloads = payload_map.get(tx.id, {})
+        entry_layout = normalize_entry_layout_type(template.entry_layout_type)
+
+        if entry_layout == "tank gauging":
+            extracted_rows.extend(
+                _extract_tank_gauging_out_turn(
+                    tx,
+                    payloads.get("tank_gauging_payload") or {},
+                    db=db,
+                    setting_cache=setting_cache,
+                    tank_ops_by_code=tank_ops_by_code,
+                    tank_ops_by_id=tank_ops_by_id,
+                )
+            )
+        elif entry_layout == "multi-tank before/after":
+            extracted_rows.extend(
+                _extract_multi_tank_out_turn(
+                    tx,
+                    payloads.get("multi_tank_payload") or {},
+                    db=db,
+                    setting_cache=setting_cache,
+                    tank_ops_by_code=tank_ops_by_code,
+                    tank_ops_by_id=tank_ops_by_id,
+                )
+            )
+        elif entry_layout in ("stock movement", "vessel cycle"):
+            extracted_rows.extend(
+                _extract_stock_movement_out_turn(
+                    tx,
+                    payloads.get("net_nsv"),
+                    db=db,
+                    setting_cache=setting_cache,
+                )
+            )
+
+    if not extracted_rows:
+        return []
+
+    window_from = date_from_value
+    if window_from is None:
+        candidate_dates = [
+            row["accounting_date"]
+            for row in extracted_rows
+            if row.get("accounting_date") is not None
+            and (date_to_value is None or row["accounting_date"] <= date_to_value)
+        ]
+        if candidate_dates:
+            window_from = default_window_start(max(candidate_dates))
 
     grouped_rows = {}
-
     for row in extracted_rows:
-        key = (
-            row["location_code"],
-            row["tank_asset_code"],
-        )
-
-        if key not in grouped_rows:
-            grouped_rows[key] = []
-
-        grouped_rows[key].append(row)
+        key = (row["location_code"], row["tank_asset_code"])
+        grouped_rows.setdefault(key, []).append(row)
 
     per_tank_rows = []
 
-    for key, group_rows in grouped_rows.items():
+    for _key, group_rows in grouped_rows.items():
+        # Chronological ordering per tank strictly by payload gauging datetime,
+        # NEVER pre-grouped by accounting_date or dropped before window_from.
         sorted_group = sorted(
             group_rows,
             key=lambda item: (
-                item["accounting_date"] or date.min,
                 item["operation_datetime"] or datetime.min,
                 item["transaction_id"],
             ),
         )
 
-        seed = seed_previous_by_group.get(key, {})
-        previous_gsv = seed.get("gsv", 0)
-        previous_nsv = seed.get("nsv", 0)
-        previous_lt = seed.get("lt", 0)
-        previous_mt = seed.get("mt", 0)
-        sequence = seed_sequence_by_group.get(key, 0)
+        previous_gsv = 0.0
+        previous_nsv = 0.0
+        previous_lt = 0.0
+        previous_mt = 0.0
+        sequence = 0
 
         for item in sorted_group:
             current_gsv = safe_float(item["gsv"])
@@ -625,6 +625,8 @@ def get_out_turn_report_rows_from_transactions(
                     "ticket_number": item["ticket_number"],
                     "operation_number": item["operation_number"],
                     "accounting_date": item["accounting_date"],
+                    "gauging_date": item.get("gauging_date"),
+                    "gauging_time": item.get("gauging_time"),
                     "operation_datetime": item["operation_datetime"],
                     "tank_operation_code": item["tank_operation_code"],
                     "tank_operation_label": item["tank_operation_label"],
@@ -662,17 +664,13 @@ def get_out_turn_report_rows_from_transactions(
         )
     )
 
-    # The requested range selects rows by their resolved accounting date
-    # (payload moment + location accounting-day setting). Filtering only
-    # after the chain is built keeps previous-stock values correct for the
-    # first visible row of each tank.
-    if date_from_value is not None or date_to_value is not None:
+    if window_from is not None or date_to_value is not None:
         per_tank_rows = [
             row
             for row in per_tank_rows
             if (
-                date_from_value is None
-                or (row["accounting_date"] or date.min) >= date_from_value
+                window_from is None
+                or (row["accounting_date"] or date.min) >= window_from
             )
             and (
                 date_to_value is None
@@ -680,8 +678,6 @@ def get_out_turn_report_rows_from_transactions(
             )
         ]
 
-    # Product is reference data only. Filter the already-calculated rows so
-    # every tank snapshot still participates in chronological out-turn logic.
     if cleaned_product_name:
         product_key = cleaned_product_name.casefold()
         per_tank_rows = [
@@ -768,38 +764,21 @@ def get_material_balance_rows_for_continuity(
 
     cleaned_status = clean_optional_text(status)
 
-    if cleaned_status:
-        query = query.filter(TankStockLedger.status == cleaned_status)
-
-    query = query.filter(
-        TankStockLedger.accounting_date != None,
-        TankStockLedger.accounting_date <= date_to_value,
-    )
-
-    cleaned_location_code = clean_optional_text(location_code)
-    cleaned_tank_asset_code = clean_optional_text(tank_asset_code)
-
-    if cleaned_location_code:
-        query = query.filter(
-            TankStockLedger.location_code.ilike(cleaned_location_code)
-        )
-
-    if cleaned_tank_asset_code:
-        query = query.filter(
-            TankStockLedger.tank_asset_code.ilike(cleaned_tank_asset_code)
-        )
-
-    rows = query.all()
-
-    return sorted(
-        rows,
-        key=lambda row: (
-            row.location_code or "",
-            row.tank_asset_code or "",
-            row.accounting_date or date.min,
-            get_ledger_operation_datetime(row) or datetime.min,
-            row.id,
-        ),
+def get_material_balance_rows_for_continuity(
+    db: Session,
+    location_code: str | None,
+    tank_asset_code: str | None,
+    product_name: str | None,
+    date_to_value: date,
+    status: str | None = "Active",
+):
+    return _shared_get_mb_rows_for_continuity(
+        db=db,
+        location_code=location_code,
+        tank_asset_code=tank_asset_code,
+        product_name=product_name,
+        date_to_value=date_to_value,
+        status=status,
     )
 
 
@@ -1270,19 +1249,7 @@ def consolidate_material_balance_rows_by_location(
 def build_dynamic_material_balance_columns_response(
     columns: list[MaterialBalanceTemplateColumn],
 ):
-    return [
-        {
-            "column_key": column.column_key,
-            "column_label": column.column_label,
-            "column_order": column.column_order,
-            "column_type": column.column_type,
-            "movement_direction": column.movement_direction,
-            "include_in_material_balance": column.include_in_material_balance,
-            "include_in_book_closing": column.include_in_book_closing,
-            "is_internal_transfer": column.is_internal_transfer,
-        }
-        for column in columns
-    ]
+    return _shared_build_mb_columns_response(columns)
 
 
 def build_dynamic_material_balance_tank_rows(
@@ -1293,229 +1260,13 @@ def build_dynamic_material_balance_tank_rows(
     date_to_value: date,
     unit_key: str = "nsv",
 ):
-    date_range = build_date_range(date_from_value, date_to_value)
-
-    grouped_rows = {}
-
-    for row in ledger_rows:
-        key = (
-            row.location_code,
-            row.tank_asset_code,
-        )
-
-        if key not in grouped_rows:
-            grouped_rows[key] = []
-
-        grouped_rows[key].append(row)
-
-    report_rows = []
-
-    for key, rows in grouped_rows.items():
-        location_code, tank_asset_code = key
-        location = get_location_by_code(location_code, db)
-
-        sorted_rows = sorted(
-            rows,
-            key=lambda row: (
-                row.accounting_date or date.min,
-                get_ledger_operation_datetime(row) or datetime.min,
-                row.id,
-            ),
-        )
-
-        tank_asset_name = ""
-        product_name_value = ""
-
-        if sorted_rows:
-            tank_asset_name = sorted_rows[-1].tank_asset_name or ""
-            product_name_value = sorted_rows[-1].product_name or ""
-
-        previous_closing_snapshot = {
-            "gsv": 0,
-            "nsv": 0,
-            "lt": 0,
-            "mt": 0,
-        }
-
-        rows_before_period = [
-            row
-            for row in sorted_rows
-            if row.accounting_date is not None
-            and row.accounting_date < date_from_value
-        ]
-
-        if rows_before_period:
-            previous_closing_snapshot = get_stock_snapshot_values(
-                rows_before_period[-1]
-            )
-
-        for accounting_date_value in date_range:
-            day_rows = [
-                row
-                for row in sorted_rows
-                if row.accounting_date == accounting_date_value
-            ]
-
-            day_rows = sorted(
-                day_rows,
-                key=lambda row: (
-                    get_ledger_operation_datetime(row) or datetime.min,
-                    row.id,
-                ),
-            )
-
-            opening_value = get_snapshot_value_for_unit(
-                previous_closing_snapshot,
-                unit_key,
-            )
-
-            explicit_opening_rows = [
-                row
-                for row in day_rows
-                if normalize_material_balance_code_value(
-                    row.tank_operation_category
-                )
-                == "OPENING"
-            ]
-
-            if explicit_opening_rows:
-                opening_snapshot = get_stock_snapshot_values(
-                    explicit_opening_rows[-1]
-                )
-                opening_value = get_snapshot_value_for_unit(
-                    opening_snapshot,
-                    unit_key,
-                )
-
-            values = {}
-
-            book_closing_value = opening_value
-            actual_closing_value = opening_value
-            last_ticket_number = None
-
-            for column in columns:
-                column_key = column.column_key
-                column_type = normalize_material_balance_code_value(
-                    column.column_type
-                )
-
-                if column_type == "OPENING":
-                    values[column_key] = round(opening_value, 3)
-                    continue
-
-                if column_type == "MOVEMENT":
-                    movement_total = 0
-
-                    for row in day_rows:
-                        if should_row_match_material_balance_column(row, column):
-                            movement_total += get_movement_value_for_unit(
-                                row,
-                                unit_key,
-                            )
-
-                    values[column_key] = round(movement_total, 3)
-                    continue
-
-                if column_type in ["INFO", "FORMULA"]:
-                    values[column_key] = 0
-                    continue
-
-            book_closing_calculation = calculate_book_closing_from_eligible_ledger_rows(
-                opening_value=opening_value,
-                day_rows=day_rows,
-                columns=columns,
-                unit_key=unit_key,
-            )
-
-            book_closing_value = book_closing_calculation["book_closing_value"]
-
-            if day_rows:
-                explicit_closing_rows = [
-                    row
-                    for row in day_rows
-                    if normalize_material_balance_code_value(
-                        row.tank_operation_category
-                    )
-                    == "CLOSING"
-                ]
-
-                if explicit_closing_rows:
-                    closing_source_row = explicit_closing_rows[-1]
-                else:
-                    closing_source_row = day_rows[-1]
-
-                actual_closing_snapshot = get_stock_snapshot_values(
-                    closing_source_row
-                )
-
-                actual_closing_value = get_snapshot_value_for_unit(
-                    actual_closing_snapshot,
-                    unit_key,
-                )
-
-                last_ticket_number = closing_source_row.ticket_number
-            else:
-                actual_closing_snapshot = previous_closing_snapshot
-                actual_closing_value = opening_value
-
-            loss_gain_value = actual_closing_value - book_closing_value
-
-            for column in columns:
-                column_key = column.column_key
-                column_type = normalize_material_balance_code_value(
-                    column.column_type
-                )
-
-                if column_type == "BOOK_CLOSING":
-                    values[column_key] = round(book_closing_value, 3)
-
-                elif column_type == "ACTUAL_CLOSING":
-                    values[column_key] = round(actual_closing_value, 3)
-
-                elif column_type == "LOSS_GAIN":
-                    values[column_key] = round(loss_gain_value, 3)
-
-            report_rows.append(
-                {
-                    "accounting_date": accounting_date_value,
-                    "location_code": location_code,
-                    "location_name": location.location_name if location else "",
-                    "tank_asset_code": tank_asset_code,
-                    "tank_asset_name": tank_asset_name,
-                    "product_name": product_name_value or None,
-                    "values": values,
-                    "rows_count": len(day_rows),
-                    "last_ticket_number": last_ticket_number,
-                    "_opening_value": opening_value,
-                    "_actual_closing_value": actual_closing_value,
-                    "_first_operation_datetime": (
-                        get_ledger_operation_datetime(day_rows[0])
-                        if day_rows
-                        else None
-                    ),
-                    "_last_operation_datetime": (
-                        get_ledger_operation_datetime(day_rows[-1])
-                        if day_rows
-                        else None
-                    ),
-                }
-            )
-
-            previous_closing_snapshot = {
-                "gsv": actual_closing_snapshot.get("gsv", actual_closing_value),
-                "nsv": actual_closing_snapshot.get("nsv", actual_closing_value),
-                "lt": actual_closing_snapshot.get("lt", 0),
-                "mt": actual_closing_snapshot.get("mt", 0),
-            }
-
-    return sorted(
-        report_rows,
-        key=lambda row: (
-            row["accounting_date"],
-            row["location_code"],
-            row["tank_asset_code"] or "",
-            row["product_name"] or "",
-        ),
+    return _shared_build_mb_tank_rows(
+        db=db,
+        ledger_rows=ledger_rows,
+        columns=columns,
+        date_from_value=date_from_value,
+        date_to_value=date_to_value,
+        unit_key=unit_key,
     )
 
 
@@ -1523,172 +1274,7 @@ def consolidate_dynamic_material_balance_rows_by_location(
     tank_rows: list[dict],
     columns: list[MaterialBalanceTemplateColumn],
 ):
-    consolidated_map = {}
-
-    for row in tank_rows:
-        key = (
-            row["accounting_date"],
-            row["location_code"],
-        )
-
-        if key not in consolidated_map:
-            consolidated_map[key] = {
-                "accounting_date": row["accounting_date"],
-                "location_code": row["location_code"],
-                "location_name": row["location_name"],
-                "tank_asset_code": None,
-                "tank_asset_name": "All Tanks",
-                "product_name": None,
-                "values": {},
-                "rows_count": 0,
-                "last_ticket_number": None,
-                "_tank_asset_codes": set(),
-                "_tank_asset_names": set(),
-                "_product_names": set(),
-                "_opening_value": None,
-                "_actual_closing_value": None,
-                "_opening_datetime": None,
-                "_closing_datetime": None,
-            }
-
-            for column in columns:
-                consolidated_map[key]["values"][column.column_key] = 0
-
-        target = consolidated_map[key]
-
-        tank_asset_code = clean_optional_text(row.get("tank_asset_code"))
-        tank_asset_name = clean_optional_text(row.get("tank_asset_name"))
-        product_name = clean_optional_text(row.get("product_name"))
-        if tank_asset_code:
-            target["_tank_asset_codes"].add(tank_asset_code)
-        if tank_asset_name:
-            target["_tank_asset_names"].add(tank_asset_name)
-        if product_name:
-            target["_product_names"].add(product_name)
-
-        for column in columns:
-            if normalize_material_balance_code_value(column.column_type) != "MOVEMENT":
-                continue
-            column_key = column.column_key
-            target["values"][column_key] = safe_float(
-                target["values"].get(column_key)
-            ) + safe_float(row["values"].get(column_key))
-
-        first_operation_datetime = row.get("_first_operation_datetime")
-        if (
-            target["_opening_value"] is None
-            or (
-                first_operation_datetime is not None
-                and (
-                    target["_opening_datetime"] is None
-                    or first_operation_datetime < target["_opening_datetime"]
-                )
-            )
-        ):
-            target["_opening_value"] = safe_float(row.get("_opening_value"))
-            target["_opening_datetime"] = first_operation_datetime
-
-        last_operation_datetime = row.get("_last_operation_datetime")
-        if (
-            target["_actual_closing_value"] is None
-            or (
-                last_operation_datetime is not None
-                and (
-                    target["_closing_datetime"] is None
-                    or last_operation_datetime > target["_closing_datetime"]
-                )
-            )
-        ):
-            target["_actual_closing_value"] = safe_float(
-                row.get("_actual_closing_value")
-            )
-            target["_closing_datetime"] = last_operation_datetime
-            target["last_ticket_number"] = row.get("last_ticket_number")
-
-        target["rows_count"] += int(row.get("rows_count") or 0)
-
-    consolidated_rows = []
-
-    for row in consolidated_map.values():
-        opening_value = safe_float(row.pop("_opening_value"))
-        actual_closing_value = safe_float(row.pop("_actual_closing_value"))
-        row.pop("_opening_datetime", None)
-        row.pop("_closing_datetime", None)
-
-        tank_asset_codes = sorted(row.pop("_tank_asset_codes"))
-        tank_asset_names = sorted(row.pop("_tank_asset_names"))
-        product_names = sorted(row.pop("_product_names"))
-        if len(tank_asset_codes) == 1:
-            row["tank_asset_code"] = tank_asset_codes[0]
-            row["tank_asset_name"] = (
-                tank_asset_names[0] if len(tank_asset_names) == 1 else ""
-            )
-        row["product_name"] = product_names[0] if len(product_names) == 1 else None
-
-        eligible_in_total = 0
-        eligible_out_total = 0
-        for column in columns:
-            column_key = column.column_key
-            column_type = normalize_material_balance_code_value(column.column_type)
-            if column_type == "OPENING":
-                row["values"][column_key] = opening_value
-            elif column_type == "MOVEMENT":
-                movement_value = safe_float(row["values"].get(column_key))
-                include_in_material_balance = (
-                    normalize_material_balance_code_value(
-                        column.include_in_material_balance
-                    )
-                    == "YES"
-                )
-                include_in_book_closing = (
-                    normalize_material_balance_code_value(
-                        column.include_in_book_closing
-                    )
-                    == "YES"
-                )
-                is_internal_transfer = (
-                    normalize_material_balance_code_value(column.is_internal_transfer)
-                    == "YES"
-                )
-                if (
-                    include_in_material_balance
-                    and include_in_book_closing
-                    and not is_internal_transfer
-                ):
-                    direction = normalize_material_balance_code_value(
-                        column.movement_direction
-                    )
-                    if direction == "IN":
-                        eligible_in_total += movement_value
-                    elif direction == "OUT":
-                        eligible_out_total += movement_value
-
-        book_closing_value = opening_value + eligible_in_total - eligible_out_total
-        loss_gain_value = actual_closing_value - book_closing_value
-
-        for column in columns:
-            column_key = column.column_key
-            column_type = normalize_material_balance_code_value(column.column_type)
-            if column_type == "BOOK_CLOSING":
-                row["values"][column_key] = book_closing_value
-            elif column_type == "ACTUAL_CLOSING":
-                row["values"][column_key] = actual_closing_value
-            elif column_type == "LOSS_GAIN":
-                row["values"][column_key] = loss_gain_value
-            row["values"][column_key] = round(
-                safe_float(row["values"].get(column_key)),
-                3,
-            )
-
-        consolidated_rows.append(row)
-
-    return sorted(
-        consolidated_rows,
-        key=lambda row: (
-            row["accounting_date"],
-            row["location_code"],
-        ),
-    )
+    return _shared_consolidate_mb_rows(tank_rows=tank_rows, columns=columns)
 
 
 @router.get(
@@ -1741,14 +1327,7 @@ def get_tank_stock_ledger_summary(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(
-        current_user,
-        "View Tank Stock Ledger",
-        db,
-    )
-
-    ledger_rows = get_filtered_tank_stock_ledger_rows(
-        db=db,
+    return _shared_get_ledger_summary(
         location_code=location_code,
         tank_asset_code=tank_asset_code,
         product_name=product_name,
@@ -1756,69 +1335,8 @@ def get_tank_stock_ledger_summary(
         date_to=date_to,
         status="Active",
         current_user=current_user,
+        db=db,
     )
-
-    summary_map = {}
-
-    for row in ledger_rows:
-        key = (
-            row.location_code,
-            row.tank_asset_code,
-            row.product_name or "",
-        )
-
-        if key not in summary_map:
-            location = get_location_by_code(row.location_code, db)
-
-            summary_map[key] = {
-                "location_code": row.location_code,
-                "location_name": location.location_name if location else "",
-                "tank_asset_code": row.tank_asset_code,
-                "tank_asset_name": row.tank_asset_name,
-                "product_name": row.product_name,
-                "opening_nsv_bbl": 0,
-                "total_in_nsv_bbl": 0,
-                "total_out_nsv_bbl": 0,
-                "closing_nsv_bbl": 0,
-                "opening_lt": 0,
-                "total_in_lt": 0,
-                "total_out_lt": 0,
-                "closing_lt": 0,
-                "opening_mt": 0,
-                "total_in_mt": 0,
-                "total_out_mt": 0,
-                "closing_mt": 0,
-            }
-
-        summary = summary_map[key]
-
-        sign = row.tank_operation_sign
-        category = row.tank_operation_category
-
-        movement_nsv = row.movement_nsv_bbl or 0
-        movement_lt = row.movement_lt or 0
-        movement_mt = row.movement_mt or 0
-
-        if category == "OPENING":
-            summary["opening_nsv_bbl"] += movement_nsv
-            summary["opening_lt"] += movement_lt
-            summary["opening_mt"] += movement_mt
-
-        if sign == "IN":
-            summary["total_in_nsv_bbl"] += movement_nsv
-            summary["total_in_lt"] += movement_lt
-            summary["total_in_mt"] += movement_mt
-
-        if sign == "OUT":
-            summary["total_out_nsv_bbl"] += movement_nsv
-            summary["total_out_lt"] += movement_lt
-            summary["total_out_mt"] += movement_mt
-
-        summary["closing_nsv_bbl"] = row.running_balance_nsv_bbl or 0
-        summary["closing_lt"] = row.running_balance_lt or 0
-        summary["closing_mt"] = row.running_balance_mt or 0
-
-    return list(summary_map.values())
 
 
 @router.get(
@@ -1934,106 +1452,15 @@ def validate_out_turn_report_tank_sequence(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(
-        current_user,
-        "View Out-Turn Report",
-        db,
-    )
-
-    date_from_value = parse_date_filter(date_from, "Date From")
-    date_to_value = parse_date_filter(date_to, "Date To")
-
-    continuity_rows = get_out_turn_report_rows(
-        db=db,
+    return _shared_validate_otr_sequence(
         location_code=location_code,
         tank_asset_code=tank_asset_code,
         product_name=product_name,
-        date_from=None,
+        date_from=date_from,
         date_to=date_to,
-        status="Active",
         current_user=current_user,
+        db=db,
     )
-
-    visible_rows = []
-
-    for row in continuity_rows:
-        if date_from_value and row.accounting_date and row.accounting_date < date_from_value:
-            continue
-
-        if date_to_value and row.accounting_date and row.accounting_date > date_to_value:
-            continue
-
-        visible_rows.append(row)
-
-    grouped_rows = {}
-
-    for row in continuity_rows:
-        key = (row.location_code, row.tank_asset_code)
-
-        if key not in grouped_rows:
-            grouped_rows[key] = []
-
-        grouped_rows[key].append(row)
-
-    visible_ledger_ids = {row.id for row in visible_rows}
-
-    issues = []
-
-    for key, group_rows in grouped_rows.items():
-        location, tank = key
-
-        sorted_group_rows = sorted(
-            group_rows,
-            key=lambda row: (
-                row.accounting_date or date.min,
-                get_ledger_operation_datetime(row) or datetime.min,
-                row.id,
-            ),
-        )
-
-        previous_row = None
-
-        for row in sorted_group_rows:
-            if previous_row is None:
-                expected_previous_nsv = 0
-            else:
-                previous_snapshot = get_stock_snapshot_values(previous_row)
-                expected_previous_nsv = previous_snapshot["nsv"]
-
-            if row.id in visible_ledger_ids:
-                actual_previous_nsv = safe_float(row.previous_stock_nsv_bbl)
-
-                if round(actual_previous_nsv, 3) != round(expected_previous_nsv, 3):
-                    issues.append(
-                        {
-                            "ledger_id": row.id,
-                            "ticket_number": row.ticket_number,
-                            "location_code": location,
-                            "tank_asset_code": tank,
-                            "product_name": row.product_name,
-                            "expected_previous_nsv_bbl": round(
-                                expected_previous_nsv,
-                                3,
-                            ),
-                            "actual_previous_nsv_bbl": round(
-                                actual_previous_nsv,
-                                3,
-                            ),
-                            "message": (
-                                "Previous stock does not match previous row "
-                                "of the same tank sequence. Run ledger rebuild."
-                            ),
-                        }
-                    )
-
-            previous_row = row
-
-    return {
-        "rows_checked": len(visible_rows),
-        "groups_checked": len(grouped_rows),
-        "issues_count": len(issues),
-        "issues": issues,
-    }
 
 
 @router.get(
@@ -2152,16 +1579,13 @@ def build_fso_otr_report(
             approved_transaction_not_on_correction_hold(db),
             OperationTransaction.origin_location_code == loc_code,
             OperationTransaction.primary_asset_code == asset_code,
-            OperationTransaction.operation_date >= date_from,
-            OperationTransaction.operation_date <= date_to + timedelta(days=1),
             OperationTransactionValue.field_code == "fso_payload",
         )
-        .order_by(OperationTransaction.operation_date.asc(), OperationTransaction.id.asc())
+        .order_by(OperationTransaction.id.asc())
     )
     if sn:
         q = q.filter(OperationTransaction.convoy_number == sn)
 
-    rows = []
     totals = {
         "receipt": 0.0,
         "export": 0.0,
@@ -2170,8 +1594,11 @@ def build_fso_otr_report(
         "compare_variance": 0.0,
     }
 
+    setting_cache = {}
+    sortable_rows = []
+
     for tx, val in q.all():
-        payload = val.field_value if isinstance(val.field_value, dict) else {}
+        payload = coerce_payload_dict(val.field_value)
         meta = payload.get("meta") or {}
         inputs = payload.get("inputs") or {}
         net = ((payload.get("calculated") or {}).get("net") or {})
@@ -2185,23 +1612,27 @@ def build_fso_otr_report(
         movement_qty = abs(net_stock) + abs(net_water)
 
         vessel_qty = float(safe_float(inputs.get("vessel_quantity_bbl")))
-        # FSO variance = shuttle discharge (vessel qty) - FSO movement.
         variance = vessel_qty - movement_qty if op_sign == "IN" else 0.0
 
         src_discharge = float(safe_float(meta.get("source_shuttle_discharge_bbl")))
         compare_var = src_discharge - movement_qty if op_sign == "IN" and src_discharge > 0 else 0.0
 
-        # Operation date/time come from the payload, not the ticket
-        # metadata (tickets recorded before the metadata date was removed
-        # may carry a different metadata date).
-        payload_operation_date = (
-            get_payload_operation_date(payload, "fso_payload") or tx.operation_date
+        p_date, p_time = get_payload_operation_parts(payload, "fso_payload")
+        payload_operation_date = p_date or tx.operation_date
+        window = resolve_location_accounting_window(
+            db,
+            location_code=loc_code,
+            operation_date=payload_operation_date,
+            operation_time=p_time,
+            setting_cache=setting_cache,
         )
-        setting = get_active_location_day_setting(db, loc_code, payload_operation_date)
-        day_start = setting.day_start_time if setting else datetime_time(0, 0)
-        acc_date = compute_accounting_date(payload_operation_date, event_time, day_start)
+        acc_date = window["accounting_date"] if window else payload_operation_date
         if not date_from <= acc_date <= date_to:
             continue
+
+        payload_dt = datetime.combine(
+            payload_operation_date, p_time or datetime_time(0, 0)
+        )
 
         row = {
             "transaction_id": tx.id,
@@ -2228,7 +1659,7 @@ def build_fso_otr_report(
             "compare_variance_bbl": compare_var,
             "remarks": inputs.get("remarks"),
         }
-        rows.append(row)
+        sortable_rows.append((acc_date, payload_dt, tx.id, row))
 
         totals["movement"] += movement_qty
         totals["variance"] += variance
@@ -2237,6 +1668,9 @@ def build_fso_otr_report(
             totals["receipt"] += movement_qty
         elif op_sign == "OUT":
             totals["export"] += movement_qty
+
+    sortable_rows.sort(key=lambda item: (item[0], item[1], item[2]))
+    rows = [item[3] for item in sortable_rows]
 
     return rows, totals
 
@@ -2261,54 +1695,58 @@ def build_fso_material_balance(
             approved_transaction_not_on_correction_hold(db),
             OperationTransaction.origin_location_code == loc_code,
             OperationTransaction.primary_asset_code == asset_code,
-            OperationTransaction.operation_date >= date_from,
-            OperationTransaction.operation_date <= date_to + timedelta(days=1),
             OperationTransactionValue.field_code == "fso_payload",
         )
-        .order_by(OperationTransaction.operation_date.asc(), OperationTransaction.id.asc())
+        .order_by(OperationTransaction.id.asc())
     )
 
+    setting_cache = {}
     buckets = {}
     for tx, val in q.all():
-        payload = val.field_value if isinstance(val.field_value, dict) else {}
+        payload = coerce_payload_dict(val.field_value)
         meta = payload.get("meta") or {}
         inputs = payload.get("inputs") or {}
         net = ((payload.get("calculated") or {}).get("net") or {})
 
-        payload_operation_date = (
-            get_payload_operation_date(payload, "fso_payload") or tx.operation_date
+        p_date, p_time = get_payload_operation_parts(payload, "fso_payload")
+        payload_operation_date = p_date or tx.operation_date
+        window = resolve_location_accounting_window(
+            db,
+            location_code=loc_code,
+            operation_date=payload_operation_date,
+            operation_time=p_time,
+            setting_cache=setting_cache,
         )
-        setting = get_active_location_day_setting(db, loc_code, payload_operation_date)
-        day_start = setting.day_start_time if setting else datetime_time(0, 0)
-        acc_date = compute_accounting_date(payload_operation_date, inputs.get("event_time"), day_start)
+        acc_date = window["accounting_date"] if window else payload_operation_date
+        if acc_date > date_to:
+            continue
 
-        buckets.setdefault(acc_date, []).append((tx, meta, inputs, net))
+        payload_dt = datetime.combine(
+            payload_operation_date, p_time or datetime_time(0, 0)
+        )
+        buckets.setdefault(acc_date, []).append((payload_dt, tx, meta, inputs, net))
 
-    dates = sorted([d for d in buckets.keys() if d >= date_from and d <= date_to])
-    rows = []
+    pre_dates = sorted([d for d in buckets.keys() if d < date_from])
     prev_physical_close = None
+    for pre_date in pre_dates:
+        pre_items = sorted(buckets[pre_date], key=lambda item: (item[0], item[1].id))
+        prev_physical_close = float(safe_float(pre_items[-1][3].get("closing_stock_bbl")))
+
+    dates = sorted([d for d in buckets.keys() if date_from <= d <= date_to])
+    rows = []
 
     for acc_date in dates:
-        items = buckets[acc_date]
-
-        def sort_key(item):
-            tx, meta, inputs, net = item
-            payload_datetime = resolve_transaction_operation_datetime(
-                tx, payload={"inputs": inputs}, field_code="fso_payload"
-            )
-            return (payload_datetime or datetime.min, tx.id)
-
-        items = sorted(items, key=sort_key)
+        items = sorted(buckets[acc_date], key=lambda item: (item[0], item[1].id))
 
         if prev_physical_close is None:
-            opening = float(safe_float(items[0][2].get("opening_stock_bbl")))
+            opening = float(safe_float(items[0][3].get("opening_stock_bbl")))
         else:
             opening = prev_physical_close
 
         receipt = 0.0
         export = 0.0
 
-        for tx, meta, inputs, net in items:
+        for _payload_dt, tx, meta, inputs, net in items:
             op_sign = str(meta.get("operation_sign") or "").strip().upper()
             net_stock = float(safe_float(net.get("net_stock_bbl")))
             net_water = float(safe_float(net.get("net_water_bbl")))
@@ -2321,7 +1759,7 @@ def build_fso_material_balance(
 
         book_close = opening + receipt - export
 
-        last_inputs = items[-1][2]
+        last_inputs = items[-1][3]
         physical_close = float(safe_float(last_inputs.get("closing_stock_bbl")))
         physical_close_water = float(safe_float(last_inputs.get("closing_water_bbl")))
         loss_gain = physical_close - book_close
@@ -2364,11 +1802,9 @@ def build_fso_outturn_report(
             approved_transaction_not_on_correction_hold(db),
             OperationTransaction.origin_location_code == loc_code,
             OperationTransaction.primary_asset_code == asset_code,
-            OperationTransaction.operation_date >= date_from,
-            OperationTransaction.operation_date <= date_to + timedelta(days=1),
             OperationTransactionValue.field_code == "fso_payload",
         )
-        .order_by(OperationTransaction.operation_date.asc(), OperationTransaction.id.asc())
+        .order_by(OperationTransaction.id.asc())
     )
 
     def _sf(v):
@@ -2380,21 +1816,24 @@ def build_fso_outturn_report(
     def _abs_qty(net_stock, net_water):
         return abs(_sf(net_stock)) + abs(_sf(net_water))
 
+    setting_cache = {}
     buckets = {}
     for tx, val in q.all():
-        payload = val.field_value if isinstance(val.field_value, dict) else {}
+        payload = coerce_payload_dict(val.field_value)
         meta = payload.get("meta") or {}
         inputs = payload.get("inputs") or {}
         net = ((payload.get("calculated") or {}).get("net") or {})
 
-        event_time = inputs.get("event_time")
-
-        payload_operation_date = (
-            get_payload_operation_date(payload, "fso_payload") or tx.operation_date
+        p_date, p_time = get_payload_operation_parts(payload, "fso_payload")
+        payload_operation_date = p_date or tx.operation_date
+        window = resolve_location_accounting_window(
+            db,
+            location_code=loc_code,
+            operation_date=payload_operation_date,
+            operation_time=p_time,
+            setting_cache=setting_cache,
         )
-        setting = get_active_location_day_setting(db, loc_code, payload_operation_date)
-        day_start = setting.day_start_time if setting else datetime_time(0, 0)
-        acc_date = compute_accounting_date(payload_operation_date, event_time, day_start)
+        acc_date = window["accounting_date"] if window else payload_operation_date
         if not date_from <= acc_date <= date_to:
             continue
 
@@ -2723,35 +2162,19 @@ def rebuild_tank_stock_ledger(
         db,
     )
 
-    query = apply_location_filter(
-        db.query(TankStockLedger), TankStockLedger, current_user, db
-    ).filter(TankStockLedger.status == "Active")
-
     cleaned_location_code = clean_optional_text(location_code)
     cleaned_tank_asset_code = clean_optional_text(tank_asset_code)
     if cleaned_location_code:
         ensure_location_in_user_scope(
             current_user, db, cleaned_location_code, "Location"
         )
-        query = query.filter(TankStockLedger.location_code.ilike(cleaned_location_code))
 
-    if cleaned_tank_asset_code:
-        query = query.filter(TankStockLedger.tank_asset_code.ilike(cleaned_tank_asset_code))
-
-    rows = query.all()
-
-    group_keys = set()
-
-    for row in rows:
-        group_keys.add((row.location_code, row.tank_asset_code))
-
-    for location, tank_asset in group_keys:
-        rebuild_tank_stock_running_balances(
-            db=db,
-            location_code=location,
-            tank_asset_code=tank_asset,
-            product_name=None,
-        )
+    sync_result = sync_and_rebuild_location_tank_stock_ledger(
+        db=db,
+        location_code=cleaned_location_code,
+        tank_asset_code=cleaned_tank_asset_code,
+        current_user=current_user,
+    )
 
     create_audit_log(
         db=db,
@@ -2761,14 +2184,15 @@ def rebuild_tank_stock_ledger(
         entity_type="TankStockLedger",
         entity_id=None,
         entity_label="Tank Stock Ledger Rebuild",
-        remarks="Rebuilt stock movements from chronological tank stock snapshots",
+        remarks="Synced payloads, accounting windows, and rebuilt chronological tank running balances",
         request_path="/tank-stock-ledger/rebuild",
         details={
             "location_code": cleaned_location_code,
             "tank_asset_code": cleaned_tank_asset_code,
             "product_name": None,
-            "groups_rebuilt": len(group_keys),
-            "rows_scanned": len(rows),
+            "groups_rebuilt": sync_result["groups_rebuilt"],
+            "rows_scanned": sync_result["rows_scanned"],
+            "rows_created": sync_result["rows_created"],
         },
     )
 
@@ -2776,8 +2200,9 @@ def rebuild_tank_stock_ledger(
 
     return {
         "message": "Tank Stock Ledger rebuilt successfully",
-        "groups_rebuilt": len(group_keys),
-        "rows_scanned": len(rows),
+        "groups_rebuilt": sync_result["groups_rebuilt"],
+        "rows_scanned": sync_result["rows_scanned"],
+        "rows_created": sync_result["rows_created"],
     }
 
 
@@ -2822,49 +2247,39 @@ def get_tank_gauging_payload_for_transaction(
     if payload_row is None or payload_row.field_value is None:
         return None
 
-    if not isinstance(payload_row.field_value, dict):
-        return None
-
-    return payload_row.field_value
+    parsed = coerce_payload_dict(payload_row.field_value)
+    return parsed or None
 
 
 def parse_payload_gauging_datetime(payload: dict):
-    inputs = payload.get("inputs") or {}
-
-    gauging_date = clean_optional_text(inputs.get("gaugingDate"))
-    gauging_time = clean_optional_text(inputs.get("gaugingTime"))
-
-    if not gauging_date or not gauging_time:
+    payload_dict = coerce_payload_dict(payload)
+    payload_date, payload_time = get_payload_operation_parts(
+        payload_dict, "tank_gauging_payload"
+    )
+    if payload_date is None:
         return None
-
-    try:
-        return datetime.fromisoformat(f"{gauging_date}T{gauging_time}")
-    except ValueError:
-        return None
+    return datetime.combine(payload_date, payload_time or datetime_time(0, 0))
 
 
 def resolve_transaction_datetime_for_accounting_day(
     transaction: OperationTransaction,
     payload: dict,
 ):
-    # The payload date/time is the operation moment. The legacy metadata
-    # Operation Start Date/Time is only consulted when the payload carries
-    # no complete date/time of its own (tickets recorded before the
-    # metadata inputs were removed may hold a *different* metadata start,
-    # and it must never override the payload).
     payload_date, payload_time = get_payload_operation_parts(payload)
 
-    if payload_date is not None and payload_time is not None:
-        return datetime.combine(payload_date, payload_time)
+    if payload_date is not None:
+        return datetime.combine(payload_date, payload_time or datetime_time(0, 0))
 
     if transaction is not None and transaction.operation_start_datetime is not None:
         return transaction.operation_start_datetime
 
+    if transaction is not None and transaction.operation_date is not None:
+        return datetime.combine(transaction.operation_date, datetime_time(0, 0))
+
     raise HTTPException(
         status_code=400,
         detail=(
-            "Operation Start Date/Time or Tank Gauging Date/Time is required "
-            "to calculate the Location Accounting Day."
+            "Tank Gauging Date/Time is required to calculate the Location Accounting Day."
         ),
     )
 
@@ -2873,39 +2288,15 @@ def calculate_accounting_window_from_setting(
     setting: LocationAccountingDaySetting,
     transaction_datetime: datetime,
 ):
-    transaction_date = transaction_datetime.date()
-    transaction_time = transaction_datetime.time()
-
-    start_time = setting.day_start_time
-    end_time = setting.day_end_time
-
-    is_overnight_window = end_time < start_time
-
-    if is_overnight_window:
-        if transaction_time >= start_time:
-            accounting_date = transaction_date
-        else:
-            accounting_date = transaction_date - timedelta(days=1)
-
-        accounting_day_start = datetime.combine(accounting_date, start_time)
-        accounting_day_end = datetime.combine(
-            accounting_date + timedelta(days=1),
-            end_time,
-        )
-
-    else:
-        if transaction_time >= start_time:
-            accounting_date = transaction_date
-        else:
-            accounting_date = transaction_date - timedelta(days=1)
-
-        accounting_day_start = datetime.combine(accounting_date, start_time)
-        accounting_day_end = datetime.combine(accounting_date, end_time)
-
+    window = calculate_window_from_setting_parts(
+        setting=setting,
+        operation_date=transaction_datetime.date(),
+        operation_time=transaction_datetime.time(),
+    )
     return {
-        "accounting_date": accounting_date,
-        "accounting_day_start": accounting_day_start,
-        "accounting_day_end": accounting_day_end,
+        "accounting_date": window["accounting_date"],
+        "accounting_day_start": window["accounting_day_start"],
+        "accounting_day_end": window["accounting_day_end"],
     }
 
 
@@ -2922,20 +2313,14 @@ def get_location_accounting_day_for_transaction(
             detail="Location is required to calculate accounting day",
         )
 
-    active_settings = (
-        db.query(LocationAccountingDaySetting)
-        .filter(
-            LocationAccountingDaySetting.location_code.ilike(cleaned_location_code),
-            LocationAccountingDaySetting.status == "Active",
-        )
-        .order_by(
-            LocationAccountingDaySetting.effective_from.desc(),
-            LocationAccountingDaySetting.id.desc(),
-        )
-        .all()
+    window = resolve_location_accounting_window(
+        db=db,
+        location_code=cleaned_location_code,
+        operation_date=transaction_datetime.date(),
+        operation_time=transaction_datetime.time(),
     )
 
-    if len(active_settings) == 0:
+    if window is None:
         raise HTTPException(
             status_code=400,
             detail=(
@@ -2945,49 +2330,11 @@ def get_location_accounting_day_for_transaction(
             ),
         )
 
-    matching_options = []
-
-    for setting in active_settings:
-        window = calculate_accounting_window_from_setting(
-            setting=setting,
-            transaction_datetime=transaction_datetime,
-        )
-
-        accounting_date = window["accounting_date"]
-
-        effective_to = setting.effective_to or date(9999, 12, 31)
-
-        if setting.effective_from <= accounting_date <= effective_to:
-            if (
-                window["accounting_day_start"]
-                <= transaction_datetime
-                <= window["accounting_day_end"]
-            ):
-                matching_options.append(
-                    {
-                        "setting": setting,
-                        "window": window,
-                    }
-                )
-
-    if len(matching_options) == 0:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "No effective Location Accounting Day Setting matched this "
-                "transaction date/time. Check Effective From/To settings."
-            ),
-        )
-
-    selected = matching_options[0]
-    selected_setting = selected["setting"]
-    selected_window = selected["window"]
-
     return {
-        "setting_id": selected_setting.id,
-        "accounting_date": selected_window["accounting_date"],
-        "accounting_day_start": selected_window["accounting_day_start"],
-        "accounting_day_end": selected_window["accounting_day_end"],
+        "setting_id": window["setting_id"],
+        "accounting_date": window["accounting_date"],
+        "accounting_day_start": window["accounting_day_start"],
+        "accounting_day_end": window["accounting_day_end"],
     }
 
 
@@ -3161,12 +2508,74 @@ def rebuild_tank_stock_running_balances(
     )
 
     ledger_rows = query.all()
+    if not ledger_rows:
+        return
 
+    tx_ids = [row.transaction_id for row in ledger_rows if row.transaction_id]
+    live_payload_by_tx_id: dict[int, dict] = {}
+    if tx_ids:
+        for val_row in (
+            db.query(OperationTransactionValue)
+            .filter(
+                OperationTransactionValue.transaction_id.in_(list(dict.fromkeys(tx_ids))),
+                OperationTransactionValue.field_code == "tank_gauging_payload",
+            )
+            .all()
+        ):
+            parsed = coerce_payload_dict(val_row.field_value)
+            if parsed:
+                live_payload_by_tx_id[val_row.transaction_id] = parsed
+
+    tank_ops_by_code = {}
+    for op in db.query(TankOperation).all():
+        c = str(op.operation_code or "").strip().lower()
+        loc = str(op.location_code or "").strip().lower()
+        tank_ops_by_code[(loc, c)] = op
+        tank_ops_by_code.setdefault(c, op)
+
+    setting_cache = {}
     sortable_rows = []
 
     for row in ledger_rows:
-        row_datetime = get_ledger_operation_datetime(row)
+        live_payload = live_payload_by_tx_id.get(row.transaction_id)
+        if live_payload:
+            row.source_payload = normalize_jsonb_value(live_payload)
+            payload = live_payload
+        else:
+            payload = coerce_payload_dict(row.source_payload)
 
+        if payload:
+            inputs = payload.get("inputs") or {}
+            op_code = clean_optional_text(inputs.get("tankOperationCode"))
+            loc_key = str(row.location_code or "").strip().lower()
+            master_op = None
+            if op_code:
+                master_op = tank_ops_by_code.get(
+                    (loc_key, op_code.lower())
+                ) or tank_ops_by_code.get(op_code.lower())
+            if master_op is not None:
+                row.tank_operation_code = master_op.operation_code
+                row.tank_operation_label = master_op.operation_label
+                row.tank_operation_category = master_op.operation_category
+                row.tank_operation_sign = master_op.operation_sign
+
+            gauging_date, gauging_time = get_payload_operation_parts(payload)
+            if gauging_date is not None:
+                row.operation_date = gauging_date
+                window = resolve_location_accounting_window(
+                    db=db,
+                    location_code=row.location_code,
+                    operation_date=gauging_date,
+                    operation_time=gauging_time,
+                    setting_cache=setting_cache,
+                )
+                if window is not None:
+                    row.accounting_date = window["accounting_date"]
+                    row.accounting_day_start = window["accounting_day_start"]
+                    row.accounting_day_end = window["accounting_day_end"]
+                    row.accounting_day_setting_id = window["setting_id"]
+
+        row_datetime = get_ledger_operation_datetime(row)
         if row_datetime is None:
             row_datetime = datetime.combine(row.operation_date, datetime_time(0, 0))
 
@@ -3176,48 +2585,7 @@ def rebuild_tank_stock_running_balances(
 
     previous_row = None
 
-    for row_datetime, _row_id, row in sortable_rows:
-        # Re-derive the operation/accounting dates from the payload on
-        # every rebuild, not only when they are missing: rows created while
-        # the metadata date/time still took precedence may carry an
-        # accounting day computed from the wrong moment, and a rebuild is
-        # the operator's tool to correct exactly that. Rows whose payload
-        # has no usable date/time (or whose location has no effective
-        # setting) keep their stored values untouched.
-        try:
-            payload = row.source_payload or {}
-
-            transaction = (
-                db.query(OperationTransaction)
-                .filter(OperationTransaction.id == row.transaction_id)
-                .first()
-            )
-
-            transaction_datetime = resolve_transaction_datetime_for_accounting_day(
-                transaction=transaction,
-                payload=payload,
-            )
-
-            accounting_day = get_location_accounting_day_for_transaction(
-                db=db,
-                location_code=row.location_code,
-                transaction_datetime=transaction_datetime,
-            )
-
-            payload_operation_date = resolve_transaction_operation_date(
-                transaction, payload=payload
-            )
-            if payload_operation_date is not None:
-                row.operation_date = payload_operation_date
-
-            row.accounting_date = accounting_day["accounting_date"]
-            row.accounting_day_start = accounting_day["accounting_day_start"]
-            row.accounting_day_end = accounting_day["accounting_day_end"]
-            row.accounting_day_setting_id = accounting_day["setting_id"]
-
-        except Exception:
-            pass
-
+    for _row_datetime, _row_id, row in sortable_rows:
         current_gsv_bbl = safe_float(row.stock_gsv_bbl)
         current_nsv_bbl = safe_float(row.stock_nsv_bbl)
         current_lt = safe_float(row.stock_lt)
@@ -3265,10 +2633,101 @@ def rebuild_tank_stock_running_balances(
     db.flush()
 
 
+def sync_and_rebuild_location_tank_stock_ledger(
+    db: Session,
+    location_code: str | None = None,
+    tank_asset_code: str | None = None,
+    current_user: User | None = None,
+):
+    from app.services.transaction_helpers import approved_transaction_not_on_correction_hold
+
+    cleaned_location_code = clean_optional_text(location_code)
+    cleaned_tank_asset_code = clean_optional_text(tank_asset_code)
+
+    tx_query = (
+        db.query(OperationTransaction)
+        .join(OperationTemplate, OperationTransaction.operation_template_id == OperationTemplate.id)
+        .filter(
+            OperationTransaction.status == APPROVED_TRANSACTION_STATUS,
+            approved_transaction_not_on_correction_hold(db),
+            func.lower(func.trim(OperationTemplate.entry_layout_type)) == "tank gauging",
+        )
+    )
+    if current_user is not None:
+        tx_query = apply_transaction_party_scope_filter(
+            tx_query, OperationTransaction, current_user, db
+        )
+    if cleaned_location_code:
+        tx_query = tx_query.filter(
+            OperationTransaction.origin_location_code.ilike(cleaned_location_code)
+        )
+    if cleaned_tank_asset_code:
+        tx_query = tx_query.filter(
+            OperationTransaction.primary_asset_code.ilike(cleaned_tank_asset_code)
+        )
+
+    approved_txs = tx_query.order_by(OperationTransaction.id.asc()).all()
+    existing_tx_ids = {
+        row[0]
+        for row in db.query(TankStockLedger.transaction_id)
+        .filter(TankStockLedger.status.in_(["Active", "Correction Hold"]))
+        .all()
+    }
+
+    rows_created = 0
+    for tx in approved_txs:
+        if tx.id in existing_tx_ids:
+            continue
+        try:
+            created = create_tank_stock_ledger_from_approved_transaction(
+                db=db,
+                transaction=tx,
+                current_user=current_user,
+                rebuild_after_insert=False,
+            )
+            if created is not None:
+                rows_created += 1
+                existing_tx_ids.add(tx.id)
+        except HTTPException:
+            continue
+
+    ledger_query = db.query(TankStockLedger).filter(TankStockLedger.status == "Active")
+    if current_user is not None:
+        ledger_query = apply_location_filter(
+            ledger_query, TankStockLedger, current_user, db
+        )
+    if cleaned_location_code:
+        ledger_query = ledger_query.filter(
+            TankStockLedger.location_code.ilike(cleaned_location_code)
+        )
+    if cleaned_tank_asset_code:
+        ledger_query = ledger_query.filter(
+            TankStockLedger.tank_asset_code.ilike(cleaned_tank_asset_code)
+        )
+
+    rows = ledger_query.all()
+    group_keys = {(row.location_code, row.tank_asset_code) for row in rows}
+
+    for loc, tank in sorted(group_keys):
+        rebuild_tank_stock_running_balances(
+            db=db,
+            location_code=loc,
+            tank_asset_code=tank,
+            product_name=None,
+        )
+
+    return {
+        "groups_rebuilt": len(group_keys),
+        "rows_scanned": len(rows),
+        "rows_created": rows_created,
+    }
+
+
 def create_tank_stock_ledger_from_approved_transaction(
     db: Session,
     transaction: OperationTransaction,
-    current_user: User,
+    current_user: User | None = None,
+    rebuild_after_insert: bool = True,
 ):
     if transaction.status != "Approved":
         return None
@@ -3317,17 +2776,25 @@ def create_tank_stock_ledger_from_approved_transaction(
         transaction_datetime=transaction_datetime,
     )
 
-    tank_operation_code = clean_optional_text(
-        inputs.get("tankOperationCode")
-    )
-    tank_operation_label = clean_optional_text(
-        inputs.get("tankOperationLabel")
-    )
-    tank_operation_category = clean_optional_text(
-        inputs.get("tankOperationCategory")
-    )
-    tank_operation_sign = clean_optional_text(
-        inputs.get("tankOperationSign")
+    tank_ops_all = db.query(TankOperation).all()
+    tank_ops_by_code = {}
+    for op in tank_ops_all:
+        c = str(op.operation_code or "").strip().lower()
+        loc = str(op.location_code or "").strip().lower()
+        tank_ops_by_code[(loc, c)] = op
+        tank_ops_by_code.setdefault(c, op)
+    tank_ops_by_id = {op.id: op for op in tank_ops_all}
+
+    (
+        tank_operation_code,
+        tank_operation_label,
+        tank_operation_category,
+        tank_operation_sign,
+    ) = _resolve_tank_op_meta(
+        transaction,
+        inputs,
+        tank_ops_by_code=tank_ops_by_code,
+        tank_ops_by_id=tank_ops_by_id,
     )
 
     if not tank_operation_code:
@@ -3357,8 +2824,16 @@ def create_tank_stock_ledger_from_approved_transaction(
             detail="Tank Operation Sign is missing in Tank Gauging payload.",
         )
 
-    current_stock_gsv_bbl = safe_float(calculated.get("gsvBbl"))
-    current_stock_nsv_bbl = safe_float(calculated.get("nsvBbl"))
+    current_stock_gsv_bbl = safe_float(
+        calculated.get("gsvBbl")
+        if calculated.get("gsvBbl") not in (None, "")
+        else calculated.get("gsv")
+    )
+    current_stock_nsv_bbl = safe_float(
+        calculated.get("nsvBbl")
+        if calculated.get("nsvBbl") not in (None, "")
+        else calculated.get("nsv")
+    )
     current_stock_lt = safe_float(calculated.get("lt"))
     current_stock_mt = safe_float(calculated.get("mt"))
 
@@ -3373,8 +2848,6 @@ def create_tank_stock_ledger_from_approved_transaction(
 
     tank_asset = get_asset_by_code(transaction.primary_asset_code, db)
 
-    tank_asset_name = ""
-
     if tank_asset:
         tank_asset_name = tank_asset.asset_name
     else:
@@ -3382,7 +2855,11 @@ def create_tank_stock_ledger_from_approved_transaction(
             payload_asset.get("asset_name")
         ) or ""
 
-    created_by_display = get_current_user_display_name(current_user)
+    created_by_display = (
+        get_current_user_display_name(current_user)
+        if current_user is not None
+        else (transaction.created_by or "System")
+    )
 
     new_ledger = TankStockLedger(
         transaction_id=transaction.id,
@@ -3391,8 +2868,6 @@ def create_tank_stock_ledger_from_approved_transaction(
         location_code=transaction.origin_location_code,
         tank_asset_code=transaction.primary_asset_code,
         tank_asset_name=tank_asset_name,
-        # Operation date is the date entered in the payload; the ticket
-        # metadata date of an older ticket may legitimately differ.
         operation_date=(
             resolve_transaction_operation_date(transaction, payload=payload)
             or transaction.operation_date
@@ -3431,14 +2906,14 @@ def create_tank_stock_ledger_from_approved_transaction(
     db.add(new_ledger)
     db.flush()
 
-    rebuild_tank_stock_running_balances(
-        db=db,
-        location_code=new_ledger.location_code,
-        tank_asset_code=new_ledger.tank_asset_code,
-        product_name=new_ledger.product_name,
-    )
-
-    db.flush()
+    if rebuild_after_insert:
+        rebuild_tank_stock_running_balances(
+            db=db,
+            location_code=new_ledger.location_code,
+            tank_asset_code=new_ledger.tank_asset_code,
+            product_name=new_ledger.product_name,
+        )
+        db.flush()
 
     create_audit_log(
         db=db,

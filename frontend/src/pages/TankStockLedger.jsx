@@ -11,6 +11,11 @@ import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
 import AlertMessage from '../components/common/AlertMessage'
 import useActionFeedback from '../hooks/useActionFeedback'
+import {
+  formatCalendarDate,
+  formatGaugingTime,
+  toIsoDateString,
+} from '../utils/format'
 
 function TankStockLedger({ locations, assets, loggedInUser }) {
   const emptyFilters = {
@@ -146,8 +151,8 @@ function TankStockLedger({ locations, assets, loggedInUser }) {
         const today = new Date()
         const firstDay = new Date(today.getFullYear(), today.getMonth(), 1)
 
-        dailyFilters.dateFrom = firstDay.toISOString().slice(0, 10)
-        dailyFilters.dateTo = today.toISOString().slice(0, 10)
+        dailyFilters.dateFrom = toIsoDateString(firstDay)
+        dailyFilters.dateTo = toIsoDateString(today)
       }
 
       const [ledgerData, summaryData, dailySummaryData] = await Promise.all([
@@ -361,7 +366,8 @@ function TankStockLedger({ locations, assets, loggedInUser }) {
 
     const headers = [
       'Accounting Date',
-      'Operation Date',
+      'Gauging Date',
+      'Gauging Time',
       'Ticket Number',
       'Operation Number',
       'Location Code',
@@ -372,6 +378,7 @@ function TankStockLedger({ locations, assets, loggedInUser }) {
       'Operation Label',
       'Operation Category',
       'Operation Sign',
+      'Previous NSV',
       'Movement NSV',
       'Running Balance NSV',
       'Movement LT',
@@ -382,8 +389,9 @@ function TankStockLedger({ locations, assets, loggedInUser }) {
     ]
 
     const dataRows = ledgerRows.map((row) => [
-      row.accountingDate || '',
-      row.operationDate,
+      formatCalendarDate(row.accountingDate, ''),
+      formatCalendarDate(row.gaugingDate || row.operationDate, ''),
+      formatGaugingTime(row.gaugingTime, ''),
       row.ticketNumber,
       row.operationNumber,
       row.locationCode,
@@ -394,6 +402,7 @@ function TankStockLedger({ locations, assets, loggedInUser }) {
       row.tankOperationLabel,
       row.tankOperationCategory,
       row.tankOperationSign,
+      formatNumber(row.previousStockNsvBbl),
       formatNumber(row.movementNsvBbl),
       formatNumber(row.runningBalanceNsvBbl),
       formatNumber(row.movementLt),
@@ -844,13 +853,15 @@ function TankStockLedger({ locations, assets, loggedInUser }) {
             <thead>
               <tr>
                 <th>Accounting Date</th>
-                <th>Operation Date</th>
+                <th>Gauging Date</th>
+                <th>Gauging Time</th>
                 <th>Ticket</th>
                 <th>Location</th>
                 <th>Tank</th>
                 <th>Product</th>
                 <th>Operation</th>
                 <th>Sign</th>
+                <th>Previous NSV</th>
                 <th>Movement NSV</th>
                 <th>Stock / Running NSV</th>
                 <th>Movement LT</th>
@@ -864,15 +875,16 @@ function TankStockLedger({ locations, assets, loggedInUser }) {
             <tbody>
               {ledgerRows.length === 0 ? (
                 <tr>
-                  <td colSpan="15" className="empty-table">
+                  <td colSpan="17" className="empty-table">
                     No Tank Stock Ledger rows found. Ledger entries are auto-created when a Tank Gauging ticket is Approved.
                   </td>
                 </tr>
               ) : (
                 visibleLedgerRows.map((row) => (
                   <tr key={row.id}>
-                    <td>{row.accountingDate || '-'}</td>
-                    <td>{row.operationDate}</td>
+                    <td>{formatCalendarDate(row.accountingDate)}</td>
+                    <td>{formatCalendarDate(row.gaugingDate || row.operationDate)}</td>
+                    <td>{formatGaugingTime(row.gaugingTime)}</td>
                     <td>
                       <strong>{row.ticketNumber}</strong>
                       <div className="muted-table-text">
@@ -897,6 +909,7 @@ function TankStockLedger({ locations, assets, loggedInUser }) {
                         {row.tankOperationSign}
                       </span>
                     </td>
+                    <td>{formatNumber(row.previousStockNsvBbl)}</td>
                     <td>{getMovementDisplay(row)}</td>
                     <td>{formatNumber(row.runningBalanceNsvBbl)}</td>
                     <td>{formatNumber(row.movementLt)}</td>

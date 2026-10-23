@@ -390,6 +390,13 @@ def update_tank_operation(
         },
     )
 
+    from app.routers.reports import sync_and_rebuild_location_tank_stock_ledger
+
+    sync_and_rebuild_location_tank_stock_ledger(
+        db=db,
+        location_code=validated_data["location_code"],
+    )
+
     db.commit()
     db.refresh(existing_tank_operation)
 

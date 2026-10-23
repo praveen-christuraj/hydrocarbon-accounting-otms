@@ -1,4 +1,4 @@
-import { apiGet } from './apiClient'
+import { apiGet, apiPost } from './apiClient'
 
 const convertLedgerRowFromApi = (row) => {
   return {
@@ -13,6 +13,14 @@ const convertLedgerRowFromApi = (row) => {
     tankAssetCode: row.tank_asset_code || '',
     tankAssetName: row.tank_asset_name || '',
 
+    accountingDate: row.accounting_date || '',
+    gaugingDate: row.gauging_date || row.operation_date || '',
+    gaugingTime: row.gauging_time || '',
+    gaugingDatetime: row.gauging_datetime || '',
+    accountingDayStart: row.accounting_day_start || '',
+    accountingDayEnd: row.accounting_day_end || '',
+    accountingDaySettingId: row.accounting_day_setting_id ?? null,
+
     operationDate: row.operation_date || '',
     productName: row.product_name || '',
 
@@ -21,10 +29,20 @@ const convertLedgerRowFromApi = (row) => {
     tankOperationCategory: row.tank_operation_category || '',
     tankOperationSign: row.tank_operation_sign || '',
 
+    previousStockGsvBbl: Number(row.previous_stock_gsv_bbl || 0),
+    previousStockNsvBbl: Number(row.previous_stock_nsv_bbl || 0),
+    previousStockLt: Number(row.previous_stock_lt || 0),
+    previousStockMt: Number(row.previous_stock_mt || 0),
+
     movementGsvBbl: Number(row.movement_gsv_bbl || 0),
     movementNsvBbl: Number(row.movement_nsv_bbl || 0),
     movementLt: Number(row.movement_lt || 0),
     movementMt: Number(row.movement_mt || 0),
+
+    stockGsvBbl: Number(row.stock_gsv_bbl || 0),
+    stockNsvBbl: Number(row.stock_nsv_bbl || 0),
+    stockLt: Number(row.stock_lt || 0),
+    stockMt: Number(row.stock_mt || 0),
 
     runningBalanceGsvBbl: Number(row.running_balance_gsv_bbl || 0),
     runningBalanceNsvBbl: Number(row.running_balance_nsv_bbl || 0),
@@ -172,4 +190,13 @@ export const getTankStockLedgerDailySummary = async (filters = {}) => {
   const data = await apiGet(path)
 
   return (data || []).map(convertDailySummaryFromApi)
+}
+
+export const rebuildTankStockLedger = async (filters = {}) => {
+  const queryString = buildQueryString(filters)
+  const path = queryString
+    ? `/reports/tank-stock-ledger/rebuild?${queryString}`
+    : '/reports/tank-stock-ledger/rebuild'
+
+  return apiPost(path, {})
 }

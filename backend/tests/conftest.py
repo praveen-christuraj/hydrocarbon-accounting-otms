@@ -18,7 +18,11 @@ def compile_jsonb_for_sqlite(_type, _compiler, **_kw):
 
 os.environ.setdefault("JWT_SECRET_KEY", secrets.token_urlsafe(32))
 os.environ.setdefault("ENCRYPTION_KEY", secrets.token_urlsafe(32))
-os.environ.setdefault("DATABASE_URL", "sqlite:///./test.db")
+_xdist_worker = os.environ.get("PYTEST_XDIST_WORKER")
+os.environ.setdefault(
+    "DATABASE_URL",
+    f"sqlite:///./test_{_xdist_worker}.db" if _xdist_worker else "sqlite:///./test.db",
+)
 
 from app.database import Base, get_db
 from app.main import app

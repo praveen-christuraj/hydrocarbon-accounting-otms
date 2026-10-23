@@ -1815,30 +1815,33 @@ def dashboard_data_gateway(
 
         asset_code_list = [a.asset_code for a in assets]
 
+        from app.routers.tank_stock_ledger import (
+            get_ledger_operation_datetime,
+            hydrate_ledger_rows_from_payload,
+        )
+
         lq = db.query(TankStockLedger).filter(
+            TankStockLedger.status == "Active",
             TankStockLedger.location_code == location_code,
             TankStockLedger.tank_asset_code.in_(asset_code_list),
         )
 
+        hydrated_rows = hydrate_ledger_rows_from_payload(db, lq.all())
         if as_of_date:
-            lq = lq.filter(TankStockLedger.operation_date <= as_of_date)
+            hydrated_rows = [
+                r
+                for r in hydrated_rows
+                if r.accounting_date is not None and r.accounting_date <= as_of_date
+            ]
 
-        latest_sub = (
-            lq.with_entities(
-                TankStockLedger.tank_asset_code.label("tank_asset_code"),
-                func.max(TankStockLedger.id).label("max_id"),
-            )
-            .group_by(TankStockLedger.tank_asset_code)
-            .subquery()
-        )
-
-        latest_rows = (
-            db.query(TankStockLedger)
-            .join(latest_sub, TankStockLedger.id == latest_sub.c.max_id)
-            .all()
-        )
-
-        ledger_by_code = {r.tank_asset_code: r for r in latest_rows}
+        latest_key_by_code: dict[str, tuple] = {}
+        ledger_by_code: dict[str, TankStockLedger] = {}
+        for r in hydrated_rows:
+            sort_key = (get_ledger_operation_datetime(r) or datetime.min, r.id)
+            prev_key = latest_key_by_code.get(r.tank_asset_code)
+            if prev_key is None or sort_key >= prev_key:
+                latest_key_by_code[r.tank_asset_code] = sort_key
+                ledger_by_code[r.tank_asset_code] = r
 
         def _safe_num(v):
             try:

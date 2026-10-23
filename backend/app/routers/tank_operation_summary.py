@@ -1,5 +1,5 @@
-from datetime import datetime, date, timedelta
-from fastapi import APIRouter, Depends, HTTPException
+from datetime import datetime, date
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, func
@@ -18,19 +18,21 @@ from app.models import (
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
     apply_transaction_party_scope_filter,
-    get_user_location_codes,
     ensure_location_in_user_scope,
     require_user_permission,
 )
-from app.services.audit_service import create_audit_log
 from app.utils.helpers import (
     clean_optional_text,
     get_transaction_ticket_number,
-    get_location_name_by_code,
     get_asset_by_code,
     get_location_by_code,
 )
-from app.services.operation_datetime import resolve_transaction_accounting
+from app.services.operation_datetime import (
+    coerce_payload_dict,
+    format_time_hhmm,
+    get_payload_operation_parts,
+    resolve_transaction_accounting,
+)
 from app.services.transaction_helpers import parse_date_filter
 from app.config import APPROVED_TRANSACTION_STATUS
 from app.utils.pagination import (
@@ -60,21 +62,15 @@ def get_tank_gauging_payload_for_transaction(
     if payload_row is None or payload_row.field_value is None:
         return None
 
-    if not isinstance(payload_row.field_value, dict):
-        return None
-
-    return payload_row.field_value
+    parsed = coerce_payload_dict(payload_row.field_value)
+    return parsed or None
 
 
 def get_tank_gauging_payload_map(
     db: Session,
     transaction_ids,
 ) -> dict[int, dict]:
-    """Batch version of ``get_tank_gauging_payload_for_transaction``.
-
-    Loads every ``tank_gauging_payload`` for the given transactions in one
-    query (the summary builders used to run one query per transaction).
-    """
+    """Batch version of ``get_tank_gauging_payload_for_transaction``."""
     ids = [tx_id for tx_id in dict.fromkeys(transaction_ids or []) if tx_id is not None]
 
     if not ids:
@@ -90,26 +86,49 @@ def get_tank_gauging_payload_map(
         )
         .all()
     ):
-        if isinstance(row.field_value, dict):
-            payload_map[row.transaction_id] = row.field_value
+        parsed = coerce_payload_dict(row.field_value)
+        if parsed:
+            payload_map[row.transaction_id] = parsed
 
     return payload_map
 
 
 def extract_tank_gauging_columns(payload: dict):
-    if not payload:
+    payload_dict = coerce_payload_dict(payload)
+    if not payload_dict:
         return {}
 
-    inputs = payload.get("inputs") or {}
-    calculated = payload.get("calculated") or {}
+    inputs = payload_dict.get("inputs") if isinstance(payload_dict.get("inputs"), dict) else {}
+    calculated = (
+        payload_dict.get("calculated")
+        if isinstance(payload_dict.get("calculated"), dict)
+        else {}
+    )
 
     result = {}
 
+    # Top-level input_/calc_ keys first, then canonical nested dicts take precedence.
+    for key, value in payload_dict.items():
+        if key in ("inputs", "calculated"):
+            continue
+        if key.startswith("input_") or key.startswith("calc_"):
+            result[key] = value
+
     for key, value in inputs.items():
-        result[f"input_{key}"] = value
+        clean_key = key if key.startswith("input_") else f"input_{key}"
+        result[clean_key] = value
 
     for key, value in calculated.items():
-        result[f"calc_{key}"] = value
+        clean_key = key if key.startswith("calc_") else f"calc_{key}"
+        result[clean_key] = value
+
+    gauging_date, gauging_time = get_payload_operation_parts(
+        payload_dict, "tank_gauging_payload"
+    )
+    if gauging_date is not None:
+        result["input_gaugingDate"] = gauging_date.isoformat()
+    if gauging_time is not None:
+        result["input_gaugingTime"] = format_time_hhmm(gauging_time)
 
     return result
 
@@ -129,7 +148,6 @@ def get_all_possible_columns(
     )
 
     if current_user is not None:
-        # Cross-location record: party rule (PERMISSION_CRITERIA_MODEL.md).
         query = apply_transaction_party_scope_filter(
             query, OperationTransaction, current_user, db
         )
@@ -160,8 +178,10 @@ def get_all_possible_columns(
         "transaction_id",
         "ticket_number",
         "operation_number",
-        "operation_date",
         "accounting_date",
+        "input_gaugingDate",
+        "input_gaugingTime",
+        "operation_date",
         "location_code",
         "location_name",
         "tank_asset_code",
@@ -189,28 +209,33 @@ def build_tank_operation_summary_row(
     asset=_UNSET,
     resolved=_UNSET,
 ):
-    # ``location`` / ``asset`` may be prefetched (bulk) by the list builder;
-    # an explicit None means "prefetched and not found" (no per-row query).
     if location is _UNSET:
         location = get_location_by_code(transaction.origin_location_code, db)
     if asset is _UNSET:
         asset = get_asset_by_code(transaction.primary_asset_code, db)
 
-    # Operation date/time come from the gauging payload; the accounting
-    # date is that moment under the origin location's accounting-day
-    # setting. ``resolved`` lets the list builder share one setting cache.
     if resolved is _UNSET:
-        resolved = resolve_transaction_accounting(db, transaction, payload=payload)
-    operation_date, _operation_time, _operation_datetime, accounting_date = resolved
+        resolved = resolve_transaction_accounting(
+            db, transaction, payload=payload, field_code="tank_gauging_payload"
+        )
+    operation_date, operation_time, _operation_datetime, accounting_date = resolved
 
     extracted = extract_tank_gauging_columns(payload)
+    effective_gauging_date = operation_date or transaction.operation_date
+    effective_accounting_date = (
+        accounting_date or effective_gauging_date or transaction.operation_date
+    )
 
     row = {
         "transaction_id": transaction.id,
         "ticket_number": get_transaction_ticket_number(transaction),
         "operation_number": transaction.operation_number,
-        "operation_date": operation_date or transaction.operation_date,
-        "accounting_date": accounting_date or operation_date or transaction.operation_date,
+        "accounting_date": effective_accounting_date,
+        "input_gaugingDate": extracted.get("input_gaugingDate")
+        or (effective_gauging_date.isoformat() if effective_gauging_date else ""),
+        "input_gaugingTime": extracted.get("input_gaugingTime")
+        or (format_time_hhmm(operation_time) if operation_time else ""),
+        "operation_date": effective_gauging_date,
         "location_code": transaction.origin_location_code,
         "location_name": location.location_name if location else "",
         "tank_asset_code": transaction.primary_asset_code,
@@ -242,17 +267,11 @@ def get_filtered_tank_operation_summary_rows(
 ):
     """Summary rows + column list + pagination/window metadata.
 
-    Bounded loading: when the caller does not supply ``date_from`` only the
-    most recent ``DEFAULT_REPORT_WINDOW_DAYS`` (relative to the newest
-    matching ticket) are loaded; older data is fetched by passing an
-    explicit date range. Candidate rows are bounded in SQL by the ticket
-    ``operation_date`` (kept equal to the payload date by the write path),
-    then each row's operation/accounting dates are resolved from its
-    gauging payload + the location's accounting-day setting, filtered on
-    the accounting date, ordered chronologically by the payload date/time
-    and paginated (default page size ``DEFAULT_REPORT_PAGE_SIZE``) -- pass
-    ``unbounded=True`` only from the CSV export, which is an explicit
-    request for the full filtered set.
+    Resolves every approved Tank Gauging ticket strictly from its payload
+    gauging date & time + origin Location Accounting Day Setting, filters on
+    the resolved accounting date (never on ``OperationTransaction.operation_date``),
+    orders chronologically by ``(accounting_date, gauging_datetime, id)``, and
+    paginates cleanly.
     """
     query = (
         db.query(OperationTransaction)
@@ -264,7 +283,6 @@ def get_filtered_tank_operation_summary_rows(
     )
 
     if current_user is not None:
-        # Cross-location record: party rule (PERMISSION_CRITERIA_MODEL.md).
         query = apply_transaction_party_scope_filter(
             query, OperationTransaction, current_user, db
         )
@@ -296,27 +314,6 @@ def get_filtered_tank_operation_summary_rows(
     date_from_value = explicit_date_from
     date_to_value = parse_date_filter(date_to, "Date To")
 
-    default_window_applied = False
-    if date_from_value is None:
-        latest_date = query.with_entities(
-            func.max(OperationTransaction.operation_date)
-        ).scalar()
-        window_start = default_window_start(latest_date)
-        if window_start is not None:
-            date_from_value = window_start
-            default_window_applied = True
-
-    if date_from_value:
-        query = query.filter(OperationTransaction.operation_date >= date_from_value)
-
-    if date_to_value:
-        # One extra candidate day: an operation in the early hours of
-        # ``date_to + 1`` can belong to accounting date ``date_to``.
-        query = query.filter(
-            OperationTransaction.operation_date <= date_to_value + timedelta(days=1)
-        )
-
-    # Only transactions that actually carry a gauging payload produce rows.
     payload_query = query.join(
         OperationTransactionValue,
         and_(
@@ -347,24 +344,41 @@ def get_filtered_tank_operation_summary_rows(
     }
 
     setting_cache = {}
-    sortable_results = []
+    resolved_items = []
     for tx in transactions:
         payload = payload_map.get(tx.id)
         if not payload:
             continue
 
         resolved = resolve_transaction_accounting(
-            db, tx, payload=payload, setting_cache=setting_cache
+            db,
+            tx,
+            payload=payload,
+            field_code="tank_gauging_payload",
+            setting_cache=setting_cache,
         )
-        _op_date, _op_time, operation_datetime, accounting_date = resolved
-        effective_accounting_date = accounting_date or tx.operation_date
+        op_date, _op_time, operation_datetime, accounting_date = resolved
+        effective_accounting_date = accounting_date or op_date or tx.operation_date
 
-        # An explicit range selects by accounting date. The default
-        # recency window keeps the candidate set it has always returned
-        # (bounded by operation date in SQL above).
-        if explicit_date_from is not None and effective_accounting_date < explicit_date_from:
+        if date_to_value is not None and (effective_accounting_date or date.max) > date_to_value:
             continue
-        if date_to_value is not None and effective_accounting_date > date_to_value:
+
+        resolved_items.append((tx, payload, resolved, effective_accounting_date, operation_datetime))
+
+    default_window_applied = False
+    if date_from_value is None and resolved_items:
+        latest_accounting_date = max(
+            (item[3] for item in resolved_items if item[3] is not None),
+            default=None,
+        )
+        window_start = default_window_start(latest_accounting_date)
+        if window_start is not None:
+            date_from_value = window_start
+            default_window_applied = True
+
+    sortable_results = []
+    for tx, payload, resolved, effective_accounting_date, operation_datetime in resolved_items:
+        if date_from_value is not None and (effective_accounting_date or date.min) < date_from_value:
             continue
 
         row = build_tank_operation_summary_row(

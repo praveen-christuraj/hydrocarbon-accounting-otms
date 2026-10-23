@@ -2,34 +2,52 @@ from datetime import datetime, timedelta, date, time as datetime_time
 from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
 
 from app.database import get_db
-from app.models import Location, TankStockLedger, LocationAccountingDaySetting, MaterialBalanceTemplate, MaterialBalanceTemplateColumn, User
+from app.models import (
+    Location,
+    LocationAccountingDaySetting,
+    MaterialBalanceTemplateColumn,
+    OperationTransactionValue,
+    TankStockLedger,
+    User,
+)
 from app.utils.pagination import clamp_limit
-from app.schemas import TankStockLedgerResponse, TankStockLedgerSummaryResponse, TankStockLedgerDailySummaryResponse, MaterialBalanceDynamicReportResponse
+from app.schemas import (
+    TankStockLedgerResponse,
+    TankStockLedgerSummaryResponse,
+    TankStockLedgerDailySummaryResponse,
+    MaterialBalanceDynamicReportResponse,
+)
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
     apply_location_filter,
     ensure_location_in_user_scope,
     require_user_permission,
 )
-from app.services.audit_service import create_audit_log
-from app.utils.helpers import safe_float, clean_optional_text, get_transaction_ticket_number, get_location_by_code
+from app.utils.helpers import (
+    safe_float,
+    clean_optional_text,
+    get_location_by_code,
+)
 from app.services.material_balance_helpers import (
-    normalize_material_balance_category,
     normalize_material_balance_code_value,
     get_active_material_balance_template_for_location,
     get_active_material_balance_template_columns,
     get_movement_value_for_unit,
     get_snapshot_value_for_unit,
     should_row_match_material_balance_column,
-    get_global_internal_transfer_operation_codes,
-    should_row_be_in_book_closing_formula,
     calculate_book_closing_from_eligible_ledger_rows,
 )
-from app.config import APPROVED_TRANSACTION_STATUS
-from app.services.operation_datetime import get_payload_operation_datetime
+from app.services.operation_datetime import (
+    coerce_payload_dict,
+    format_time_hhmm,
+    get_active_day_setting,
+    get_payload_operation_datetime,
+    get_payload_operation_parts,
+    parse_time_value,
+    resolve_location_accounting_window,
+)
 from app.services.transaction_helpers import parse_date_filter
 
 router = APIRouter(prefix="/tank-stock-ledger", tags=["Tank Stock Ledger"])
@@ -38,15 +56,120 @@ router = APIRouter(prefix="/tank-stock-ledger", tags=["Tank Stock Ledger"])
 _UNSET = object()
 
 
+def _effective_payload_for_ledger(
+    row: TankStockLedger,
+    live_payload_by_tx_id: dict[int, dict] | None = None,
+) -> dict:
+    if live_payload_by_tx_id and row.transaction_id in live_payload_by_tx_id:
+        live = live_payload_by_tx_id[row.transaction_id]
+        if live:
+            return live
+    return coerce_payload_dict(row.source_payload)
+
+
+def hydrate_ledger_rows_from_payload(
+    db: Session,
+    rows: list[TankStockLedger],
+) -> list[TankStockLedger]:
+    """Hydrate each ``TankStockLedger`` row's gauging moment & accounting day
+    directly from the live ``tank_gauging_payload`` (or ``source_payload``) +
+    active ``LocationAccountingDaySetting`` before sorting or date filtering.
+
+    Synthetic rows that carry no payload date at all keep their stored
+    ``operation_date`` / ``accounting_date`` untouched.
+    """
+    if not rows:
+        return []
+
+    tx_ids = [r.transaction_id for r in rows if r.transaction_id]
+    live_payload_by_tx_id: dict[int, dict] = {}
+    if tx_ids:
+        for val_row in (
+            db.query(OperationTransactionValue)
+            .filter(
+                OperationTransactionValue.transaction_id.in_(list(dict.fromkeys(tx_ids))),
+                OperationTransactionValue.field_code == "tank_gauging_payload",
+            )
+            .all()
+        ):
+            parsed = coerce_payload_dict(val_row.field_value)
+            if parsed:
+                live_payload_by_tx_id[val_row.transaction_id] = parsed
+
+    setting_cache: dict = {}
+    for row in rows:
+        payload = _effective_payload_for_ledger(row, live_payload_by_tx_id)
+        if not payload:
+            continue
+        if live_payload_by_tx_id.get(row.transaction_id):
+            row.source_payload = payload
+
+        gauging_date, gauging_time = get_payload_operation_parts(payload)
+        if gauging_date is None:
+            continue
+
+        row.operation_date = gauging_date
+        window = resolve_location_accounting_window(
+            db=db,
+            location_code=row.location_code,
+            operation_date=gauging_date,
+            operation_time=gauging_time,
+            setting_cache=setting_cache,
+        )
+        if window is not None:
+            row.accounting_date = window["accounting_date"]
+            row.accounting_day_start = window["accounting_day_start"]
+            row.accounting_day_end = window["accounting_day_end"]
+            row.accounting_day_setting_id = window["setting_id"]
+        elif row.accounting_date is None:
+            row.accounting_date = gauging_date
+
+    return rows
+
+
+def get_ledger_gauging_parts(
+    row: TankStockLedger,
+) -> tuple[date | None, datetime_time | None, datetime | None]:
+    payload = coerce_payload_dict(row.source_payload)
+    if payload:
+        gauging_date, gauging_time = get_payload_operation_parts(payload)
+        if gauging_date is not None:
+            gauging_dt = datetime.combine(
+                gauging_date, gauging_time or datetime_time(0, 0)
+            )
+            return gauging_date, gauging_time, gauging_dt
+    return None, None, None
+
+
+def get_ledger_operation_datetime(row: TankStockLedger):
+    """Exact chronological moment of a ledger row from its gauging payload."""
+    try:
+        payload_datetime = get_payload_operation_datetime(row.source_payload)
+        if payload_datetime is not None:
+            return payload_datetime
+    except Exception:
+        pass
+
+    if row.accounting_day_start is not None:
+        return row.accounting_day_start
+
+    if row.operation_date is not None:
+        return datetime.combine(row.operation_date, datetime_time(0, 0))
+
+    return None
+
+
 def build_tank_stock_ledger_response(
     ledger: TankStockLedger,
     db: Session,
     location=_UNSET,
 ):
-    # ``location`` may be prefetched (bulk) by list endpoints; an explicit
-    # None means "prefetched and not found" (no per-row query).
     if location is _UNSET:
         location = get_location_by_code(ledger.location_code, db)
+
+    gauging_date, gauging_time, gauging_datetime = get_ledger_gauging_parts(ledger)
+    effective_gauging_date = gauging_date or ledger.operation_date
+    effective_gauging_dt = gauging_datetime or get_ledger_operation_datetime(ledger)
 
     return {
         "id": ledger.id,
@@ -57,7 +180,10 @@ def build_tank_stock_ledger_response(
         "location_name": location.location_name if location else "",
         "tank_asset_code": ledger.tank_asset_code,
         "tank_asset_name": ledger.tank_asset_name,
-        "operation_date": ledger.operation_date,
+        "operation_date": effective_gauging_date,
+        "gauging_date": effective_gauging_date,
+        "gauging_time": format_time_hhmm(gauging_time) if gauging_time else None,
+        "gauging_datetime": effective_gauging_dt,
         "product_name": ledger.product_name,
         "accounting_date": ledger.accounting_date,
         "accounting_day_start": ledger.accounting_day_start,
@@ -101,6 +227,9 @@ def get_filtered_tank_stock_ledger_rows(
     status: str | None = None,
     current_user: User | None = None,
 ):
+    date_from_value = parse_date_filter(date_from, "Date From")
+    date_to_value = parse_date_filter(date_to, "Date To")
+
     query = db.query(TankStockLedger)
 
     if current_user is not None:
@@ -128,20 +257,24 @@ def get_filtered_tank_stock_ledger_rows(
             TankStockLedger.product_name.ilike(cleaned_product_name)
         )
 
-    if date_from:
-        query = query.filter(TankStockLedger.accounting_date >= date_from)
-
-    if date_to:
-        query = query.filter(TankStockLedger.accounting_date <= date_to)
-
     if cleaned_status:
         query = query.filter(TankStockLedger.status == cleaned_status)
 
-    rows = query.all()
+    rows = hydrate_ledger_rows_from_payload(db, query.all())
 
-    # Chronological order inside an accounting day comes from the operation
-    # date/time entered in the ticket payload, never from row ids or the
-    # (identical for the whole day) accounting-day window start.
+    if date_from_value is not None:
+        rows = [
+            row
+            for row in rows
+            if row.accounting_date is not None and row.accounting_date >= date_from_value
+        ]
+    if date_to_value is not None:
+        rows = [
+            row
+            for row in rows
+            if row.accounting_date is not None and row.accounting_date <= date_to_value
+        ]
+
     return sorted(
         rows,
         key=lambda row: (
@@ -171,49 +304,41 @@ def build_date_range(start_date: date, end_date: date):
     return dates
 
 
-def get_active_location_day_setting(db: Session, location_code: str, on_date: date):
-    return (
-        db.query(LocationAccountingDaySetting)
-        .filter(
-            LocationAccountingDaySetting.location_code.ilike(location_code),
-            LocationAccountingDaySetting.status == "Active",
-            LocationAccountingDaySetting.effective_from <= on_date,
-            or_(
-                LocationAccountingDaySetting.effective_to.is_(None),
-                LocationAccountingDaySetting.effective_to >= on_date,
-            ),
-        )
-        .order_by(
-            LocationAccountingDaySetting.effective_from.desc(),
-            LocationAccountingDaySetting.id.desc(),
-        )
-        .first()
+def get_active_location_day_setting(
+    db: Session,
+    location_code: str,
+    on_date: date,
+    setting_cache: dict | None = None,
+) -> LocationAccountingDaySetting | None:
+    return get_active_day_setting(
+        db=db,
+        location_code=location_code,
+        on_date=on_date,
+        setting_cache=setting_cache,
     )
 
 
 def compute_accounting_date(
     op_date: date,
-    event_time: str | None,
-    day_start_time: datetime_time,
+    event_time: str | datetime_time | None,
+    day_start_time: datetime_time | None,
 ):
-    if not event_time:
+    if not event_time or day_start_time is None:
         return op_date
 
-    try:
-        hh, mm = event_time.split(":")
-        t = datetime_time(int(hh), int(mm))
-    except Exception:
+    parsed_time = parse_time_value(event_time)
+    if parsed_time is None:
         return op_date
 
-    return op_date - timedelta(days=1) if t < day_start_time else op_date
+    return op_date - timedelta(days=1) if parsed_time < day_start_time else op_date
 
 
 def combine_operation_datetime(op_date: date, event_time: str | None, tz_name: str):
     try:
-        if not event_time:
+        parsed_time = parse_time_value(event_time)
+        if parsed_time is None:
             return None
-        hh, mm = event_time.split(":")
-        dt = datetime(op_date.year, op_date.month, op_date.day, int(hh), int(mm))
+        dt = datetime.combine(op_date, parsed_time)
         return dt.replace(tzinfo=ZoneInfo(tz_name))
     except Exception:
         return None
@@ -234,13 +359,8 @@ def get_tank_stock_rows_for_daily_summary(
         query = apply_location_filter(query, TankStockLedger, current_user, db)
 
     cleaned_status = clean_optional_text(status)
-
     if cleaned_status:
         query = query.filter(TankStockLedger.status == cleaned_status)
-
-    query = query.filter(
-        TankStockLedger.accounting_date <= date_to_value,
-    )
 
     cleaned_location_code = clean_optional_text(location_code)
     if cleaned_location_code and current_user is not None:
@@ -256,7 +376,12 @@ def get_tank_stock_rows_for_daily_summary(
             TankStockLedger.tank_asset_code.ilike(cleaned_tank_asset_code)
         )
 
-    rows = query.all()
+    rows = hydrate_ledger_rows_from_payload(db, query.all())
+    rows = [
+        row
+        for row in rows
+        if row.accounting_date is not None and row.accounting_date <= date_to_value
+    ]
 
     return sorted(
         rows,
@@ -290,28 +415,6 @@ def get_stock_snapshot_values(row: TankStockLedger):
     }
 
 
-def get_ledger_operation_datetime(row: TankStockLedger):
-    # The operation moment is the date/time entered inside the ticket
-    # payload (kept on the ledger row as ``source_payload``) - for every
-    # payload type, and also when only a date was entered. The stored
-    # accounting-day window / operation date are legacy fallbacks for rows
-    # whose payload carries no date at all.
-    try:
-        payload_datetime = get_payload_operation_datetime(row.source_payload)
-        if payload_datetime is not None:
-            return payload_datetime
-    except Exception:
-        pass
-
-    if row.accounting_day_start is not None:
-        return row.accounting_day_start
-
-    if row.operation_date is not None:
-        return datetime.combine(row.operation_date, datetime_time(0, 0))
-
-    return None
-
-
 def build_out_turn_report_response(
     row: TankStockLedger,
     db: Session,
@@ -319,7 +422,8 @@ def build_out_turn_report_response(
     from app.services.stock_ledger_helpers import build_out_turn_report_response_from_values
 
     stock_snapshot = get_stock_snapshot_values(row)
-    operation_datetime = get_ledger_operation_datetime(row)
+    gauging_date, gauging_time, gauging_dt = get_ledger_gauging_parts(row)
+    operation_datetime = gauging_dt or get_ledger_operation_datetime(row)
 
     return build_out_turn_report_response_from_values(
         params={
@@ -328,6 +432,8 @@ def build_out_turn_report_response(
             "ticket_number": row.ticket_number,
             "operation_number": row.operation_number,
             "accounting_date": row.accounting_date,
+            "gauging_date": gauging_date or row.operation_date,
+            "gauging_time": format_time_hhmm(gauging_time) if gauging_time else None,
             "operation_datetime": operation_datetime,
             "location_code": row.location_code,
             "tank_asset_code": row.tank_asset_code,
@@ -362,6 +468,9 @@ def get_out_turn_report_rows(
     status: str | None = "Active",
     current_user: User | None = None,
 ):
+    date_from_value = parse_date_filter(date_from, "Date From")
+    date_to_value = parse_date_filter(date_to, "Date To")
+
     query = db.query(TankStockLedger)
 
     if current_user is not None:
@@ -386,16 +495,21 @@ def get_out_turn_report_rows(
             TankStockLedger.tank_asset_code.ilike(cleaned_tank_asset_code)
         )
 
-    date_from_value = parse_date_filter(date_from, "Date From")
-    date_to_value = parse_date_filter(date_to, "Date To")
+    rows = hydrate_ledger_rows_from_payload(db, query.all())
 
     if date_from_value:
-        query = query.filter(TankStockLedger.accounting_date >= date_from_value)
+        rows = [
+            row
+            for row in rows
+            if row.accounting_date is not None and row.accounting_date >= date_from_value
+        ]
 
     if date_to_value:
-        query = query.filter(TankStockLedger.accounting_date <= date_to_value)
-
-    rows = query.all()
+        rows = [
+            row
+            for row in rows
+            if row.accounting_date is not None and row.accounting_date <= date_to_value
+        ]
 
     rows = sorted(
         rows,
@@ -439,7 +553,6 @@ def build_tank_stock_daily_summary_rows(
         sorted_rows = sorted(
             rows,
             key=lambda row: (
-                row.accounting_date or date.min,
                 get_ledger_operation_datetime(row) or datetime.min,
                 row.id,
             ),
@@ -632,9 +745,9 @@ def build_tank_stock_daily_summary_rows(
     )
 
 
-
 def add_volume_values(target: dict, prefix: str, row: TankStockLedger):
     from app.services.stock_ledger_helpers import add_volume_values_from_values
+
     add_volume_values_from_values(
         target=target,
         prefix=prefix,
@@ -653,10 +766,7 @@ def get_material_balance_rows_for_continuity(
     date_to_value: date,
     status: str | None = "Active",
 ):
-    query = db.query(TankStockLedger).filter(
-        TankStockLedger.accounting_date != None,
-        TankStockLedger.accounting_date <= date_to_value,
-    )
+    query = db.query(TankStockLedger)
 
     cleaned_location_code = clean_optional_text(location_code)
     cleaned_tank_asset_code = clean_optional_text(tank_asset_code)
@@ -675,7 +785,12 @@ def get_material_balance_rows_for_continuity(
             TankStockLedger.tank_asset_code.ilike(cleaned_tank_asset_code)
         )
 
-    rows = query.all()
+    rows = hydrate_ledger_rows_from_payload(db, query.all())
+    rows = [
+        row
+        for row in rows
+        if row.accounting_date is not None and row.accounting_date <= date_to_value
+    ]
 
     return sorted(
         rows,
@@ -687,8 +802,6 @@ def get_material_balance_rows_for_continuity(
             row.id,
         ),
     )
-
-
 
 
 def build_dynamic_material_balance_columns_response(
@@ -707,9 +820,6 @@ def build_dynamic_material_balance_columns_response(
         }
         for column in columns
     ]
-
-
-
 
 
 def build_dynamic_material_balance_tank_rows(
@@ -744,7 +854,6 @@ def build_dynamic_material_balance_tank_rows(
         sorted_rows = sorted(
             rows,
             key=lambda row: (
-                row.accounting_date or date.min,
                 get_ledger_operation_datetime(row) or datetime.min,
                 row.id,
             ),
@@ -950,6 +1059,14 @@ def consolidate_dynamic_material_balance_rows_by_location(
     tank_rows: list[dict],
     columns: list[MaterialBalanceTemplateColumn],
 ):
+    """Consolidate per-tank daily material-balance rows to one row per
+    ``(accounting_date, location_code)``.
+
+    Summing each distinct tank's opening and actual closing stock across the
+    facility ensures multi-tank locations balance identically to the sum of
+    their individual tank material balances while keeping single-tank queries
+    exact.
+    """
     consolidated_map = {}
 
     for row in tank_rows:
@@ -972,9 +1089,8 @@ def consolidate_dynamic_material_balance_rows_by_location(
                 "_tank_asset_codes": set(),
                 "_tank_asset_names": set(),
                 "_product_names": set(),
-                "_opening_value": None,
-                "_actual_closing_value": None,
-                "_opening_datetime": None,
+                "_opening_value": 0.0,
+                "_actual_closing_value": 0.0,
                 "_closing_datetime": None,
             }
 
@@ -1001,35 +1117,20 @@ def consolidate_dynamic_material_balance_rows_by_location(
                 target["values"].get(column_key)
             ) + safe_float(row["values"].get(column_key))
 
-        first_operation_datetime = row.get("_first_operation_datetime")
-        if (
-            target["_opening_value"] is None
-            or (
-                first_operation_datetime is not None
-                and (
-                    target["_opening_datetime"] is None
-                    or first_operation_datetime < target["_opening_datetime"]
-                )
-            )
-        ):
-            target["_opening_value"] = safe_float(row.get("_opening_value"))
-            target["_opening_datetime"] = first_operation_datetime
+        target["_opening_value"] += safe_float(row.get("_opening_value"))
+        target["_actual_closing_value"] += safe_float(
+            row.get("_actual_closing_value")
+        )
 
         last_operation_datetime = row.get("_last_operation_datetime")
-        if (
-            target["_actual_closing_value"] is None
-            or (
-                last_operation_datetime is not None
-                and (
-                    target["_closing_datetime"] is None
-                    or last_operation_datetime > target["_closing_datetime"]
-                )
-            )
+        if last_operation_datetime is not None and (
+            target["_closing_datetime"] is None
+            or last_operation_datetime >= target["_closing_datetime"]
         ):
-            target["_actual_closing_value"] = safe_float(
-                row.get("_actual_closing_value")
-            )
             target["_closing_datetime"] = last_operation_datetime
+            if row.get("last_ticket_number"):
+                target["last_ticket_number"] = row.get("last_ticket_number")
+        elif target["last_ticket_number"] is None and row.get("last_ticket_number"):
             target["last_ticket_number"] = row.get("last_ticket_number")
 
         target["rows_count"] += int(row.get("rows_count") or 0)
@@ -1039,7 +1140,6 @@ def consolidate_dynamic_material_balance_rows_by_location(
     for row in consolidated_map.values():
         opening_value = safe_float(row.pop("_opening_value"))
         actual_closing_value = safe_float(row.pop("_actual_closing_value"))
-        row.pop("_opening_datetime", None)
         row.pop("_closing_datetime", None)
 
         tank_asset_codes = sorted(row.pop("_tank_asset_codes"))
@@ -1150,7 +1250,6 @@ def get_tank_stock_ledger(
     if limit is not None:
         ledger_rows = ledger_rows[: clamp_limit(limit)]
 
-    # One bulk location lookup for the page instead of one query per row.
     locations_by_code = {
         str(row.location_code or "").strip().lower(): row
         for row in db.query(Location).all()
@@ -1208,7 +1307,8 @@ def get_tank_stock_ledger_summary(
             row.product_name or "",
         )
 
-        if key not in summary_map:
+        is_first_row_for_tank = key not in summary_map
+        if is_first_row_for_tank:
             location = get_location_by_code(row.location_code, db)
 
             summary_map[key] = {
@@ -1233,31 +1333,38 @@ def get_tank_stock_ledger_summary(
 
         summary = summary_map[key]
 
-        sign = row.tank_operation_sign
-        category = row.tank_operation_category
+        sign = str(row.tank_operation_sign or "").upper()
+        category = str(row.tank_operation_category or "").upper()
 
-        movement_nsv = row.movement_nsv_bbl or 0
-        movement_lt = row.movement_lt or 0
-        movement_mt = row.movement_mt or 0
+        movement_nsv = safe_float(row.movement_nsv_bbl)
+        movement_lt = safe_float(row.movement_lt)
+        movement_mt = safe_float(row.movement_mt)
 
-        if category == "OPENING":
-            summary["opening_nsv_bbl"] += movement_nsv
-            summary["opening_lt"] += movement_lt
-            summary["opening_mt"] += movement_mt
+        if is_first_row_for_tank:
+            if category == "OPENING" or sign == "SET":
+                snapshot = get_stock_snapshot_values(row)
+                summary["opening_nsv_bbl"] = snapshot["nsv"]
+                summary["opening_lt"] = snapshot["lt"]
+                summary["opening_mt"] = snapshot["mt"]
+            else:
+                summary["opening_nsv_bbl"] = safe_float(row.previous_stock_nsv_bbl)
+                summary["opening_lt"] = safe_float(row.previous_stock_lt)
+                summary["opening_mt"] = safe_float(row.previous_stock_mt)
 
         if sign == "IN":
             summary["total_in_nsv_bbl"] += movement_nsv
             summary["total_in_lt"] += movement_lt
             summary["total_in_mt"] += movement_mt
 
-        if sign == "OUT":
+        elif sign == "OUT":
             summary["total_out_nsv_bbl"] += movement_nsv
             summary["total_out_lt"] += movement_lt
             summary["total_out_mt"] += movement_mt
 
-        summary["closing_nsv_bbl"] = row.running_balance_nsv_bbl or 0
-        summary["closing_lt"] = row.running_balance_lt or 0
-        summary["closing_mt"] = row.running_balance_mt or 0
+        closing_snapshot = get_stock_snapshot_values(row)
+        summary["closing_nsv_bbl"] = closing_snapshot["nsv"]
+        summary["closing_lt"] = closing_snapshot["lt"]
+        summary["closing_mt"] = closing_snapshot["mt"]
 
     return list(summary_map.values())
 
@@ -1340,25 +1447,17 @@ def validate_out_turn_report_tank_sequence(
     )
 
     visible_rows = []
-
     for row in continuity_rows:
         if date_from_value and row.accounting_date and row.accounting_date < date_from_value:
             continue
-
         if date_to_value and row.accounting_date and row.accounting_date > date_to_value:
             continue
-
         visible_rows.append(row)
 
     grouped_rows = {}
-
     for row in continuity_rows:
         key = (row.location_code, row.tank_asset_code)
-
-        if key not in grouped_rows:
-            grouped_rows[key] = []
-
-        grouped_rows[key].append(row)
+        grouped_rows.setdefault(key, []).append(row)
 
     visible_ledger_ids = {row.id for row in visible_rows}
 
@@ -1370,7 +1469,6 @@ def validate_out_turn_report_tank_sequence(
         sorted_group_rows = sorted(
             group_rows,
             key=lambda row: (
-                row.accounting_date or date.min,
                 get_ledger_operation_datetime(row) or datetime.min,
                 row.id,
             ),
@@ -1508,5 +1606,3 @@ def get_material_balance_report(
         "columns": build_dynamic_material_balance_columns_response(columns),
         "rows": report_rows,
     }
-
-

@@ -1,5 +1,5 @@
-from datetime import datetime, date, timedelta
-from fastapi import APIRouter, Depends, HTTPException
+from datetime import datetime, date
+from fastapi import APIRouter, Depends
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -8,9 +8,9 @@ from app.models import (
     Asset,
     Location,
     OperationTransaction,
-    OperationTransactionValue,
     OperationTemplate,
     OutTurnSummaryConfig,
+    TankOperation,
     User,
 )
 from app.dependencies.auth import get_current_user_from_token
@@ -20,7 +20,6 @@ from app.dependencies.permissions import (
 )
 from app.routers.tank_operation_summary import (
     extract_tank_gauging_columns,
-    get_tank_gauging_payload_for_transaction,
     get_tank_gauging_payload_map,
 )
 from app.utils.pagination import (
@@ -32,8 +31,14 @@ from app.utils.pagination import (
 )
 from app.schemas import OutTurnSummaryConfigUpdate
 from app.services.audit_service import create_audit_log
-from app.services.operation_datetime import resolve_transaction_accounting
-from app.services.transaction_helpers import parse_date_filter, approved_transaction_not_on_correction_hold
+from app.services.operation_datetime import (
+    format_time_hhmm,
+    resolve_transaction_accounting,
+)
+from app.services.transaction_helpers import (
+    parse_date_filter,
+    approved_transaction_not_on_correction_hold,
+)
 from app.utils.helpers import (
     clean_optional_text,
     get_asset_by_code,
@@ -69,74 +74,88 @@ BASE_COLUMNS = [
         "order": 2,
     },
     {
-        "key": "operation_date",
-        "label": "Operation Date",
+        "key": "accounting_date",
+        "label": "Accounting Date",
         "group": "Base",
         "enabled": True,
         "order": 3,
     },
     {
-        "key": "accounting_date",
-        "label": "Accounting Date",
-        "group": "Base",
+        "key": "input_gaugingDate",
+        "label": "Gauging Date",
+        "group": "Input",
         "enabled": True,
         "order": 4,
+    },
+    {
+        "key": "input_gaugingTime",
+        "label": "Gauging Time",
+        "group": "Input",
+        "enabled": True,
+        "order": 5,
+    },
+    {
+        "key": "operation_date",
+        "label": "Operation Date",
+        "group": "Base",
+        "enabled": True,
+        "order": 6,
     },
     {
         "key": "location_code",
         "label": "Location Code",
         "group": "Base",
         "enabled": True,
-        "order": 5,
+        "order": 7,
     },
     {
         "key": "location_name",
         "label": "Location Name",
         "group": "Base",
         "enabled": True,
-        "order": 6,
+        "order": 8,
     },
     {
         "key": "tank_asset_code",
         "label": "Tank Asset Code",
         "group": "Base",
         "enabled": True,
-        "order": 7,
+        "order": 9,
     },
     {
         "key": "tank_asset_name",
         "label": "Tank Asset Name",
         "group": "Base",
         "enabled": True,
-        "order": 8,
+        "order": 10,
     },
     {
         "key": "product_name",
         "label": "Product Name",
         "group": "Base",
         "enabled": True,
-        "order": 9,
+        "order": 11,
     },
     {
         "key": "status",
         "label": "Status",
         "group": "Base",
         "enabled": True,
-        "order": 10,
+        "order": 12,
     },
     {
         "key": "created_by",
         "label": "Created By",
         "group": "Base",
         "enabled": True,
-        "order": 11,
+        "order": 13,
     },
     {
         "key": "created_at",
         "label": "Created At",
         "group": "Base",
         "enabled": True,
-        "order": 12,
+        "order": 14,
     },
 ]
 
@@ -283,6 +302,17 @@ def _get_transaction_query(
     date_to: str | None = None,
     current_user: User | None = None,
 ):
+    """Query approved, non-hold Tank Gauging transactions.
+
+    NOTE: Date filtering is intentionally NEVER applied against
+    ``OperationTransaction.operation_date`` in SQL because gauging dates and
+    times live inside the payload and shift across calendar boundaries under
+    each location's Accounting Day Setting. Validate ``date_from``/``date_to``
+    format here so invalid input still raises HTTP 400 consistently.
+    """
+    parse_date_filter(date_from, "Date From")
+    parse_date_filter(date_to, "Date To")
+
     query = (
         db.query(OperationTransaction)
         .join(OperationTemplate, OperationTransaction.operation_template_id == OperationTemplate.id)
@@ -294,11 +324,6 @@ def _get_transaction_query(
     )
 
     if current_user is not None:
-        # Cross-location record: a location-scoped user sees a ticket when ANY
-        # party location (origin, destination, sender or receiver) is in scope,
-        # so the receiving terminal sees the movement it took part in - the same
-        # rule as the tracking lists and the register
-        # (PERMISSION_CRITERIA_MODEL.md, sections 3 and 7).
         query = apply_transaction_party_scope_filter(
             query, OperationTransaction, current_user, db
         )
@@ -322,15 +347,6 @@ def _get_transaction_query(
             OperationTransaction.product_name.ilike(cleaned_product_name)
         )
 
-    date_from_value = parse_date_filter(date_from, "Date From")
-    date_to_value = parse_date_filter(date_to, "Date To")
-
-    if date_from_value:
-        query = query.filter(OperationTransaction.operation_date >= date_from_value)
-
-    if date_to_value:
-        query = query.filter(OperationTransaction.operation_date <= date_to_value)
-
     return query
 
 
@@ -338,12 +354,86 @@ def _extract_payload_columns(payload: dict) -> dict:
     return extract_tank_gauging_columns(payload)
 
 
+def _extract_stock_volumes(extracted: dict) -> dict:
+    return {
+        "nsv": safe_float(
+            extracted.get("calc_nsvBbl")
+            if extracted.get("calc_nsvBbl") not in (None, "")
+            else extracted.get("calc_nsv")
+        ),
+        "gsv": safe_float(
+            extracted.get("calc_gsvBbl")
+            if extracted.get("calc_gsvBbl") not in (None, "")
+            else extracted.get("calc_gsv")
+        ),
+        "lt": safe_float(extracted.get("calc_lt")),
+        "mt": safe_float(extracted.get("calc_mt")),
+    }
+
+
+def _resolve_tank_operation_sign(
+    transaction: OperationTransaction,
+    extracted: dict,
+    tank_ops_by_code: dict,
+    tank_ops_by_id: dict,
+) -> str:
+    tank_op = None
+    loc_key = str(transaction.origin_location_code or "").strip().lower()
+    op_code = str(extracted.get("input_tankOperationCode") or "").strip().lower()
+    if op_code:
+        tank_op = tank_ops_by_code.get((loc_key, op_code)) or tank_ops_by_code.get(
+            op_code
+        )
+
+    op_id_raw = extracted.get("input_tankOperationId")
+    if tank_op is None and op_id_raw not in (None, ""):
+        try:
+            tank_op = tank_ops_by_id.get(int(op_id_raw))
+        except (TypeError, ValueError):
+            tank_op = None
+
+    if tank_op is None and getattr(transaction, "tank_operation_id", None):
+        tank_op = tank_ops_by_id.get(transaction.tank_operation_id)
+
+    if tank_op is not None and tank_op.operation_sign:
+        return str(tank_op.operation_sign).strip().upper()
+
+    payload_sign = str(extracted.get("input_tankOperationSign") or "").strip().upper()
+    return payload_sign
+
+
+def _compute_signed_movements(signed_net: dict, sign: str) -> tuple[dict, dict]:
+    """Compute sign-aware ``(net_receipt, net_dispatch)`` dictionaries.
+
+    Matches ``TankStockLedger``, ``DailySummary``, ``OutTurnReport``, and
+    ``MaterialBalance``:
+      - ``SET`` (Opening stock) / ``NEUTRAL`` (Closing / static before-dip):
+        reference tank snapshot only -> 0 receipt, 0 dispatch.
+      - ``IN``: ``net_receipt = max(signed_net, 0)``, ``net_dispatch = 0``.
+      - ``OUT``: ``net_dispatch = max(-signed_net, 0)``, ``net_receipt = 0``.
+      - Blank sign (legacy/minimal payload with no tank operation metadata):
+        positive deltas count as receipt, negative deltas as dispatch.
+    """
+    zero = {"nsv": 0.0, "gsv": 0.0, "lt": 0.0, "mt": 0.0}
+    if sign in ("SET", "NEUTRAL"):
+        return dict(zero), dict(zero)
+    if sign == "IN":
+        return {k: max(v, 0.0) for k, v in signed_net.items()}, dict(zero)
+    if sign == "OUT":
+        return dict(zero), {k: max(-v, 0.0) for k, v in signed_net.items()}
+    return (
+        {k: max(v, 0.0) for k, v in signed_net.items()},
+        {k: max(-v, 0.0) for k, v in signed_net.items()},
+    )
+
+
 def _build_all_column_definitions(
     db: Session,
     location_code: str | None = None,
     current_user: User | None = None,
 ):
-    definitions = list(BASE_COLUMNS)
+    definitions = [dict(col) for col in BASE_COLUMNS]
+    existing_keys = {col["key"] for col in definitions}
 
     query = _get_transaction_query(
         db,
@@ -365,6 +455,8 @@ def _build_all_column_definitions(
         columns = _extract_payload_columns(payload)
 
         for key in columns.keys():
+            if key in existing_keys:
+                continue
             if key.startswith("input_"):
                 input_keys.add(key)
             elif key.startswith("calc_"):
@@ -392,7 +484,8 @@ def _build_all_column_definitions(
             }
         )
 
-    definitions.extend(COMPUTED_COLUMNS)
+    for col in COMPUTED_COLUMNS:
+        definitions.append(dict(col))
 
     return definitions
 
@@ -417,15 +510,7 @@ def _get_or_create_config(db: Session):
 
 
 def _load_configured_columns(db: Session, available_definitions: list[dict]):
-    """
-    Merge the saved column configuration with the currently available columns.
-
-    The saved configuration is authoritative: a column the user switched off
-    stays off after a refresh, including columns that were not part of the
-    catalogue when the configuration was saved (a filtered report, a column
-    discovered later, ...). Newly discovered columns are appended disabled so
-    they never silently re-enable a report the user already configured.
-    """
+    """Merge saved column configuration with currently available columns."""
     config = _get_saved_config(db)
 
     if config is None or not config.columns_json:
@@ -479,13 +564,6 @@ def _load_configured_columns(db: Session, available_definitions: list[dict]):
 
 
 def _standard_available_definitions(db: Session, current_user: User | None):
-    """
-    Column catalogue used for the saved configuration.
-
-    Discovery deliberately ignores the report location filter so the catalogue
-    does not shrink/expand with the selected filter (that is what made saved
-    configurations look like they were reset).
-    """
     return _build_all_column_definitions(db, None, current_user=current_user)
 
 
@@ -501,44 +579,63 @@ def _build_row(
     location=_UNSET,
     asset=_UNSET,
     resolved=_UNSET,
+    tank_ops_by_code=None,
+    tank_ops_by_id=None,
 ):
-    # ``location`` / ``asset`` may be prefetched (bulk) by the list builder;
-    # an explicit None means "prefetched and not found" (no per-row query).
     if location is _UNSET:
         location = get_location_by_code(transaction.origin_location_code, db)
     if asset is _UNSET:
         asset = get_asset_by_code(transaction.primary_asset_code, db)
 
-    # Operation date/time come from the gauging payload; the accounting
-    # date is that moment under the origin location's accounting-day
-    # setting. ``resolved`` lets the list builder share one setting cache.
     if resolved is _UNSET:
-        resolved = resolve_transaction_accounting(db, transaction, payload=payload)
-    operation_date, _operation_time, _operation_datetime, accounting_date = resolved
+        resolved = resolve_transaction_accounting(
+            db, transaction, payload=payload, field_code="tank_gauging_payload"
+        )
+    operation_date, operation_time, _operation_datetime, accounting_date = resolved
 
     extracted = _extract_payload_columns(payload)
-
-    current_nsv = safe_float(extracted.get("calc_nsvBbl"))
-    current_gsv = safe_float(extracted.get("calc_gsvBbl"))
-    current_lt = safe_float(extracted.get("calc_lt"))
-    current_mt = safe_float(extracted.get("calc_mt"))
+    current = _extract_stock_volumes(extracted)
 
     previous_nsv = safe_float(previous.get("nsv"))
     previous_gsv = safe_float(previous.get("gsv"))
     previous_lt = safe_float(previous.get("lt"))
     previous_mt = safe_float(previous.get("mt"))
 
-    signed_net_nsv = current_nsv - previous_nsv
-    signed_net_gsv = current_gsv - previous_gsv
-    signed_net_lt = current_lt - previous_lt
-    signed_net_mt = current_mt - previous_mt
+    signed_net = {
+        "nsv": current["nsv"] - previous_nsv,
+        "gsv": current["gsv"] - previous_gsv,
+        "lt": current["lt"] - previous_lt,
+        "mt": current["mt"] - previous_mt,
+    }
+
+    if tank_ops_by_code is None or tank_ops_by_id is None:
+        all_tank_ops = db.query(TankOperation).all()
+        tank_ops_by_code = {}
+        for op in all_tank_ops:
+            c = str(op.operation_code or "").strip().lower()
+            loc = str(op.location_code or "").strip().lower()
+            tank_ops_by_code[(loc, c)] = op
+            tank_ops_by_code.setdefault(c, op)
+        tank_ops_by_id = {op.id: op for op in all_tank_ops}
+
+    sign = _resolve_tank_operation_sign(
+        transaction, extracted, tank_ops_by_code, tank_ops_by_id
+    )
+    net_receipt, net_dispatch = _compute_signed_movements(signed_net, sign)
+
+    effective_gauging_date = operation_date or transaction.operation_date
+    effective_accounting_date = (
+        accounting_date or effective_gauging_date or transaction.operation_date
+    )
 
     row = {
         "transaction_id": transaction.id,
         "ticket_number": get_transaction_ticket_number(transaction),
         "operation_number": transaction.operation_number,
-        "operation_date": operation_date or transaction.operation_date,
-        "accounting_date": accounting_date or operation_date or transaction.operation_date,
+        "accounting_date": effective_accounting_date,
+        "gauging_date": effective_gauging_date,
+        "gauging_time": format_time_hhmm(operation_time) if operation_time else "",
+        "operation_date": effective_gauging_date,
         "location_code": transaction.origin_location_code,
         "location_name": location.location_name if location else "",
         "tank_asset_code": transaction.primary_asset_code,
@@ -552,6 +649,15 @@ def _build_row(
     for key, value in extracted.items():
         row[key] = value
 
+    if "input_gaugingDate" not in row or not row["input_gaugingDate"]:
+        row["input_gaugingDate"] = (
+            effective_gauging_date.isoformat() if effective_gauging_date else ""
+        )
+    if "input_gaugingTime" not in row or row["input_gaugingTime"] is None:
+        row["input_gaugingTime"] = (
+            format_time_hhmm(operation_time) if operation_time else ""
+        )
+
     row.update(
         {
             "sequence": sequence,
@@ -559,18 +665,18 @@ def _build_row(
             "previous_gsv": previous_gsv,
             "previous_lt": previous_lt,
             "previous_mt": previous_mt,
-            "signed_net_nsv": signed_net_nsv,
-            "signed_net_gsv": signed_net_gsv,
-            "signed_net_lt": signed_net_lt,
-            "signed_net_mt": signed_net_mt,
-            "net_receipt_nsv": max(signed_net_nsv, 0),
-            "net_receipt_gsv": max(signed_net_gsv, 0),
-            "net_receipt_lt": max(signed_net_lt, 0),
-            "net_receipt_mt": max(signed_net_mt, 0),
-            "net_dispatch_nsv": max(-signed_net_nsv, 0),
-            "net_dispatch_gsv": max(-signed_net_gsv, 0),
-            "net_dispatch_lt": max(-signed_net_lt, 0),
-            "net_dispatch_mt": max(-signed_net_mt, 0),
+            "signed_net_nsv": signed_net["nsv"],
+            "signed_net_gsv": signed_net["gsv"],
+            "signed_net_lt": signed_net["lt"],
+            "signed_net_mt": signed_net["mt"],
+            "net_receipt_nsv": net_receipt["nsv"],
+            "net_receipt_gsv": net_receipt["gsv"],
+            "net_receipt_lt": net_receipt["lt"],
+            "net_receipt_mt": net_receipt["mt"],
+            "net_dispatch_nsv": net_dispatch["nsv"],
+            "net_dispatch_gsv": net_dispatch["gsv"],
+            "net_dispatch_lt": net_dispatch["lt"],
+            "net_dispatch_mt": net_dispatch["mt"],
         }
     )
 
@@ -585,29 +691,45 @@ def resolve_out_turn_date_window(
     date_to: str | None = None,
     current_user: User | None = None,
 ):
-    """Resolve the effective ``date_from`` for a summary request.
-
-    An explicit ``date_from`` is returned unchanged. Otherwise the report
-    is limited to the most recent ``DEFAULT_REPORT_WINDOW_DAYS`` relative
-    to the newest matching ticket, so opening the page does not replay the
-    whole history; older rows load when the user picks a date range.
-    Returns ``(effective_date_from_iso, default_window_applied)``.
-    """
+    """Resolve effective ``date_from`` strictly from payload accounting dates."""
     explicit = parse_date_filter(date_from, "Date From")
+    explicit_to = parse_date_filter(date_to, "Date To")
 
     if explicit is not None:
         return explicit.isoformat(), False
 
-    history_query = _get_transaction_query(
+    transactions = _get_transaction_query(
         db,
         location_code=location_code,
         tank_asset_code=tank_asset_code,
-        date_to=date_to,
         current_user=current_user,
-    )
-    latest_date = history_query.with_entities(
-        func.max(OperationTransaction.operation_date)
-    ).scalar()
+    ).all()
+
+    if not transactions:
+        return None, False
+
+    payload_map = get_tank_gauging_payload_map(db, [tx.id for tx in transactions])
+    setting_cache = {}
+    candidate_dates = []
+    for tx in transactions:
+        payload = payload_map.get(tx.id)
+        if not payload:
+            continue
+        op_date, _op_time, _op_dt, acc_date = resolve_transaction_accounting(
+            db,
+            tx,
+            payload=payload,
+            field_code="tank_gauging_payload",
+            setting_cache=setting_cache,
+        )
+        eff_acc = acc_date or op_date or tx.operation_date
+        if eff_acc is None:
+            continue
+        if explicit_to is not None and eff_acc > explicit_to:
+            continue
+        candidate_dates.append(eff_acc)
+
+    latest_date = max(candidate_dates) if candidate_dates else None
     window_start = default_window_start(latest_date)
 
     if window_start is None:
@@ -616,7 +738,7 @@ def resolve_out_turn_date_window(
     return window_start.isoformat(), True
 
 
-def get_out_turn_summary_rows(
+def _build_out_turn_summary_result(
     db: Session,
     location_code: str | None = None,
     tank_asset_code: str | None = None,
@@ -625,87 +747,69 @@ def get_out_turn_summary_rows(
     date_to: str | None = None,
     current_user: User | None = None,
 ):
-    """Out-turn rows for the (bounded) visible window.
-
-    Previously this replayed every approved Tank Gauging ticket since the
-    beginning of time and ran one payload query plus two name lookups per
-    ticket. Now only the visible window is loaded (see
-    ``resolve_out_turn_date_window``); each tank's chain is seeded from the
-    single snapshot that precedes the window, which keeps ``previous_*``
-    and net receipt/dispatch values identical to the full-history result.
-    Product and the lower date bound still only select output rows, never
-    the history used to find the preceding snapshot.
+    """Build full chronological chains per tank from payload gauging date/time,
+    then slice rows strictly by resolved ``accounting_date``.
     """
-    effective_date_from, _window_applied = resolve_out_turn_date_window(
-        db,
-        location_code=location_code,
-        tank_asset_code=tank_asset_code,
-        date_from=date_from,
-        date_to=date_to,
-        current_user=current_user,
-    )
-
-    # Product is descriptive metadata. Load the complete tank sequence first
-    # so a label change cannot remove an intermediate stock snapshot from the
-    # out-turn calculation. The optional product filter is applied to the
-    # finished display rows below.
-    #
-    # One extra candidate day at the top end: an operation in the early
-    # hours of ``date_to + 1`` can belong to accounting date ``date_to``
-    # under the location's accounting-day window. Rows are filtered on
-    # their resolved accounting date after the chain is built.
     explicit_date_from = parse_date_filter(date_from, "Date From")
     explicit_date_to = parse_date_filter(date_to, "Date To")
-    visible_date_to = (
-        (explicit_date_to + timedelta(days=1)).isoformat()
-        if explicit_date_to is not None
-        else date_to
-    )
 
-    visible_transactions = (
+    # Load all approved non-hold Tank Gauging tickets for the requested
+    # location / tank (product is filtered on output rows so an intermediate
+    # product rename never drops a tank snapshot from the chain).
+    all_transactions = (
         _get_transaction_query(
             db,
             location_code=location_code,
             tank_asset_code=tank_asset_code,
-            date_from=effective_date_from,
-            date_to=visible_date_to,
             current_user=current_user,
         )
-        .order_by(
-            OperationTransaction.operation_date.asc(),
-            OperationTransaction.id.asc(),
-        )
+        .order_by(OperationTransaction.id.asc())
         .all()
     )
 
-    if not visible_transactions:
-        return []
+    if not all_transactions:
+        effective_from_iso = (
+            explicit_date_from.isoformat() if explicit_date_from is not None else None
+        )
+        return [], effective_from_iso, False
 
-    payload_map = get_tank_gauging_payload_map(
-        db, [tx.id for tx in visible_transactions]
-    )
+    payload_map = get_tank_gauging_payload_map(db, [tx.id for tx in all_transactions])
 
-    # Resolve every ticket's operation moment from its payload once; the
-    # chain below is chronological by that moment (date *and* time), not
-    # by metadata date / row id.
     setting_cache = {}
-    resolved_by_tx = {
-        tx.id: resolve_transaction_accounting(
+    resolved_by_tx = {}
+    candidate_acc_dates = []
+    for tx in all_transactions:
+        payload = payload_map.get(tx.id)
+        if not payload:
+            continue
+        resolved = resolve_transaction_accounting(
             db,
             tx,
-            payload=payload_map.get(tx.id) or {},
+            payload=payload,
+            field_code="tank_gauging_payload",
             setting_cache=setting_cache,
         )
-        for tx in visible_transactions
-    }
+        resolved_by_tx[tx.id] = resolved
+        eff_acc = resolved[3] or resolved[0] or tx.operation_date
+        if eff_acc is not None and (explicit_date_to is None or eff_acc <= explicit_date_to):
+            candidate_acc_dates.append(eff_acc)
+
+    default_window_applied = False
+    window_from = explicit_date_from
+    if window_from is None and candidate_acc_dates:
+        window_start = default_window_start(max(candidate_acc_dates))
+        if window_start is not None:
+            window_from = window_start
+            default_window_applied = True
 
     def _tx_sort_key(tx):
         _op_date, _op_time, operation_datetime, _acc_date = resolved_by_tx[tx.id]
         return (operation_datetime or datetime.min, tx.id)
 
     grouped: dict[tuple[str, str], list] = {}
-
-    for tx in visible_transactions:
+    for tx in all_transactions:
+        if tx.id not in resolved_by_tx:
+            continue
         key = (
             tx.origin_location_code or "",
             tx.primary_asset_code or "",
@@ -721,172 +825,54 @@ def get_out_turn_summary_rows(
     assets_by_code = {
         _key(row.asset_code): row for row in db.query(Asset).all()
     }
+    all_tank_ops = db.query(TankOperation).all()
+    tank_ops_by_code = {}
+    for op in all_tank_ops:
+        c = str(op.operation_code or "").strip().lower()
+        loc = str(op.location_code or "").strip().lower()
+        tank_ops_by_code[(loc, c)] = op
+        tank_ops_by_code.setdefault(c, op)
+    tank_ops_by_id = {op.id: op for op in all_tank_ops}
 
     rows = []
 
     for group_key in sorted(grouped.keys()):
         group_transactions = sorted(grouped[group_key], key=_tx_sort_key)
-
-        # The chain is anchored on the first row-producing ticket in
-        # payload-chronological order.
-        first_tx = next(
-            (tx for tx in group_transactions if payload_map.get(tx.id)),
-            group_transactions[0],
-        )
-        first_sort_key = _tx_sort_key(first_tx)
-
-        # --- seed the chain from history before the visible window -------
-        history_query = _get_transaction_query(
-            db,
-            location_code=location_code,
-            tank_asset_code=tank_asset_code,
-            date_to=visible_date_to,
-            current_user=current_user,
-        ).filter(
-            OperationTransaction.origin_location_code.ilike(group_key[0] or "%"),
-            OperationTransaction.primary_asset_code.ilike(group_key[1] or "%"),
-            (
-                (OperationTransaction.operation_date < first_tx.operation_date)
-                | (
-                    (OperationTransaction.operation_date == first_tx.operation_date)
-                    & (OperationTransaction.id < first_tx.id)
-                )
-            ),
-        )
-
         previous = {"nsv": 0.0, "gsv": 0.0, "lt": 0.0, "mt": 0.0}
-
-        # Latest payload-bearing snapshot before the window, latest by the
-        # payload date/time (a same-day predecessor entered later but
-        # gauged earlier must still seed the chain). Candidate payloads
-        # are loaded one operation date at a time, newest first, until an
-        # eligible predecessor is found.
-        predecessor_candidates = (
-            _get_transaction_query(
-                db,
-                location_code=location_code,
-                tank_asset_code=tank_asset_code,
-                date_to=visible_date_to,
-                current_user=current_user,
-            )
-            .join(
-                OperationTransactionValue,
-                (OperationTransactionValue.transaction_id == OperationTransaction.id)
-                & (OperationTransactionValue.field_code == "tank_gauging_payload")
-                & (OperationTransactionValue.field_value.isnot(None)),
-            )
-            .filter(
-                OperationTransaction.origin_location_code.ilike(group_key[0] or "%"),
-                OperationTransaction.primary_asset_code.ilike(group_key[1] or "%"),
-                OperationTransaction.operation_date <= first_tx.operation_date,
-                OperationTransaction.id != first_tx.id,
-            )
-            .with_entities(
-                OperationTransaction.id,
-                OperationTransaction.operation_date,
-                OperationTransaction.operation_start_datetime,
-                OperationTransaction.origin_location_code,
-            )
-            .order_by(
-                OperationTransaction.operation_date.desc(),
-                OperationTransaction.id.desc(),
-            )
-            .all()
-        )
-
-        predecessor_payload = None
-        candidates_by_date: dict[date, list] = {}
-        for candidate in predecessor_candidates:
-            candidates_by_date.setdefault(candidate.operation_date, []).append(candidate)
-
-        for candidate_date in sorted(candidates_by_date.keys(), reverse=True):
-            day_candidates = candidates_by_date[candidate_date]
-            day_payload_map = get_tank_gauging_payload_map(
-                db, [candidate.id for candidate in day_candidates]
-            )
-
-            eligible = []
-            for candidate in day_candidates:
-                candidate_payload = day_payload_map.get(candidate.id)
-                if not candidate_payload:
-                    continue
-                _c_date, _c_time, candidate_datetime, _c_acc = (
-                    resolve_transaction_accounting(
-                        db,
-                        candidate,
-                        payload=candidate_payload,
-                        setting_cache=setting_cache,
-                    )
-                )
-                candidate_key = (candidate_datetime or datetime.min, candidate.id)
-                if candidate_key < first_sort_key:
-                    eligible.append((candidate_key, candidate_payload))
-
-            if eligible:
-                eligible.sort(key=lambda item: item[0])
-                predecessor_payload = eligible[-1][1]
-                break
-
-        if predecessor_payload:
-            extracted = _extract_payload_columns(predecessor_payload)
-            previous = {
-                "nsv": safe_float(extracted.get("calc_nsvBbl")),
-                "gsv": safe_float(extracted.get("calc_gsvBbl")),
-                "lt": safe_float(extracted.get("calc_lt")),
-                "mt": safe_float(extracted.get("calc_mt")),
-            }
-
-        # Sequence numbers continue from the count of earlier tickets for
-        # this tank (payload-bearing in practice; gauging tickets without a
-        # payload are skipped below without consuming a sequence number).
-        sequence = history_query.count()
+        sequence = 0
 
         for tx in group_transactions:
             payload = payload_map.get(tx.id)
-
             if not payload:
                 continue
 
-            row = _build_row(
-                db,
-                tx,
-                payload,
-                sequence=sequence,
-                previous=previous,
-                location=locations_by_code.get(_key(tx.origin_location_code)),
-                asset=assets_by_code.get(_key(tx.primary_asset_code)),
-                resolved=resolved_by_tx[tx.id],
-            )
-
-            rows.append(row)
-
+            resolved = resolved_by_tx[tx.id]
+            eff_acc = resolved[3] or resolved[0] or tx.operation_date
             extracted = _extract_payload_columns(payload)
+            current = _extract_stock_volumes(extracted)
 
-            previous = {
-                "nsv": safe_float(extracted.get("calc_nsvBbl")),
-                "gsv": safe_float(extracted.get("calc_gsvBbl")),
-                "lt": safe_float(extracted.get("calc_lt")),
-                "mt": safe_float(extracted.get("calc_mt")),
-            }
+            in_window = (
+                (window_from is None or (eff_acc or date.min) >= window_from)
+                and (explicit_date_to is None or (eff_acc or date.max) <= explicit_date_to)
+            )
 
+            if in_window:
+                row = _build_row(
+                    db,
+                    tx,
+                    payload,
+                    sequence=sequence,
+                    previous=previous,
+                    location=locations_by_code.get(_key(tx.origin_location_code)),
+                    asset=assets_by_code.get(_key(tx.primary_asset_code)),
+                    resolved=resolved,
+                    tank_ops_by_code=tank_ops_by_code,
+                    tank_ops_by_id=tank_ops_by_id,
+                )
+                rows.append(row)
+
+            previous = current
             sequence += 1
-
-    # An explicit range selects rows by their resolved accounting date,
-    # applied only now so the chronological chain (previous-stock values)
-    # is computed over the complete sequence first.
-    if explicit_date_from is not None or explicit_date_to is not None:
-        rows = [
-            row
-            for row in rows
-            if (
-                explicit_date_from is None
-                or (row.get("accounting_date") or date.min) >= explicit_date_from
-            )
-            and (
-                explicit_date_to is None
-                or (row.get("accounting_date") or date.max) <= explicit_date_to
-            )
-        ]
 
     cleaned_product_name = clean_optional_text(product_name)
     if cleaned_product_name:
@@ -897,6 +883,28 @@ def get_out_turn_summary_rows(
             if str(row.get("product_name") or "").casefold() == product_key
         ]
 
+    effective_from_iso = window_from.isoformat() if window_from is not None else None
+    return rows, effective_from_iso, default_window_applied
+
+
+def get_out_turn_summary_rows(
+    db: Session,
+    location_code: str | None = None,
+    tank_asset_code: str | None = None,
+    product_name: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    current_user: User | None = None,
+):
+    rows, _eff_from, _window_applied = _build_out_turn_summary_result(
+        db,
+        location_code=location_code,
+        tank_asset_code=tank_asset_code,
+        product_name=product_name,
+        date_from=date_from,
+        date_to=date_to,
+        current_user=current_user,
+    )
     return rows
 
 
@@ -1005,8 +1013,6 @@ def update_out_turn_summary_config(
 
     db.commit()
 
-    # Return the same normalised column list the report sends on refresh, so
-    # what the user sees right after saving is exactly what they get later.
     definitions = _standard_available_definitions(db, current_user=current_user)
 
     return {
@@ -1032,16 +1038,7 @@ def get_out_turn_summary(
         db,
     )
 
-    effective_date_from, default_window_applied = resolve_out_turn_date_window(
-        db,
-        location_code=location_code,
-        tank_asset_code=tank_asset_code,
-        date_from=date_from,
-        date_to=date_to,
-        current_user=current_user,
-    )
-
-    all_rows = get_out_turn_summary_rows(
+    all_rows, effective_date_from, default_window_applied = _build_out_turn_summary_result(
         db,
         location_code=location_code,
         tank_asset_code=tank_asset_code,
@@ -1051,8 +1048,6 @@ def get_out_turn_summary(
         current_user=current_user,
     )
 
-    # The row computation is already bounded to the visible window; this
-    # page slice only bounds the payload sent to the browser.
     safe_page = clamp_page(page)
     safe_page_size = clamp_limit(
         page_size, DEFAULT_REPORT_PAGE_SIZE, MAX_REPORT_PAGE_SIZE

@@ -1745,82 +1745,23 @@ def ensure_payload_operation_dates():
                 updated_transactions += 1
             corrected_operation_dates[transaction_id] = payload_date
 
-        # --- 2. tank_stock_ledger dates + accounting day ----------------
+        # --- 2. tank_stock_ledger sync + accounting day + rebuild ------
         updated_ledger_rows = 0
-        affected_groups = set()
         if "tank_stock_ledger" in table_names:
-            from app.models import TankStockLedger
-            from app.routers.reports import (
-                get_location_accounting_day_for_transaction,
-                resolve_transaction_datetime_for_accounting_day,
-            )
+            from app.routers.reports import sync_and_rebuild_location_tank_stock_ledger
 
-            ledger_rows = session.query(TankStockLedger).all()
-
-            for row in ledger_rows:
-                payload_date, payload_time = get_payload_operation_parts(
-                    row.source_payload
+            try:
+                sync_summary = sync_and_rebuild_location_tank_stock_ledger(
+                    db=session
                 )
-                if payload_date is None or payload_time is None:
-                    continue
-
-                transaction = session.get(
-                    OperationTransaction, row.transaction_id
+                updated_ledger_rows = int(
+                    sync_summary.get("rows_scanned", 0)
+                ) + int(sync_summary.get("rows_created", 0))
+            except Exception as error:  # pragma: no cover
+                print(
+                    "[migrations] payload operation date ledger sync/rebuild "
+                    f"skipped: {error}"
                 )
-
-                try:
-                    transaction_datetime = (
-                        resolve_transaction_datetime_for_accounting_day(
-                            transaction=transaction,
-                            payload=row.source_payload or {},
-                        )
-                    )
-                    accounting_day = get_location_accounting_day_for_transaction(
-                        db=session,
-                        location_code=row.location_code,
-                        transaction_datetime=transaction_datetime,
-                    )
-                except Exception:
-                    # No effective accounting-day setting for this moment:
-                    # leave the stored window exactly as it is.
-                    continue
-
-                changed = (
-                    row.operation_date != payload_date
-                    or row.accounting_date != accounting_day["accounting_date"]
-                    or row.accounting_day_start
-                    != accounting_day["accounting_day_start"]
-                    or row.accounting_day_end != accounting_day["accounting_day_end"]
-                    or row.accounting_day_setting_id != accounting_day["setting_id"]
-                )
-                if not changed:
-                    continue
-
-                row.operation_date = payload_date
-                row.accounting_date = accounting_day["accounting_date"]
-                row.accounting_day_start = accounting_day["accounting_day_start"]
-                row.accounting_day_end = accounting_day["accounting_day_end"]
-                row.accounting_day_setting_id = accounting_day["setting_id"]
-                updated_ledger_rows += 1
-                affected_groups.add((row.location_code, row.tank_asset_code))
-
-            if affected_groups:
-                session.flush()
-                from app.routers.reports import rebuild_tank_stock_running_balances
-
-                for location_code, tank_asset_code in sorted(affected_groups):
-                    try:
-                        rebuild_tank_stock_running_balances(
-                            db=session,
-                            location_code=location_code,
-                            tank_asset_code=tank_asset_code,
-                            product_name=None,
-                        )
-                    except Exception as error:  # pragma: no cover
-                        print(
-                            "[migrations] payload operation date rebuild "
-                            f"skipped for {location_code}/{tank_asset_code}: {error}"
-                        )
 
         # --- 3. vessel_stock_ledger.operation_date ----------------------
         updated_vessel_rows = 0
