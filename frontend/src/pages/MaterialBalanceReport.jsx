@@ -7,6 +7,7 @@ import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
 import AlertMessage from '../components/common/AlertMessage'
 import useActionFeedback from '../hooks/useActionFeedback'
+import { formatCalendarDate } from '../utils/format'
 
 function MaterialBalanceReport({ locations, assets }) {
   const emptyFilters = {
@@ -295,7 +296,7 @@ function MaterialBalanceReport({ locations, assets }) {
 
   const getExportDataRows = () => {
     return rows.map((row) => [
-      row.accountingDate,
+      formatCalendarDate(row.accountingDate, ''),
       row.locationCode,
       row.locationName,
       row.tankAssetCode || '',
@@ -623,7 +624,7 @@ function MaterialBalanceReport({ locations, assets }) {
               <tr
                 key={`${row.accountingDate}-${row.tankAssetCode || 'ALL'}-${index}`}
               >
-                <td>{row.accountingDate}</td>
+                <td>{formatCalendarDate(row.accountingDate)}</td>
                 <td>
                   {row.locationName} ({row.locationCode})
                 </td>

@@ -12,6 +12,11 @@ import { useAutoColumns } from '../hooks/useAutoColumns'
 import Modal from '../components/common/Modal'
 import AlertMessage from '../components/common/AlertMessage'
 import useActionFeedback from '../hooks/useActionFeedback'
+import {
+  formatCalendarDate,
+  formatDateTime as formatSafeDateTime,
+  formatGaugingTime,
+} from '../utils/format'
 
 const COLUMN_GROUPS = ['Base', 'Input', 'Calculated', 'Computed']
 
@@ -257,17 +262,7 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
   }
 
   const formatDateTime = (value) => {
-    if (!value) {
-      return '-'
-    }
-
-    const dateValue = new Date(value)
-
-    if (Number.isNaN(dateValue.getTime())) {
-      return value
-    }
-
-    return dateValue.toLocaleString()
+    return formatSafeDateTime(value, '-')
   }
 
   const formatNumber = (value, decimals = 3) => {
@@ -289,22 +284,63 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
     return !isNaN(Number(value))
   }
 
-  const isDateColumn = (col) => {
+  const isCalendarDateColumn = (col) => {
     return (
-      col.includes('date') ||
-      col.includes('datetime') ||
-      col === 'created_at' ||
+      col === 'accounting_date' ||
       col === 'operation_date' ||
-      col === 'accounting_date'
+      col === 'gauging_date' ||
+      col === 'input_gaugingDate' ||
+      col === 'input_gauging_date' ||
+      col.endsWith('Date')
     )
   }
+
+  const isTimeOnlyColumn = (col) => {
+    return (
+      col === 'gauging_time' ||
+      col === 'input_gaugingTime' ||
+      col === 'input_gauging_time' ||
+      col.endsWith('Time')
+    )
+  }
+
+  const isDateTimeColumn = (col) => {
+    return col.includes('datetime') || col === 'created_at' || col === 'updated_at'
+  }
+
+  const NON_NUMERIC_INPUT_COLS = new Set([
+    'input_tankOperation',
+    'input_ticketNumber',
+    'input_operationNumber',
+    'input_gaugingDate',
+    'input_gaugingTime',
+    'input_gauging_date',
+    'input_gauging_time',
+    'input_productName',
+    'input_remarks',
+    'input_tankTemperatureUnit',
+    'input_observedDensityUnit',
+  ])
 
   const renderCellValue = (col, value) => {
     if (value === null || value === undefined || value === '') {
       return '-'
     }
 
+    if (isCalendarDateColumn(col)) {
+      return formatCalendarDate(value)
+    }
+
+    if (isTimeOnlyColumn(col)) {
+      return formatGaugingTime(value)
+    }
+
+    if (isDateTimeColumn(col)) {
+      return formatDateTime(value)
+    }
+
     if (
+      !NON_NUMERIC_INPUT_COLS.has(col) &&
       isNumericValue(value) &&
       (col.startsWith('calc_') ||
         col.startsWith('input_') ||
@@ -315,10 +351,6 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
         col.includes('_bbl'))
     ) {
       return formatNumber(value)
-    }
-
-    if (isDateColumn(col)) {
-      return formatDateTime(value)
     }
 
     return value
@@ -540,7 +572,7 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
         </div>
 
         <div>
-          <label>Operation Date From</label>
+          <label>Accounting Date From</label>
           <input
             name="dateFrom"
             type="date"
@@ -551,7 +583,7 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
         </div>
 
         <div>
-          <label>Operation Date To</label>
+          <label>Accounting Date To</label>
           <input
             name="dateTo"
             type="date"
@@ -592,7 +624,7 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
           {reportMeta.appliedDateFrom
             ? ` (${reportMeta.appliedDateFrom} to ${reportMeta.appliedDateTo || 'latest'})`
             : ''}
-          . To load older records, set Operation Date From / To above and
+          . To load older records, set Accounting Date From / To above and
           click Apply.
         </div>
       )}

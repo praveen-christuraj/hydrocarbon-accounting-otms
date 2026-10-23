@@ -7,6 +7,11 @@ import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
 import AlertMessage from '../components/common/AlertMessage'
 import useActionFeedback from '../hooks/useActionFeedback'
+import {
+  formatCalendarDate,
+  formatDateTime as formatSafeDateTime,
+  formatGaugingTime,
+} from '../utils/format'
 
 function OutTurnReport({ locations, assets }) {
   const emptyFilters = {
@@ -173,17 +178,7 @@ function OutTurnReport({ locations, assets }) {
   }
 
   const formatDateTime = (value) => {
-    if (!value) {
-      return '-'
-    }
-
-    const dateValue = new Date(value)
-
-    if (Number.isNaN(dateValue.getTime())) {
-      return value
-    }
-
-    return dateValue.toLocaleString()
+    return formatSafeDateTime(value, '-')
   }
 
   const getMovementClass = (value) => {
@@ -251,6 +246,8 @@ function OutTurnReport({ locations, assets }) {
 
     const headers = [
       'Accounting Date',
+      'Gauging Date',
+      'Gauging Time',
       'Operation Date/Time',
       'Ticket Number',
       'Operation Number',
@@ -277,7 +274,9 @@ function OutTurnReport({ locations, assets }) {
     ]
 
     const dataRows = rows.map((row) => [
-      row.accountingDate,
+      formatCalendarDate(row.accountingDate, ''),
+      formatCalendarDate(row.gaugingDate, ''),
+      formatGaugingTime(row.gaugingTime, ''),
       formatDateTime(row.operationDatetime),
       row.ticketNumber,
       row.operationNumber,
@@ -590,7 +589,8 @@ function OutTurnReport({ locations, assets }) {
         <thead>
           <tr>
             <th>Accounting Date</th>
-            <th>Operation Date/Time</th>
+            <th>Gauging Date</th>
+            <th>Gauging Time</th>
             <th>Ticket</th>
             <th>Location</th>
             <th>Tank</th>
@@ -614,15 +614,16 @@ function OutTurnReport({ locations, assets }) {
         <tbody>
           {rows.length === 0 ? (
             <tr>
-              <td colSpan="19" className="empty-table">
+              <td colSpan="20" className="empty-table">
                 No Out-Turn Report rows found. Approved Tank Gauging tickets create ledger entries automatically. Submit → Approve a tank gauging ticket, then return here.
               </td>
             </tr>
           ) : (
             visibleRows.map((row) => (
               <tr key={row.ledgerId}>
-                <td>{row.accountingDate || '-'}</td>
-                <td>{formatDateTime(row.operationDatetime)}</td>
+                <td>{formatCalendarDate(row.accountingDate)}</td>
+                <td>{formatCalendarDate(row.gaugingDate)}</td>
+                <td>{formatGaugingTime(row.gaugingTime)}</td>
                 <td>
                   <strong>{row.ticketNumber}</strong>
                   <div className="muted-table-text">{row.operationNumber}</div>

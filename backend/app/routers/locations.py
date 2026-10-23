@@ -542,6 +542,13 @@ def create_location_accounting_day_setting(
         details={"after": after_snapshot},
     )
 
+    from app.routers.reports import sync_and_rebuild_location_tank_stock_ledger
+
+    sync_and_rebuild_location_tank_stock_ledger(
+        db=db,
+        location_code=validated["location_code"],
+    )
+
     db.commit()
     db.refresh(new_setting)
 
@@ -607,6 +614,14 @@ def update_location_accounting_day_setting(
         details={"before": before_snapshot, "after": after_snapshot},
     )
 
+    from app.routers.reports import sync_and_rebuild_location_tank_stock_ledger
+
+    affected_locations = {validated["location_code"]}
+    if before_snapshot.get("location_code"):
+        affected_locations.add(before_snapshot["location_code"])
+    for loc_code in affected_locations:
+        sync_and_rebuild_location_tank_stock_ledger(db=db, location_code=loc_code)
+
     db.commit()
     db.refresh(existing_setting)
 
@@ -635,6 +650,7 @@ def delete_location_accounting_day_setting(
         raise HTTPException(status_code=404, detail="Setting not found")
     ensure_location_in_user_scope(current_user, db, existing_setting.location_code, "Location")
 
+    deleted_location_code = existing_setting.location_code
     snapshot = build_location_accounting_day_setting_audit_snapshot(
         existing_setting, db
     )
@@ -653,6 +669,13 @@ def delete_location_accounting_day_setting(
     )
 
     db.delete(existing_setting)
+    db.flush()
+
+    from app.routers.reports import sync_and_rebuild_location_tank_stock_ledger
+
+    sync_and_rebuild_location_tank_stock_ledger(
+        db=db, location_code=deleted_location_code
+    )
     db.commit()
 
     return {"message": "Accounting day setting deleted successfully"}

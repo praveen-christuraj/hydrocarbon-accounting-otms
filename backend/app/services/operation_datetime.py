@@ -1,30 +1,19 @@
-"""Payload-first operation date/time resolution (single source of truth).
+"""Payload-first gauging/operation date & time resolution (single source of truth).
 
 The Operation Date / Start Date-Time / End Date-Time inputs were removed from
-the Operation Entry *metadata* section: the operation date and time of a
-ticket are whatever the operator entered inside the respective operation
-type's data-entry **payload** (tank gauging date/time, tanker transaction
-date/time, multi-tank before/after date/time, flowmeter reading date/time,
-FSO / Shuttle operation date + event time).
+the Operation Entry metadata section: the operational moment of every ticket is
+strictly the gauging/operation date and time entered inside its payload
+(``inputs.gaugingDate`` + ``inputs.gaugingTime`` / ``input_gaugingDate`` +
+``input_gaugingTime``, tanker transaction date/time, multi-tank before/after
+date/time, flowmeter reading date/time, FSO / Shuttle operation date + event
+time).
 
-Every calculation and report (Tank Stock Ledger, Tank Operation Summary,
-Out-Turn Summary / Report, Material Balance, FSO reports, tracking
-timelines, ...) must therefore resolve a ticket's operation moment from its
-payload first and only fall back to the legacy ticket metadata
-(``operation_start_datetime`` / ``operation_date``) when a payload carries no
-date/time at all. ``operation_transactions.operation_date`` is kept as a
-derived cache column (it is NOT NULL and heavily indexed/filtered); the
-write path and a start-up backfill keep it equal to the payload date.
-
-Chronological ordering always uses the full payload date **and time**, and
-the accounting date is the payload operation moment shifted by the
-respective location's Location Accounting Day Setting (an operation before
-the location's day-start time belongs to the previous accounting day).
-
-Multi-tank (before/after) payloads resolve to the *before* date/time first -
-the moment the operation starts - falling back to *after*. This matches the
-frontend resolver (``frontend/src/utils/operationDate.js``) so the ticket
-date derived in the browser and the dates derived here never disagree.
+Every calculation and report (Tank Stock Ledger, Daily Summary, Tank Operation
+Summary, Out-Turn Summary, Out-Turn Report, Material Balance Report, FSO
+reports, tracking timelines, ...) resolves each ticket's moment from its
+payload first, orders chronologically by payload date AND time, and applies the
+respective location's Location Accounting Day Setting window cleanly without
+gap-second or boundary-date mismatches.
 """
 
 from __future__ import annotations
@@ -33,7 +22,6 @@ import json
 import re
 from datetime import date, datetime, time as datetime_time, timedelta
 
-from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -43,7 +31,7 @@ from app.models import (
 )
 
 # Payload value field codes, in resolution priority order. A ticket normally
-# carries exactly one of them (chosen by its entry layout).
+# carries one of them (chosen by its entry layout).
 PAYLOAD_FIELD_CODES = (
     "tank_gauging_payload",
     "multi_tank_payload",
@@ -54,10 +42,13 @@ PAYLOAD_FIELD_CODES = (
     "shuttle_payload",
 )
 
-_DATE_PREFIX = re.compile(r"^\d{4}-\d{2}-\d{2}")
-_TIME_TEXT = re.compile(r"^(\d{1,2}):(\d{2})(?::(\d{2}))?")
+_ISO_YMD_RE = re.compile(r"^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:$|[\sT])")
+_DMY_RE = re.compile(r"^(\d{1,2})[/-](\d{1,2})[/-](\d{4})(?:$|[\sT])")
+_TIME_TEXT = re.compile(
+    r"^(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?(?:\s*([AaPp][Mm]))?"
+)
 
-# Date-like keys that describe reference data, never the operation moment.
+# Date-like keys that describe reference data, never the gauging/operation moment.
 _NON_OPERATION_DATE_HINTS = (
     "effective",
     "expiry",
@@ -77,8 +68,26 @@ def _text(value) -> str | None:
     return cleaned or None
 
 
+def coerce_payload_dict(payload) -> dict:
+    """Normalise a payload value (dict, JSON string, or double-encoded string) to ``dict``."""
+    current = payload
+    for _ in range(3):
+        if isinstance(current, dict):
+            return current
+        if not isinstance(current, str):
+            return {}
+        cleaned = current.strip()
+        if not cleaned or cleaned[0] not in ('{', '"'):
+            return {}
+        try:
+            current = json.loads(cleaned)
+        except (TypeError, ValueError):
+            return {}
+    return current if isinstance(current, dict) else {}
+
+
 def parse_date_value(value) -> date | None:
-    """Best-effort ``date`` from a payload value (date/datetime/ISO text)."""
+    """Best-effort ``date`` from a payload value (date/datetime/ISO or slash text)."""
     if value is None:
         return None
     if isinstance(value, datetime):
@@ -87,17 +96,40 @@ def parse_date_value(value) -> date | None:
         return value
 
     cleaned = _text(value)
-    if not cleaned or not _DATE_PREFIX.match(cleaned):
+    if not cleaned:
         return None
 
-    try:
-        return date.fromisoformat(cleaned[:10])
-    except ValueError:
-        return None
+    ymd_match = _ISO_YMD_RE.match(cleaned)
+    if ymd_match:
+        try:
+            return date(
+                int(ymd_match.group(1)),
+                int(ymd_match.group(2)),
+                int(ymd_match.group(3)),
+            )
+        except ValueError:
+            return None
+
+    dmy_match = _DMY_RE.match(cleaned)
+    if dmy_match:
+        first, second, year = (
+            int(dmy_match.group(1)),
+            int(dmy_match.group(2)),
+            int(dmy_match.group(3)),
+        )
+        try:
+            return date(year, second, first)
+        except ValueError:
+            try:
+                return date(year, first, second)
+            except ValueError:
+                return None
+
+    return None
 
 
 def parse_time_value(value) -> datetime_time | None:
-    """Best-effort ``time`` from a payload value ("HH:MM" or ISO datetime)."""
+    """Best-effort ``time`` from a payload value ('HH:MM', 'H:MM', 'HH:MM AM/PM', or ISO datetime)."""
     if value is None:
         return None
     if isinstance(value, datetime):
@@ -109,36 +141,42 @@ def parse_time_value(value) -> datetime_time | None:
     if not cleaned:
         return None
 
-    # Full ISO datetime text: take the time part after ``T``/space.
-    if _DATE_PREFIX.match(cleaned) and len(cleaned) > 10:
-        cleaned = cleaned[10:].lstrip("T ")
+    ymd_match = _ISO_YMD_RE.match(cleaned)
+    if ymd_match:
+        idx = ymd_match.end()
+        cleaned = cleaned[idx - 1 :].lstrip("T ") if idx <= len(cleaned) else ""
+        if not cleaned:
+            return None
+    else:
+        dmy_match = _DMY_RE.match(cleaned)
+        if dmy_match:
+            idx = dmy_match.end()
+            cleaned = cleaned[idx - 1 :].lstrip("T ") if idx <= len(cleaned) else ""
+            if not cleaned:
+                return None
 
     match = _TIME_TEXT.match(cleaned)
     if not match:
         return None
 
+    hour = int(match.group(1))
+    minute = int(match.group(2))
+    second = int(match.group(3) or 0)
+    meridiem = (match.group(4) or "").upper()
+
+    if meridiem == "PM" and 1 <= hour <= 11:
+        hour += 12
+    elif meridiem == "AM" and hour == 12:
+        hour = 0
+
     try:
-        return datetime_time(
-            int(match.group(1)),
-            int(match.group(2)),
-            int(match.group(3) or 0),
-        )
+        return datetime_time(hour, minute, second)
     except ValueError:
         return None
 
 
 def _as_dict(payload) -> dict:
-    if isinstance(payload, dict):
-        return payload
-    if isinstance(payload, str):
-        cleaned = payload.strip()
-        if cleaned.startswith("{"):
-            try:
-                parsed = json.loads(cleaned)
-            except (TypeError, ValueError):
-                return {}
-            return parsed if isinstance(parsed, dict) else {}
-    return {}
+    return coerce_payload_dict(payload)
 
 
 def _inputs(payload: dict) -> dict:
@@ -146,31 +184,74 @@ def _inputs(payload: dict) -> dict:
     return inputs if isinstance(inputs, dict) else {}
 
 
-def _first_date(inputs: dict, keys) -> date | None:
-    for key in keys:
-        parsed = parse_date_value(inputs.get(key))
-        if parsed is not None:
-            return parsed
+def _first_date(sources: tuple[dict, ...], keys) -> date | None:
+    for mapping in sources:
+        if not mapping:
+            continue
+        for key in keys:
+            parsed = parse_date_value(mapping.get(key))
+            if parsed is not None:
+                return parsed
     return None
 
 
-def _first_time(inputs: dict, keys) -> datetime_time | None:
-    for key in keys:
-        parsed = parse_time_value(inputs.get(key))
-        if parsed is not None:
-            return parsed
+def _first_time(sources: tuple[dict, ...], keys) -> datetime_time | None:
+    for mapping in sources:
+        if not mapping:
+            continue
+        for key in keys:
+            parsed = parse_time_value(mapping.get(key))
+            if parsed is not None:
+                return parsed
     return None
 
 
-# Explicit payload key sets. Both the camelCase keys the current layouts
-# write and snake_case variants seen in older payloads are accepted.
-_GAUGING_DATE_KEYS = ("gaugingDate", "gauging_date")
-_GAUGING_TIME_KEYS = ("gaugingTime", "gauging_time")
-_TANKER_DATE_KEYS = ("tankerTransactionDate", "tanker_transaction_date")
-_TANKER_TIME_KEYS = ("tankerTransactionTime", "tanker_transaction_time")
-_READING_DATE_KEYS = ("reading_date", "readingDate", "operation_date", "operationDate")
-_OPERATION_DATE_KEYS = ("operation_date", "operationDate")
-_EVENT_TIME_KEYS = ("event_time", "eventTime")
+# Explicit payload key sets — both nested ``inputs.<key>`` and flattened
+# ``input_<key>`` / snake_case forms are supported symmetrically.
+_GAUGING_DATE_KEYS = (
+    "gaugingDate",
+    "gauging_date",
+    "input_gaugingDate",
+    "input_gauging_date",
+)
+_GAUGING_TIME_KEYS = (
+    "gaugingTime",
+    "gauging_time",
+    "input_gaugingTime",
+    "input_gauging_time",
+)
+_TANKER_DATE_KEYS = (
+    "tankerTransactionDate",
+    "tanker_transaction_date",
+    "input_tankerTransactionDate",
+    "input_tanker_transaction_date",
+)
+_TANKER_TIME_KEYS = (
+    "tankerTransactionTime",
+    "tanker_transaction_time",
+    "input_tankerTransactionTime",
+    "input_tanker_transaction_time",
+)
+_READING_DATE_KEYS = (
+    "reading_date",
+    "readingDate",
+    "input_reading_date",
+    "input_readingDate",
+    "operation_date",
+    "operationDate",
+)
+_OPERATION_DATE_KEYS = (
+    "operation_date",
+    "operationDate",
+    "input_operation_date",
+    "input_operationDate",
+)
+_EVENT_TIME_KEYS = (
+    "event_time",
+    "eventTime",
+    "input_event_time",
+    "input_eventTime",
+)
 
 
 def _explicit_parts(
@@ -182,12 +263,13 @@ def _explicit_parts(
     ``source_payload`` snapshots, which do not record their field code).
     """
     inputs = _inputs(payload)
+    sources = (inputs, payload)
     code = _text(field_code)
 
     def gauging():
         return (
-            _first_date(inputs, _GAUGING_DATE_KEYS),
-            _first_time(inputs, _GAUGING_TIME_KEYS),
+            _first_date(sources, _GAUGING_DATE_KEYS),
+            _first_time(sources, _GAUGING_TIME_KEYS),
         )
 
     def multi_tank():
@@ -202,20 +284,20 @@ def _explicit_parts(
 
     def tanker():
         return (
-            _first_date(inputs, _TANKER_DATE_KEYS),
-            _first_time(inputs, _TANKER_TIME_KEYS),
+            _first_date(sources, _TANKER_DATE_KEYS),
+            _first_time(sources, _TANKER_TIME_KEYS),
         )
 
     def reading():
         return (
-            _first_date(inputs, _READING_DATE_KEYS),
-            _first_time(inputs, _EVENT_TIME_KEYS),
+            _first_date(sources, _READING_DATE_KEYS),
+            _first_time(sources, _EVENT_TIME_KEYS),
         )
 
     def operation():
         return (
-            _first_date(inputs, _OPERATION_DATE_KEYS),
-            _first_time(inputs, _EVENT_TIME_KEYS),
+            _first_date(sources, _OPERATION_DATE_KEYS),
+            _first_time(sources, _EVENT_TIME_KEYS),
         )
 
     by_code = {
@@ -232,8 +314,6 @@ def _explicit_parts(
         found_date, found_time = by_code[code]()
         if found_date is not None:
             return found_date, found_time
-        # The payload of a known type may still date itself through one of
-        # the other known key sets (older layout versions) - fall through.
 
     for extractor in (gauging, multi_tank, tanker, reading, operation):
         found_date, found_time = extractor()
@@ -251,7 +331,9 @@ def _score_date_key(key: str) -> int:
         return -1
     if "datetime" in normalized or normalized.endswith("time"):
         return 0
-    if "reading" in normalized or "gauging" in normalized or "transaction" in normalized:
+    if "gauging" in normalized:
+        return 8
+    if "reading" in normalized or "transaction" in normalized:
         return 6
     if "operation" in normalized:
         return 5
@@ -264,7 +346,9 @@ def _score_time_key(key: str) -> int:
     normalized = str(key or "").lower()
     if "time" not in normalized:
         return -1
-    if "gauging" in normalized or "transaction" in normalized:
+    if "gauging" in normalized:
+        return 8
+    if "transaction" in normalized:
         return 6
     if "event" in normalized:
         return 3
@@ -272,22 +356,17 @@ def _score_time_key(key: str) -> int:
 
 
 def _generic_parts(payload, depth: int = 0):
-    """Scored recursive search for unknown payload shapes.
-
-    Mirrors ``frontend/src/utils/operationDate.js`` so a payload the explicit
-    extractors do not know still resolves the same way in browser and server.
-    Returns ``(date, date_score, time, time_score)``.
-    """
+    """Scored recursive search for unknown payload shapes."""
     if depth > 6 or payload is None:
         return None, -1, None, -1
 
     if isinstance(payload, str):
         cleaned = payload.strip()
-        if cleaned.startswith(("{", "[")):
+        if cleaned.startswith(("{", "[", '"')):
             try:
                 return _generic_parts(json.loads(cleaned), depth + 1)
             except (TypeError, ValueError):
-                return None, -1, None, -1
+                pass
         parsed_date = parse_date_value(cleaned)
         if parsed_date is not None:
             return parsed_date, 1, parse_time_value(cleaned), 1
@@ -315,7 +394,6 @@ def _generic_parts(payload, depth: int = 0):
             parsed_date = parse_date_value(value)
             if parsed_date is not None and date_score > best_date_score:
                 best_date, best_date_score = parsed_date, date_score
-                # A full datetime in a date key also supplies the time.
                 parsed_time = parse_time_value(value)
                 if parsed_time is not None and date_score > best_time_score:
                     best_time, best_time_score = parsed_time, date_score
@@ -340,11 +418,7 @@ def _generic_parts(payload, depth: int = 0):
 def get_payload_operation_parts(
     payload, field_code: str | None = None
 ) -> tuple[date | None, datetime_time | None]:
-    """``(operation_date, operation_time)`` entered inside one payload.
-
-    Either part is ``None`` when the payload does not carry it. Explicit
-    per-layout keys win; a scored generic walk covers unknown shapes.
-    """
+    """``(gauging_or_operation_date, gauging_or_operation_time)`` from a payload."""
     payload_dict = _as_dict(payload)
 
     found_date, found_time = _explicit_parts(payload_dict, field_code)
@@ -371,16 +445,20 @@ def get_payload_operation_time(
 def get_payload_operation_datetime(
     payload, field_code: str | None = None
 ) -> datetime | None:
-    """Payload operation moment; ``None`` only when it has no date at all.
-
-    A payload date without a time resolves to midnight of that date - use
-    :func:`get_payload_operation_parts` when the caller must distinguish
-    "no time entered" (accounting-date calculation does).
-    """
+    """Payload gauging/operation moment; ``None`` only when it has no date at all."""
     found_date, found_time = get_payload_operation_parts(payload, field_code)
     if found_date is None:
         return None
     return datetime.combine(found_date, found_time or datetime_time(0, 0))
+
+
+def format_time_hhmm(value: datetime_time | None) -> str | None:
+    """Format a ``time`` cleanly as ``HH:MM`` (or ``HH:MM:SS`` when seconds != 0)."""
+    if value is None:
+        return None
+    if value.second:
+        return value.strftime("%H:%M:%S")
+    return value.strftime("%H:%M")
 
 
 # --------------------------------------------------------------------------
@@ -404,13 +482,7 @@ def _value_code_and_payload(value) -> tuple[str, object]:
 
 
 def operation_parts_from_values(values) -> tuple[date | None, datetime_time | None]:
-    """Resolve (date, time) from a transaction's stored values.
-
-    Known ``*_payload`` values are tried first (in layout priority order),
-    then any other JSON value, then flat date/time template fields. Returns
-    ``(None, None)`` when no value carries an operation date - callers then
-    fall back to the legacy ticket metadata.
-    """
+    """Resolve (date, time) from a transaction's stored values."""
     normalised = [_value_code_and_payload(value) for value in (values or [])]
 
     for wanted_code in PAYLOAD_FIELD_CODES:
@@ -425,14 +497,13 @@ def operation_parts_from_values(values) -> tuple[date | None, datetime_time | No
         if code in PAYLOAD_FIELD_CODES:
             continue
         if isinstance(raw, (dict, list)) or (
-            isinstance(raw, str) and raw.strip().startswith(("{", "["))
+            isinstance(raw, str) and raw.strip().startswith(("{", "[", '"'))
         ):
             found_date, found_time = get_payload_operation_parts(raw, code)
             if found_date is not None:
                 return found_date, found_time
 
-    # Flat template fields (e.g. a custom layout with a ``reading_date``
-    # field): best scored date-like / time-like field codes.
+    # Flat template fields (e.g. ``input_gaugingDate`` + ``input_gaugingTime``).
     best_date, best_date_score = None, -1
     best_time, best_time_score = None, -1
     for code, raw in normalised:
@@ -477,7 +548,8 @@ def operation_datetime_from_values(values) -> datetime | None:
 
 
 # --------------------------------------------------------------------------
-# Transaction level resolution (payload first, legacy metadata last)
+# Transaction level resolution (payload strictly first; metadata fallback only
+# when a legacy/non-payload ticket has no date in its payload at all)
 # --------------------------------------------------------------------------
 
 
@@ -487,13 +559,7 @@ def resolve_transaction_operation_parts(
     payload=None,
     field_code: str | None = None,
 ) -> tuple[date | None, datetime_time | None]:
-    """Operation (date, time) of a ticket - payload first, metadata last.
-
-    The metadata (``operation_start_datetime`` / ``operation_date``) is only
-    consulted when no payload/value supplies a date, so tickets recorded
-    before the metadata inputs were removed still account on the date/time
-    typed inside their payloads.
-    """
+    """Gauging / operation (date, time) of a ticket — strictly payload-first."""
     if payload is not None:
         found_date, found_time = get_payload_operation_parts(payload, field_code)
         if found_date is not None:
@@ -546,17 +612,14 @@ def resolve_transaction_operation_datetime(
 def load_payload_values_map(
     db: Session, transaction_ids
 ) -> dict[int, list[OperationTransactionValue]]:
-    """Batch-load the ``*_payload`` values of many transactions in one query."""
+    """Batch-load transaction values for many transactions in one query."""
     ids = [tx_id for tx_id in dict.fromkeys(transaction_ids or []) if tx_id is not None]
     if not ids:
         return {}
 
     rows = (
         db.query(OperationTransactionValue)
-        .filter(
-            OperationTransactionValue.transaction_id.in_(ids),
-            OperationTransactionValue.field_code.in_(PAYLOAD_FIELD_CODES),
-        )
+        .filter(OperationTransactionValue.transaction_id.in_(ids))
         .all()
     )
 
@@ -592,40 +655,150 @@ def resolve_transaction_operation_datetime_from_db(
 
 
 # --------------------------------------------------------------------------
-# Location Accounting Day
+# Unified Location Accounting Day Window Engine
 # --------------------------------------------------------------------------
 
 
-def get_active_day_setting(
-    db: Session, location_code: str | None, on_date: date | None
-) -> LocationAccountingDaySetting | None:
-    """Active Location Accounting Day Setting effective on ``on_date``.
-
-    Same selection rule the Tank Stock Ledger has always used: newest
-    ``effective_from`` (then newest id) whose effective range contains the
-    operation date. The *respective location's* setting is always used.
-    """
+def _load_active_location_settings(
+    db: Session,
+    location_code: str | None,
+    setting_cache: dict | None = None,
+) -> list[LocationAccountingDaySetting]:
     cleaned_location = _text(location_code)
-    if not cleaned_location or on_date is None:
-        return None
+    if not cleaned_location:
+        return []
 
-    return (
+    cache_key = ("_settings", cleaned_location.lower())
+    if setting_cache is not None and cache_key in setting_cache:
+        return setting_cache[cache_key]
+
+    settings = (
         db.query(LocationAccountingDaySetting)
         .filter(
             LocationAccountingDaySetting.location_code.ilike(cleaned_location),
             LocationAccountingDaySetting.status == "Active",
-            LocationAccountingDaySetting.effective_from <= on_date,
-            or_(
-                LocationAccountingDaySetting.effective_to.is_(None),
-                LocationAccountingDaySetting.effective_to >= on_date,
-            ),
         )
         .order_by(
             LocationAccountingDaySetting.effective_from.desc(),
             LocationAccountingDaySetting.id.desc(),
         )
-        .first()
+        .all()
     )
+    if setting_cache is not None:
+        setting_cache[cache_key] = settings
+    return settings
+
+
+def calculate_window_from_setting_parts(
+    setting: LocationAccountingDaySetting,
+    operation_date: date,
+    operation_time: datetime_time | None,
+) -> dict:
+    """Compute continuous 24-hour accounting day window for ``(operation_date, operation_time)``.
+
+    Any moment strictly before ``setting.day_start_time`` belongs to
+    ``operation_date - 1 day``; any moment at or after ``day_start_time``
+    (or when no time was recorded) belongs to ``operation_date``. This avoids
+    false gap errors on seconds between ``day_end_time`` (e.g. ``06:00:00``)
+    and ``day_start_time`` (e.g. ``06:01:00``).
+    """
+    start_time = setting.day_start_time
+    end_time = setting.day_end_time
+    accounting_date = accounting_date_from_parts(
+        operation_date, operation_time, start_time
+    )
+    accounting_day_start = datetime.combine(accounting_date, start_time)
+    if end_time <= start_time:
+        accounting_day_end = datetime.combine(
+            accounting_date + timedelta(days=1),
+            end_time,
+        )
+    else:
+        accounting_day_end = datetime.combine(accounting_date, end_time)
+
+    return {
+        "setting_id": setting.id,
+        "setting": setting,
+        "accounting_date": accounting_date,
+        "accounting_day_start": accounting_day_start,
+        "accounting_day_end": accounting_day_end,
+    }
+
+
+def resolve_location_accounting_window(
+    db: Session,
+    location_code: str | None,
+    operation_date: date | None,
+    operation_time: datetime_time | None = None,
+    setting_cache: dict | None = None,
+) -> dict | None:
+    """Resolve the active accounting window for ``(location_code, operation_date, operation_time)``.
+
+    Selection order:
+      1. Newest Active setting whose effective range covers the resolved
+         accounting date or calendar gauging date.
+      2. Earliest Active open-ended/covering setting for the location when
+         historical gauging dates precede ``effective_from`` (so configuring a
+         location's accounting window today still applies to earlier tickets).
+      3. ``None`` only when the location has no Active setting at all.
+    """
+    if operation_date is None:
+        return None
+
+    active_settings = _load_active_location_settings(
+        db, location_code, setting_cache=setting_cache
+    )
+    if not active_settings:
+        return None
+
+    for setting in active_settings:
+        window = calculate_window_from_setting_parts(
+            setting, operation_date, operation_time
+        )
+        effective_to = setting.effective_to or date.max
+        acc_date = window["accounting_date"]
+        if (
+            setting.effective_from <= acc_date <= effective_to
+            or setting.effective_from <= operation_date <= effective_to
+        ):
+            return window
+
+    # Fallback: tickets gauged earlier than the earliest configured
+    # ``effective_from`` use the earliest Active setting for that location
+    # whose ``effective_to`` has not expired before the gauging date.
+    earliest_candidates = sorted(
+        active_settings,
+        key=lambda s: (s.effective_from or date.min, -(s.id or 0)),
+    )
+    for setting in earliest_candidates:
+        effective_to = setting.effective_to or date.max
+        window = calculate_window_from_setting_parts(
+            setting, operation_date, operation_time
+        )
+        if window["accounting_date"] <= effective_to or operation_date <= effective_to:
+            return window
+
+    return calculate_window_from_setting_parts(
+        active_settings[0], operation_date, operation_time
+    )
+
+
+def get_active_day_setting(
+    db: Session,
+    location_code: str | None,
+    on_date: date | None,
+    operation_time: datetime_time | None = None,
+    setting_cache: dict | None = None,
+) -> LocationAccountingDaySetting | None:
+    """Active Location Accounting Day Setting for ``location_code`` on ``on_date``."""
+    window = resolve_location_accounting_window(
+        db,
+        location_code=location_code,
+        operation_date=on_date,
+        operation_time=operation_time,
+        setting_cache=setting_cache,
+    )
+    return window["setting"] if window else None
 
 
 def accounting_date_from_parts(
@@ -633,13 +806,7 @@ def accounting_date_from_parts(
     operation_time: datetime_time | None,
     day_start_time: datetime_time | None,
 ) -> date:
-    """Accounting date of an operation moment under a location's day-start.
-
-    An operation earlier than the day-start time belongs to the previous
-    accounting day. No entered time (or no configured setting) keeps the
-    operation date itself - the long-standing behaviour of
-    ``compute_accounting_date``.
-    """
+    """Accounting date of a gauging moment under a location's ``day_start_time``."""
     if operation_time is None or day_start_time is None:
         return operation_date
     if operation_time < day_start_time:
@@ -654,26 +821,20 @@ def resolve_accounting_date(
     operation_time: datetime_time | None = None,
     setting_cache: dict | None = None,
 ) -> date | None:
-    """Accounting date for one operation moment at one location.
-
-    ``setting_cache`` (optional) memoises setting lookups per
-    (location, operation date) for report builders resolving many rows.
-    Locations without an Active setting keep the calendar operation date,
-    exactly as reports behaved before this centralisation.
-    """
+    """Accounting date for ``(operation_date, operation_time)`` at ``location_code``."""
     if operation_date is None:
         return None
 
-    cache_key = (str(location_code or "").strip().lower(), operation_date)
-    if setting_cache is not None and cache_key in setting_cache:
-        setting = setting_cache[cache_key]
-    else:
-        setting = get_active_day_setting(db, location_code, operation_date)
-        if setting_cache is not None:
-            setting_cache[cache_key] = setting
-
-    day_start = setting.day_start_time if setting else None
-    return accounting_date_from_parts(operation_date, operation_time, day_start)
+    window = resolve_location_accounting_window(
+        db,
+        location_code=location_code,
+        operation_date=operation_date,
+        operation_time=operation_time,
+        setting_cache=setting_cache,
+    )
+    if window is not None:
+        return window["accounting_date"]
+    return operation_date
 
 
 def resolve_transaction_accounting(
@@ -684,12 +845,7 @@ def resolve_transaction_accounting(
     field_code: str | None = None,
     setting_cache: dict | None = None,
 ) -> tuple[date | None, datetime_time | None, datetime | None, date | None]:
-    """``(operation_date, operation_time, operation_datetime, accounting_date)``.
-
-    The one call report/calculation builders need: operation moment from the
-    payload, accounting date from the origin location's accounting-day
-    setting applied to that moment.
-    """
+    """``(gauging_date, gauging_time, gauging_datetime, accounting_date)``."""
     operation_date, operation_time = resolve_transaction_operation_parts(
         transaction, values=values, payload=payload, field_code=field_code
     )

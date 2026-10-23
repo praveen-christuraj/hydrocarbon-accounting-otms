@@ -6,7 +6,6 @@ Consolidates functions that were previously duplicated between:
   - backend/app/routers/reports.py
 """
 
-from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.utils.helpers import safe_float, get_location_by_code
@@ -22,26 +21,8 @@ def build_out_turn_report_response_from_values(
 
     Accepts a dict with already-extracted values (not ORM objects) and
     returns the full OTR response dict with receipt/production/draining/
-    dispatch/other classification.
-
-    Required keys in `params`:
-        location_code, tank_asset_code, tank_asset_name,
-        product_name, accounting_date, operation_datetime,
-        ticket_number, operation_number, transaction_id,
-        tank_operation_code, tank_operation_label,
-        tank_operation_category, tank_operation_sign,
-        previous_gsv, previous_nsv, previous_lt, previous_mt,
-        stock_after_gsv, stock_after_nsv, stock_after_lt, stock_after_mt,
-        status
-
-    Optional keys:
-        signed_net_gsv, signed_net_nsv, signed_net_lt, signed_net_mt
-          (computed from stock_after - previous if not provided)
-        ledger_id  (defaults to transaction_id if not provided)
-        remarks
+    dispatch/other classification aligned with Tank Operation signs.
     """
-    # List endpoints may prefetch the location name in bulk (one query for
-    # the whole page instead of one query per row).
     if params.get("location_name") is not None:
         location = None
         prefetched_location_name = params["location_name"]
@@ -59,8 +40,10 @@ def build_out_turn_report_response_from_values(
     stock_after_lt = safe_float(params.get("stock_after_lt", 0))
     stock_after_mt = safe_float(params.get("stock_after_mt", 0))
 
-    # Use pre-computed signed_net if provided, otherwise derive
-    if all(k in params for k in ("signed_net_gsv", "signed_net_nsv", "signed_net_lt", "signed_net_mt")):
+    if all(
+        k in params
+        for k in ("signed_net_gsv", "signed_net_nsv", "signed_net_lt", "signed_net_mt")
+    ):
         signed_net_gsv = safe_float(params["signed_net_gsv"])
         signed_net_nsv = safe_float(params["signed_net_nsv"])
         signed_net_lt = safe_float(params["signed_net_lt"])
@@ -71,122 +54,140 @@ def build_out_turn_report_response_from_values(
         signed_net_lt = stock_after_lt - previous_lt
         signed_net_mt = stock_after_mt - previous_mt
 
-    net_receipt_gsv = max(signed_net_gsv, 0)
-    net_receipt_nsv = max(signed_net_nsv, 0)
-    net_receipt_lt = max(signed_net_lt, 0)
-    net_receipt_mt = max(signed_net_mt, 0)
+    net_receipt_gsv = 0.0
+    net_receipt_nsv = 0.0
+    net_receipt_lt = 0.0
+    net_receipt_mt = 0.0
 
-    net_dispatch_gsv = max(-signed_net_gsv, 0)
-    net_dispatch_nsv = max(-signed_net_nsv, 0)
-    net_dispatch_lt = max(-signed_net_lt, 0)
-    net_dispatch_mt = max(-signed_net_mt, 0)
+    net_dispatch_gsv = 0.0
+    net_dispatch_nsv = 0.0
+    net_dispatch_lt = 0.0
+    net_dispatch_mt = 0.0
 
-    receipt_gsv = 0
-    receipt_nsv = 0
-    receipt_lt = 0
-    receipt_mt = 0
+    receipt_gsv = 0.0
+    receipt_nsv = 0.0
+    receipt_lt = 0.0
+    receipt_mt = 0.0
 
-    production_gsv = 0
-    production_nsv = 0
-    production_lt = 0
-    production_mt = 0
+    production_gsv = 0.0
+    production_nsv = 0.0
+    production_lt = 0.0
+    production_mt = 0.0
 
-    draining_gsv = 0
-    draining_nsv = 0
-    draining_lt = 0
-    draining_mt = 0
+    draining_gsv = 0.0
+    draining_nsv = 0.0
+    draining_lt = 0.0
+    draining_mt = 0.0
 
-    dispatch_gsv = 0
-    dispatch_nsv = 0
-    dispatch_lt = 0
-    dispatch_mt = 0
+    dispatch_gsv = 0.0
+    dispatch_nsv = 0.0
+    dispatch_lt = 0.0
+    dispatch_mt = 0.0
 
-    other_in_gsv = 0
-    other_in_nsv = 0
-    other_in_lt = 0
-    other_in_mt = 0
+    other_in_gsv = 0.0
+    other_in_nsv = 0.0
+    other_in_lt = 0.0
+    other_in_mt = 0.0
 
-    other_out_gsv = 0
-    other_out_nsv = 0
-    other_out_lt = 0
-    other_out_mt = 0
+    other_out_gsv = 0.0
+    other_out_nsv = 0.0
+    other_out_lt = 0.0
+    other_out_mt = 0.0
 
-    sign = str(params.get("tank_operation_sign") or "").upper()
+    sign = str(params.get("tank_operation_sign") or "").strip().upper()
     category = normalize_material_balance_category(params.get("tank_operation_category"))
 
-    if sign == "IN":
+    in_gsv = max(signed_net_gsv, 0.0)
+    in_nsv = max(signed_net_nsv, 0.0)
+    in_lt = max(signed_net_lt, 0.0)
+    in_mt = max(signed_net_mt, 0.0)
+
+    out_gsv = max(-signed_net_gsv, 0.0)
+    out_nsv = max(-signed_net_nsv, 0.0)
+    out_lt = max(-signed_net_lt, 0.0)
+    out_mt = max(-signed_net_mt, 0.0)
+
+    if sign in ("SET", "NEUTRAL"):
+        # Opening stock resets (SET) and closing / before-operation static
+        # gauges (NEUTRAL) establish reference tank snapshots without counting
+        # as receipts or dispatches.
+        pass
+
+    elif sign == "IN":
+        net_receipt_gsv = in_gsv
+        net_receipt_nsv = in_nsv
+        net_receipt_lt = in_lt
+        net_receipt_mt = in_mt
+
         if category == "RECEIPT":
-            receipt_gsv = signed_net_gsv
-            receipt_nsv = signed_net_nsv
-            receipt_lt = signed_net_lt
-            receipt_mt = signed_net_mt
-            net_receipt_gsv = receipt_gsv
-            net_receipt_nsv = receipt_nsv
-            net_receipt_lt = receipt_lt
-            net_receipt_mt = receipt_mt
-
+            receipt_gsv = in_gsv
+            receipt_nsv = in_nsv
+            receipt_lt = in_lt
+            receipt_mt = in_mt
         elif category == "PRODUCTION":
-            production_gsv = signed_net_gsv
-            production_nsv = signed_net_nsv
-            production_lt = signed_net_lt
-            production_mt = signed_net_mt
-
+            production_gsv = in_gsv
+            production_nsv = in_nsv
+            production_lt = in_lt
+            production_mt = in_mt
         else:
-            other_in_gsv = signed_net_gsv
-            other_in_nsv = signed_net_nsv
-            other_in_lt = signed_net_lt
-            other_in_mt = signed_net_mt
-            net_receipt_gsv = other_in_gsv
-            net_receipt_nsv = other_in_nsv
-            net_receipt_lt = other_in_lt
-            net_receipt_mt = other_in_mt
+            other_in_gsv = in_gsv
+            other_in_nsv = in_nsv
+            other_in_lt = in_lt
+            other_in_mt = in_mt
 
     elif sign == "OUT":
+        net_dispatch_gsv = out_gsv
+        net_dispatch_nsv = out_nsv
+        net_dispatch_lt = out_lt
+        net_dispatch_mt = out_mt
+
         if category == "DISPATCH":
-            dispatch_gsv = -signed_net_gsv
-            dispatch_nsv = -signed_net_nsv
-            dispatch_lt = -signed_net_lt
-            dispatch_mt = -signed_net_mt
-            net_dispatch_gsv = dispatch_gsv
-            net_dispatch_nsv = dispatch_nsv
-            net_dispatch_lt = dispatch_lt
-            net_dispatch_mt = dispatch_mt
-
+            dispatch_gsv = out_gsv
+            dispatch_nsv = out_nsv
+            dispatch_lt = out_lt
+            dispatch_mt = out_mt
         elif category == "DRAINING":
-            draining_gsv = -signed_net_gsv
-            draining_nsv = -signed_net_nsv
-            draining_lt = -signed_net_lt
-            draining_mt = -signed_net_mt
-
+            draining_gsv = out_gsv
+            draining_nsv = out_nsv
+            draining_lt = out_lt
+            draining_mt = out_mt
         else:
-            other_out_gsv = -signed_net_gsv
-            other_out_nsv = -signed_net_nsv
-            other_out_lt = -signed_net_lt
-            other_out_mt = -signed_net_mt
-            net_dispatch_gsv = other_out_gsv
-            net_dispatch_nsv = other_out_nsv
-            net_dispatch_lt = other_out_lt
-            net_dispatch_mt = other_out_mt
+            other_out_gsv = out_gsv
+            other_out_nsv = out_nsv
+            other_out_lt = out_lt
+            other_out_mt = out_mt
 
-    elif signed_net_gsv >= 0:
-        other_in_gsv = signed_net_gsv
-        other_in_nsv = signed_net_nsv
-        other_in_lt = signed_net_lt
-        other_in_mt = signed_net_mt
-        net_receipt_gsv = other_in_gsv
-        net_receipt_nsv = other_in_nsv
-        net_receipt_lt = other_in_lt
-        net_receipt_mt = other_in_mt
+    elif signed_net_gsv >= 0 and signed_net_nsv >= 0:
+        other_in_gsv = in_gsv
+        other_in_nsv = in_nsv
+        other_in_lt = in_lt
+        other_in_mt = in_mt
+        net_receipt_gsv = in_gsv
+        net_receipt_nsv = in_nsv
+        net_receipt_lt = in_lt
+        net_receipt_mt = in_mt
 
     else:
-        other_out_gsv = -signed_net_gsv
-        other_out_nsv = -signed_net_nsv
-        other_out_lt = -signed_net_lt
-        other_out_mt = -signed_net_mt
-        net_dispatch_gsv = other_out_gsv
-        net_dispatch_nsv = other_out_nsv
-        net_dispatch_lt = other_out_lt
-        net_dispatch_mt = other_out_mt
+        other_out_gsv = out_gsv
+        other_out_nsv = out_nsv
+        other_out_lt = out_lt
+        other_out_mt = out_mt
+        net_dispatch_gsv = out_gsv
+        net_dispatch_nsv = out_nsv
+        net_dispatch_lt = out_lt
+        net_dispatch_mt = out_mt
+
+    operation_dt = params.get("operation_datetime")
+    gauging_date = params.get("gauging_date")
+    gauging_time = params.get("gauging_time")
+    if gauging_date is None and operation_dt is not None:
+        gauging_date = operation_dt.date() if hasattr(operation_dt, "date") else None
+    if gauging_time is None and operation_dt is not None and hasattr(operation_dt, "strftime"):
+        gauging_time = (
+            operation_dt.strftime("%H:%M:%S")
+            if getattr(operation_dt, "second", 0)
+            else operation_dt.strftime("%H:%M")
+        )
 
     return {
         "ledger_id": params.get("ledger_id", params.get("transaction_id", 0)),
@@ -194,7 +195,9 @@ def build_out_turn_report_response_from_values(
         "ticket_number": params.get("ticket_number") or "",
         "operation_number": params.get("operation_number") or "",
         "accounting_date": params.get("accounting_date"),
-        "operation_datetime": params.get("operation_datetime"),
+        "gauging_date": gauging_date,
+        "gauging_time": gauging_time,
+        "operation_datetime": operation_dt,
         "location_code": params.get("location_code") or "",
         "location_name": prefetched_location_name
         if prefetched_location_name is not None

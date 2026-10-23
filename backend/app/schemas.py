@@ -1130,6 +1130,9 @@ class TankStockLedgerResponse(BaseModel):
     tank_asset_name: Optional[str] = None
 
     operation_date: date
+    gauging_date: Optional[date] = None
+    gauging_time: Optional[str] = None
+    gauging_datetime: Optional[datetime] = None
     product_name: Optional[str] = None
 
     accounting_date: Optional[date] = None
@@ -1250,6 +1253,8 @@ class OutTurnReportResponse(BaseModel):
     operation_number: str
 
     accounting_date: Optional[date] = None
+    gauging_date: Optional[date] = None
+    gauging_time: Optional[str] = None
     operation_datetime: Optional[datetime] = None
 
     location_code: str

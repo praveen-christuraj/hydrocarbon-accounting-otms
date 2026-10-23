@@ -9,6 +9,8 @@ const convertOutTurnRowFromApi = (row) => {
     operationNumber: row.operation_number || '',
 
     accountingDate: row.accounting_date || '',
+    gaugingDate: row.gauging_date || '',
+    gaugingTime: row.gauging_time || '',
     operationDatetime: row.operation_datetime || '',
 
     locationCode: row.location_code || '',
@@ -63,6 +65,16 @@ const convertOutTurnRowFromApi = (row) => {
     otherOutNsvBbl: Number(row.other_out_nsv_bbl || 0),
     otherOutLt: Number(row.other_out_lt || 0),
     otherOutMt: Number(row.other_out_mt || 0),
+
+    netReceiptGsvBbl: Number(row.net_receipt_gsv_bbl || 0),
+    netReceiptNsvBbl: Number(row.net_receipt_nsv_bbl || 0),
+    netReceiptLt: Number(row.net_receipt_lt || 0),
+    netReceiptMt: Number(row.net_receipt_mt || 0),
+
+    netDispatchGsvBbl: Number(row.net_dispatch_gsv_bbl || 0),
+    netDispatchNsvBbl: Number(row.net_dispatch_nsv_bbl || 0),
+    netDispatchLt: Number(row.net_dispatch_lt || 0),
+    netDispatchMt: Number(row.net_dispatch_mt || 0),
 
     signedNetMovementGsvBbl: Number(row.signed_net_movement_gsv_bbl || 0),
     signedNetMovementNsvBbl: Number(row.signed_net_movement_nsv_bbl || 0),

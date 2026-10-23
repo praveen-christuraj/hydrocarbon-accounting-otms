@@ -57,6 +57,10 @@ from app.services.transaction_helpers import (
     get_operation_type_by_code,
     parse_date_filter,
 )
+from app.services.operation_datetime import (
+    get_payload_operation_parts,
+    resolve_accounting_date,
+)
 
 router = APIRouter(prefix="/tanker-tracking", tags=["Tanker Tracking"])
 
@@ -178,12 +182,36 @@ def build_tanker_transaction_report_row(
                 return safe_float(value)
         return 0
 
+    payload_date, payload_time = get_payload_operation_parts(
+        tanker_payload, "tanker_payload"
+    )
+    effective_operation_date = payload_date or transaction.operation_date
+    payload_dt = (
+        datetime.combine(effective_operation_date, payload_time)
+        if effective_operation_date is not None and payload_time is not None
+        else (
+            datetime.combine(effective_operation_date, datetime.min.time())
+            if effective_operation_date is not None
+            else None
+        )
+    )
+    effective_accounting_date = (
+        resolve_accounting_date(
+            db,
+            transaction.origin_location_code,
+            effective_operation_date,
+            payload_time,
+        )
+        or effective_operation_date
+    )
+
     return {
         "transaction_id": transaction.id,
         "operation_number": transaction.operation_number,
         "ticket_number": get_transaction_ticket_number(transaction),
 
-        "operation_date": transaction.operation_date,
+        "operation_date": effective_accounting_date,
+        "_sort_datetime": payload_dt or datetime.min,
         "operation_start_datetime": transaction.operation_start_datetime,
         "operation_end_datetime": transaction.operation_end_datetime,
 
@@ -304,12 +332,6 @@ def get_filtered_tanker_transaction_report_rows(
     date_from_value = parse_date_filter(date_from, "Date From")
     date_to_value = parse_date_filter(date_to, "Date To")
 
-    if date_from_value:
-        query = query.filter(OperationTransaction.operation_date >= date_from_value)
-
-    if date_to_value:
-        query = query.filter(OperationTransaction.operation_date <= date_to_value)
-
     cleaned_location_code = clean_optional_text(location_code)
     cleaned_asset_code = clean_optional_text(asset_code)
     cleaned_convoy_number = clean_optional_text(convoy_number)
@@ -337,13 +359,7 @@ def get_filtered_tanker_transaction_report_rows(
     if cleaned_status:
         query = query.filter(OperationTransaction.status == cleaned_status)
 
-    transactions = (
-        query.order_by(
-            OperationTransaction.operation_date.desc(),
-            OperationTransaction.id.desc(),
-        )
-        .all()
-    )
+    transactions = query.order_by(OperationTransaction.id.desc()).all()
 
     rows = []
 
@@ -360,6 +376,12 @@ def get_filtered_tanker_transaction_report_rows(
             tanker_payload=tanker_payload,
             db=db,
         )
+
+        row_date = row.get("operation_date")
+        if date_from_value and (row_date is None or row_date < date_from_value):
+            continue
+        if date_to_value and (row_date is None or row_date > date_to_value):
+            continue
 
         cleaned_search = clean_optional_text(search)
 
@@ -390,6 +412,17 @@ def get_filtered_tanker_transaction_report_rows(
                 continue
 
         rows.append(row)
+
+    rows.sort(
+        key=lambda r: (
+            r.get("operation_date") or date.min,
+            r.get("_sort_datetime") or datetime.min,
+            r.get("transaction_id") or 0,
+        ),
+        reverse=True,
+    )
+    for r in rows:
+        r.pop("_sort_datetime", None)
 
     return rows
 
