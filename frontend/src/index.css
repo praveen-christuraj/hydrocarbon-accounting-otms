@@ -6132,6 +6132,31 @@ tr.is-selected > td {
   color: var(--text-muted);
 }
 
+/* ============================
+   Tanker Convoy Comparison print
+   ============================ */
+@media print {
+  .tanker-convoy-mtr-report .tanker-convoy-section {
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+
+  .tanker-convoy-mtr-report .tanker-convoy-table {
+    min-width: 0;
+    font-size: 8px;
+  }
+
+  .tanker-convoy-mtr-report .tanker-convoy-number-table td,
+  .tanker-convoy-mtr-report .tanker-convoy-number-table th {
+    padding: 2px 4px !important;
+  }
+
+  .tanker-convoy-mtr-report tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}
+
 /* =========================================================================
    Compact print reports (owner change 2026-10-16)
    -------------------------------------------------------------------------
@@ -6156,6 +6181,7 @@ tr.is-selected > td {
   .printable-register-report,
   .tanker-mtr-report,
   .barge-mtr-report,
+  .tanker-convoy-mtr-report,
   .mtr-page,
   .print-report,
   .export-operations-page,
@@ -6181,6 +6207,7 @@ tr.is-selected > td {
   .mtr-kv,
   .mtr-section,
   .barge-mtr-section,
+  .tanker-convoy-section,
   .print-report-section,
   .mtr-status-strip,
   .mtr-remarks-grid,
@@ -6197,6 +6224,7 @@ tr.is-selected > td {
   .printable-register-report table,
   .tanker-mtr-report table,
   .barge-mtr-report table,
+  .tanker-convoy-mtr-report table,
   .mtr-page table,
   .mtr-table,
   .print-table,
@@ -6221,6 +6249,8 @@ tr.is-selected > td {
   .tanker-mtr-report td,
   .barge-mtr-report th,
   .barge-mtr-report td,
+  .tanker-convoy-mtr-report th,
+  .tanker-convoy-mtr-report td,
   .mtr-page th,
   .mtr-page td,
   .mtr-table th,
@@ -6250,6 +6280,7 @@ tr.is-selected > td {
   .printable-register-report th,
   .tanker-mtr-report th,
   .barge-mtr-report th,
+  .tanker-convoy-mtr-report th,
   .mtr-page th,
   .mtr-table th,
   .print-table th,
@@ -6268,6 +6299,7 @@ tr.is-selected > td {
   .printable-register-report thead,
   .tanker-mtr-report thead,
   .barge-mtr-report thead,
+  .tanker-convoy-mtr-report thead,
   .mtr-page thead,
   .mtr-table thead,
   .print-table thead,
@@ -6284,6 +6316,7 @@ tr.is-selected > td {
   .printable-register-report tr,
   .tanker-mtr-report tr,
   .barge-mtr-report tr,
+  .tanker-convoy-mtr-report tr,
   .mtr-page tr,
   .mtr-table tr,
   .print-table tr,
