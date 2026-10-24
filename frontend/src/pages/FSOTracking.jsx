@@ -132,7 +132,13 @@ function FSOTracking({ locations = [], assets = [] }) {
       for (const group of allGroups) {
         const voyageStatus = group.voyage_status || 'OPEN'
         for (const ticket of group.tickets || []) {
-          tickets.push({ ...ticket, voyageStatus })
+          // The ticket payload carries net stock / net water only; the
+          // movement quantity is the same |net stock| + |net water| rule the
+          // OTR report uses on the server.
+          const movementQtyBbl =
+            Math.abs(Number(ticket.netStockBbl || 0)) +
+            Math.abs(Number(ticket.netWaterBbl || 0))
+          tickets.push({ ...ticket, voyageStatus, movementQtyBbl })
         }
       }
       setFsoTickets(tickets)

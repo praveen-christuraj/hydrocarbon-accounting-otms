@@ -1075,6 +1075,16 @@ function TankerTracking({
             const closed = g.trackingStatus === 'CLOSED'
             const pending = g.trackingStatus === 'PENDING_RECEIPT'
 
+            // Sender first, then every receiver ticket. Missing sides are
+            // dropped so a group without a sender never renders an empty row.
+            const ticketEntries = [
+              { ticket: g.senderTicket, role: 'SENDER' },
+              ...(g.receiverTickets || []).map((ticket) => ({
+                ticket,
+                role: 'RECEIVER',
+              })),
+            ].filter((entry) => Boolean(entry.ticket))
+
             return (
               <div key={g.groupKey} className="full-width-field">
                 <div className="section-title">
@@ -1202,26 +1212,14 @@ function TankerTracking({
                     </tr>
                   </thead>
                   <tbody>
-                    {[
-                      { ticket: g.senderTicket, role: 'SENDER' },
-                      ...(g.receiverTickets || []).map((ticket) => ({
-                        ticket,
-                        role: 'RECEIVER',
-                      })),
-                    ].length === 0 ? (
+                    {ticketEntries.length === 0 ? (
                       <tr>
                         <td colSpan="8" className="empty-table">
                           No tickets.
                         </td>
                       </tr>
                     ) : (
-                      [
-                        { ticket: g.senderTicket, role: 'SENDER' },
-                        ...(g.receiverTickets || []).map((ticket) => ({
-                          ticket,
-                          role: 'RECEIVER',
-                        })),
-                      ].map((entry) => {
+                      ticketEntries.map((entry) => {
                         const t = entry.ticket
                         return (
                           <tr key={t?.transactionId}>
@@ -1409,8 +1407,11 @@ function TankerTracking({
         </div>
       )}
 
+      {/* .printable-report hides itself on screen and prints on its own, so
+          the close control stays reachable next to it (same pattern as Barge
+          Tracking's convoy comparison). */}
       {convoyPrintOpen && (
-        <div className="print-only">
+        <>
           <TankerConvoyComparisonReport
             convoyNumber={selectedConvoy?.convoyNumber || convoyNumber}
             groups={selectedConvoy?.groups || []}
@@ -1421,7 +1422,7 @@ function TankerTracking({
               Close Report
             </button>
           </div>
-        </div>
+        </>
       )}
 
       {ackGroup && (
