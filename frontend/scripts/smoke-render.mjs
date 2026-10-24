@@ -385,6 +385,132 @@ globalThis.fetch = async (input, init = {}) => {
     }
     return jsonResponse(roleLocations)
   }
+  /* Tanker Tracking + FSO Tracking: one shared convoy fixture each, so the
+     convoy list / trip tabs and the FSO summary tab render with real rows. */
+  if (path.startsWith('/tanker-tracking')) {
+    const ticket = (extra = {}) => ({
+      transaction_id: 1, ticket_number: 'TKT-0001', operation_number: 'OP-0001',
+      movement_role: 'SENDER', operation_date: '2026-10-10',
+      operation_type_code: 'TANKER_LOADING', operation_type_name: 'Tanker Loading',
+      origin_location_code: 'LOC001', origin_location_name: 'Terminal 1',
+      destination_location_code: 'LOC002', destination_location_name: 'Terminal 2',
+      sender_location_code: 'LOC001', sender_location_name: 'Terminal 1',
+      receiver_location_code: 'LOC002', receiver_location_name: 'Terminal 2',
+      sender_code: 'LOC001', sender_name: 'Terminal 1',
+      receiver_code: 'LOC002', receiver_name: 'Terminal 2',
+      primary_asset_code: 'TNK-001', primary_asset_name: 'Tanker Alpha',
+      primary_asset_type_code: 'TANKER',
+      prime_mover_asset_code: 'PM-001', prime_mover_asset_name: 'Prime Mover 1',
+      tanker_asset_code: 'TNK-001', tanker_asset_name: 'Tanker Alpha',
+      tanker_chassis_number: 'CHS-001', convoy_number: 'CNV-2026-001',
+      product_name: 'Crude Oil', total_dip_cm: 210.5, water_dip_cm: 2.1,
+      bsw_percent: 0.5, observed_api: 34.2, api60: 34.5, vcf: 0.9987,
+      tov_bbl: 5200, free_water_bbl: 12, gov_bbl: 5188, gsv_bbl: 5178,
+      bsw_bbl: 25.9, nsv_bbl: 5152.1, lt: 650, mt: 660,
+      seal_c1: 'C1-1001', seal_c2: 'C2-1001', seal_m1: 'M1-1001', seal_m2: 'M2-1001',
+      remarks: '', status: 'Approved', created_by: 'admin',
+      created_at: now, updated_at: now, ...extra,
+    })
+    const receiver = ticket({
+      transaction_id: 2, ticket_number: 'TKT-0002', operation_number: 'OP-0002',
+      movement_role: 'RECEIVER', operation_type_code: 'TANKER_RECEIPT',
+      operation_type_name: 'Tanker Receipt', nsv_bbl: 5148.6, total_dip_cm: 209.8,
+    })
+    const groups = [
+      {
+        group_key: 'CNV-2026-001::TNK-001', convoy_number: 'CNV-2026-001',
+        tanker_asset_code: 'TNK-001', tanker_asset_name: 'Tanker Alpha',
+        tanker_chassis_number: 'CHS-001', prime_mover_asset_code: 'PM-001',
+        prime_mover_asset_name: 'Prime Mover 1', product_name: 'Crude Oil',
+        sender_ticket: ticket(), receiver_tickets: [receiver],
+        latest_receiver_ticket: receiver,
+        acknowledgement_id: 11, acknowledged_by: 'admin', acknowledged_at: now,
+        acknowledgement_remarks: 'Arrived', closed_by: null, closed_at: null,
+        closure_remarks: null,
+        seal_checks: [
+          { seal_name: 'C1', sender_value: 'C1-1001', receiver_value: 'C1-1001', status: 'MATCHED' },
+          { seal_name: 'C2', sender_value: 'C2-1001', receiver_value: 'C2-1001', status: 'MATCHED' },
+        ],
+        quantity_comparison: {
+          sender_transaction_id: 1, receiver_transaction_id: 2,
+          sender_gov_bbl: 5188, receiver_gov_bbl: 5184.2, gov_variance_bbl: -3.8,
+          sender_gsv_bbl: 5178, receiver_gsv_bbl: 5174.1, gsv_variance_bbl: -3.9,
+          sender_nsv_bbl: 5152.1, receiver_nsv_bbl: 5148.6, nsv_variance_bbl: -3.5,
+          nsv_variance_percent: -0.0679, sender_lt: 650, receiver_lt: 649.5,
+          lt_variance: -0.5, sender_mt: 660, receiver_mt: 659.4, mt_variance: -0.6,
+        },
+        tracking_status: 'MATCHED', warning_messages: [],
+      },
+      {
+        group_key: 'CNV-2026-002::TNK-002', convoy_number: 'CNV-2026-002',
+        tanker_asset_code: 'TNK-002', tanker_asset_name: 'Tanker Bravo',
+        tanker_chassis_number: 'CHS-002', prime_mover_asset_code: 'PM-002',
+        prime_mover_asset_name: 'Prime Mover 2', product_name: 'Crude Oil',
+        sender_ticket: ticket({ transaction_id: 3, ticket_number: 'TKT-0003', convoy_number: 'CNV-2026-002', tanker_asset_code: 'TNK-002', tanker_asset_name: 'Tanker Bravo' }),
+        receiver_tickets: [], latest_receiver_ticket: null,
+        acknowledgement_id: 12, acknowledged_by: 'admin', acknowledged_at: now,
+        acknowledgement_remarks: '', closed_by: 'admin', closed_at: now,
+        closure_remarks: 'Settled', seal_checks: [], quantity_comparison: null,
+        tracking_status: 'CLOSED', warning_messages: [],
+      },
+    ]
+    return jsonResponse({
+      rows: groups,
+      total_groups: groups.length,
+      pending_receipts: 0,
+      received_groups: 0,
+      compared_groups: 1,
+      seal_mismatch_groups: 0,
+      quantity_variance_groups: 0,
+    })
+  }
+
+  if (path.startsWith('/shuttle-fso/fso-tracking')) {
+    const tab = new URL(url, 'http://x').searchParams.get('tab') || 'OPEN'
+    const fsoTicket = (extra = {}) => ({
+      transaction_id: 101, ticket_number: 'FSO-2026-0101', operation_number: 'OP-0101',
+      location_code: 'LOC001', location_name: 'Terminal 1', shuttle_number: 'SH100',
+      fso_asset_code: 'FSO-001', fso_asset_name: 'FSO Unity', product_name: 'Crude Oil',
+      operation_date: '2026-10-12', event_time: '06:30', operation_label: 'Receipt',
+      vessel_name: 'Shuttle Delta', vessel_quantity_bbl: 12000,
+      opening_stock_bbl: 150000, opening_water_bbl: 400,
+      closing_stock_bbl: 162000, closing_water_bbl: 400,
+      net_stock_bbl: 12000, net_water_bbl: 0, variance_bbl: 0,
+      remarks: '', status: 'Approved', created_by: 'admin',
+      created_at: now, updated_at: now, ...extra,
+    })
+    const base = {
+      location_code: 'LOC001', location_name: 'Terminal 1', shuttle_number: 'SH100',
+      fso_asset_code: 'FSO-001', fso_asset_name: 'FSO Unity',
+      total_receipts_bbl: 12000, total_exports_bbl: 9500, total_water_in_bbl: 0,
+      total_water_out_bbl: 0, net_water_bbl: 0, loss_gain_bbl: 0,
+      total_variance_bbl: 0, shuttle_discharge_bbl: 12000, fso_receipt_bbl: 12000,
+      variance_bbl: 0,
+    }
+    const openGroup = {
+      ...base,
+      group_key: 'LOC001|SH100|FSO-001', voyage_status: 'OPEN',
+      closed_by: null, closed_at: null, closure_remarks: null,
+      tickets: [
+        fsoTicket(),
+        fsoTicket({
+          transaction_id: 102, ticket_number: 'FSO-2026-0102', operation_number: 'OP-0102',
+          operation_date: '2026-10-13', operation_label: 'Export', vessel_name: 'MT Bonny',
+          vessel_quantity_bbl: 0, opening_stock_bbl: 162000, closing_stock_bbl: 152500,
+          net_stock_bbl: -9500,
+        }),
+      ],
+    }
+    const closedGroup = {
+      ...base,
+      group_key: 'LOC001|SH099|FSO-001', shuttle_number: 'SH099', voyage_status: 'CLOSED',
+      closed_by: 'admin', closed_at: now, closure_remarks: 'Settled',
+      tickets: [fsoTicket({ transaction_id: 103, ticket_number: 'FSO-2026-0099', shuttle_number: 'SH099', operation_date: '2026-09-29' })],
+    }
+    const rows = tab.toUpperCase() === 'CLOSED' ? [closedGroup] : [openGroup]
+    return jsonResponse({ rows, total_groups: rows.length, page: 1, page_size: 200, has_more: false })
+  }
+
   if (path.startsWith('/operation-transactions')) {
     const historyMatch = path.match(/^\/operation-transactions\/(\d+)\/status-history/)
     if (historyMatch) return jsonResponse([])
@@ -928,6 +1054,83 @@ try {
           await flush(120)
         }
       }
+    }
+
+    if (path === '/tanker-tracking') {
+      // Open / Closed trip tabs, convoy list, then the convoy detail.
+      const tabs = qa('.list-tab').map((b) => text(b))
+      check('tanker tracking has open/closed trip tabs', tabs.length === 2, tabs.join(' | '))
+
+      const rows = qa('.main-content tbody tr')
+      check('tanker tracking lists convoys', rows.length >= 1, `${rows.length} row(s)`)
+      check(
+        'tanker convoy row shows the convoy number',
+        text(q('.main-content tbody tr')).includes('CNV-2026-001'),
+        text(q('.main-content tbody tr')).slice(0, 90)
+      )
+
+      // Closed tab holds the closed convoy.
+      const closedTab = qa('.list-tab').find((b) => text(b).includes('Closed'))
+      click(closedTab)
+      await flush(150)
+      check(
+        'closed tab lists the closed convoy only',
+        text(q('.main-content tbody')).includes('CNV-2026-002')
+          && !text(q('.main-content tbody')).includes('CNV-2026-001'),
+        text(q('.main-content tbody tr')).slice(0, 90)
+      )
+
+      const openTab = qa('.list-tab').find((b) => text(b).includes('Open'))
+      click(openTab)
+      await flush(150)
+
+      // Open the convoy detail (print comparison lives there).
+      const viewButton = qa('.main-content tbody button').find((b) => text(b) === 'View')
+      click(viewButton)
+      await flush(200)
+      check('convoy detail opens', Boolean(q('.modal, .modal-dialog, [role="dialog"]')))
+      const printButton = qa('button').find((b) => text(b) === 'Print Convoy Comparison')
+      check('convoy comparison print action is present', Boolean(printButton))
+
+      if (printButton) {
+        click(printButton)
+        await flush(150)
+        const report = q('.tanker-convoy-mtr-report')
+        check('convoy comparison report renders', Boolean(report))
+        check(
+          'convoy comparison report names the tanker and its tickets',
+          Boolean(report)
+            && text(report).includes('Tanker Alpha (TNK-001)')
+            && text(report).includes('TKT-0001')
+            && text(report).includes('TKT-0002'),
+          report ? text(report).slice(0, 140) : ''
+        )
+        check(
+          'convoy comparison report has quantity totals',
+          Boolean(report) && text(report).includes('Convoy Quantity Totals')
+        )
+        const closeReport = qa('button').find((b) => text(b).includes('Close Report'))
+        if (closeReport) click(closeReport)
+        await flush(100)
+      }
+    }
+
+    if (path === '/fso-tracking') {
+      // Summary is the landing tab: every FSO ticket with its status.
+      const heading = text(q('.main-content h3'))
+      check('fso tracking opens on the summary tab', heading.includes('Summary'), heading)
+
+      check(
+        'fso summary loads open and closed voyages',
+        apiCalls.some((c) => c.includes('/shuttle-fso/fso-tracking?tab=OPEN'))
+          && apiCalls.some((c) => c.includes('/shuttle-fso/fso-tracking?tab=CLOSED'))
+      )
+
+      const bodyText = text(q('.main-content'))
+      check('fso summary lists tickets', bodyText.includes('FSO-2026-0101'), bodyText.slice(0, 90))
+      check('fso summary shows ticket status', bodyText.includes('Approved'))
+      check('fso summary shows voyage status', /Open|Closed/.test(bodyText))
+      check('fso summary has pagination and filters', Boolean(q('.data-filter-bar')) && Boolean(q('.main-content table')))
     }
 
     if (path === '/barge-seal-master') {
