@@ -1,31 +1,28 @@
 import { logUiAction } from '../utils/actionLogger'
 import { resolveReceiverCode, resolveSenderCode } from '../utils/senderReceiver'
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
-import DataTableToolbar from '../components/common/DataTableToolbar'
-import { useDataFilters } from '../hooks/useDataFilters'
-import { useAutoColumns } from '../hooks/useAutoColumns'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   acknowledgeTankerReceipt,
   closeTankerMovement,
   getTankerTracking,
   revokeTankerAcknowledgement,
 } from '../api/tankerTrackingApi'
+import TankerConvoyComparisonReport from '../components/reports/TankerConvoyComparisonReport'
 import TankerMtrComparisonReport from '../components/reports/TankerMtrComparisonReport'
-import AlertMessage from '../components/common/AlertMessage'
+import { useDataFilters } from '../hooks/useDataFilters'
 import useActionFeedback from '../hooks/useActionFeedback'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
+import AlertMessage from '../components/common/AlertMessage'
+import Modal from '../components/common/Modal'
 
-const today = new Date().toISOString().slice(0, 10)
+const TRIP_TABS = [
+  { value: 'OPEN', label: 'Open Trips' },
+  { value: 'CLOSED', label: 'Closed Trips' },
+]
 
-const defaultFilters = {
-  date_from: '',
-  date_to: '',
-  convoy_number: '',
-  location_code: '',
-  tanker_asset_code: '',
-  search: '',
-}
+const NO_CONVOY_LABEL = '—'
 
 const formatNumber = (value, decimals = 3) => {
   const numberValue = Number(value || 0)
@@ -98,37 +95,111 @@ const getSealStatusClass = (status) => {
   return 'submitted'
 }
 
-const escapeCsvValue = (value) => {
-  const text = String(value ?? '')
+function tankerLabel(group) {
+  const name = group.tankerAssetName || ''
+  const code = group.tankerAssetCode || '-'
+  return name ? `${name} (${code})` : code
+}
 
-  if (text.includes(',') || text.includes('"') || text.includes('\n')) {
-    return `"${text.replace(/"/g, '""')}"`
+function tankerChassisLabel(group) {
+  return group.tankerChassisNumber ? group.tankerChassisNumber : '-'
+}
+
+/**
+ * Build convoy summaries from tanker tracking groups. A convoy is CLOSED only
+ * when every tanker group in it is closed; otherwise it is OPEN.
+ */
+function buildTankerConvoys(rows = []) {
+  const byConvoy = new Map()
+
+  for (const group of rows) {
+    const convoyNumber = String(group.convoyNumber || '').trim() || NO_CONVOY_LABEL
+    if (!byConvoy.has(convoyNumber)) {
+      byConvoy.set(convoyNumber, [])
+    }
+    byConvoy.get(convoyNumber).push(group)
   }
 
-  return text
+  return Array.from(byConvoy.entries()).map(([convoyNumber, convoyGroups]) => {
+    const status =
+      convoyGroups.every((g) => g.trackingStatus === 'CLOSED')
+        ? 'CLOSED'
+        : 'OPEN'
+
+    const tankers = new Map()
+    let firstDate = null
+    let lastDate = null
+    let ticketCount = 0
+
+    for (const g of convoyGroups) {
+      tankers.set(g.tankerAssetCode || 'UNKNOWN_TANKER', g)
+      ticketCount += (g.senderTicket ? 1 : 0) + g.receiverTickets.length
+
+      for (const t of [g.senderTicket, ...g.receiverTickets].filter(Boolean)) {
+        const d = t.operationDate
+        if (d && (!firstDate || d < firstDate)) firstDate = d
+        if (d && (!lastDate || d > lastDate)) lastDate = d
+      }
+    }
+
+    const sender = convoyGroups.find((g) => g.senderTicket)?.senderTicket
+    const receiver = convoyGroups.find(
+      (g) => g.latestReceiverTicket,
+    )?.latestReceiverTicket
+
+    const senderText = sender
+      ? sender.senderName ||
+          sender.originLocationName ||
+          sender.senderCode ||
+          sender.originLocationCode ||
+          '-'
+      : '-'
+    const receiverText = receiver
+      ? receiver.receiverName ||
+          receiver.destinationLocationName ||
+          receiver.receiverCode ||
+          receiver.destinationLocationCode ||
+          '-'
+      : '-'
+
+    return {
+      convoyNumber,
+      status,
+      tankers: Array.from(tankers.values()),
+      tankerCount: tankers.size,
+      ticketCount,
+      senderText,
+      receiverText,
+      firstOperationDate: firstDate || '-',
+      lastOperationDate: lastDate || '-',
+      groups: convoyGroups,
+    }
+  })
 }
 
 function TankerTracking({
   locations = [],
-  assets = [],
   operationTypes = [],
   operationTemplates = [],
   loggedInUser,
 }) {
   const navigate = useNavigate()
+  const location = useLocation()
 
   const isAdminBootstrap =
     loggedInUser?.isAdmin === true ||
     String(loggedInUser?.username || '').trim().toLowerCase() === 'admin' ||
-    (Array.isArray(loggedInUser?.roles) && loggedInUser.roles.some((role) =>
-      String(role?.role_name || role?.roleName || '').trim().toLowerCase() === 'admin'
-    ))
+    (Array.isArray(loggedInUser?.roles) &&
+      loggedInUser.roles.some((role) =>
+        String(role?.role_name || role?.roleName || '').trim().toLowerCase() ===
+          'admin',
+      ))
 
   const hasPermission = (permissionName) =>
     Boolean(
       loggedInUser?.permissions?.some(
-        (p) => p.permissionName === permissionName
-      )
+        (p) => p.permissionName === permissionName,
+      ),
     )
 
   const canManage = useMemo(() => {
@@ -136,9 +207,6 @@ function TankerTracking({
     return hasPermission('Create Operation Entry')
   }, [loggedInUser])
 
-  // Cross-location receiving side (PERMISSION_CRITERIA_MODEL.md, section 7.1):
-  // the receiving terminal may hold the scoped shipment-receipt capabilities
-  // instead of the general tanker tracking edit / entry rights.
   const canAcknowledgeReceipt =
     isAdminBootstrap ||
     canManage ||
@@ -147,7 +215,7 @@ function TankerTracking({
 
   const canCreateReceivingTicket =
     isAdminBootstrap || canManage || hasPermission('Create Receiving Ticket')
-  const [filters, setFilters] = useState(defaultFilters)
+
   const [report, setReport] = useState({
     rows: [],
     totalGroups: 0,
@@ -157,9 +225,23 @@ function TankerTracking({
     sealMismatchGroups: 0,
     quantityVarianceGroups: 0,
   })
-  const [trackingStatusFilter, setTrackingStatusFilter] = useState('ALL')
-  const [selectedGroup, setSelectedGroup] = useState(null)
-  const [printGroup, setPrintGroup] = useState(null)
+  const [tripTab, setTripTab] = useState('OPEN')
+  const [loading, setLoading] = useState(false)
+
+  // Convoy list pagination
+  const [convoyPage, setConvoyPage] = useState(1)
+  const convoyPageSize = usePageSize()
+
+  // Convoy detail (opened from the convoy list or via ?convoy_number=)
+  const [convoyNumber, setConvoyNumber] = useState('')
+  const [convoyDetailOpen, setConvoyDetailOpen] = useState(false)
+  const [selectedConvoy, setSelectedConvoy] = useState(null)
+
+  // Convoy comparison print
+  const [convoyPrintOpen, setConvoyPrintOpen] = useState(false)
+
+  // Action panels (acknowledge / revoke / close), opened from the convoy
+  // detail, one tanker at a time - same state shape as before.
   const [ackGroup, setAckGroup] = useState(null)
   const [ackForm, setAckForm] = useState({
     receiverLocationCode: '',
@@ -167,69 +249,18 @@ function TankerTracking({
   })
   const [revokeGroup, setRevokeGroup] = useState(null)
   const [revokeRemarks, setRevokeRemarks] = useState('')
-  const [loading, setLoading] = useState(false)
   const [closeGroup, setCloseGroup] = useState(null)
   const [closureRemarks, setClosureRemarks] = useState('')
-  // Action feedback: little pop-up (toast) + inline message near the
-  // action area (owner rule 8) - never at the bottom of the page.
+
+  // Action feedback: little pop-up (toast) + inline message near the action
+  // area (owner rule 8).
   const feedback = useActionFeedback()
   const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
   const [confirmRevokeGroup, setConfirmRevokeGroup] = useState(null)
   const [confirmCloseGroup, setConfirmCloseGroup] = useState(null)
-  const [page, setPage] = useState(1)
-  
-  const pageSize = usePageSize()
-  const trackingExceptionSummary = useMemo(() => {
-    const rows = report.rows || []
 
-    return {
-      all: rows.length,
-      pendingReceipt: rows.filter((row) => row.trackingStatus === 'PENDING_RECEIPT')
-        .length,
-      acknowledged: rows.filter((row) => row.trackingStatus === 'ACKNOWLEDGED')
-        .length,
-      sealMismatch: rows.filter((row) => row.trackingStatus === 'SEAL_MISMATCH')
-        .length,
-      quantityVariance: rows.filter(
-        (row) => row.trackingStatus === 'QUANTITY_VARIANCE'
-      ).length,
-      matched: rows.filter((row) => row.trackingStatus === 'MATCHED').length,
-      closed: rows.filter((row) => row.trackingStatus === 'CLOSED').length,
-      noSender: rows.filter((row) => row.trackingStatus === 'NO_SENDER').length,
-    }
-  }, [report.rows])
-
-  const filteredTrackingRows = useMemo(() => {
-    if (trackingStatusFilter === 'ALL') {
-      return report.rows || []
-    }
-
-    return (report.rows || []).filter((row) => {
-      return row.trackingStatus === trackingStatusFilter
-    })
-  }, [report.rows, trackingStatusFilter])
-
-  const filteredTrackingRowsFilters = useDataFilters(filteredTrackingRows, useAutoColumns(filteredTrackingRows), { module: 'Tanker Tracking' })
-  const visibleTrackingRows = paginateRows(filteredTrackingRowsFilters.filteredRows, page, pageSize)
-
-  useEffect(() => {
-    setPage(1)
-  }, [filteredTrackingRows.length])
-
-  const tankerAssets = useMemo(() => {
-    return assets.filter((asset) => {
-      const typeCode = String(asset.assetTypeCode || '').toUpperCase()
-      const name = String(asset.assetName || '').toUpperCase()
-
-      return (
-        typeCode.includes('TANKER') ||
-        typeCode.includes('TRAILER') ||
-        typeCode.includes('TRUCK') ||
-        name.includes('TANKER') ||
-        name.includes('TRAILER')
-      )
-    })
-  }, [assets])
+  // Print MTR for a single tanker group
+  const [printGroup, setPrintGroup] = useState(null)
 
   const tankerReceiverOperationTypes = useMemo(() => {
     return operationTypes.filter((operationType) => {
@@ -251,7 +282,7 @@ function TankerTracking({
         name.includes('DISCHARGE')
 
       const applicableAssetTypeCode = String(
-        operationType.applicableAssetTypeCode || ''
+        operationType.applicableAssetTypeCode || '',
       ).toUpperCase()
 
       const looksLikeTanker =
@@ -296,17 +327,9 @@ function TankerTracking({
     try {
       setLoading(true)
 
-      const data = await getTankerTracking(filters)
-
+      const data = await getTankerTracking({})
       setReport(data)
-
-      if (selectedGroup) {
-        const refreshedSelectedGroup = data.rows.find((row) => {
-          return row.groupKey === selectedGroup.groupKey
-        })
-
-        setSelectedGroup(refreshedSelectedGroup || null)
-      }
+      return data
     } catch (error) {
       notifyError(error.message || 'Unable to load Tanker Tracking')
     } finally {
@@ -315,22 +338,150 @@ function TankerTracking({
   }
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadTracking()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const handleFilterChange = (e) => {
-    const { name, value } = e.target
+  const convoys = useMemo(
+    () => buildTankerConvoys(report.rows || []),
+    [report.rows],
+  )
 
-    setFilters((current) => ({
-      ...current,
-      [name]: value,
-    }))
+  const tabConvoys = convoys.filter(
+    (convoy) =>
+      tripTab === 'CLOSED' ? convoy.status === 'CLOSED' : convoy.status !== 'CLOSED',
+  )
+
+  const convoyCounts = useMemo(
+    () => ({
+      open: convoys.filter((c) => c.status !== 'CLOSED').length,
+      closed: convoys.filter((c) => c.status === 'CLOSED').length,
+    }),
+    [convoys],
+  )
+
+  const convoyColumns = [
+    { key: 'convoyNumber', label: 'Convoy No' },
+    { key: 'status', label: 'Status' },
+    { key: 'tankers', label: 'Tanker(s)', accessor: (row) =>
+      row.tankers.map(tankerLabel).join(', ') },
+    { key: 'ticketCount', label: 'Tickets', type: 'number' },
+    { key: 'senderText', label: 'Sender' },
+    { key: 'receiverText', label: 'Receiver' },
+    { key: 'firstOperationDate', label: 'First Date', type: 'date' },
+    { key: 'lastOperationDate', label: 'Last Date', type: 'date' },
+  ]
+
+  const convoyFilters = useDataFilters(tabConvoys, convoyColumns, {
+    module: 'Tanker Tracking',
+  })
+  const filteredConvoyCount = convoyFilters.filteredRows.length
+  const visibleConvoyRows = paginateRows(
+    convoyFilters.filteredRows,
+    convoyPage,
+    convoyPageSize,
+  )
+
+  // Go back to page 1 when the tab or the filtered result set changes.
+  const pageResetKey = `${tripTab}|${filteredConvoyCount}`
+  const [appliedPageResetKey, setAppliedPageResetKey] = useState(pageResetKey)
+  if (appliedPageResetKey !== pageResetKey) {
+    setAppliedPageResetKey(pageResetKey)
+    setConvoyPage(1)
   }
 
-  const handleClearFilters = () => {
-    setFilters(defaultFilters)
+  const switchTripTab = (tab) => {
+    if (tab === tripTab) return
+    logUiAction('Tanker Tracking', 'Switch Trip Tab', { tab })
+    setConvoyPage(1)
+    setConvoyError('')
+    setTripTab(tab)
   }
+
+  const [convoyError, setConvoyError] = useState('')
+
+  const openConvoy = async (convoyNo, reload = true) => {
+    const clean = String(convoyNo || '').trim()
+    if (!clean) return
+
+    logUiAction('Tanker Tracking', 'Open Convoy', { convoyNumber: clean })
+    setConvoyNumber(clean)
+    setConvoyError('')
+
+    const data = reload ? await loadTracking() : null
+    const rows = (data ? data.rows : report.rows) || []
+
+    const found = buildTankerConvoys(rows).find(
+      (c) => c.convoyNumber === clean,
+    )
+    setSelectedConvoy(found || null)
+    setConvoyDetailOpen(true)
+    if (!found) {
+      notifyError(`Convoy ${clean} not found`)
+    }
+  }
+
+  const closeConvoyDetail = () => {
+    setConvoyDetailOpen(false)
+    setSelectedConvoy(null)
+    setConvoyNumber('')
+    setConvoyPrintOpen(false)
+    feedback.clear()
+  }
+
+  const handleSearchConvoy = async (e) => {
+    e.preventDefault()
+    setConvoyDetailOpen(true)
+    await openConvoy(convoyNumber, true)
+  }
+
+  // Auto-open the convoy detail when arriving with ?convoy_number=...
+  const convoyFromUrl = useMemo(() => {
+    const params = new URLSearchParams(location.search)
+    return String(params.get('convoy_number') || '').trim()
+  }, [location.search])
+  const [autoOpenedConvoy, setAutoOpenedConvoy] = useState('')
+  if (convoyFromUrl && autoOpenedConvoy !== convoyFromUrl) {
+    setAutoOpenedConvoy(convoyFromUrl)
+    openConvoy(convoyFromUrl, true)
+  }
+
+  const openConvoyComparisonReport = () => {
+    const comparisons =
+      (selectedConvoy?.groups || []).filter(
+        (g) => Boolean(g.quantityComparison),
+      ) || []
+    if (comparisons.length === 0) {
+      notifyError(
+        'No approved tanker comparisons are available for this convoy yet.',
+      )
+      return
+    }
+
+    logUiAction('Tanker Tracking', 'Print Convoy Comparison Report', {
+      convoyNumber: selectedConvoy.convoyNumber,
+      comparisonCount: comparisons.length,
+      tankerCount: selectedConvoy.tankerCount,
+    })
+    setConvoyPrintOpen(true)
+    setTimeout(() => {
+      try {
+        window.print()
+      } catch {
+        // ignore
+      }
+    }, 250)
+  }
+
+  const closeConvoyComparisonReport = () => {
+    setConvoyPrintOpen(false)
+  }
+
+  // -------------------------------------------------------------------------
+  // Tanker group actions (acknowledge / revoke / close / receiver entry).
+  // These panels are rendered at page level and opened from the convoy detail.
+  // -------------------------------------------------------------------------
 
   const openAcknowledgePanel = (row) => {
     if (!row.senderTicket?.transactionId) {
@@ -349,10 +500,7 @@ function TankerTracking({
 
   const closeAcknowledgePanel = () => {
     setAckGroup(null)
-    setAckForm({
-      receiverLocationCode: '',
-      remarks: '',
-    })
+    setAckForm({ receiverLocationCode: '', remarks: '' })
   }
 
   const handleAckFormChange = (e) => {
@@ -414,15 +562,6 @@ function TankerTracking({
     setRevokeRemarks('')
   }
 
-  const handleRevokeAcknowledgement = async () => {
-    if (!revokeGroup?.acknowledgementId) {
-      notifyError('Acknowledgement ID is missing.')
-      return
-    }
-
-    setConfirmRevokeGroup(revokeGroup)
-  }
-
   const confirmRevokeAction = async () => {
     const group = confirmRevokeGroup
     setConfirmRevokeGroup(null)
@@ -459,7 +598,7 @@ function TankerTracking({
 
     if (!row.latestReceiverTicket || !row.quantityComparison) {
       notifyError(
-        'Movement can be closed only after receiver ticket is Approved and comparison is available.'
+        'Movement can be closed only after receiver ticket is Approved and comparison is available.',
       )
       return
     }
@@ -471,15 +610,6 @@ function TankerTracking({
   const closeClosePanel = () => {
     setCloseGroup(null)
     setClosureRemarks('')
-  }
-
-  const handleCloseMovement = async () => {
-    if (!closeGroup?.acknowledgementId) {
-      notifyError('Acknowledgement ID is missing.')
-      return
-    }
-
-    setConfirmCloseGroup(closeGroup)
   }
 
   const confirmCloseAction = async () => {
@@ -520,18 +650,18 @@ function TankerTracking({
 
     if (!receiverOperationTypeCode) {
       notifyError(
-        'No active Tanker Receipt/Unloading operation type found. Please create an operation type such as TANKER_RECEIPT or TANKER_UNLOADING first.'
+        'No active Tanker Receipt/Unloading operation type found. Please create an operation type such as TANKER_RECEIPT or TANKER_UNLOADING first.',
       )
       return
     }
 
     const receiverTemplateId = getDefaultReceiverTemplateId(
-      receiverOperationTypeCode
+      receiverOperationTypeCode,
     )
 
     if (!receiverTemplateId) {
       notifyError(
-        'No active Tanker Receiver template found for the selected receipt operation type. Please create an Operation Template with Entry Layout Type = Tanker Loading and Calculation Engine = Tanker Quantity.'
+        'No active Tanker Receiver template found for the selected receipt operation type. Please create an Operation Template with Entry Layout Type = Tanker Loading and Calculation Engine = Tanker Quantity.',
       )
       return
     }
@@ -549,15 +679,10 @@ function TankerTracking({
     params.set('convoy_number', row.convoyNumber || '')
     params.set(
       'primary_asset_code',
-      row.tankerAssetCode || row.primeMoverAssetCode || ''
+      row.tankerAssetCode || row.primeMoverAssetCode || '',
     )
 
-    // Clubbed Sender / Receiver pairing. The receiving terminal (the sender
-    // ticket's Receiver) is the Origin of the receiver ticket - that is the
-    // location that owns and creates it - while the dispatching terminal
-    // (the sender ticket's Sender) is carried as its Sender. Both columns
-    // of each pair are written, so a ticket recorded before the clubbing
-    // (only origin / destination populated) pre-fills identically.
+    // Clubbed Sender / Receiver pairing.
     const senderCode = resolveSenderCode(row.senderTicket)
     const receiverCode = resolveReceiverCode(row.senderTicket)
     const receivingTerminal = receiverCode || senderCode || ''
@@ -576,7 +701,7 @@ function TankerTracking({
       'remarks',
       `Receiver entry against sender ticket ${
         row.senderTicket.ticketNumber || row.senderTicket.operationNumber
-      }`
+      }`,
     )
 
     navigate(`/operation-entry?${params.toString()}`)
@@ -599,147 +724,19 @@ function TankerTracking({
 
     if (!row.latestReceiverTicket || !row.quantityComparison) {
       notifyError(
-        'MTR comparison report is available only after the receiver ticket is Approved and compared.'
+        'MTR comparison report is available only after the receiver ticket is Approved and compared.',
       )
       return
     }
 
-    logUiAction('Tanker Tracking', 'Print Comparison Report', { groupKey: row.groupKey })
+    logUiAction('Tanker Tracking', 'Print Comparison Report', {
+      groupKey: row.groupKey,
+    })
     setPrintGroup(row)
 
     window.setTimeout(() => {
       window.print()
     }, 100)
-  }
-
-  const exportCsv = () => {
-    const headers = [
-      'Convoy Number',
-      'Tracking Status',
-      'Prime Mover',
-      'Tanker',
-      'Chassis',
-      'Product',
-      'Sender Ticket',
-      'Receiver Ticket',
-      'Sender NSV',
-      'Receiver NSV',
-      'NSV Variance',
-      'NSV Variance %',
-      'Seal C1',
-      'Seal C2',
-      'Seal M1',
-      'Seal M2',
-    ]
-
-    const rows = filteredTrackingRows.map((row) => {
-      const comparison = row.quantityComparison
-      const sender = row.senderTicket
-      const receiver = row.latestReceiverTicket
-
-      const sealStatus = {}
-      row.sealChecks.forEach((seal) => {
-        sealStatus[seal.sealName] = seal.status
-      })
-
-      return [
-        row.convoyNumber,
-        getTrackingStatusLabel(row.trackingStatus),
-        `${row.primeMoverAssetName || ''} (${row.primeMoverAssetCode || ''})`,
-        `${row.tankerAssetName || ''} (${row.tankerAssetCode || ''})`,
-        row.tankerChassisNumber,
-        row.productName,
-        sender?.ticketNumber || '',
-        receiver?.ticketNumber || '',
-        comparison?.senderNsvBbl ?? '',
-        comparison?.receiverNsvBbl ?? '',
-        comparison?.nsvVarianceBbl ?? '',
-        comparison?.nsvVariancePercent ?? '',
-        sealStatus.C1 || '',
-        sealStatus.C2 || '',
-        sealStatus.M1 || '',
-        sealStatus.M2 || '',
-      ]
-    })
-
-    const csv = [headers, ...rows]
-      .map((row) => row.map(escapeCsvValue).join(','))
-      .join('\n')
-
-    const blob = new Blob([csv], {
-      type: 'text/csv;charset=utf-8;',
-    })
-
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-
-    link.href = url
-    link.download = `tanker-tracking-${today}.csv`
-    link.click()
-
-    URL.revokeObjectURL(url)
-  }
-
-  const exportExcel = () => {
-    const rowsHtml = filteredTrackingRows
-      .map((row) => {
-        const comparison = row.quantityComparison
-        const sender = row.senderTicket
-        const receiver = row.latestReceiverTicket
-
-        return `
-          <tr>
-            <td>${row.convoyNumber || ''}</td>
-            <td>${getTrackingStatusLabel(row.trackingStatus)}</td>
-            <td>${row.primeMoverAssetName || ''} (${row.primeMoverAssetCode || ''})</td>
-            <td>${row.tankerAssetName || ''} (${row.tankerAssetCode || ''})</td>
-            <td>${row.tankerChassisNumber || ''}</td>
-            <td>${row.productName || ''}</td>
-            <td>${sender?.ticketNumber || ''}</td>
-            <td>${receiver?.ticketNumber || ''}</td>
-            <td>${comparison?.senderNsvBbl ?? ''}</td>
-            <td>${comparison?.receiverNsvBbl ?? ''}</td>
-            <td>${comparison?.nsvVarianceBbl ?? ''}</td>
-            <td>${comparison?.nsvVariancePercent ?? ''}</td>
-          </tr>
-        `
-      })
-      .join('')
-
-    const html = `
-      <table border="1">
-        <thead>
-          <tr>
-            <th>Convoy Number</th>
-            <th>Status</th>
-            <th>Prime Mover</th>
-            <th>Tanker</th>
-            <th>Chassis</th>
-            <th>Product</th>
-            <th>Sender Ticket</th>
-            <th>Receiver Ticket</th>
-            <th>Sender NSV</th>
-            <th>Receiver NSV</th>
-            <th>NSV Variance</th>
-            <th>Variance %</th>
-          </tr>
-        </thead>
-        <tbody>${rowsHtml}</tbody>
-      </table>
-    `
-
-    const blob = new Blob([html], {
-      type: 'application/vnd.ms-excel',
-    })
-
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-
-    link.href = url
-    link.download = `tanker-tracking-${today}.xls`
-    link.click()
-
-    URL.revokeObjectURL(url)
   }
 
   const renderTicketCard = (title, ticket) => {
@@ -758,10 +755,7 @@ function TankerTracking({
           <h4>{title}</h4>
 
           {ticket.transactionId && (
-            <button
-              type="button"
-              onClick={() => openOperationTicket(ticket.transactionId)}
-            >
+            <button type="button" onClick={() => openOperationTicket(ticket.transactionId)}>
               Open Ticket
             </button>
           )}
@@ -810,13 +804,20 @@ function TankerTracking({
     )
   }
 
+  const getRoleLabel = (movementRole) => {
+    const value = String(movementRole || '').toUpperCase()
+    return value === 'RECEIVER' ? 'Receiver' : value === 'SENDER' ? 'Sender' : 'Ticket'
+  }
+
   return (
     <div>
       <div className="screen-only">
       {confirmRevokeGroup && (
         <div className="confirm-overlay">
           <div className="confirm-dialog">
-            <p>Revoke acknowledgement for convoy {confirmRevokeGroup.convoyNumber}?</p>
+            <p>
+              Revoke acknowledgement for convoy {confirmRevokeGroup.convoyNumber}?
+            </p>
             <div className="confirm-actions">
               <button onClick={confirmRevokeAction}>Yes</button>
               <button onClick={() => setConfirmRevokeGroup(null)}>Cancel</button>
@@ -827,7 +828,9 @@ function TankerTracking({
       {confirmCloseGroup && (
         <div className="confirm-overlay">
           <div className="confirm-dialog">
-            <p>Close tanker movement for convoy {confirmCloseGroup.convoyNumber}?</p>
+            <p>
+              Close tanker movement for convoy {confirmCloseGroup.convoyNumber}?
+            </p>
             <div className="confirm-actions">
               <button onClick={confirmCloseAction}>Yes</button>
               <button onClick={() => setConfirmCloseGroup(null)}>Cancel</button>
@@ -835,121 +838,21 @@ function TankerTracking({
           </div>
         </div>
       )}
+
       <div className="page-title">
         <div>
           <h2>Tanker Tracking</h2>
           <p>
             Track road tanker dispatch, pending receipt, receiver entry,
-            quantity variance and seal cross-check.
+            quantity variance and seal cross-check, grouped by convoy.
           </p>
         </div>
-
-        <span className="record-count">{report.totalGroups} Groups</span>
       </div>
+
       {/* Action feedback: right next to the page actions + a little pop-up
           toast - never at the bottom of the page (owner rule 8). */}
       <AlertMessage tone="success" message={feedback.successMsg} onDismiss={clearSuccess} />
       <AlertMessage tone="error" message={feedback.errorMsg} onDismiss={clearError} />
-
-      {/* Single KPI strip: the coloured, clickable exception cards. The plain
-          "plan" summary cards were removed because they duplicated every number
-          (Tanker Tracking owner change 2026-10-16). */}
-      <p className="kpi-strip-caption no-print">
-        Tanker movement KPIs - select a card to filter the list below
-      </p>
-
-      <div className="tanker-exception-dashboard no-print">
-        <button
-          type="button"
-          className={`exception-card ${
-            trackingStatusFilter === 'ALL' ? 'selected' : ''
-          }`}
-          onClick={() => setTrackingStatusFilter('ALL')}
-        >
-          <span>All</span>
-          <strong>{trackingExceptionSummary.all}</strong>
-        </button>
-
-        <button
-          type="button"
-          className={`exception-card pending ${
-            trackingStatusFilter === 'PENDING_RECEIPT' ? 'selected' : ''
-          }`}
-          onClick={() => setTrackingStatusFilter('PENDING_RECEIPT')}
-        >
-          <span>Pending Receipt</span>
-          <strong>{trackingExceptionSummary.pendingReceipt}</strong>
-        </button>
-
-        <button
-          type="button"
-          className={`exception-card acknowledged ${
-            trackingStatusFilter === 'ACKNOWLEDGED' ? 'selected' : ''
-          }`}
-          onClick={() => setTrackingStatusFilter('ACKNOWLEDGED')}
-        >
-          <span>Acknowledged</span>
-          <strong>{trackingExceptionSummary.acknowledged}</strong>
-        </button>
-
-        <button
-          type="button"
-          className={`exception-card danger ${
-            trackingStatusFilter === 'SEAL_MISMATCH' ? 'selected' : ''
-          }`}
-          onClick={() => setTrackingStatusFilter('SEAL_MISMATCH')}
-        >
-          <span>Seal Mismatch</span>
-          <strong>{trackingExceptionSummary.sealMismatch}</strong>
-        </button>
-
-        <button
-          type="button"
-          className={`exception-card warning ${
-            trackingStatusFilter === 'QUANTITY_VARIANCE' ? 'selected' : ''
-          }`}
-          onClick={() => setTrackingStatusFilter('QUANTITY_VARIANCE')}
-        >
-          <span>Quantity Variance</span>
-          <strong>{trackingExceptionSummary.quantityVariance}</strong>
-        </button>
-
-        <button
-          type="button"
-          className={`exception-card success ${
-            trackingStatusFilter === 'MATCHED' ? 'selected' : ''
-          }`}
-          onClick={() => setTrackingStatusFilter('MATCHED')}
-        >
-          <span>Matched</span>
-          <strong>{trackingExceptionSummary.matched}</strong>
-        </button>
-
-        <button
-          type="button"
-          className={`exception-card success ${
-            trackingStatusFilter === 'CLOSED' ? 'selected' : ''
-          }`}
-          onClick={() => setTrackingStatusFilter('CLOSED')}
-        >
-          <span>Closed</span>
-          <strong>{trackingExceptionSummary.closed}</strong>
-        </button>
-      </div>
-
-      {trackingStatusFilter !== 'ALL' && (
-        <div className="info-box no-print">
-          Showing tanker tracking rows with status:{' '}
-          <strong>{getTrackingStatusLabel(trackingStatusFilter)}</strong>.
-          <button
-            type="button"
-            className="inline-action-btn"
-            onClick={() => setTrackingStatusFilter('ALL')}
-          >
-            Show All
-          </button>
-        </div>
-      )}
 
       <div className="info-box no-print">
         Tanker Tracking uses only <strong>Approved</strong> sender and receiver
@@ -965,340 +868,561 @@ function TankerTracking({
         </div>
       )}
 
-      <div className="report-filter-panel no-print">
-        <div>
-          <label>Date From</label>
-          <input
-            type="date"
-            name="date_from"
-            value={filters.date_from}
-            onChange={handleFilterChange}
-          />
-        </div>
-
-        <div>
-          <label>Date To</label>
-          <input
-            type="date"
-            name="date_to"
-            value={filters.date_to}
-            onChange={handleFilterChange}
-          />
-        </div>
-
-        <div>
-          <label>Convoy Number</label>
-          <input
-            name="convoy_number"
-            value={filters.convoy_number}
-            onChange={handleFilterChange}
-            placeholder="CNV..."
-          />
-        </div>
-
-        <div>
-          <label>Location</label>
-          <select
-            name="location_code"
-            value={filters.location_code}
-            onChange={handleFilterChange}
-          >
-            <option value="">All Locations</option>
-            {locations.map((location) => (
-              <option key={location.id} value={location.locationCode}>
-                {location.locationName} ({location.locationCode})
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label>Tanker</label>
-          <select
-            name="tanker_asset_code"
-            value={filters.tanker_asset_code}
-            onChange={handleFilterChange}
-          >
-            <option value="">All Tankers</option>
-            {tankerAssets.map((asset) => (
-              <option key={asset.id} value={asset.assetCode}>
-                {asset.assetName} ({asset.assetCode})
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label>Search</label>
-          <input
-            name="search"
-            value={filters.search}
-            onChange={handleFilterChange}
-            placeholder="Ticket / convoy / tanker"
-          />
-        </div>
-
-        <div className="report-filter-actions">
-          <button type="button" onClick={loadTracking} disabled={loading}>
-            {loading ? 'Loading...' : 'Load'}
-          </button>
-
-          <button type="button" onClick={handleClearFilters} disabled={loading}>
-            Clear
-          </button>
-        </div>
+      {/* Tanker trips: Open / Closed tabs with the standard filter bar */}
+      <div className="section-title">
+        <h3>Tanker Trips</h3>
+        <p>
+          Approved tanker trips grouped by convoy number. Open a convoy to view its
+          tankers, comparisons and actions.
+        </p>
       </div>
 
-      {tankerReceiverOperationTypes.length === 0 && (
-        <div className="info-box no-print">
-          No active Tanker Receipt / Unloading operation type was detected.
-          Create one in Operation Type Master before using Create Receiver
-          Entry. Recommended code: <strong>TANKER_RECEIPT</strong>.
-        </div>
-      )}
+      <div className="list-tabs" role="tablist" aria-label="Tanker trip status">
+        {TRIP_TABS.map((tab) => {
+          const count = tab.value === 'CLOSED' ? convoyCounts.closed : convoyCounts.open
+          const selected = tripTab === tab.value
 
-      <div className="report-actions no-print">
-        <button type="button" onClick={exportCsv} disabled={loading}>
-          Export CSV
-        </button>
-
-        <button type="button" onClick={exportExcel} disabled={loading}>
-          Export Excel
-        </button>
-
-        <button type="button" onClick={() => window.print()}>
-          Print
-        </button>
+          return (
+            <button
+              key={tab.value}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              className={`list-tab ${selected ? 'selected' : ''}`}
+              onClick={() => switchTripTab(tab.value)}
+            >
+              {tab.label}
+              <span className="list-tab-count">{count}</span>
+            </button>
+          )
+        })}
       </div>
+
+      <AlertMessage
+        tone="error"
+        message={convoyError}
+        onDismiss={() => setConvoyError('')}
+      />
 
       <DataTableToolbar
-        filters={filteredTrackingRowsFilters}
-        columns={filteredTrackingRowsFilters.columns}
-        exportFileName="tanker-tracking"
-        exportTitle="Tanker Tracking"
+        filters={convoyFilters}
+        columns={convoyFilters.columns}
+        exportFileName={`tanker-convoys-${tripTab.toLowerCase()}`}
+        exportTitle={`Tanker Convoys - ${tripTab === 'CLOSED' ? 'Closed' : 'Open'}`}
+        module="Tanker Tracking"
       />
 
       <table>
         <thead>
           <tr>
-            <th>Convoy</th>
+            <th>Convoy No</th>
             <th>Status</th>
-            <th>Prime Mover</th>
-            <th>Tanker / Chassis</th>
-            <th>Sender Ticket</th>
-            <th>Receiver Ticket</th>
-            <th>Sender NSV</th>
-            <th>Receiver NSV</th>
-            <th>Variance</th>
-            <th>Seal</th>
-            <th>Action</th>
+            <th>Tanker(s)</th>
+            <th>Tickets</th>
+            <th>Sender</th>
+            <th>Receiver</th>
+            <th>First Date</th>
+            <th>Last Date</th>
+            <th className="no-print">Action</th>
           </tr>
         </thead>
-
         <tbody>
-          {visibleTrackingRows.length === 0 ? (
+          {loading ? (
             <tr>
-              <td colSpan="11" className="empty-table">
-                No tanker tracking records found.
+              <td colSpan="9" className="empty-table">Loading convoys...</td>
+            </tr>
+          ) : visibleConvoyRows.length === 0 ? (
+            <tr>
+              <td colSpan="9" className="empty-table">
+                {tabConvoys.length === 0
+                  ? `No ${tripTab === 'CLOSED' ? 'closed' : 'open'} tanker trips.`
+                  : 'No convoys match the current filters.'}
               </td>
             </tr>
           ) : (
-            visibleTrackingRows.map((row) => {
-              const comparison = row.quantityComparison
-              const sealMismatch = row.sealChecks.some((seal) => {
-                return (
-                  seal.status === 'MISMATCH' ||
-                  seal.status === 'RECEIVER_MISSING' ||
-                  seal.status === 'SENDER_MISSING'
-                )
-              })
-
-              return (
-                <tr key={row.groupKey}>
-                  <td>
-                    <strong>{row.convoyNumber}</strong>
-                    <br />
-                    <small>{row.productName || '-'}</small>
-                  </td>
-
-                  <td>
-                    <span
-                      className={`status-badge ${getTrackingStatusClass(
-                        row.trackingStatus
-                      )}`}
-                    >
-                      {getTrackingStatusLabel(row.trackingStatus)}
-                    </span>
-                  </td>
-
-                  <td>
-                    <strong>{row.primeMoverAssetName || '-'}</strong>
-                    <br />
-                    <small>{row.primeMoverAssetCode || '-'}</small>
-                  </td>
-
-                  <td>
-                    <strong>{row.tankerAssetName || '-'}</strong>
-                    <br />
-                    <small>
-                      {row.tankerAssetCode || '-'} /{' '}
-                      {row.tankerChassisNumber || '-'}
-                    </small>
-                  </td>
-
-                  <td>
-                    {row.senderTicket?.ticketNumber ||
-                      row.senderTicket?.operationNumber ||
-                      '-'}
-                  </td>
-
-                  <td>
-                    {row.latestReceiverTicket?.ticketNumber ||
-                      row.latestReceiverTicket?.operationNumber ||
-                      '-'}
-                  </td>
-
-                  <td className="number-cell">
-                    {comparison
-                      ? formatNumber(comparison.senderNsvBbl)
-                      : row.senderTicket
-                        ? formatNumber(row.senderTicket.nsvBbl)
-                        : '-'}
-                  </td>
-
-                  <td className="number-cell">
-                    {comparison
-                      ? formatNumber(comparison.receiverNsvBbl)
-                      : row.latestReceiverTicket
-                        ? formatNumber(row.latestReceiverTicket.nsvBbl)
-                        : '-'}
-                  </td>
-
-                  <td className="number-cell">
-                    {comparison ? (
-                      <>
-                        {formatNumber(comparison.nsvVarianceBbl)} bbl
-                        <br />
-                        <small>
-                          {formatPercent(comparison.nsvVariancePercent)}
-                        </small>
-                      </>
-                    ) : (
-                      '-'
-                    )}
-                  </td>
-
-                  <td>
-                    <span
-                      className={`status-badge ${
-                        sealMismatch ? 'rejected' : 'active'
-                      }`}
-                    >
-                      {sealMismatch ? 'Mismatch' : 'OK'}
-                    </span>
-                  </td>
-
-                  <td>
-                    <div className="table-actions">
-                      <button
-                        type="button"
-                        onClick={() => setSelectedGroup(row)}
-                      >
-                        View
-                      </button>
-
-                      {row.senderTicket?.transactionId && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            openOperationTicket(row.senderTicket.transactionId)
-                          }
-                          disabled={loading}
-                        >
-                          Sender
-                        </button>
-                      )}
-
-                      {row.latestReceiverTicket?.transactionId && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            openOperationTicket(
-                              row.latestReceiverTicket.transactionId
-                            )
-                          }
-                          disabled={loading}
-                        >
-                          Receiver
-                        </button>
-                      )}
-
-                      {row.quantityComparison && (
-                        <button
-                          type="button"
-                          onClick={() => handlePrintMtrReport(row)}
-                          disabled={loading}
-                        >
-                          Print MTR
-                        </button>
-                      )}
-
-                      {row.quantityComparison &&
-                        row.acknowledgementId &&
-                        row.trackingStatus !== 'CLOSED' && (
-                          <button
-                            type="button"
-                            onClick={() => openClosePanel(row)}
-                            disabled={loading || !canManage}
-                            title={!canManage ? 'You do not have permission to close tanker movement' : ''}
-                          >
-                            Close
-                          </button>
-                        )}
-
-                      {row.trackingStatus === 'PENDING_RECEIPT' &&
-                        row.senderTicket && (
-                          <button
-                            type="button"
-                            onClick={() => openAcknowledgePanel(row)}
-                            disabled={loading || !canAcknowledgeReceipt}
-                            title={!canAcknowledgeReceipt ? 'You do not have permission to acknowledge tanker receipt' : ''}
-                          >
-                            Acknowledge
-                          </button>
-                        )}
-
-                      {row.trackingStatus === 'ACKNOWLEDGED' && (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => handleCreateReceiverEntry(row)}
-                            disabled={loading || !canCreateReceivingTicket}
-                            title={!canCreateReceivingTicket ? 'You do not have permission to create receiver entry' : ''}
-                          >
-                            Create Receiver Entry
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => openRevokePanel(row)}
-                            disabled={loading || !canAcknowledgeReceipt}
-                            title={!canAcknowledgeReceipt ? 'You do not have permission to revoke acknowledgement' : ''}
-                          >
-                            Revoke Ack
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              )
-            })
+            visibleConvoyRows.map((row) => (
+              <tr
+                key={row.convoyNumber}
+                className={row.convoyNumber === selectedConvoy?.convoyNumber ? 'is-selected' : ''}
+              >
+                <td><strong>{row.convoyNumber}</strong></td>
+                <td>
+                  <span
+                    className={`status-badge ${
+                      row.status === 'CLOSED' ? 'active' : 'draft'
+                    }`}
+                  >
+                    {row.status === 'CLOSED' ? 'Closed' : 'Open'}
+                  </span>
+                </td>
+                <td>{row.tankers.map(tankerLabel).join(', ') || '-'}</td>
+                <td>{row.ticketCount}</td>
+                <td>{row.senderText || '-'}</td>
+                <td>{row.receiverText || '-'}</td>
+                <td>{row.firstOperationDate || '-'}</td>
+                <td>{row.lastOperationDate || '-'}</td>
+                <td className="no-print">
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={() => openConvoy(row.convoyNumber, false)}
+                  >
+                    View
+                  </button>
+                </td>
+              </tr>
+            ))
           )}
         </tbody>
       </table>
 
-      <PaginationControls currentPage={page} totalRows={filteredTrackingRowsFilters.filteredRows.length} onPageChange={setPage} />
+      <PaginationControls
+        currentPage={convoyPage}
+        totalRows={filteredConvoyCount}
+        onPageChange={setConvoyPage}
+      />
+
+      {/* Convoy Detail */}
+      <Modal
+        open={convoyDetailOpen}
+        title="Convoy Detail"
+        description="Search a convoy number, or open a convoy from the list above."
+        onClose={closeConvoyDetail}
+        size="xl"
+      >
+      <form onSubmit={handleSearchConvoy}>
+        <div>
+          <label>Convoy Number</label>
+          <input
+            type="text"
+            value={convoyNumber}
+            onChange={(e) => setConvoyNumber(e.target.value)}
+            placeholder="Example: CNV-2026-001"
+          />
+        </div>
+
+        <div className="form-actions">
+          <button type="submit" disabled={loading}>
+            {loading ? 'Loading...' : 'Search'}
+          </button>
+        </div>
+      </form>
+
+      {!selectedConvoy ? (
+        <div className="info-box">Enter Convoy Number and click Search.</div>
+      ) : (
+        <>
+          <div className="section-title">
+            <h3>Convoy: {selectedConvoy.convoyNumber}</h3>
+            <p>
+              Tankers: <strong>{selectedConvoy.tankerCount}</strong> | Tickets:{' '}
+              <strong>{selectedConvoy.ticketCount}</strong> | Trip Status:{' '}
+              <strong>
+                {selectedConvoy.status === 'CLOSED' ? 'Closed' : 'Open'}
+              </strong>
+            </p>
+
+            <AlertMessage
+              tone="success"
+              message={feedback.successMsg}
+              onDismiss={clearSuccess}
+            />
+            <AlertMessage
+              tone="error"
+              message={feedback.errorMsg}
+              onDismiss={clearError}
+            />
+
+            <div className="form-actions" style={{ marginTop: 10 }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={
+                  loading ||
+                  !selectedConvoy.groups.some((g) => Boolean(g.quantityComparison))
+                }
+                onClick={openConvoyComparisonReport}
+                title={
+                  !selectedConvoy.groups.some((g) => Boolean(g.quantityComparison))
+                    ? 'No approved comparisons are available for this convoy yet'
+                    : 'Print dips and quantity comparisons for all tankers in this convoy'
+                }
+              >
+                Print Convoy Comparison
+              </button>
+
+              {selectedConvoy.status === 'CLOSED' && (
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={closeConvoyDetail}
+                >
+                  Close Detail
+                </button>
+              )}
+            </div>
+
+            {selectedConvoy.status === 'CLOSED' && (
+              <div className="info-box">
+                <strong>Trip Closed.</strong> All tanker movements in this
+                convoy are closed.
+              </div>
+            )}
+          </div>
+
+          {selectedConvoy.groups.map((g) => {
+            const acked = g.trackingStatus === 'ACKNOWLEDGED'
+            const closed = g.trackingStatus === 'CLOSED'
+            const pending = g.trackingStatus === 'PENDING_RECEIPT'
+
+            return (
+              <div key={g.groupKey} className="full-width-field">
+                <div className="section-title">
+                  <h3>{tankerLabel(g)}</h3>
+                  <p>
+                    Chassis: <strong>{tankerChassisLabel(g)}</strong> | Product:{' '}
+                    <strong>{g.productName || '-'}</strong> |{' '}
+                    Tracking Status:{' '}
+                    <span
+                      className={`status-badge ${getTrackingStatusClass(
+                        g.trackingStatus,
+                      )}`}
+                    >
+                      {getTrackingStatusLabel(g.trackingStatus)}
+                    </span>
+                  </p>
+
+                  <div className="form-actions" style={{ marginTop: 8 }}>
+                    {renderTicketCard('Sender Ticket', g.senderTicket)}
+                    {renderTicketCard('Latest Receiver Ticket', g.latestReceiverTicket)}
+
+                    {g.quantityComparison && (
+                      <button
+                        type="button"
+                        onClick={() => handlePrintMtrReport(g)}
+                        disabled={loading}
+                      >
+                        Print MTR
+                      </button>
+                    )}
+
+                    {g.quantityComparison &&
+                      g.acknowledgementId &&
+                      g.trackingStatus !== 'CLOSED' && (
+                        <button
+                          type="button"
+                          onClick={() => openClosePanel(g)}
+                          disabled={loading || !canManage}
+                          title={
+                            !canManage
+                              ? 'You do not have permission to close tanker movement'
+                              : ''
+                          }
+                        >
+                          Close Movement
+                        </button>
+                      )}
+
+                    {pending && g.senderTicket && (
+                      <button
+                        type="button"
+                        onClick={() => openAcknowledgePanel(g)}
+                        disabled={loading || !canAcknowledgeReceipt}
+                        title={
+                          !canAcknowledgeReceipt
+                            ? 'You do not have permission to acknowledge tanker receipt'
+                            : ''
+                        }
+                      >
+                        Acknowledge
+                      </button>
+                    )}
+
+                    {acked && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleCreateReceiverEntry(g)}
+                          disabled={loading || !canCreateReceivingTicket}
+                          title={
+                            !canCreateReceivingTicket
+                              ? 'You do not have permission to create receiver entry'
+                              : ''
+                          }
+                        >
+                          Create Receiver Entry
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => openRevokePanel(g)}
+                          disabled={loading || !canAcknowledgeReceipt}
+                          title={
+                            !canAcknowledgeReceipt
+                              ? 'You do not have permission to revoke acknowledgement'
+                              : ''
+                          }
+                        >
+                          Revoke Ack
+                        </button>
+                      </>
+                    )}
+                  </div>
+
+                  {g.warningMessages.length > 0 && (
+                    <div className="info-box">
+                      {g.warningMessages.map((message) => (
+                        <div key={message}>{message}</div>
+                      ))}
+                    </div>
+                  )}
+
+                  {closed && (
+                    <div className="info-box">
+                      <strong>Movement Closed</strong>
+                      <div>Closed By: {g.closedBy || '-'}</div>
+                      <div>Closed At: {g.closedAt || '-'}</div>
+                      <div>Closure Remarks: {g.closureRemarks || '-'}</div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Tickets */}
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Ticket</th>
+                      <th>Role</th>
+                      <th>Operation</th>
+                      <th>Date</th>
+                      <th>Location</th>
+                      <th>NSV</th>
+                      <th>Status</th>
+                      <th>Open</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                      { ticket: g.senderTicket, role: 'SENDER' },
+                      ...(g.receiverTickets || []).map((ticket) => ({
+                        ticket,
+                        role: 'RECEIVER',
+                      })),
+                    ].length === 0 ? (
+                      <tr>
+                        <td colSpan="8" className="empty-table">
+                          No tickets.
+                        </td>
+                      </tr>
+                    ) : (
+                      [
+                        { ticket: g.senderTicket, role: 'SENDER' },
+                        ...(g.receiverTickets || []).map((ticket) => ({
+                          ticket,
+                          role: 'RECEIVER',
+                        })),
+                      ].map((entry) => {
+                        const t = entry.ticket
+                        return (
+                          <tr key={t?.transactionId}>
+                            <td>
+                              <strong>{t?.ticketNumber || t?.operationNumber}</strong>
+                            </td>
+                            <td>{getRoleLabel(entry.role)}</td>
+                            <td>{t?.operationTypeName}</td>
+                            <td>{t?.operationDate}</td>
+                            <td>
+                              {t?.senderName ||
+                                t?.originLocationName ||
+                                t?.senderCode ||
+                                t?.originLocationCode ||
+                                '-'}
+                            </td>
+                            <td className="number-cell">
+                              {formatNumber(t?.nsvBbl)} bbl
+                            </td>
+                            <td>
+                              <span
+                                className={`status-badge ${
+                                  String(t?.status || '').toLowerCase()
+                                }`}
+                              >
+                                {t?.status}
+                              </span>
+                            </td>
+                            <td>
+                              <Link to={`/operation-transactions/${t.transactionId}`}>
+                                <button type="button">View</button>
+                              </Link>
+                            </td>
+                          </tr>
+                        )
+                      })
+                    )}
+                  </tbody>
+                </table>
+
+                {/* Seal Cross-check */}
+                <div className="section-title compact-section-title">
+                  <h3>Seal Cross-check</h3>
+                </div>
+
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Seal</th>
+                      <th>Sender</th>
+                      <th>Receiver</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {g.sealChecks.map((seal) => (
+                      <tr key={seal.sealName}>
+                        <td>{seal.sealName}</td>
+                        <td>{seal.senderValue || '-'}</td>
+                        <td>{seal.receiverValue || '-'}</td>
+                        <td>
+                          <span
+                            className={`status-badge ${getSealStatusClass(
+                              seal.status,
+                            )}`}
+                          >
+                            {seal.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                    {g.sealChecks.length === 0 && (
+                      <tr>
+                        <td colSpan="4" className="empty-table">
+                          No seal data recorded.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+
+                {/* Quantity Comparison */}
+                <div className="section-title compact-section-title">
+                  <h3>Quantity Comparison</h3>
+                </div>
+
+                {g.quantityComparison ? (
+                  <table className="comparison-table">
+                    <thead>
+                      <tr>
+                        <th>Parameter</th>
+                        <th className="number-cell">Sender</th>
+                        <th className="number-cell">Receiver</th>
+                        <th className="number-cell">Variance</th>
+                        <th className="number-cell">Variance %</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>GOV</td>
+                        <td className="number-cell">
+                          {formatNumber(g.quantityComparison.senderGovBbl)} bbl
+                        </td>
+                        <td className="number-cell">
+                          {formatNumber(g.quantityComparison.receiverGovBbl)} bbl
+                        </td>
+                        <td className="number-cell">
+                          {formatNumber(g.quantityComparison.govVarianceBbl)} bbl
+                        </td>
+                        <td className="number-cell">-</td>
+                      </tr>
+                      <tr>
+                        <td>GSV</td>
+                        <td className="number-cell">
+                          {formatNumber(g.quantityComparison.senderGsvBbl)} bbl
+                        </td>
+                        <td className="number-cell">
+                          {formatNumber(g.quantityComparison.receiverGsvBbl)} bbl
+                        </td>
+                        <td className="number-cell">
+                          {formatNumber(g.quantityComparison.gsvVarianceBbl)} bbl
+                        </td>
+                        <td className="number-cell">-</td>
+                      </tr>
+                      <tr>
+                        <td>NSV</td>
+                        <td className="number-cell">
+                          {formatNumber(g.quantityComparison.senderNsvBbl)} bbl
+                        </td>
+                        <td className="number-cell">
+                          {formatNumber(g.quantityComparison.receiverNsvBbl)} bbl
+                        </td>
+                        <td className="number-cell">
+                          {formatNumber(g.quantityComparison.nsvVarianceBbl)} bbl
+                        </td>
+                        <td className="number-cell">
+                          {formatPercent(g.quantityComparison.nsvVariancePercent)}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>LT</td>
+                        <td className="number-cell">
+                          {formatNumber(g.quantityComparison.senderLt)}
+                        </td>
+                        <td className="number-cell">
+                          {formatNumber(g.quantityComparison.receiverLt)}
+                        </td>
+                        <td className="number-cell">
+                          {formatNumber(g.quantityComparison.ltVariance)}
+                        </td>
+                        <td className="number-cell">-</td>
+                      </tr>
+                      <tr>
+                        <td>MT</td>
+                        <td className="number-cell">
+                          {formatNumber(g.quantityComparison.senderMt)}
+                        </td>
+                        <td className="number-cell">
+                          {formatNumber(g.quantityComparison.receiverMt)}
+                        </td>
+                        <td className="number-cell">
+                          {formatNumber(g.quantityComparison.mtVariance)}
+                        </td>
+                        <td className="number-cell">-</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                ) : (
+                  <div className="info-box">
+                    No receiver ticket is available yet. Quantity comparison will
+                    appear after receiver tanker entry is saved with the same
+                    convoy and tanker.
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </>)}
+      </Modal>
+      </div>
+
+      {printGroup && (
+        <div className="print-only">
+          <TankerMtrComparisonReport group={printGroup} />
+        </div>
+      )}
+
+      {convoyPrintOpen && (
+        <div className="print-only">
+          <TankerConvoyComparisonReport
+            convoyNumber={selectedConvoy?.convoyNumber || convoyNumber}
+            groups={selectedConvoy?.groups || []}
+            generatedBy={loggedInUser?.fullName || loggedInUser?.username || ''}
+          />
+          <div className="no-print" style={{ marginTop: 10 }}>
+            <button type="button" onClick={closeConvoyComparisonReport}>
+              Close Report
+            </button>
+          </div>
+        </div>
+      )}
 
       {ackGroup && (
         <div className="report-detail-panel no-print">
@@ -1377,10 +1501,7 @@ function TankerTracking({
                     <option value="">Select Receiver Location</option>
 
                     {locations.map((location) => (
-                      <option
-                        key={location.id}
-                        value={location.locationCode}
-                      >
+                      <option key={location.id} value={location.locationCode}>
                         {location.locationName} ({location.locationCode})
                       </option>
                     ))}
@@ -1458,7 +1579,7 @@ function TankerTracking({
           <div className="form-actions">
             <button
               type="button"
-              onClick={handleRevokeAcknowledgement}
+              onClick={confirmRevokeAction}
               disabled={loading}
             >
               {loading ? 'Revoking...' : 'Confirm Revoke'}
@@ -1520,9 +1641,7 @@ function TankerTracking({
                   <td className="number-cell">
                     {formatNumber(closeGroup.quantityComparison.nsvVarianceBbl)} bbl
                   </td>
-                  <td className="number-cell">
-                    {formatPercent(closeGroup.quantityComparison.nsvVariancePercent)}
-                  </td>
+                  <td className="number-cell">-</td>
                 </tr>
 
                 <tr>
@@ -1571,7 +1690,7 @@ function TankerTracking({
           <div className="form-actions">
             <button
               type="button"
-              onClick={handleCloseMovement}
+              onClick={confirmCloseAction}
               disabled={loading}
             >
               {loading ? 'Closing...' : 'Confirm Close Movement'}
@@ -1583,247 +1702,6 @@ function TankerTracking({
           </div>
         </div>
       )}
-
-      {selectedGroup && (
-        <div className="report-detail-panel no-print">
-          <div className="report-detail-header">
-            <div>
-              <h3>Convoy {selectedGroup.convoyNumber}</h3>
-              <p>
-                {selectedGroup.tankerAssetName} (
-                {selectedGroup.tankerAssetCode}) / Chassis{' '}
-                {selectedGroup.tankerChassisNumber || '-'}
-              </p>
-            </div>
-
-            <div className="table-actions">
-              {selectedGroup.senderTicket?.transactionId && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    openOperationTicket(selectedGroup.senderTicket.transactionId)
-                  }
-                  disabled={loading}
-                >
-                  Open Sender Ticket
-                </button>
-              )}
-
-              {selectedGroup.latestReceiverTicket?.transactionId && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    openOperationTicket(
-                      selectedGroup.latestReceiverTicket.transactionId
-                    )
-                  }
-                  disabled={loading}
-                >
-                  Open Receiver Ticket
-                </button>
-              )}
-
-              {selectedGroup.quantityComparison && (
-                <button
-                  type="button"
-                  onClick={() => handlePrintMtrReport(selectedGroup)}
-                  disabled={loading}
-                >
-                  Print MTR
-                </button>
-              )}
-
-              {selectedGroup.quantityComparison &&
-                selectedGroup.acknowledgementId &&
-                selectedGroup.trackingStatus !== 'CLOSED' && (
-                  <button
-                    type="button"
-                    onClick={() => openClosePanel(selectedGroup)}
-                    disabled={loading || !canManage}
-                    title={!canManage ? 'You do not have permission to close tanker movement' : ''}
-                  >
-                    Close Movement
-                  </button>
-                )}
-
-              <button type="button" onClick={() => setSelectedGroup(null)}>
-                Close
-              </button>
-            </div>
-          </div>
-
-          {selectedGroup.warningMessages.length > 0 && (
-            <div className="info-box">
-              {selectedGroup.warningMessages.map((message) => (
-                <div key={message}>{message}</div>
-              ))}
-            </div>
-          )}
-
-          {selectedGroup.trackingStatus === 'CLOSED' && (
-            <div className="info-box">
-              <strong>Movement Closed</strong>
-              <div>Closed By: {selectedGroup.closedBy || '-'}</div>
-              <div>Closed At: {selectedGroup.closedAt || '-'}</div>
-              <div>Closure Remarks: {selectedGroup.closureRemarks || '-'}</div>
-            </div>
-          )}
-
-          <div className="tracking-detail-grid">
-            {renderTicketCard('Sender Ticket', selectedGroup.senderTicket)}
-            {renderTicketCard(
-              'Latest Receiver Ticket',
-              selectedGroup.latestReceiverTicket
-            )}
-          </div>
-
-          <div className="section-title compact-section-title">
-            <h3>Seal Cross-check</h3>
-          </div>
-
-          <table>
-            <thead>
-              <tr>
-                <th>Seal</th>
-                <th>Sender</th>
-                <th>Receiver</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {selectedGroup.sealChecks.map((seal) => (
-                <tr key={seal.sealName}>
-                  <td>{seal.sealName}</td>
-                  <td>{seal.senderValue || '-'}</td>
-                  <td>{seal.receiverValue || '-'}</td>
-                  <td>
-                    <span
-                      className={`status-badge ${getSealStatusClass(
-                        seal.status
-                      )}`}
-                    >
-                      {seal.status}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          <div className="info-box">
-            Sender and receiver comparison is based only on Approved tickets. Approvers
-            can verify tanker dips, quality, seals and calculated quantity in the Tanker
-            Approval Preview before approving.
-          </div>
-
-          <div className="section-title compact-section-title">
-            <h3>Quantity Comparison</h3>
-          </div>
-
-          {selectedGroup.quantityComparison ? (
-            <table className="comparison-table">
-              <thead>
-                <tr>
-                  <th>Parameter</th>
-                  <th className="number-cell">Sender</th>
-                  <th className="number-cell">Receiver</th>
-                  <th className="number-cell">Variance</th>
-                  <th className="number-cell">Variance %</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                <tr>
-                  <td>GOV</td>
-                  <td className="number-cell">
-                    {formatNumber(selectedGroup.quantityComparison.senderGovBbl)} bbl
-                  </td>
-                  <td className="number-cell">
-                    {formatNumber(selectedGroup.quantityComparison.receiverGovBbl)} bbl
-                  </td>
-                  <td className="number-cell">
-                    {formatNumber(selectedGroup.quantityComparison.govVarianceBbl)} bbl
-                  </td>
-                  <td className="number-cell">-</td>
-                </tr>
-
-                <tr>
-                  <td>GSV</td>
-                  <td className="number-cell">
-                    {formatNumber(selectedGroup.quantityComparison.senderGsvBbl)} bbl
-                  </td>
-                  <td className="number-cell">
-                    {formatNumber(selectedGroup.quantityComparison.receiverGsvBbl)} bbl
-                  </td>
-                  <td className="number-cell">
-                    {formatNumber(selectedGroup.quantityComparison.gsvVarianceBbl)} bbl
-                  </td>
-                  <td className="number-cell">-</td>
-                </tr>
-
-                <tr>
-                  <td>NSV</td>
-                  <td className="number-cell">
-                    {formatNumber(selectedGroup.quantityComparison.senderNsvBbl)} bbl
-                  </td>
-                  <td className="number-cell">
-                    {formatNumber(selectedGroup.quantityComparison.receiverNsvBbl)} bbl
-                  </td>
-                  <td className="number-cell">
-                    {formatNumber(selectedGroup.quantityComparison.nsvVarianceBbl)} bbl
-                  </td>
-                  <td className="number-cell">
-                    {formatPercent(selectedGroup.quantityComparison.nsvVariancePercent)}
-                  </td>
-                </tr>
-
-                <tr>
-                  <td>LT</td>
-                  <td className="number-cell">
-                    {formatNumber(selectedGroup.quantityComparison.senderLt)}
-                  </td>
-                  <td className="number-cell">
-                    {formatNumber(selectedGroup.quantityComparison.receiverLt)}
-                  </td>
-                  <td className="number-cell">
-                    {formatNumber(selectedGroup.quantityComparison.ltVariance)}
-                  </td>
-                  <td className="number-cell">-</td>
-                </tr>
-
-                <tr>
-                  <td>MT</td>
-                  <td className="number-cell">
-                    {formatNumber(selectedGroup.quantityComparison.senderMt)}
-                  </td>
-                  <td className="number-cell">
-                    {formatNumber(selectedGroup.quantityComparison.receiverMt)}
-                  </td>
-                  <td className="number-cell">
-                    {formatNumber(selectedGroup.quantityComparison.mtVariance)}
-                  </td>
-                  <td className="number-cell">-</td>
-                </tr>
-              </tbody>
-            </table>
-          ) : (
-            <div className="info-box">
-              No receiver ticket is available yet. Quantity comparison will
-              appear after receiver tanker entry is saved with the same convoy
-              and tanker.
-            </div>
-          )}
-        </div>
-      )}
-      </div>
-
-      {printGroup && (
-        <div className="print-only">
-          <TankerMtrComparisonReport group={printGroup} />
-        </div>
-      )}
-
     </div>
   )
 }

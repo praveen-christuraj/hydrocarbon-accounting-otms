@@ -1,5 +1,5 @@
 import { logUiAction } from '../utils/actionLogger'
-import { useMemo, useState } from 'react'
+import { Link, useEffect, useState } from 'react'
 import {
   getFSOOTRReport,
   getFSOMaterialBalanceReport,
@@ -8,11 +8,15 @@ import {
   downloadFSOMaterialBalanceXlsx,
   downloadFSOOutturnXlsx,
 } from '../api/fsoReportApi'
+import { getFSOTracking } from '../api/fsoTrackingApi'
 import { useCompanyPrintProfile } from '../hooks/useCompanyPrintProfile'
+import { useDataFilters } from '../hooks/useDataFilters'
 import CompanyPrintHeader from '../components/reports/CompanyPrintHeader'
 import CompanyPrintFooter from '../components/reports/CompanyPrintFooter'
 import AlertMessage from '../components/common/AlertMessage'
 import useActionFeedback from '../hooks/useActionFeedback'
+import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
+import DataTableToolbar from '../components/common/DataTableToolbar'
 
 const downloadCsv = (filename, headers, rows) => {
   const escape = (v) => {
@@ -36,13 +40,12 @@ const downloadCsv = (filename, headers, rows) => {
 function FSOTracking({ locations = [], assets = [] }) {
   const profile = useCompanyPrintProfile()
 
-  const [tab, setTab] = useState('OTR') // OTR | MB | OUTTURN
+  const [tab, setTab] = useState('SUMMARY') // SUMMARY | OTR | MB | OUTTURN
   const [loading, setLoading] = useState(false)
   // Action feedback: little pop-up (toast) + inline message near the
   // action area (owner rule 8) - never at the bottom of the page.
   const feedback = useActionFeedback()
-  const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
-  const [validationErrors, setValidationErrors] = useState({})
+  const { notifyError, clearSuccess, clearError } = feedback
 
   const [filters, setFilters] = useState({
     locationCode: '',
@@ -56,11 +59,108 @@ function FSOTracking({ locations = [], assets = [] }) {
   const [mb, setMb] = useState(null)
   const [outturn, setOutturn] = useState(null)
 
-  const fsoAssets = useMemo(() => {
-    return (assets || []).filter(
-      (a) => String(a.assetTypeCode || '').toUpperCase() === 'FSO' && a.status === 'Active'
-    )
-  }, [assets])
+  // ----- Summary tab: all FSO tracking transactions (tickets) -----
+  const [fsoTickets, setFsoTickets] = useState([])
+  const [fsoLoading, setFsoLoading] = useState(false)
+  const [fsoPage, setFsoPage] = useState(1)
+  const fsoPageSize = usePageSize()
+
+  const fsoColumns = [
+    { key: 'ticketNumber', label: 'Ticket' },
+    { key: 'operationNumber', label: 'Operation No' },
+    { key: 'operationLabel', label: 'Operation' },
+    { key: 'operationDate', label: 'Date', type: 'date' },
+    {
+      key: 'locationName',
+      label: 'Location',
+      accessor: (ticket) => {
+        const name = ticket.locationName || ticket.locationCode || ''
+        const code = ticket.locationCode || ''
+        return name && code ? `${name} (${code})` : name || code || '-'
+      },
+    },
+    { key: 'shuttleNumber', label: 'Shuttle' },
+    {
+      key: 'fsoAssetName',
+      label: 'FSO Asset',
+      accessor: (ticket) => {
+        const name = ticket.fsoAssetName || ticket.fsoAssetCode || ''
+        const code = ticket.fsoAssetCode || ''
+        return name && code ? `${name} (${code})` : name || code || '-'
+      },
+    },
+    { key: 'productName', label: 'Product' },
+    { key: 'vesselQuantityBbl', label: 'Vessel Qty (bbl)', type: 'number' },
+    { key: 'movementQtyBbl', label: 'Movement Qty (bbl)', type: 'number' },
+    { key: 'varianceBbl', label: 'Variance (bbl)', type: 'number' },
+    { key: 'status', label: 'Ticket Status' },
+    { key: 'voyageStatus', label: 'Voyage Status' },
+  ]
+
+  const fetchFsoGroups = async (tabValue) => {
+    const allGroups = []
+    let page = 1
+    let hasMore = true
+    while (hasMore) {
+      const data = await getFSOTracking({
+        tab: tabValue,
+        include_tickets: true,
+        page,
+        page_size: 200,
+      })
+      const rows = data.rows || []
+      allGroups.push(...rows)
+      hasMore = Boolean(data.has_more)
+      page += 1
+    }
+    return allGroups
+  }
+
+  const loadFsoTickets = async () => {
+    try {
+      setFsoLoading(true)
+      // Both OPEN and CLOSED voyages are needed for the "all transactions"
+      // summary. A voyage is either open or closed, so the two sets are
+      // disjoint and can be merged safely.
+      const allGroups = await Promise.all([
+        fetchFsoGroups('OPEN'),
+        fetchFsoGroups('CLOSED'),
+      ]).then((results) => results.flat())
+
+      const tickets = []
+      for (const group of allGroups) {
+        const voyageStatus = group.voyage_status || 'OPEN'
+        for (const ticket of group.tickets || []) {
+          tickets.push({ ...ticket, voyageStatus })
+        }
+      }
+      setFsoTickets(tickets)
+    } catch (e) {
+      notifyError(e.message || 'Unable to load FSO tracking summary')
+    } finally {
+      setFsoLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadFsoTickets()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const fsoFilters = useDataFilters(fsoTickets, fsoColumns, {
+    module: 'FSO Tracking',
+  })
+  const filteredFsoCount = fsoFilters.filteredRows.length
+  const visibleFsoRows = paginateRows(fsoFilters.filteredRows, fsoPage, fsoPageSize)
+
+  const fsoNumber = (value) => {
+    const n = Number(value || 0)
+    return n.toLocaleString(undefined, {
+      minimumFractionDigits: 3,
+      maximumFractionDigits: 3,
+    })
+  }
 
   const requireBaseFilters = () => {
     const errors = {}
@@ -68,7 +168,6 @@ function FSOTracking({ locations = [], assets = [] }) {
     if (!filters.fsoAssetCode) errors.fsoAssetCode = 'FSO Asset is required'
     if (!filters.dateFrom) errors.dateFrom = 'Date From is required'
     if (!filters.dateTo) errors.dateTo = 'Date To is required'
-    setValidationErrors(errors)
     if (Object.keys(errors).length) return false
     return true
   }
@@ -347,17 +446,17 @@ function FSOTracking({ locations = [], assets = [] }) {
             <div>
               <h2>FSO Reports</h2>
               <p>
-                FSO OTR (transaction-wise), Material Balance (date-wise), and Outturn (Shuttle Discharge vs FSO Receipt).
-                Day boundary is taken from Location Accounting Day Setting (frontend configurable).
+                FSO OTR (transaction-wise), Material Balance (date-wise), and Outturn (Shuttle Discharge vs FSO Receipt).\n                Day boundary is taken from Location Accounting Day Setting (frontend configurable).
               </p>
             </div>
           </div>
 
-          {/* Filters */}
           {/* Action feedback: right next to the page actions + a little pop-up
               toast - never at the bottom of the page (owner rule 8). */}
           <AlertMessage tone="success" message={feedback.successMsg} onDismiss={clearSuccess} />
           <AlertMessage tone="error" message={feedback.errorMsg} onDismiss={clearError} />
+
+          {/* Filters for OTR / Material Balance / Outturn */}
           <div className="info-box no-print">
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'end' }}>
               <div style={{ minWidth: 220 }}>
@@ -376,7 +475,7 @@ function FSOTracking({ locations = [], assets = [] }) {
                 <label>FSO Asset</label>
                 <select value={filters.fsoAssetCode} onChange={(e) => setFilters((c) => ({ ...c, fsoAssetCode: e.target.value }))}>
                   <option value="">Select</option>
-                  {fsoAssets.map((a) => (
+                  {(assets || []).filter((a) => String(a.assetTypeCode || '').toUpperCase() === 'FSO' && a.status === 'Active').map((a) => (
                     <option key={a.id} value={a.assetCode}>
                       {a.assetName} ({a.assetCode})
                     </option>
@@ -402,173 +501,270 @@ function FSOTracking({ locations = [], assets = [] }) {
               ) : null}
 
               <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" onClick={() => setTab('SUMMARY')} disabled={tab === 'SUMMARY'}>Summary</button>
                 <button type="button" onClick={() => setTab('OTR')} disabled={tab === 'OTR'}>OTR</button>
                 <button type="button" onClick={() => setTab('MB')} disabled={tab === 'MB'}>Material Balance</button>
                 <button type="button" onClick={() => setTab('OUTTURN')} disabled={tab === 'OUTTURN'}>Outturn</button>
               </div>
 
-              <div style={{ display: 'flex', gap: 8 }}>
-                {tab === 'OTR' ? (
-                  <>
-                    <button type="button" onClick={runOTR} disabled={loading}>{loading ? 'Loading...' : 'Run OTR'}</button>
-                    <button type="button" onClick={exportOTRcsv} disabled={loading}>CSV</button>
-                    <button type="button" onClick={downloadOTRxlsx} disabled={loading}>Excel</button>
-                  </>
-                ) : tab === 'MB' ? (
-                  <>
-                    <button type="button" onClick={runMB} disabled={loading}>{loading ? 'Loading...' : 'Run MB'}</button>
-                    <button type="button" onClick={exportMBcsv} disabled={loading}>CSV</button>
-                    <button type="button" onClick={downloadMBxlsx} disabled={loading}>Excel</button>
-                  </>
+              {(tab === 'OTR' || tab === 'MB' || tab === 'OUTTURN') && (
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {tab === 'OTR' ? (
+                    <>
+                      <button type="button" onClick={runOTR} disabled={loading}>{loading ? 'Loading...' : 'Run OTR'}</button>
+                      <button type="button" onClick={exportOTRcsv} disabled={loading}>CSV</button>
+                      <button type="button" onClick={downloadOTRxlsx} disabled={loading}>Excel</button>
+                    </>
+                  ) : tab === 'MB' ? (
+                    <>
+                      <button type="button" onClick={runMB} disabled={loading}>{loading ? 'Loading...' : 'Run MB'}</button>
+                      <button type="button" onClick={exportMBcsv} disabled={loading}>CSV</button>
+                      <button type="button" onClick={downloadMBxlsx} disabled={loading}>Excel</button>
+                    </>
+                  ) : (
+                    <>
+                      <button type="button" onClick={runOutturn} disabled={loading}>{loading ? 'Loading...' : 'Run Outturn'}</button>
+                      <button type="button" onClick={exportOutturnCsv} disabled={loading}>CSV</button>
+                      <button type="button" onClick={downloadOutturnXlsx} disabled={loading}>Excel</button>
+                    </>
+                  )}
+                  <button type="button" onClick={printReport} disabled={loading}>Print</button>
+                </div>
+              )}
+            </div>
+          </div>
+
+        {tab === 'SUMMARY' ? (
+          <>
+            <div className="section-title">
+              <h3>FSO Tracking Summary</h3>
+              <p>
+                Summary of all FSO tracking transactions (tickets), with their
+                status and voyage status. Use the filter bar above to search or
+                filter the list, and the export buttons to download the result.
+              </p>
+            </div>
+
+            <DataTableToolbar
+              filters={fsoFilters}
+              columns={fsoFilters.columns}
+              exportFileName="fso-tracking-summary"
+              exportTitle="FSO Tracking Summary"
+              module="FSO Tracking"
+            />
+
+            <table>
+              <thead>
+                <tr>
+                  <th>Ticket</th>
+                  <th>Operation No</th>
+                  <th>Operation</th>
+                  <th>Date</th>
+                  <th>Location</th>
+                  <th>Shuttle</th>
+                  <th>FSO Asset</th>
+                  <th>Product</th>
+                  <th className="number-cell">Vessel Qty</th>
+                  <th className="number-cell">Movement Qty</th>
+                  <th className="number-cell">Variance</th>
+                  <th>Ticket Status</th>
+                  <th>Voyage Status</th>
+                  <th className="no-print">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {fsoLoading ? (
+                  <tr>
+                    <td colSpan="14" className="empty-table">Loading FSO tracking summary...</td>
+                  </tr>
+                ) : visibleFsoRows.length === 0 ? (
+                  <tr>
+                    <td colSpan="14" className="empty-table">
+                      {fsoTickets.length === 0
+                        ? 'No FSO tracking transactions found.'
+                        : 'No transactions match the current filters.'}
+                    </td>
+                  </tr>
                 ) : (
-                  <>
-                    <button type="button" onClick={runOutturn} disabled={loading}>{loading ? 'Loading...' : 'Run Outturn'}</button>
-                    <button type="button" onClick={exportOutturnCsv} disabled={loading}>CSV</button>
-                    <button type="button" onClick={downloadOutturnXlsx} disabled={loading}>Excel</button>
-                  </>
+                  visibleFsoRows.map((ticket) => (
+                    <tr key={ticket.transactionId}>
+                      <td>{ticket.ticketNumber || ticket.operationNumber || '-'}</td>
+                      <td>{ticket.operationNumber || '-'}</td>
+                      <td>{ticket.operationLabel || '-'}</td>
+                      <td>{ticket.operationDate || '-'}</td>
+                      <td>{ticket.locationName || ticket.locationCode || '-'}</td>
+                      <td>{ticket.shuttleNumber || '-'}</td>
+                      <td>{ticket.fsoAssetName || ticket.fsoAssetCode || '-'}</td>
+                      <td>{ticket.productName || '-'}</td>
+                      <td className="number-cell">{fsoNumber(ticket.vesselQuantityBbl)}</td>
+                      <td className="number-cell">{fsoNumber(ticket.movementQtyBbl)}</td>
+                      <td className="number-cell">{fsoNumber(ticket.varianceBbl)}</td>
+                      <td>
+                        <span className={`status-badge ${String(ticket.status || '').toLowerCase()}`}>
+                          {ticket.status || '-'}
+                        </span>
+                      </td>
+                      <td>
+                        <span className={`status-badge ${ticket.voyageStatus === 'CLOSED' ? 'active' : 'draft'}`}>
+                          {ticket.voyageStatus === 'CLOSED' ? 'Closed' : 'Open'}
+                        </span>
+                      </td>
+                      <td className="no-print">
+                        {ticket.transactionId && (
+                          <Link to={`/operation-transactions/${ticket.transactionId}`}>
+                            <button type="button">View</button>
+                          </Link>
+                        )}
+                      </td>
+                    </tr>
+                  ))
                 )}
-                <button type="button" onClick={printReport} disabled={loading}>Print</button>
+              </tbody>
+            </table>
+
+            <PaginationControls
+              currentPage={fsoPage}
+              totalRows={filteredFsoCount}
+              onPageChange={setFsoPage}
+            />
+          </>
+        ) : tab === 'OTR' ? (
+          <>
+            <div className="section-title">
+              <h3>FSO OTR</h3>
+              <p>Transaction-wise daily record: receipts, exports, shuttle comparisons, variances.</p>
+            </div>
+
+            <table className="dense-table">
+              <thead>
+                <tr>
+                  <th>Ticket</th>
+                  <th>Acc Date</th>
+                  <th>Op</th>
+                  <th>Sign</th>
+                  <th>Shuttle</th>
+                  <th>Vessel</th>
+                  <th>Vessel Qty</th>
+                  <th>Move Qty</th>
+                  <th>Var</th>
+                  <th>Shuttle Disch</th>
+                  <th>Cmp Var</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!otr?.rows?.length ? (
+                  <tr><td colSpan="11" className="empty-table">No data. Run OTR.</td></tr>
+                ) : (
+                  otr.rows.map((r) => (
+                    <tr key={r.transaction_id}>
+                      <td>{r.ticket_number}</td>
+                      <td>{r.accounting_date}</td>
+                      <td>{r.operation_label}</td>
+                      <td>{r.operation_sign}</td>
+                      <td>{r.shuttle_number || '-'}</td>
+                      <td>{r.vessel_name || '-'}</td>
+                      <td>{Number(r.vessel_quantity_bbl || 0).toFixed(3)}</td>
+                      <td>{Number(r.movement_qty_bbl || 0).toFixed(3)}</td>
+                      <td>{Number(r.variance_bbl || 0).toFixed(3)}</td>
+                      <td>{Number(r.source_shuttle_discharge_bbl || 0).toFixed(3)}</td>
+                      <td>{Number(r.compare_variance_bbl || 0).toFixed(3)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+
+            {otr ? (
+              <div className="info-box">
+                <strong>Totals:</strong>{' '}
+                Receipt {Number(otr.total_receipt_bbl || 0).toFixed(3)} | Export {Number(otr.total_export_bbl || 0).toFixed(3)} | Variance {Number(otr.total_variance_bbl || 0).toFixed(3)}
               </div>
+            ) : null}
+          </>
+        ) : tab === 'MB' ? (
+          <>
+            <div className="section-title">
+              <h3>FSO Material Balance</h3>
+              <p>Date-wise record using Location Accounting Day Setting boundaries.</p>
             </div>
-          </div>
 
-      {tab === 'OTR' ? (
-        <>
-          <div className="section-title">
-            <h3>FSO OTR</h3>
-            <p>Transaction-wise daily record: receipts, exports, shuttle comparisons, variances.</p>
-          </div>
-
-          <table className="dense-table">
-            <thead>
-              <tr>
-                <th>Ticket</th>
-                <th>Acc Date</th>
-                <th>Op</th>
-                <th>Sign</th>
-                <th>Shuttle</th>
-                <th>Vessel</th>
-                <th>Vessel Qty</th>
-                <th>Move Qty</th>
-                <th>Var</th>
-                <th>Shuttle Disch</th>
-                <th>Cmp Var</th>
-              </tr>
-            </thead>
-            <tbody>
-              {!otr?.rows?.length ? (
-                <tr><td colSpan="11" className="empty-table">No data. Run OTR.</td></tr>
-              ) : (
-                otr.rows.map((r) => (
-                  <tr key={r.transaction_id}>
-                    <td>{r.ticket_number}</td>
-                    <td>{r.accounting_date}</td>
-                    <td>{r.operation_label}</td>
-                    <td>{r.operation_sign}</td>
-                    <td>{r.shuttle_number || '-'}</td>
-                    <td>{r.vessel_name || '-'}</td>
-                    <td>{Number(r.vessel_quantity_bbl || 0).toFixed(3)}</td>
-                    <td>{Number(r.movement_qty_bbl || 0).toFixed(3)}</td>
-                    <td>{Number(r.variance_bbl || 0).toFixed(3)}</td>
-                    <td>{Number(r.source_shuttle_discharge_bbl || 0).toFixed(3)}</td>
-                    <td>{Number(r.compare_variance_bbl || 0).toFixed(3)}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-
-          {otr ? (
-            <div className="info-box">
-              <strong>Totals:</strong>{' '}
-              Receipt {Number(otr.total_receipt_bbl || 0).toFixed(3)} | Export {Number(otr.total_export_bbl || 0).toFixed(3)} | Variance {Number(otr.total_variance_bbl || 0).toFixed(3)}
+            <table className="dense-table">
+              <thead>
+                <tr>
+                  <th>Acc Date</th>
+                  <th>Opening</th>
+                  <th>Receipt</th>
+                  <th>Export</th>
+                  <th>Book Close</th>
+                  <th>Phys Close</th>
+                  <th>Close Water</th>
+                  <th>Loss/Gain</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!mb?.rows?.length ? (
+                  <tr><td colSpan="8" className="empty-table">No data. Run MB.</td></tr>
+                ) : (
+                  mb.rows.map((r) => (
+                    <tr key={r.accounting_date}>
+                      <td>{r.accounting_date}</td>
+                      <td>{Number(r.opening_stock_bbl || 0).toFixed(3)}</td>
+                      <td>{Number(r.receipt_bbl || 0).toFixed(3)}</td>
+                      <td>{Number(r.export_bbl || 0).toFixed(3)}</td>
+                      <td>{Number(r.book_closing_bbl || 0).toFixed(3)}</td>
+                      <td>{Number(r.physical_closing_bbl || 0).toFixed(3)}</td>
+                      <td>{Number(r.physical_closing_water_bbl || 0).toFixed(3)}</td>
+                      <td>{Number(r.loss_gain_bbl || 0).toFixed(3)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </>
+        ) : (
+          <>
+            <div className="section-title">
+              <h3>FSO Outturn</h3>
+              <p>Daily shuttle discharge vs FSO receipt comparison (A4 print-ready).</p>
             </div>
-          ) : null}
-        </>
-      ) : tab === 'MB' ? (
-        <>
-          <div className="section-title">
-            <h3>FSO Material Balance</h3>
-            <p>Date-wise record using Location Accounting Day Setting boundaries.</p>
-          </div>
 
-          <table className="dense-table">
-            <thead>
-              <tr>
-                <th>Acc Date</th>
-                <th>Opening</th>
-                <th>Receipt</th>
-                <th>Export</th>
-                <th>Book Close</th>
-                <th>Phys Close</th>
-                <th>Close Water</th>
-                <th>Loss/Gain</th>
-              </tr>
-            </thead>
-            <tbody>
-              {!mb?.rows?.length ? (
-                <tr><td colSpan="8" className="empty-table">No data. Run MB.</td></tr>
-              ) : (
-                mb.rows.map((r) => (
-                  <tr key={r.accounting_date}>
-                    <td>{r.accounting_date}</td>
-                    <td>{Number(r.opening_stock_bbl || 0).toFixed(3)}</td>
-                    <td>{Number(r.receipt_bbl || 0).toFixed(3)}</td>
-                    <td>{Number(r.export_bbl || 0).toFixed(3)}</td>
-                    <td>{Number(r.book_closing_bbl || 0).toFixed(3)}</td>
-                    <td>{Number(r.physical_closing_bbl || 0).toFixed(3)}</td>
-                    <td>{Number(r.physical_closing_water_bbl || 0).toFixed(3)}</td>
-                    <td>{Number(r.loss_gain_bbl || 0).toFixed(3)}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </>
-      ) : (
-        <>
-          <div className="section-title">
-            <h3>FSO Outturn</h3>
-            <p>Daily shuttle discharge vs FSO receipt comparison (A4 print-ready).</p>
-          </div>
+            <table className="dense-table">
+              <thead>
+                <tr>
+                  <th>Acc Date</th>
+                  <th>Shuttle</th>
+                  <th>Shuttle Discharge</th>
+                  <th>FSO Receipt</th>
+                  <th>Variance</th>
+                  <th>%</th>
+                </tr>
+              </thead>
+              <tbody>
+                {!outturn?.rows?.length ? (
+                  <tr><td colSpan="6" className="empty-table">No data. Run Outturn.</td></tr>
+                ) : (
+                  outturn.rows.map((r, idx) => (
+                    <tr key={`${r.accounting_date}-${r.shuttle_number}-${idx}`}>
+                      <td>{r.accounting_date}</td>
+                      <td>{r.shuttle_number}</td>
+                      <td>{Number(r.shuttle_discharge_bbl || 0).toFixed(3)}</td>
+                      <td>{Number(r.fso_receipt_bbl || 0).toFixed(3)}</td>
+                      <td>{Number(r.variance_bbl || 0).toFixed(3)}</td>
+                      <td>{Number(r.variance_pct || 0).toFixed(3)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
 
-          <table className="dense-table">
-            <thead>
-              <tr>
-                <th>Acc Date</th>
-                <th>Shuttle</th>
-                <th>Shuttle Discharge</th>
-                <th>FSO Receipt</th>
-                <th>Variance</th>
-                <th>%</th>
-              </tr>
-            </thead>
-            <tbody>
-              {!outturn?.rows?.length ? (
-                <tr><td colSpan="6" className="empty-table">No data. Run Outturn.</td></tr>
-              ) : (
-                outturn.rows.map((r, idx) => (
-                  <tr key={`${r.accounting_date}-${r.shuttle_number}-${idx}`}>
-                    <td>{r.accounting_date}</td>
-                    <td>{r.shuttle_number}</td>
-                    <td>{Number(r.shuttle_discharge_bbl || 0).toFixed(3)}</td>
-                    <td>{Number(r.fso_receipt_bbl || 0).toFixed(3)}</td>
-                    <td>{Number(r.variance_bbl || 0).toFixed(3)}</td>
-                    <td>{Number(r.variance_pct || 0).toFixed(3)}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-
-          {outturn ? (
-            <div className="info-box">
-              <strong>Totals:</strong>{' '}
-              Discharge {Number(outturn.total_shuttle_discharge_bbl || 0).toFixed(3)} | Receipt {Number(outturn.total_fso_receipt_bbl || 0).toFixed(3)} | Var {Number(outturn.total_variance_bbl || 0).toFixed(3)} | % {Number(outturn.total_variance_pct || 0).toFixed(3)}
-            </div>
-          ) : null}
-        </>
-          )}
+            {outturn ? (
+              <div className="info-box">
+                <strong>Totals:</strong>{' '}
+                Discharge {Number(outturn.total_shuttle_discharge_bbl || 0).toFixed(3)} | Receipt {Number(outturn.total_fso_receipt_bbl || 0).toFixed(3)} | Var {Number(outturn.total_variance_bbl || 0).toFixed(3)} | % {Number(outturn.total_variance_pct || 0).toFixed(3)}
+              </div>
+            ) : null}
+          </>
+        )}
         </div>
       </div>
 
