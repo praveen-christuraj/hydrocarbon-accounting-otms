@@ -58,12 +58,19 @@ const locationLabel = (code, name) => {
  * totals. Rendered inside a print-only container by Tanker Tracking.
  */
 const QUANTITY_ROWS = [
-  { key: 'GOV', label: 'GOV (bbl)', sumKey: 'senderGovBbl', recvKey: 'receiverGovBbl', varKey: 'govVarianceBbl' },
-  { key: 'GSV', label: 'GSV (bbl)', sumKey: 'senderGsvBbl', recvKey: 'receiverGsvBbl', varKey: 'gsvVarianceBbl' },
-  { key: 'NSV', label: 'NSV (bbl)', sumKey: 'senderNsvBbl', recvKey: 'receiverNsvBbl', varKey: 'nsvVarianceBbl' },
-  { key: 'LT', label: 'LT', sumKey: 'senderLt', recvKey: 'receiverLt', varKey: 'ltVariance' },
-  { key: 'MT', label: 'MT', sumKey: 'senderMt', recvKey: 'receiverMt', varKey: 'mtVariance' },
+  { key: 'GOV', label: 'GOV (bbl)', ticketKey: 'govBbl', senderKey: 'senderGovBbl', receiverKey: 'receiverGovBbl', varianceKey: 'govVarianceBbl' },
+  { key: 'GSV', label: 'GSV (bbl)', ticketKey: 'gsvBbl', senderKey: 'senderGsvBbl', receiverKey: 'receiverGsvBbl', varianceKey: 'gsvVarianceBbl' },
+  { key: 'NSV', label: 'NSV (bbl)', ticketKey: 'nsvBbl', senderKey: 'senderNsvBbl', receiverKey: 'receiverNsvBbl', varianceKey: 'nsvVarianceBbl' },
+  { key: 'LT', label: 'LT', ticketKey: 'lt', senderKey: 'senderLt', receiverKey: 'receiverLt', varianceKey: 'ltVariance' },
+  { key: 'MT', label: 'MT', ticketKey: 'mt', senderKey: 'senderMt', receiverKey: 'receiverMt', varianceKey: 'mtVariance' },
 ]
+
+function ticketQuantity(ticket, comparison, ticketKey, comparisonKey) {
+  const ticketValue = ticket?.[ticketKey]
+  return ticketValue === null || ticketValue === undefined
+    ? comparison?.[comparisonKey]
+    : ticketValue
+}
 
 function tankerLabel(group) {
   const name = group.tankerAssetName || ''
@@ -108,7 +115,13 @@ function TankerConvoyComparisonReport({
     receiverLocations.add(groupReceiverLocation(group))
   })
 
-  const convoyTotals = QUANTITY_ROWS.map(({ key, label }) => {
+  const convoyTotals = QUANTITY_ROWS.map(({
+    key,
+    label,
+    ticketKey,
+    senderKey,
+    receiverKey,
+  }) => {
     let senderTotal = 0
     let receiverTotal = 0
     let differenceTotal = 0
@@ -118,8 +131,20 @@ function TankerConvoyComparisonReport({
 
     comparedGroups.forEach((group) => {
       const comparison = group.quantityComparison
-      const senderValue = Number(comparison[`sender${key}Bbl`] || 0)
-      const receiverValue = Number(comparison[`receiver${key}Bbl`] || 0)
+      const senderValue = Number(ticketQuantity(
+        group.senderTicket,
+        comparison,
+        ticketKey,
+        senderKey,
+      ))
+      const receiverValue = Number(ticketQuantity(
+        group.latestReceiverTicket,
+        comparison,
+        ticketKey,
+        receiverKey,
+      ))
+
+      if (!Number.isFinite(senderValue) || !Number.isFinite(receiverValue)) return
 
       senderTotal += senderValue
       senderCount += 1
@@ -141,14 +166,26 @@ function TankerConvoyComparisonReport({
   const quantityRows = comparedGroups.flatMap((group) => {
     const comparison = group.quantityComparison
     const tanker = tankerLabel(group)
-    return QUANTITY_ROWS.map(({ key, label }) => ({
+    return QUANTITY_ROWS.map(({
+      key,
+      label,
+      ticketKey,
+      senderKey,
+      receiverKey,
+      varianceKey,
+    }) => ({
       key: `${group.groupKey}-${key}`,
       tanker,
       group,
       label,
-      sender: comparison[`sender${key}Bbl`],
-      receiver: comparison[`receiver${key}Bbl`],
-      variance: comparison[`${key === 'GOV' ? 'gov' : key === 'GSV' ? 'gsv' : key === 'NSV' ? 'nsv' : key.toLowerCase()}VarianceBbl`],
+      sender: ticketQuantity(group.senderTicket, comparison, ticketKey, senderKey),
+      receiver: ticketQuantity(
+        group.latestReceiverTicket,
+        comparison,
+        ticketKey,
+        receiverKey,
+      ),
+      variance: comparison[varianceKey],
     }))
   })
 

@@ -1,7 +1,7 @@
 import { logUiAction } from '../utils/actionLogger'
 import { resolveReceiverCode, resolveSenderCode } from '../utils/senderReceiver'
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import {
   acknowledgeTankerReceipt,
   closeTankerMovement,
@@ -31,10 +31,6 @@ const formatNumber = (value, decimals = 3) => {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   })
-}
-
-const formatPercent = (value) => {
-  return `${formatNumber(value, 4)}%`
 }
 
 const statusLabelMap = {
@@ -72,26 +68,6 @@ const getTrackingStatusClass = (status) => {
   if (status === 'CLOSED') {
     return 'active'
   }
-  return 'submitted'
-}
-
-const getSealStatusClass = (status) => {
-  if (status === 'MATCHED') {
-    return 'active'
-  }
-
-  if (status === 'NOT_ENTERED') {
-    return 'draft'
-  }
-
-  if (
-    status === 'MISMATCH' ||
-    status === 'RECEIVER_MISSING' ||
-    status === 'SENDER_MISSING'
-  ) {
-    return 'rejected'
-  }
-
   return 'submitted'
 }
 
@@ -739,7 +715,7 @@ function TankerTracking({
     }, 100)
   }
 
-  const renderTicketCard = (title, ticket) => {
+  const renderTicketCard = (title, ticket, locationRole) => {
     if (!ticket) {
       return (
         <div className="tracking-ticket-card empty">
@@ -748,6 +724,16 @@ function TankerTracking({
         </div>
       )
     }
+
+    const location = locationRole === 'receiver'
+      ? ticket.receiverName ||
+        ticket.destinationLocationName ||
+        ticket.receiverCode ||
+        ticket.destinationLocationCode
+      : ticket.senderName ||
+        ticket.originLocationName ||
+        ticket.senderCode ||
+        ticket.originLocationCode
 
     return (
       <div className="tracking-ticket-card">
@@ -765,26 +751,14 @@ function TankerTracking({
           <span>Ticket</span>
           <strong>{ticket.ticketNumber || ticket.operationNumber}</strong>
 
-          <span>Operation</span>
-          <strong>{ticket.operationTypeName || ticket.operationTypeCode}</strong>
-
           <span>Date</span>
           <strong>{ticket.operationDate}</strong>
 
           <span>Location</span>
-          <strong>
-            {ticket.senderName ||
-              ticket.originLocationName ||
-              ticket.senderCode ||
-              ticket.originLocationCode ||
-              '-'}
-          </strong>
+          <strong>{location || '-'}</strong>
 
-          <span>Total Dip</span>
-          <strong>{formatNumber(ticket.totalDipCm, 1)} cm</strong>
-
-          <span>Water Dip</span>
-          <strong>{formatNumber(ticket.waterDipCm, 1)} cm</strong>
+          <span>TOV</span>
+          <strong>{formatNumber(ticket.tovBbl)} bbl</strong>
 
           <span>GOV</span>
           <strong>{formatNumber(ticket.govBbl)} bbl</strong>
@@ -795,18 +769,9 @@ function TankerTracking({
           <span>NSV</span>
           <strong>{formatNumber(ticket.nsvBbl)} bbl</strong>
 
-          <span>LT / MT</span>
-          <strong>
-            {formatNumber(ticket.lt)} / {formatNumber(ticket.mt)}
-          </strong>
         </div>
       </div>
     )
-  }
-
-  const getRoleLabel = (movementRole) => {
-    const value = String(movementRole || '').toUpperCase()
-    return value === 'RECEIVER' ? 'Receiver' : value === 'SENDER' ? 'Sender' : 'Ticket'
   }
 
   return (
@@ -1075,16 +1040,6 @@ function TankerTracking({
             const closed = g.trackingStatus === 'CLOSED'
             const pending = g.trackingStatus === 'PENDING_RECEIPT'
 
-            // Sender first, then every receiver ticket. Missing sides are
-            // dropped so a group without a sender never renders an empty row.
-            const ticketEntries = [
-              { ticket: g.senderTicket, role: 'SENDER' },
-              ...(g.receiverTickets || []).map((ticket) => ({
-                ticket,
-                role: 'RECEIVER',
-              })),
-            ].filter((entry) => Boolean(entry.ticket))
-
             return (
               <div key={g.groupKey} className="full-width-field">
                 <div className="section-title">
@@ -1103,9 +1058,6 @@ function TankerTracking({
                   </p>
 
                   <div className="form-actions" style={{ marginTop: 8 }}>
-                    {renderTicketCard('Sender Ticket', g.senderTicket)}
-                    {renderTicketCard('Latest Receiver Ticket', g.latestReceiverTicket)}
-
                     {g.quantityComparison && (
                       <button
                         type="button"
@@ -1179,6 +1131,15 @@ function TankerTracking({
                     )}
                   </div>
 
+                  <div className="tracking-detail-grid">
+                    {renderTicketCard('Sender Ticket', g.senderTicket, 'sender')}
+                    {renderTicketCard(
+                      'Latest Receiver Ticket',
+                      g.latestReceiverTicket,
+                      'receiver',
+                    )}
+                  </div>
+
                   {g.warningMessages.length > 0 && (
                     <div className="info-box">
                       {g.warningMessages.map((message) => (
@@ -1197,203 +1158,6 @@ function TankerTracking({
                   )}
                 </div>
 
-                {/* Tickets */}
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Ticket</th>
-                      <th>Role</th>
-                      <th>Operation</th>
-                      <th>Date</th>
-                      <th>Location</th>
-                      <th>NSV</th>
-                      <th>Status</th>
-                      <th>Open</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {ticketEntries.length === 0 ? (
-                      <tr>
-                        <td colSpan="8" className="empty-table">
-                          No tickets.
-                        </td>
-                      </tr>
-                    ) : (
-                      ticketEntries.map((entry) => {
-                        const t = entry.ticket
-                        return (
-                          <tr key={t?.transactionId}>
-                            <td>
-                              <strong>{t?.ticketNumber || t?.operationNumber}</strong>
-                            </td>
-                            <td>{getRoleLabel(entry.role)}</td>
-                            <td>{t?.operationTypeName}</td>
-                            <td>{t?.operationDate}</td>
-                            <td>
-                              {t?.senderName ||
-                                t?.originLocationName ||
-                                t?.senderCode ||
-                                t?.originLocationCode ||
-                                '-'}
-                            </td>
-                            <td className="number-cell">
-                              {formatNumber(t?.nsvBbl)} bbl
-                            </td>
-                            <td>
-                              <span
-                                className={`status-badge ${
-                                  String(t?.status || '').toLowerCase()
-                                }`}
-                              >
-                                {t?.status}
-                              </span>
-                            </td>
-                            <td>
-                              <Link to={`/operation-transactions/${t.transactionId}`}>
-                                <button type="button">View</button>
-                              </Link>
-                            </td>
-                          </tr>
-                        )
-                      })
-                    )}
-                  </tbody>
-                </table>
-
-                {/* Seal Cross-check */}
-                <div className="section-title compact-section-title">
-                  <h3>Seal Cross-check</h3>
-                </div>
-
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Seal</th>
-                      <th>Sender</th>
-                      <th>Receiver</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {g.sealChecks.map((seal) => (
-                      <tr key={seal.sealName}>
-                        <td>{seal.sealName}</td>
-                        <td>{seal.senderValue || '-'}</td>
-                        <td>{seal.receiverValue || '-'}</td>
-                        <td>
-                          <span
-                            className={`status-badge ${getSealStatusClass(
-                              seal.status,
-                            )}`}
-                          >
-                            {seal.status}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                    {g.sealChecks.length === 0 && (
-                      <tr>
-                        <td colSpan="4" className="empty-table">
-                          No seal data recorded.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-
-                {/* Quantity Comparison */}
-                <div className="section-title compact-section-title">
-                  <h3>Quantity Comparison</h3>
-                </div>
-
-                {g.quantityComparison ? (
-                  <table className="comparison-table">
-                    <thead>
-                      <tr>
-                        <th>Parameter</th>
-                        <th className="number-cell">Sender</th>
-                        <th className="number-cell">Receiver</th>
-                        <th className="number-cell">Variance</th>
-                        <th className="number-cell">Variance %</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td>GOV</td>
-                        <td className="number-cell">
-                          {formatNumber(g.quantityComparison.senderGovBbl)} bbl
-                        </td>
-                        <td className="number-cell">
-                          {formatNumber(g.quantityComparison.receiverGovBbl)} bbl
-                        </td>
-                        <td className="number-cell">
-                          {formatNumber(g.quantityComparison.govVarianceBbl)} bbl
-                        </td>
-                        <td className="number-cell">-</td>
-                      </tr>
-                      <tr>
-                        <td>GSV</td>
-                        <td className="number-cell">
-                          {formatNumber(g.quantityComparison.senderGsvBbl)} bbl
-                        </td>
-                        <td className="number-cell">
-                          {formatNumber(g.quantityComparison.receiverGsvBbl)} bbl
-                        </td>
-                        <td className="number-cell">
-                          {formatNumber(g.quantityComparison.gsvVarianceBbl)} bbl
-                        </td>
-                        <td className="number-cell">-</td>
-                      </tr>
-                      <tr>
-                        <td>NSV</td>
-                        <td className="number-cell">
-                          {formatNumber(g.quantityComparison.senderNsvBbl)} bbl
-                        </td>
-                        <td className="number-cell">
-                          {formatNumber(g.quantityComparison.receiverNsvBbl)} bbl
-                        </td>
-                        <td className="number-cell">
-                          {formatNumber(g.quantityComparison.nsvVarianceBbl)} bbl
-                        </td>
-                        <td className="number-cell">
-                          {formatPercent(g.quantityComparison.nsvVariancePercent)}
-                        </td>
-                      </tr>
-                      <tr>
-                        <td>LT</td>
-                        <td className="number-cell">
-                          {formatNumber(g.quantityComparison.senderLt)}
-                        </td>
-                        <td className="number-cell">
-                          {formatNumber(g.quantityComparison.receiverLt)}
-                        </td>
-                        <td className="number-cell">
-                          {formatNumber(g.quantityComparison.ltVariance)}
-                        </td>
-                        <td className="number-cell">-</td>
-                      </tr>
-                      <tr>
-                        <td>MT</td>
-                        <td className="number-cell">
-                          {formatNumber(g.quantityComparison.senderMt)}
-                        </td>
-                        <td className="number-cell">
-                          {formatNumber(g.quantityComparison.receiverMt)}
-                        </td>
-                        <td className="number-cell">
-                          {formatNumber(g.quantityComparison.mtVariance)}
-                        </td>
-                        <td className="number-cell">-</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                ) : (
-                  <div className="info-box">
-                    No receiver ticket is available yet. Quantity comparison will
-                    appear after receiver tanker entry is saved with the same
-                    convoy and tanker.
-                  </div>
-                )}
               </div>
             )
           })}

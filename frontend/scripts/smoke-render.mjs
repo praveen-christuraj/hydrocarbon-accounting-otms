@@ -414,7 +414,9 @@ globalThis.fetch = async (input, init = {}) => {
     const receiver = ticket({
       transaction_id: 2, ticket_number: 'TKT-0002', operation_number: 'OP-0002',
       movement_role: 'RECEIVER', operation_type_code: 'TANKER_RECEIPT',
-      operation_type_name: 'Tanker Receipt', nsv_bbl: 5148.6, total_dip_cm: 209.8,
+      operation_type_name: 'Tanker Receipt', total_dip_cm: 209.8,
+      gov_bbl: 5184.2, gsv_bbl: 5174.1, nsv_bbl: 5148.6,
+      lt: 649.5, mt: 659.4,
     })
     const groups = [
       {
@@ -1089,6 +1091,16 @@ try {
       click(viewButton)
       await flush(200)
       check('convoy detail opens', Boolean(q('.modal, .modal-dialog, [role="dialog"]')))
+      const convoyDetail = q('.app-modal-body')
+      check(
+        'convoy detail keeps each tanker compact',
+        Boolean(convoyDetail)
+          && text(convoyDetail).includes('Sender Ticket')
+          && text(convoyDetail).includes('Latest Receiver Ticket')
+          && !text(convoyDetail).includes('Seal Cross-check')
+          && !text(convoyDetail).includes('Total Dip'),
+        convoyDetail ? text(convoyDetail).slice(0, 180) : ''
+      )
       const printButton = qa('button').find((b) => text(b) === 'Print Convoy Comparison')
       check('convoy comparison print action is present', Boolean(printButton))
 
@@ -1108,6 +1120,13 @@ try {
         check(
           'convoy comparison report has quantity totals',
           Boolean(report) && text(report).includes('Convoy Quantity Totals')
+        )
+        check(
+          'convoy comparison report prints sender and receiver quantities',
+          Boolean(report)
+            && text(report).includes('5,188.000')
+            && text(report).includes('5,184.200'),
+          report ? text(report).slice(0, 260) : ''
         )
         const closeReport = qa('button').find((b) => text(b).includes('Close Report'))
         if (closeReport) click(closeReport)
