@@ -4,7 +4,9 @@ import {
   getTankStockLedgerDailySummary,
   getTankStockLedgerSummary,
 } from '../api/tankStockLedgerApi'
-import { getCompanyReportProfiles } from '../api/companyReportProfileApi'
+import { useCompanyPrintProfile } from '../hooks/useCompanyPrintProfile'
+import { usePrintDialog } from '../components/print/printProfileContext'
+import { logUiAction } from '../utils/actionLogger'
 import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
@@ -18,6 +20,9 @@ import {
 } from '../utils/format'
 
 function TankStockLedger({ locations, assets, loggedInUser }) {
+  const profile = useCompanyPrintProfile()
+  const { requestPrint } = usePrintDialog()
+
   const emptyFilters = {
     locationCode: '',
     tankAssetCode: '',
@@ -43,7 +48,6 @@ function TankStockLedger({ locations, assets, loggedInUser }) {
   const feedback = useActionFeedback()
   const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
 
-  const [profile, setProfile] = useState(null)
   const isAdminBootstrap =
     loggedInUser?.isAdmin === true ||
     String(loggedInUser?.username || '').trim().toLowerCase() === 'admin' ||
@@ -129,15 +133,6 @@ function TankStockLedger({ locations, assets, loggedInUser }) {
     )
   }, [dailySummaryRows])
 
-  useEffect(() => {
-    ;(async () => {
-      try {
-        const profiles = await getCompanyReportProfiles()
-        const activeProfile = profiles.find((p) => p.status === 'Active') || profiles[0]
-        if (activeProfile) setProfile(activeProfile)
-      } catch { /* non-critical */ }
-    })()
-  }, [])
 
   const loadLedger = async (activeFilters = filters) => {
     try {
@@ -483,7 +478,21 @@ function TankStockLedger({ locations, assets, loggedInUser }) {
 
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <span className="record-count">{ledgerRows.length} Ledger Rows</span>
-          <button type="button" onClick={() => window.print()}>
+          <button
+            type="button"
+            onClick={() =>
+              requestPrint({
+                module: 'Tank Stock Ledger',
+                reportName: 'Tank Stock Ledger',
+                onBeforePrint: () => {
+                  logUiAction('Tank Stock Ledger', 'Print Report', {
+                    filters,
+                    view: activeView,
+                  })
+                },
+              })
+            }
+          >
             Print
           </button>
         </div>

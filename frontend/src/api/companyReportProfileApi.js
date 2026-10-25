@@ -36,6 +36,18 @@ export const getCompanyReportProfiles = async () => {
   return data.map(convertProfileFromApi)
 }
 
+/**
+ * Profiles offered by the global print dialog.
+ *
+ * Unlike the master listing this endpoint only needs a valid login, because
+ * every user prints reports and every print must be branded with a profile.
+ * Profiles are global: one created in the master is available to all users.
+ */
+export const getCompanyReportProfilePrintOptions = async () => {
+  const data = await apiGet('/company-report-profiles/print-options')
+  return data.map(convertProfileFromApi)
+}
+
 export const createCompanyReportProfile = async (profile) => {
   const data = await apiPost(
     '/company-report-profiles',

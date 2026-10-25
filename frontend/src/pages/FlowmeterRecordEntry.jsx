@@ -3,6 +3,8 @@ import {
   getFlowmeterRecords,
 } from '../api/flowmeterApi'
 import { useCompanyPrintProfile } from '../hooks/useCompanyPrintProfile'
+import { usePrintDialog } from '../components/print/printProfileContext'
+import { logUiAction } from '../utils/actionLogger'
 import CompanyPrintHeader from '../components/reports/CompanyPrintHeader'
 import CompanyPrintFooter from '../components/reports/CompanyPrintFooter'
 import AlertMessage from '../components/common/AlertMessage'
@@ -10,6 +12,7 @@ import useActionFeedback from '../hooks/useActionFeedback'
 
 function FlowmeterRecordEntry({ locations = [], assets = [] }) {
   const profile = useCompanyPrintProfile()
+  const { requestPrint } = usePrintDialog()
 
   const [rows, setRows] = useState([])
   const [filters, setFilters] = useState({
@@ -255,7 +258,21 @@ function FlowmeterRecordEntry({ locations = [], assets = [] }) {
           Clear Filters
         </button>
         <button type="button" onClick={exportCsv} disabled={loading || rows.length === 0}>Export CSV</button>
-        <button type="button" onClick={() => window.print()} disabled={loading}>Print</button>
+        <button
+          type="button"
+          onClick={() =>
+            requestPrint({
+              module: 'Flowmeter Records',
+              reportName: 'Flowmeter Records Report',
+              onBeforePrint: () => {
+                logUiAction('Flowmeter Records', 'Print Report', filters)
+              },
+            })
+          }
+          disabled={loading}
+        >
+          Print
+        </button>
       </div>
 
       <div className="info-box no-print">

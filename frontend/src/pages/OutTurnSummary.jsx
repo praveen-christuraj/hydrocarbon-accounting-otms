@@ -4,7 +4,9 @@ import {
   getOutTurnSummaryConfig,
   saveOutTurnSummaryConfig,
 } from '../api/outTurnSummaryApi'
-import { getCompanyReportProfiles } from '../api/companyReportProfileApi'
+import { useCompanyPrintProfile } from '../hooks/useCompanyPrintProfile'
+import { usePrintDialog } from '../components/print/printProfileContext'
+import { logUiAction } from '../utils/actionLogger'
 import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
@@ -21,6 +23,9 @@ import {
 const COLUMN_GROUPS = ['Base', 'Input', 'Calculated', 'Computed']
 
 function OutTurnSummary({ locations, assets, loggedInUser }) {
+  const profile = useCompanyPrintProfile()
+  const { requestPrint } = usePrintDialog()
+
   const emptyFilters = {
     locationCode: '',
     tankAssetCode: '',
@@ -58,8 +63,6 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
   // action area (owner rule 8) - never at the bottom of the page.
   const feedback = useActionFeedback()
   const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
-  const [profile, setProfile] = useState(null)
-
   const [showConfigModal, setShowConfigModal] = useState(false)
   const [configDraft, setConfigDraft] = useState([])
   const [savingConfig, setSavingConfig] = useState(false)
@@ -151,13 +154,7 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
     try {
       setLoading(true)
 
-      const [reportData, profiles] = await Promise.all([
-        getOutTurnSummary(activeFilters),
-        getCompanyReportProfiles(),
-      ])
-
-      const activeProfile = profiles.find((p) => p.status === 'Active') || profiles[0]
-      setProfile(activeProfile)
+      const reportData = await getOutTurnSummary(activeFilters)
 
       setRows(reportData.rows || [])
       setConfiguredColumns(reportData.columns || [])
@@ -426,7 +423,13 @@ function OutTurnSummary({ locations, assets, loggedInUser }) {
       return
     }
 
-    window.print()
+    requestPrint({
+      module: 'Out-Turn Summary',
+      reportName: 'Out-Turn Summary',
+      onBeforePrint: () => {
+        logUiAction('Out-Turn Summary', 'Print Report', filters)
+      },
+    })
   }
 
   const handleFilterChange = (e) => {

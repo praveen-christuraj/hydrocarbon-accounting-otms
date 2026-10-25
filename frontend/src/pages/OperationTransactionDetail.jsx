@@ -10,12 +10,12 @@ import {
 
 import { checkOperationWorkflowPolicy } from '../api/operationWorkflowPolicyApi'
 
-import { getCompanyReportProfiles } from '../api/companyReportProfileApi'
+import { useCompanyPrintProfile } from '../hooks/useCompanyPrintProfile'
+import { usePrintDialog } from '../components/print/printProfileContext'
+import { logUiAction } from '../utils/actionLogger'
 import TankerPayloadPreview from '../components/operationLayouts/TankerPayloadPreview'
 import AlertMessage from '../components/common/AlertMessage'
 import useActionFeedback from '../hooks/useActionFeedback'
-
-const SELECTED_REPORT_PROFILE_KEY = 'tank_gauging_selected_report_profile'
 
 const defaultReportSettings = {
   id: null,
@@ -32,16 +32,6 @@ const defaultReportSettings = {
   status: 'Active',
 }
 
-const loadSelectedReportProfileName = () => {
-  return (
-    localStorage.getItem(SELECTED_REPORT_PROFILE_KEY) ||
-    defaultReportSettings.profileName
-  )
-}
-
-const saveSelectedReportProfileName = (profileName) => {
-  localStorage.setItem(SELECTED_REPORT_PROFILE_KEY, profileName)
-}
 const formatValue = (value, decimals = 3) => {
   if (value === null || value === undefined || value === '') {
     return '-'
@@ -1874,6 +1864,12 @@ function OperationTransactionDetail({ loggedInUser }) {
   const { transactionId } = useParams()
   const navigate = useNavigate()
 
+  // Global print-profile selection (prompted by every Print button) is the
+  // single source of the report branding on this page too.
+  const printProfile = useCompanyPrintProfile()
+  const { requestPrint } = usePrintDialog()
+  const reportSettings = printProfile || defaultReportSettings
+
   const [transaction, setTransaction] = useState(null)
   const [statusHistory, setStatusHistory] = useState([])
   const [correctionRequests, setCorrectionRequests] = useState([])
@@ -1892,70 +1888,10 @@ function OperationTransactionDetail({ loggedInUser }) {
   const [pendingReviewConfirmed, setPendingReviewConfirmed] = useState(false)
   const [workflowActionAllow, setWorkflowActionAllow] = useState({})
   const [workflowActionReason, setWorkflowActionReason] = useState({})
-  const [reportProfiles, setReportProfiles] = useState([])
-  const [selectedReportProfileName, setSelectedReportProfileName] = useState(
-    loadSelectedReportProfileName
-  )
-  const [reportSettings, setReportSettings] = useState(defaultReportSettings)
-  const [reportProfilesLoading, setReportProfilesLoading] = useState(false)
   // Status-action feedback: little pop-up (toast) + inline message next to
   // the status action buttons and inside the review modal (owner rule 8).
   const feedback = useActionFeedback()
   const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
-  const reloadReportProfiles = async (preferredProfileName = '') => {
-    try {
-      setReportProfilesLoading(true)
-
-      const profilesFromApi = await getCompanyReportProfiles()
-
-      const activeProfiles = profilesFromApi.filter((profile) => {
-        return profile.status === 'Active'
-      })
-
-      setReportProfiles(activeProfiles)
-
-      const savedSelectedName =
-        preferredProfileName ||
-        loadSelectedReportProfileName() ||
-        defaultReportSettings.profileName
-
-      const selectedProfile =
-        activeProfiles.find((profile) => {
-          return profile.profileName === savedSelectedName
-        }) ||
-        activeProfiles[0] ||
-        defaultReportSettings
-
-      saveSelectedReportProfileName(selectedProfile.profileName)
-      setSelectedReportProfileName(selectedProfile.profileName)
-      setReportSettings(selectedProfile)
-
-      return activeProfiles
-    } catch (error) {
-      notifyError(error.message)
-      setReportProfiles([])
-      setSelectedReportProfileName(defaultReportSettings.profileName)
-      setReportSettings(defaultReportSettings)
-
-      return []
-    } finally {
-      setReportProfilesLoading(false)
-    }
-  }
-
-  const handleReportProfileChange = (profileName) => {
-    const selectedProfile = reportProfiles.find((profile) => {
-      return profile.profileName === profileName
-    })
-
-    if (!selectedProfile) {
-      return
-    }
-
-    saveSelectedReportProfileName(profileName)
-    setSelectedReportProfileName(profileName)
-    setReportSettings(selectedProfile)
-  }
   const isAdminBootstrap =
     loggedInUser?.isAdmin === true ||
     String(loggedInUser?.username || '').trim().toLowerCase() === 'admin' ||
@@ -2065,7 +2001,6 @@ function OperationTransactionDetail({ loggedInUser }) {
     loadTransactionDetail()
     loadStatusHistory()
     loadCorrectionRequests()
-    reloadReportProfiles()
   }, [transactionId])
 
   useEffect(() => {
@@ -3279,49 +3214,27 @@ function OperationTransactionDetail({ loggedInUser }) {
 
         {hasPrintablePayload && (
           <>
-            <div className="report-profile-selector">
-              <label>Report Profile</label>
-              <select
-                value={selectedReportProfileName}
-                onChange={(e) => handleReportProfileChange(e.target.value)}
-                disabled={reportProfilesLoading}
-              >
-                {reportProfiles.length === 0 ? (
-                  <option value={defaultReportSettings.profileName}>
-                    No Active Profile - Using Default
-                  </option>
-                ) : (
-                  reportProfiles.map((profile) => (
-                    <option key={profile.id || profile.profileName} value={profile.profileName}>
-                      {profile.profileName}
-                    </option>
-                  ))
-                )}
-              </select>
-            </div>
-
-            {reportProfiles.length === 0 ? (
-              <div className="info-box">
-                No active company report profile found. Please create one from Admin →
-                Company Report Profile Master. The report will use default placeholder
-                settings until an active profile is available.
-              </div>
-            ) : (
-              <div className="info-box">
-                Report profiles are managed from Admin → Company Report Profile Master.
-                Only Active profiles are available here for printing.
-              </div>
-            )}
-
             <button
               type="button"
-              onClick={() => reloadReportProfiles(selectedReportProfileName)}
-              disabled={reportProfilesLoading}
+              onClick={() =>
+                requestPrint({
+                  module: 'Operation Transaction Detail',
+                  reportName: tankPayload
+                    ? `Tank Gauging Report - ${transaction.ticketNumber}`
+                    : `Multi-Tank Report - ${transaction.ticketNumber}`,
+                  onBeforePrint: () => {
+                    logUiAction(
+                      'Operation Transaction Detail',
+                      'Print Report',
+                      {
+                        ticketNumber: transaction.ticketNumber,
+                        reportType: tankPayload ? 'Tank Gauging' : 'Multi-Tank',
+                      }
+                    )
+                  },
+                })
+              }
             >
-              {reportProfilesLoading ? 'Loading Profiles...' : 'Refresh Profiles'}
-            </button>
-
-            <button type="button" onClick={() => window.print()}>
               {tankPayload ? 'Print Tank Gauging Report' : 'Print Multi-Tank Report'}
             </button>
 

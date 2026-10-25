@@ -10,6 +10,7 @@ import {
 import { createOperationEntry } from '../api/operationEntryApi'
 import { getVesselOperations } from '../api/vesselOperationApi'
 import { useCompanyPrintProfile } from '../hooks/useCompanyPrintProfile'
+import { usePrintDialog } from '../components/print/printProfileContext'
 import { usePermissions } from '../hooks/usePermissions'
 import CompanyPrintHeader from '../components/reports/CompanyPrintHeader'
 import CompanyPrintFooter from '../components/reports/CompanyPrintFooter'
@@ -45,6 +46,7 @@ function ShuttleTracking({
   const navigate = useNavigate()
 
   const profile = useCompanyPrintProfile()
+  const { requestPrint } = usePrintDialog()
 
   const { hasPermission } = usePermissions(loggedInUser)
   const canCloseVoyage = hasPermission('Close Shuttle Voyage')
@@ -605,6 +607,24 @@ function ShuttleTracking({
   // ----------------------------
   // Export
   // ----------------------------
+  const handlePrintVoyageMtr = () => {
+    if (!selectedGroup) {
+      notifyError('Select a voyage first, then print the MTR.')
+      return
+    }
+
+    requestPrint({
+      module: 'Shuttle Tracking',
+      reportName: `Shuttle Voyage MTR - ${selectedGroup.shuttleNumber || ''}`.trim(),
+      onBeforePrint: () => {
+        logUiAction('Shuttle Tracking', 'Print Voyage MTR', {
+          groupKey: selectedGroupKey,
+          shuttleNumber: selectedGroup.shuttleNumber,
+        })
+      },
+    })
+  }
+
   const downloadCsvForSelected = () => {
     if (!selectedGroup) {
       notifyError('Select a voyage first')
@@ -1244,7 +1264,7 @@ function ShuttleTracking({
                     <button type="button" disabled={loading} onClick={exportExcelForSelected}>
                       Export Excel
                     </button>
-                    <button type="button" className="no-print" onClick={() => { logUiAction('Shuttle Tracking', 'Print Voyage MTR', { groupKey: selectedGroupKey }); window.print() }}>
+                    <button type="button" className="no-print" onClick={handlePrintVoyageMtr}>
                       Print (MTR)
                     </button>
                   </div>

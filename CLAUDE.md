@@ -28,6 +28,7 @@
 | 9 | **Every page ships with Auditing and RBAC by default**, controlled by the admin user. | Wrap every route in `PermissionGuard` (module **View** permission) and gate every mutating control with the matching **action** permission from the catalog: `usePermissions(loggedInUser).hasPermission('Create Location')` / `'Edit Location'` / `'Delete Location'` / the named workflow permission (`Close Movement Mapping`, `Approve Operation Transaction`, …). Never use a single `Manage …` flag for create, edit and delete – the legacy `Manage X` names no longer exist. Permission names must exist in the Permission Master so the admin can assign them per role. Audit = rule 1. |
 | 10 | **Pop-ups must not close when the user clicks outside them.** Only the Cancel / Close button closes a dialog. | Use `frontend/src/components/common/Modal.jsx` (and `ConfirmDialog`) for every dialog. The backdrop has no click handler and Escape is ignored by design. Never add `onClick` to a backdrop/overlay element. Any dialog that is rendered inline (for example a column configuration panel) is a bug: it must go through `Modal`, which portals to `<body>`, so its CSS cannot live under a page-scoped selector. |
 | 11 | **Cross-location records follow the party (involvement) rule** (product owner, 2026-10-16). A location-scoped user must see and act on a ticket / voyage / acknowledgement when **any** of its party locations (origin, destination, sender, receiver) is inside their assigned locations – location B must see a ticket addressed to it even though B has no access to location A. Applies to **all** tracking modules and the Operation Transaction Register. | Shared helpers in `backend/app/dependencies/permissions.py` (`apply_transaction_party_scope_filter`, `ensure_transaction_in_user_party_scope`, `user_is_party_to_transaction`); voyage-level: `ensure_voyage_in_user_scope` in `backend/app/routers/shuttle_fso_voyages.py`. Own-side records keep the plain `apply_location_filter`; create/edit/approve stay origin-scoped. The full multi-criteria model (Permission × Location × Operation availability × Workflow policy) is documented in `PERMISSION_CRITERIA_MODEL.md`. |
+| 12 | **Every Print action prompts for the Company Report Profile first** (product owner, 2026-10-25). No report may print with a hard-coded/default/single profile. Clicking any Print button opens a dialog listing **all** profiles from the Company Report Profile Master (global – a profile saved once is usable by every user); `window.print()` runs only after the user picks a profile and confirms. Applies to every module and any future Print button. | `frontend/src/components/print/PrintProfileProvider.jsx` (mounted once inside `App`), `printProfileContext.js` (`usePrintDialog().requestPrint(...)`), `hooks/useCompanyPrintProfile.js` (selected profile for every report header/footer), backend read-only `GET /company-report-profiles/print-options` (login only, so non-admin operators can print). Full notes: `PRINT_REPORT_PROFILE.md`. |
 
 ### Permission model (read before gating any control)
 
@@ -108,6 +109,45 @@ Rules:
 - If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+
+## Recent Changes (2026-10-25) - Global Company Report Profile Selection On Every Print
+
+**Rule (product owner):** every Print button in every module must first ask which
+Company Report Profile the report should be branded with. Reports must never
+silently use one fixed/default profile. The profile list is the **global**
+Company Report Profile Master: once a profile is saved there, any user can pick
+it for any print-out.
+
+- **One global dialog:** `frontend/src/components/print/PrintProfileProvider.jsx`
+  is mounted once inside `App` (inside the authenticated shell, outside the
+  routes). Pages call `usePrintDialog().requestPrint({ module, reportName,
+  onBeforePrint })` from `components/print/printProfileContext.js`; the provider
+  opens the profile dialog, sets the chosen profile as active branding, waits for
+  React to paint and only then calls `window.print()`.
+- **All direct `window.print()` calls removed** from pages/components. Converted
+  modules: Barge Tracking (MTR + convoy), Tanker Tracking (MTR + convoy), FSO
+  Tracking, Shuttle Tracking, Flowmeter Records, Material Balance, Operation
+  Transaction Register, Operation Transaction Detail (tank gauging / multi-tank),
+  Out-Turn Report, Out-Turn Summary, Tank Operation Summary, Tank Stock Ledger,
+  Tanker Transaction Report and Export Reports.
+- **Single source of branding:** `hooks/useCompanyPrintProfile.js` now reads the
+  profile chosen in that dialog; the per-page duplicate “find first Active
+  profile” fetches were removed. That also fixes non-admin prints, which used to
+  render **no** company header at all because the master listing required the
+  admin-only View permission.
+- **Backend exception to section 0 (explicitly requested):** one new read-only
+  endpoint `GET /company-report-profiles/print-options` (auth required, no
+  permission required) serves the full profile list to the print dialog. No
+  model, migration, schema or existing endpoint changed; the master CRUD API
+  keeps its existing permissions. Covered by
+  `backend/tests/test_company_report_profile_print_options.py`.
+- **Regression guard:** `npm run check:print-actions` fails when any page or component
+  calls `window.print()` directly instead of `requestPrint()`.
+- **Verification:** `npm run smoke -- /tanker-tracking` and
+  `npm run smoke -- /fso-tracking` prove the dialog lists every profile, that no
+  print happens before confirmation, and that the printed report carries the
+  selected company name (not the default). Backend suite: 256 passed; frontend
+  smoke + all `test:*` scripts pass.
 
 ## Recent Changes (2026-10-22) - Operation Date/Time Comes From The Payload Only
 

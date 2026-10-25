@@ -4,7 +4,9 @@ import {
   getOperationTransactionsPaged,
   exportOperationTransactionsCsv,
 } from '../api/operationTransactionApi'
-import { getCompanyReportProfiles } from '../api/companyReportProfileApi'
+import { useCompanyPrintProfile } from '../hooks/useCompanyPrintProfile'
+import { usePrintDialog } from '../components/print/printProfileContext'
+import { logUiAction } from '../utils/actionLogger'
 import AlertMessage from '../components/common/AlertMessage'
 import useActionFeedback from '../hooks/useActionFeedback'
 
@@ -13,6 +15,9 @@ function OperationTransactionRegister({
   locations = [],
   assets = [],
 }) {
+  const profile = useCompanyPrintProfile()
+  const { requestPrint } = usePrintDialog()
+
   const [rows, setRows] = useState([])
   const [statusCounts, setStatusCounts] = useState([])
   const [totalRows, setTotalRows] = useState(0)
@@ -26,8 +31,6 @@ function OperationTransactionRegister({
   // action area (owner rule 8) - never at the bottom of the page.
   const feedback = useActionFeedback()
   const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
-
-  const [profile, setProfile] = useState(null)
 
   const [filters, setFilters] = useState({
     searchText: '',
@@ -104,16 +107,6 @@ function OperationTransactionRegister({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters, page, pageSize])
 
-  useEffect(() => {
-    ;(async () => {
-      try {
-        const profiles = await getCompanyReportProfiles()
-        const activeProfile = profiles.find((p) => p.status === 'Active') || profiles[0]
-        if (activeProfile) setProfile(activeProfile)
-      } catch { /* non-critical */ }
-    })()
-  }, [])
-
   const handleFilterChange = (e) => {
     const { name, value } = e.target
 
@@ -164,7 +157,13 @@ function OperationTransactionRegister({
   }
 
   const handlePrintRegister = () => {
-    window.print()
+    requestPrint({
+      module: 'Operation Transaction Register',
+      reportName: 'Operation Transaction Register',
+      onBeforePrint: () => {
+        logUiAction('Operation Transaction Register', 'Print Register', filters)
+      },
+    })
   }
 
   const totalPages = useMemo(() => {

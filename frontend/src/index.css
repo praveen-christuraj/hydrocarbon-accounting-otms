@@ -6471,11 +6471,87 @@ tr.is-selected > td {
     page-break-before: always;
   }
 
-  /* never print scaffolding / empty shells */
+  /* never print scaffolding / empty shells - the print-profile prompt and
+     every other open dialog stay out of the paper */
   .no-print,
-  .no-print * {
+  .no-print *,
+  .app-modal-backdrop {
     display: none !important;
   }
+}
+
+/* ===========================================================================
+   Company Report Profile print prompt (all modules)
+   =========================================================================== */
+.print-profile-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.print-profile-field label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.print-profile-preview {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface-2);
+}
+
+.print-profile-logo {
+  flex: 0 0 auto;
+  width: 64px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  overflow: hidden;
+}
+
+.print-profile-logo img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.print-profile-details h4 {
+  margin: 0;
+  font-size: 15px;
+  color: var(--text);
+}
+
+.print-profile-details p {
+  margin: 2px 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.print-profile-details .status-badge {
+  margin-top: 6px;
+}
+
+.print-profile-footer-note {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
 }
 
 /* Location checkbox selectors live with their component:

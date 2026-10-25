@@ -11,6 +11,7 @@ import {
 } from '../api/fsoReportApi'
 import { getFSOTracking } from '../api/fsoTrackingApi'
 import { useCompanyPrintProfile } from '../hooks/useCompanyPrintProfile'
+import { usePrintDialog } from '../components/print/printProfileContext'
 import { useDataFilters } from '../hooks/useDataFilters'
 import CompanyPrintHeader from '../components/reports/CompanyPrintHeader'
 import CompanyPrintFooter from '../components/reports/CompanyPrintFooter'
@@ -40,6 +41,7 @@ const downloadCsv = (filename, headers, rows) => {
 
 function FSOTracking({ locations = [], assets = [] }) {
   const profile = useCompanyPrintProfile()
+  const { requestPrint } = usePrintDialog()
 
   const [tab, setTab] = useState('SUMMARY') // SUMMARY | OTR | MB | OUTTURN
   const [loading, setLoading] = useState(false)
@@ -274,7 +276,15 @@ function FSOTracking({ locations = [], assets = [] }) {
     downloadCsv('fso_outturn.csv', headers, outturn.rows)
   }
 
-  const printReport = () => { logUiAction('FSO Reports', 'Print Report', { tab }); window.print() }
+  const printReport = () => {
+    requestPrint({
+      module: 'FSO Reports',
+      reportName: `FSO ${tab} Report`,
+      onBeforePrint: () => {
+        logUiAction('FSO Reports', 'Print Report', { tab })
+      },
+    })
+  }
 
   const downloadOTRxlsx = async () => {
     if (!requireBaseFilters()) return
