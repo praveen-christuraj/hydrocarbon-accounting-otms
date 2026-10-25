@@ -2092,3 +2092,100 @@ class TrackingModuleConfig(Base):
             name="unique_tracking_module_operation_type",
         ),
     )
+
+
+class ReportDefinition(Base):
+    """One user-built report (Report Builder, Configurations module).
+
+    The full design (data source, columns, JSON-to-column mappings,
+    calculated-column formulas, filters, grouping / matrix layout, sorting
+    and print options) lives in ``definition_json`` — see
+    ``app.services.report_engine`` for the versioned schema.  Denormalised
+    columns keep lists, menus and access checks cheap without opening the
+    JSON.  Published reports appear in the Reporting module for every user
+    who passes the report's access grants (``report_access_grants``).
+    """
+
+    __tablename__ = "report_definitions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    report_code = Column(String(120), nullable=False, unique=True, index=True)
+    report_name = Column(String(200), nullable=False, index=True)
+    description = Column(Text, nullable=True)
+
+    # TABULAR | MATRIX
+    report_type = Column(String(20), nullable=False, default="TABULAR", index=True)
+    # operation_tickets | tank_stock_ledger | table
+    source_kind = Column(String(40), nullable=False, default="operation_tickets", index=True)
+    source_table = Column(String(120), nullable=True, index=True)
+
+    definition_json = Column(JSONB, nullable=False, default=dict)
+
+    # PRIVATE = owner + grants only; INTERNAL = any user holding
+    # "View Custom Report" (grants still add Editor access).
+    visibility = Column(String(20), nullable=False, default="PRIVATE")
+    is_published = Column(String(10), nullable=False, default="No", index=True)
+    status = Column(String(20), nullable=False, default="Active", index=True)
+    version = Column(Integer, nullable=False, default=1)
+
+    owner_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    created_by = Column(String(150), nullable=True)
+    updated_by = Column(String(150), nullable=True)
+
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class ReportAccessGrant(Base):
+    """Who may use one built report, chosen while the report is created.
+
+    Exactly one of ``user_id`` / ``role_id`` / ``location_code`` is set,
+    matching ``grant_type`` (USER | ROLE | LOCATION).  A LOCATION grant
+    means "any user whose effective location scope contains this location".
+    ``access_level`` is VIEW (run / export / print) or EDIT (also redesign).
+    """
+
+    __tablename__ = "report_access_grants"
+
+    id = Column(Integer, primary_key=True, index=True)
+    report_id = Column(
+        Integer,
+        ForeignKey("report_definitions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    grant_type = Column(String(20), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    role_id = Column(Integer, ForeignKey("roles.id", ondelete="CASCADE"), nullable=True, index=True)
+    location_code = Column(String(50), nullable=True, index=True)
+    access_level = Column(String(10), nullable=False, default="VIEW")
+
+    created_by = Column(String(150), nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class ReportDefinitionVersion(Base):
+    """Immutable snapshot of a report design, for audit / reproducibility."""
+
+    __tablename__ = "report_definition_versions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    report_id = Column(
+        Integer,
+        ForeignKey("report_definitions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    version_number = Column(Integer, nullable=False)
+    definition_json = Column(JSONB, nullable=False, default=dict)
+    change_note = Column(Text, nullable=True)
+    created_by = Column(String(150), nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "report_id",
+            "version_number",
+            name="unique_report_definition_version",
+        ),
+    )

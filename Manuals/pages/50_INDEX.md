@@ -65,6 +65,7 @@
 | 38 | [38_MaterialBalanceReport.md](38_MaterialBalanceReport.md) | materialBalanceReportApi | reports.py | (report) |
 | 39 | [39_MaterialBalanceTemplateMaster.md](39_MaterialBalanceTemplateMaster.md) | materialBalanceTemplateApi | material_balance_templates.py | MaterialBalanceTemplate |
 | 40 | [40_AuditLog.md](40_AuditLog.md) | auditLogApi | audit_logs.py | AuditLog |
+| 54 | [54_ReportBuilder.md](54_ReportBuilder.md) | reportBuilderApi | report_builder.py | ReportDefinition |
 
 ## System Administration
 | # | Page | API Module | Backend Router | Model |

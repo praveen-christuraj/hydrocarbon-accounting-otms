@@ -36,6 +36,7 @@ from app.models import (
     AuditLog, Trip, TripEvent, TripComparison, ShuttleVoyage, FSOVoyage,
     ExportLocation, ExportEntity, ExportLocationEntity, ExportBlock,
     ExportPermit, ExportTransaction, ExportConfig,
+    ReportDefinition, ReportAccessGrant, ReportDefinitionVersion,
 )
 
 from app.utils.db_migrations import (
@@ -124,7 +125,7 @@ from app.routers import (
     flowmeter_configs_records, location_operation_availability, locations,
     material_balance_templates, movement_mappings, operation_entries,
     operation_tasks, operation_templates, operation_transactions, operation_types,
-    permissions, prime_mover_tanker_links, reports, role_locations, role_permissions, roles,
+    permissions, prime_mover_tanker_links, report_builder, reports, role_locations, role_permissions, roles,
     shuttle_fso_voyages, system_notifications, table11_factors, tank_operations,
     tank_operation_summary, tank_stock_ledger, tanker_tracking, tracking_module_configs, user_locations, user_roles, users, vessel_operations,
     vessel_stock_ledger, workflow_policies,
@@ -160,6 +161,7 @@ app.include_router(operation_types.router)
 app.include_router(out_turn_summary.router)
 app.include_router(permissions.router)
 app.include_router(prime_mover_tanker_links.router)
+app.include_router(report_builder.router)
 app.include_router(reports.router)
 app.include_router(role_locations.router)
 app.include_router(role_permissions.router)

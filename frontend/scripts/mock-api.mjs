@@ -1080,6 +1080,148 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
+  /* ------------------------------------------------ report builder (mock) */
+  if (pathname.startsWith('/report-builder')) {
+    const mockCols = (cols) => cols.map(([column, label, data_type = 'text', is_json = false]) => ({ column, label, data_type, is_json, is_location: column.endsWith('_location_code') || column === 'location_code', is_date: data_type === 'date' || data_type === 'datetime', nullable: true }))
+    const ticketCols = mockCols([
+      ['operation_ticket_number', 'Operation Ticket Number'], ['operation_number', 'Operation Number'],
+      ['operation_type_code', 'Operation Type Code'], ['origin_location_code', 'Origin Location Code'],
+      ['primary_asset_code', 'Asset Code'], ['product_name', 'Product'], ['status', 'Status'],
+      ['operation_date', 'Operation Date', 'date'], ['created_at', 'Created At', 'datetime'], ['created_by', 'Created By'],
+    ])
+    const mockRun = (definition, body = {}) => {
+      const columns = (definition?.columns || []).filter((c) => !c.hidden).map((c) => ({
+        key: c.key, label: c.label, kind: c.kind || 'data', data_type: c.data_type || 'text', format: c.format || {},
+        aggregate: c.aggregate || null, show_total: Boolean(c.show_total), formula: c.formula || null, unit: c.unit || null,
+      }))
+      const rows = Array.from({ length: 8 }, (_, i) => {
+        const row = {}
+        columns.forEach((c, ci) => {
+          row[c.key] = c.data_type === 'number' || (c.kind === 'calculated') ? Math.round((1000 + i * 137 + ci * 41) * 100) / 100 : c.data_type === 'date' ? `2026-10-${String(5 + i).padStart(2, '0')}` : c.key.includes('ticket') ? `TKT-100${i}` : c.key.includes('location') ? 'UTP' : c.key.includes('status') ? 'Approved' : `Value ${i + 1}`
+        })
+        return row
+      })
+      const totals = {}
+      columns.filter((c) => c.show_total).forEach((c) => { totals[c.key] = rows.reduce((s, r) => s + (Number(r[c.key]) || 0), 0) })
+      const pageSize = body.page_size || 50
+      return { columns, rows: rows.slice(0, pageSize), totals, meta: { total_rows: rows.length, page: 1, page_size: pageSize, total_pages: 1, scanned_rows: rows.length, filtered_rows: rows.length, warnings: ['Mock API: sample rows only. Run against the real backend for live data.'], generated_at: now(), generated_in_ms: 3, date_basis: definition?.date_basis || 'ACCOUNTING_DATE', date_basis_label: 'Accounting Date', source_kind: definition?.source?.kind || 'operation_tickets', source_table: 'operation_transactions', report_type: definition?.report_type || 'TABULAR', grouped: false } }
+    }
+    db.report_definitions = db.report_definitions || [{
+      id: 1, report_code: 'mock-gauging', report_name: 'Mock Gauging Quantities', description: 'Sample report (mock API)',
+      report_type: 'TABULAR', source_kind: 'operation_tickets', definition: {
+        schema_version: 1, report_type: 'TABULAR', source: { kind: 'operation_tickets', statuses: ['Approved'] }, date_basis: 'ACCOUNTING_DATE',
+        columns: [
+          { key: 'ticket', label: 'Ticket No', kind: 'data', source: { type: 'column', column: 'operation_ticket_number' }, data_type: 'text' },
+          { key: 'gsv', label: 'GSV (BBL)', kind: 'data', source: { type: 'payload_path', field_code: 'tank_gauging_payload', path: 'calculated.gsvBbl' }, data_type: 'number', show_total: true, format: { decimals: 3 } },
+          { key: 'nsv', label: 'NSV (BBL)', kind: 'data', source: { type: 'payload_path', field_code: 'tank_gauging_payload', path: 'calculated.nsvBbl' }, data_type: 'number', show_total: true, format: { decimals: 3 } },
+        ],
+        runtime_filters: [{ key: 'location', label: 'Location', type: 'location' }],
+      },
+      visibility: 'INTERNAL', is_published: true, status: 'Active', version: 1, owner_name: 'System Administrator',
+      owner_user_id: 1, created_by: 'System Administrator', updated_by: 'System Administrator',
+      grants: [], my_access: 'OWNER', column_count: 3, created_at: now(), updated_at: now(),
+    }]
+    const mockSummary = (r) => ({ id: r.id, report_code: r.report_code, report_name: r.report_name, description: r.description, report_type: r.report_type, source_kind: r.source_kind, visibility: r.visibility, is_published: Boolean(r.is_published), status: r.status, version: r.version, owner_name: r.owner_name, created_by: r.created_by, updated_at: r.updated_at, my_access: 'OWNER', column_count: (r.definition?.columns || []).length })
+
+    if (pathname === '/report-builder/catalog' && method === 'GET') {
+      sendJson(res, 200, {
+        datasets: [
+          { id: 'operation_tickets', kind: 'operation_tickets', name: 'Operation Tickets — with all form answers & payloads split into columns', description: 'Mock catalog', icon: 'clipboardList', columns: ticketCols, virtual_fields: [{ field: 'accounting_date', label: 'Accounting Date (location accounting day)', data_type: 'date', group: 'Dates (from ticket answers)', help: '' }, { field: 'payload_operation_date', label: 'Operation / Gauging Date (from ticket answers)', data_type: 'date', group: 'Dates (from ticket answers)', help: '' }], default_date_basis: 'ACCOUNTING_DATE' },
+          { id: 'tank_stock_ledger', kind: 'tank_stock_ledger', name: 'Tank Stock Ledger', description: 'Mock catalog', icon: 'database', columns: mockCols([['location_code', 'Location Code'], ['tank_asset_code', 'Tank Code'], ['movement_nsv_bbl', 'Movement NSV BBL', 'number'], ['accounting_date', 'Accounting Date', 'date']]), virtual_fields: [], default_date_basis: 'ACCOUNTING_DATE' },
+        ],
+        tables: [{ table: 'locations', label: 'Locations', group: 'Masters — Locations & Assets', columns: mockCols([['location_code', 'Location Code'], ['location_name', 'Location Name'], ['status', 'Status']]), json_columns: [], location_columns: [], date_columns: [] }],
+        formula_help: [], operator_help: [],
+        date_bases: [
+          { value: 'ACCOUNTING_DATE', label: 'Accounting Date (location accounting day)', help: '' },
+          { value: 'PAYLOAD_OPERATION_DATE', label: 'Operation / Gauging Date (from ticket answers)', help: '' },
+          { value: 'NONE', label: 'No date filtering', help: '' },
+        ],
+      })
+      return
+    }
+    if (pathname === '/report-builder/lookups' && method === 'GET') {
+      sendJson(res, 200, {
+        locations: db.locations.map((l) => ({ location_code: l.location_code, location_name: l.location_name, location_type: l.location_type })),
+        operation_types: (db.operation_types || []).map((o) => ({ operation_type_code: o.operation_type_code, operation_type_name: o.operation_type_name, operation_category: o.operation_category || '', applicable_asset_type_code: o.applicable_asset_type_code || '' })),
+        templates: [], statuses: ['Draft', 'Submitted', 'Approved', 'Rejected', 'Cancelled'],
+        assets: db.assets.map((a) => ({ asset_code: a.asset_code, asset_name: a.asset_name, asset_type_code: a.asset_type_code, location_code: a.location_code })),
+        products: ['Bonny Light'], users: [{ id: 1, full_name: 'System Administrator', username: 'admin' }], roles: (db.roles || []).map((r) => ({ id: r.id, role_name: r.role_name })),
+      })
+      return
+    }
+    if (pathname === '/report-builder/operation-fields' && method === 'GET') {
+      sendJson(res, 200, { templates: [], saved_fields: [{ field_code: 'tank_gauging_payload', field_name: 'Tank Gauging Payload', label: 'Tank Gauging Payload', data_type: 'json', unit: null, saved_count: 12, is_payload: true }] })
+      return
+    }
+    if (pathname === '/report-builder/json-paths' && method === 'POST') {
+      await readBody(req)
+      sendJson(res, 200, { sampled_rows: 5, rows_with_json: 5, paths: [
+        { path: 'calculated.gsvBbl', label: 'Calculated › GSV BBL', short_label: 'GSV BBL', data_type: 'number', present_in: 5, examples: ['5200.5'], is_array_item: false },
+        { path: 'calculated.nsvBbl', label: 'Calculated › NSV BBL', short_label: 'NSV BBL', data_type: 'number', present_in: 5, examples: ['5178'], is_array_item: false },
+        { path: 'inputs.gaugingDate', label: 'Inputs › Gauging Date', short_label: 'Gauging Date', data_type: 'date', present_in: 5, examples: ['2026-10-10'], is_array_item: false },
+      ], wildcard_paths: [], field_code: 'tank_gauging_payload', json_column: null })
+      return
+    }
+    if (pathname === '/report-builder/formula/validate' && method === 'POST') {
+      const body = await readBody(req)
+      sendJson(res, 200, { valid: Boolean(String(body.formula || '').trim()), error: String(body.formula || '').trim() ? null : 'The formula is empty.', code: null, position: null, referenced_columns: [] })
+      return
+    }
+    if (pathname === '/report-builder/starter-templates' && method === 'GET') { sendJson(res, 200, []); return }
+    if (pathname === '/report-builder/definitions' && method === 'GET') { sendJson(res, 200, db.report_definitions.map(mockSummary)); return }
+    if (pathname === '/report-builder/definitions' && method === 'POST') {
+      const body = await readBody(req)
+      const created = { id: nextId(), report_code: `mock-${nextId()}`, report_name: body.report_name, description: body.description || null, report_type: body.definition?.report_type || 'TABULAR', source_kind: body.definition?.source?.kind || 'operation_tickets', definition: body.definition || {}, visibility: body.visibility || 'PRIVATE', is_published: Boolean(body.is_published), status: 'Active', version: 1, owner_name: 'System Administrator', owner_user_id: 1, created_by: 'System Administrator', updated_by: 'System Administrator', grants: body.grants || [], my_access: 'OWNER', column_count: (body.definition?.columns || []).length, created_at: now(), updated_at: now() }
+      db.report_definitions.push(created)
+      sendJson(res, 200, created)
+      return
+    }
+    if (pathname === '/report-builder/run-preview' && method === 'POST') {
+      const body = await readBody(req)
+      sendJson(res, 200, mockRun(body.definition, body))
+      return
+    }
+    if (pathname === '/report-builder/my-reports' && method === 'GET') {
+      sendJson(res, 200, db.report_definitions.filter((r) => r.is_published).map(mockSummary))
+      return
+    }
+    const defMatch = pathname.match(/^\/report-builder\/(?:definitions|my-reports)\/(\d+)(\/(run|publish|duplicate|versions|export))?$/)
+    if (defMatch) {
+      const found = db.report_definitions.find((r) => String(r.id) === defMatch[1])
+      if (!found) { sendJson(res, 404, { detail: 'Report not found' }); return }
+      const action = defMatch[3]
+      if (method === 'GET' && !action) { sendJson(res, 200, found); return }
+      if (method === 'PUT' && !action) {
+        const body = await readBody(req)
+        Object.assign(found, { report_name: body.report_name, description: body.description, definition: body.definition, visibility: body.visibility, is_published: Boolean(body.is_published), grants: body.grants || [], version: (found.version || 1) + 1, updated_at: now() })
+        sendJson(res, 200, found)
+        return
+      }
+      if (method === 'DELETE' && !action) {
+        db.report_definitions = db.report_definitions.filter((r) => r !== found)
+        sendJson(res, 200, { message: 'Report deleted successfully' })
+        return
+      }
+      if (action === 'run' && method === 'POST') { const body = await readBody(req); sendJson(res, 200, mockRun(found.definition, body)); return }
+      if (action === 'publish' && method === 'POST') { const body = await readBody(req); found.is_published = Boolean(body.published); sendJson(res, 200, found); return }
+      if (action === 'duplicate' && method === 'POST') {
+        const copy = { ...found, id: nextId(), report_name: `${found.report_name} (Copy)`, is_published: false }
+        db.report_definitions.push(copy)
+        sendJson(res, 200, copy)
+        return
+      }
+      if (action === 'versions' && method === 'GET') { sendJson(res, 200, []); return }
+      if (action === 'export' && method === 'POST') {
+        await readBody(req)
+        res.writeHead(200, { 'Content-Type': 'text/csv', 'Content-Disposition': 'attachment; filename="mock-report.csv"', 'Access-Control-Allow-Origin': '*' })
+        res.end('Ticket No,GSV (BBL),NSV (BBL)\nTKT-1000,5200,5178\n')
+        return
+      }
+    }
+    sendJson(res, 404, { detail: 'Not found in mock API' })
+    return
+  }
+
   /* --------------------------------------------------- generic CRUD */
   const route = findRoute(pathname)
   if (!route) {

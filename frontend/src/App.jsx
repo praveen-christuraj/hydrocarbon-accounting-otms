@@ -44,6 +44,8 @@ import PermissionGuard from './components/PermissionGuard'
 import { PrintProfileProvider } from './components/print/PrintProfileProvider'
 import Table11FactorMaster from './pages/Table11FactorMaster'
 import CompanyReportProfileMaster from './pages/CompanyReportProfileMaster'
+import ReportBuilder from './pages/ReportBuilder'
+import CustomReportViewer from './pages/CustomReportViewer'
 import AuditLog from './pages/AuditLog'
 import BargeSealMaster from './pages/BargeSealMaster'
 import BargeTracking from './pages/BargeTracking'
@@ -670,6 +672,18 @@ function AppContent({
               </PermissionGuard>
             }
           />
+          <Route
+            path="/report-builder"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View Report Definition"
+                fallbackMessage="You do not have permission to view the Report Builder."
+              >
+                <ReportBuilder loggedInUser={loggedInUser} />
+              </PermissionGuard>
+            }
+          />
 
           <Route
             path="/database-browser"
@@ -1179,6 +1193,30 @@ function AppContent({
                   locations={locations}
                   assets={assets}
                 />
+              </PermissionGuard>
+            }
+          />
+          <Route
+            path="/reporting/custom-reports"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View Custom Report"
+                fallbackMessage="You do not have permission to view custom reports."
+              >
+                <CustomReportViewer loggedInUser={loggedInUser} />
+              </PermissionGuard>
+            }
+          />
+          <Route
+            path="/reporting/custom-reports/:reportId"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View Custom Report"
+                fallbackMessage="You do not have permission to view custom reports."
+              >
+                <CustomReportViewer loggedInUser={loggedInUser} />
               </PermissionGuard>
             }
           />

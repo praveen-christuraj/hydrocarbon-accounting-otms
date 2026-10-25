@@ -133,6 +133,7 @@ export const navigationItems = [
         permission: 'View Material Balance Template',
       },
       { label: 'Flowmeter Config', path: '/flowmeter-configs', permission: 'View Flowmeter Config' },
+      { label: 'Report Builder', path: '/report-builder', permission: 'View Report Definition' },
     ],
   },
   {
@@ -250,6 +251,13 @@ export const navigationItems = [
         label: 'FSO Tracking Report',
         path: '/fso-tracking',
         permission: 'View FSO Tracking',
+      },
+      {
+        // Published Report Builder reports are appended dynamically below
+        // this entry by TopNavigation (one menu item per shared report).
+        label: 'Custom Reports',
+        path: '/reporting/custom-reports',
+        permission: 'View Custom Report',
       },
     ],
   },
