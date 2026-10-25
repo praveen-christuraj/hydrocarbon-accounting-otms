@@ -4,6 +4,26 @@ import { refreshAccessToken } from './authApi'
 
 /** Report Builder (Configurations) + Custom Reports (Reporting) API. */
 
+// Some API gateways/deployments wrap successful JSON bodies in `data` (and
+// some add a second envelope). Keep this feature tolerant of both forms so a
+// wrapped list cannot crash the Reporting page when it tries to call `.map`.
+const unwrapResponse = (value) => {
+  let current = value
+  for (let depth = 0; depth < 2 && current && typeof current === 'object' && !Array.isArray(current) && Object.prototype.hasOwnProperty.call(current, 'data'); depth += 1) {
+    current = current.data
+  }
+  return current
+}
+
+const unwrapReportList = (value) => {
+  const payload = unwrapResponse(value)
+  if (Array.isArray(payload)) return payload
+  for (const key of ['reports', 'items', 'results']) {
+    if (Array.isArray(payload?.[key])) return payload[key]
+  }
+  throw new Error('The server returned an unexpected custom reports response. Please refresh and try again.')
+}
+
 export const getReportCatalog = () => apiGet('/report-builder/catalog')
 
 export const getReportLookups = () => apiGet('/report-builder/lookups')
@@ -53,11 +73,17 @@ export const runReportPreview = (definition, run = {}) =>
 export const runSavedReport = (reportId, run = {}) =>
   apiPost(`/report-builder/definitions/${reportId}/run`, run)
 
-export const getMyReports = () => apiGet('/report-builder/my-reports')
+export const getMyReports = async () => unwrapReportList(await apiGet('/report-builder/my-reports'))
 
-export const getMyReport = (reportId) => apiGet(`/report-builder/my-reports/${reportId}`)
+export const getMyReport = async (reportId) => {
+  const payload = unwrapResponse(await apiGet(`/report-builder/my-reports/${reportId}`))
+  return payload?.report && typeof payload.report === 'object' ? payload.report : payload
+}
 
-export const runMyReport = (reportId, run = {}) => apiPost(`/report-builder/my-reports/${reportId}/run`, run)
+export const runMyReport = async (reportId, run = {}) => {
+  const payload = unwrapResponse(await apiPost(`/report-builder/my-reports/${reportId}/run`, run))
+  return payload?.result && typeof payload.result === 'object' ? payload.result : payload
+}
 
 /** POST download (server export of the full result set), with token refresh. */
 export const exportMyReport = async (reportId, run = {}, format = 'xlsx') => {
