@@ -9,6 +9,7 @@ import {
   revokeTankerAcknowledgement,
 } from '../api/tankerTrackingApi'
 import TankerConvoyComparisonReport from '../components/reports/TankerConvoyComparisonReport'
+import { usePrintDialog } from '../components/print/printProfileContext'
 import TankerMtrComparisonReport from '../components/reports/TankerMtrComparisonReport'
 import { useDataFilters } from '../hooks/useDataFilters'
 import useActionFeedback from '../hooks/useActionFeedback'
@@ -161,6 +162,7 @@ function TankerTracking({
 }) {
   const navigate = useNavigate()
   const location = useLocation()
+  const { requestPrint } = usePrintDialog()
 
   const isAdminBootstrap =
     loggedInUser?.isAdmin === true ||
@@ -435,19 +437,18 @@ function TankerTracking({
       return
     }
 
-    logUiAction('Tanker Tracking', 'Print Convoy Comparison Report', {
-      convoyNumber: selectedConvoy.convoyNumber,
-      comparisonCount: comparisons.length,
-      tankerCount: selectedConvoy.tankerCount,
+    requestPrint({
+      module: 'Tanker Tracking',
+      reportName: `Tanker Convoy Comparison Report - ${selectedConvoy.convoyNumber}`,
+      onBeforePrint: () => {
+        logUiAction('Tanker Tracking', 'Print Convoy Comparison Report', {
+          convoyNumber: selectedConvoy.convoyNumber,
+          comparisonCount: comparisons.length,
+          tankerCount: selectedConvoy.tankerCount,
+        })
+        setConvoyPrintOpen(true)
+      },
     })
-    setConvoyPrintOpen(true)
-    setTimeout(() => {
-      try {
-        window.print()
-      } catch {
-        // ignore
-      }
-    }, 250)
   }
 
   const closeConvoyComparisonReport = () => {
@@ -705,14 +706,17 @@ function TankerTracking({
       return
     }
 
-    logUiAction('Tanker Tracking', 'Print Comparison Report', {
-      groupKey: row.groupKey,
+    requestPrint({
+      module: 'Tanker Tracking',
+      reportName: `Tanker MTR Report - ${row.tankerAssetCode || row.tankerAssetName || ''}`.trim(),
+      onBeforePrint: () => {
+        logUiAction('Tanker Tracking', 'Print Comparison Report', {
+          groupKey: row.groupKey,
+          tankerAssetCode: row.tankerAssetCode,
+        })
+        setPrintGroup(row)
+      },
     })
-    setPrintGroup(row)
-
-    window.setTimeout(() => {
-      window.print()
-    }, 100)
   }
 
   const renderTicketCard = (title, ticket, locationRole) => {

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getOutTurnReport } from '../api/outTurnReportApi'
-import { getCompanyReportProfiles } from '../api/companyReportProfileApi'
+import { useCompanyPrintProfile } from '../hooks/useCompanyPrintProfile'
+import { usePrintDialog } from '../components/print/printProfileContext'
+import { logUiAction } from '../utils/actionLogger'
 import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
@@ -14,6 +16,9 @@ import {
 } from '../utils/format'
 
 function OutTurnReport({ locations, assets }) {
+  const profile = useCompanyPrintProfile()
+  const { requestPrint } = usePrintDialog()
+
   const emptyFilters = {
     locationCode: '',
     tankAssetCode: '',
@@ -112,17 +117,6 @@ function OutTurnReport({ locations, assets }) {
     )
   }, [rows])
 
-  const [profile, setProfile] = useState(null)
-
-  useEffect(() => {
-    ;(async () => {
-      try {
-        const profiles = await getCompanyReportProfiles()
-        const activeProfile = profiles.find((p) => p.status === 'Active') || profiles[0]
-        if (activeProfile) setProfile(activeProfile)
-      } catch { /* non-critical */ }
-    })()
-  }, [])
 
   const loadReport = async (activeFilters = filters) => {
     try {
@@ -311,7 +305,13 @@ function OutTurnReport({ locations, assets }) {
       return
     }
 
-    window.print()
+    requestPrint({
+      module: 'Out-Turn Report',
+      reportName: 'Out-Turn Report',
+      onBeforePrint: () => {
+        logUiAction('Out-Turn Report', 'Print Report', filters)
+      },
+    })
   }
 
   return (

@@ -8,6 +8,7 @@ import Icon from '../../components/common/Icon'
 import CompanyPrintHeader from '../../components/reports/CompanyPrintHeader'
 import CompanyPrintFooter from '../../components/reports/CompanyPrintFooter'
 import { useCompanyPrintProfile } from '../../hooks/useCompanyPrintProfile'
+import { usePrintDialog } from '../../components/print/printProfileContext'
 import { useDataFilters } from '../../hooks/useDataFilters'
 import { logUiAction } from '../../utils/actionLogger'
 import { COUNTRIES, codeOptions, fmt, useExportReferenceData } from './exportShared'
@@ -32,6 +33,7 @@ const COLUMNS = [
 
 function ExportReports() {
   const profile = useCompanyPrintProfile()
+  const { requestPrint } = usePrintDialog()
   const reference = useExportReferenceData(['locations'])
   const { locations } = reference.data
   const [filters, setFilters] = useState(EMPTY_FILTERS)
@@ -99,8 +101,13 @@ function ExportReports() {
   }
 
   const handlePrint = () => {
-    logUiAction(MODULE, 'Print Export Report')
-    window.print()
+    requestPrint({
+      module: MODULE,
+      reportName: 'Export Report',
+      onBeforePrint: () => {
+        logUiAction(MODULE, 'Print Export Report', filters)
+      },
+    })
   }
 
   return (

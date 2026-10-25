@@ -41,6 +41,7 @@ import MaterialBalanceTemplateMaster from './pages/MaterialBalanceTemplateMaster
 import OperationTransactionDetail from './pages/OperationTransactionDetail'
 import LoginPage from './pages/LoginPage'
 import PermissionGuard from './components/PermissionGuard'
+import { PrintProfileProvider } from './components/print/PrintProfileProvider'
 import Table11FactorMaster from './pages/Table11FactorMaster'
 import CompanyReportProfileMaster from './pages/CompanyReportProfileMaster'
 import AuditLog from './pages/AuditLog'
@@ -1568,77 +1569,82 @@ useEffect(() => {
 
   return (
     <AuthProvider value={{ loggedInUser }}>
-      <BrowserRouter>
-        <AppContent
-        loggedInUser={loggedInUser}
-        onLogout={handleLogout}
-        refreshLoggedInUser={refreshLoggedInUser}
+      {/* Global print-profile selection: every Print button in every module
+          goes through this provider, which prompts for the company report
+          profile before the browser print dialog opens. */}
+      <PrintProfileProvider>
+        <BrowserRouter>
+          <AppContent
+          loggedInUser={loggedInUser}
+          onLogout={handleLogout}
+          refreshLoggedInUser={refreshLoggedInUser}
 
-        users={users}
-        setUsers={setUsers}
-        reloadUsers={reloadUsers}
+          users={users}
+          setUsers={setUsers}
+          reloadUsers={reloadUsers}
 
-        roles={roles}
-        reloadRoles={reloadRoles}
+          roles={roles}
+          reloadRoles={reloadRoles}
 
-        permissions={permissions}
-        reloadPermissions={reloadPermissions}
+          permissions={permissions}
+          reloadPermissions={reloadPermissions}
 
-        locations={locations}
-        setLocations={setLocations}
-        reloadLocations={reloadLocations}
+          locations={locations}
+          setLocations={setLocations}
+          reloadLocations={reloadLocations}
 
-        assetTypes={assetTypes}
-        setAssetTypes={setAssetTypes}
-        reloadAssetTypes={reloadAssetTypes}
-        assetCalibrationTables={calibrationTables}
+          assetTypes={assetTypes}
+          setAssetTypes={setAssetTypes}
+          reloadAssetTypes={reloadAssetTypes}
+          assetCalibrationTables={calibrationTables}
         
-        assets={assets}
-        setAssets={setAssets}
-        reloadAssets={reloadAssets}
+          assets={assets}
+          setAssets={setAssets}
+          reloadAssets={reloadAssets}
 
-        calibrationTemplates={calibrationTemplates}
-        setCalibrationTemplates={setCalibrationTemplates}
-        reloadCalibrationTemplates={reloadCalibrationTemplates}
+          calibrationTemplates={calibrationTemplates}
+          setCalibrationTemplates={setCalibrationTemplates}
+          reloadCalibrationTemplates={reloadCalibrationTemplates}
 
-        calibrationTables={calibrationTables}
-        setCalibrationTables={setCalibrationTables}
-        reloadAssetCalibrationTables={reloadAssetCalibrationTables}
+          calibrationTables={calibrationTables}
+          setCalibrationTables={setCalibrationTables}
+          reloadAssetCalibrationTables={reloadAssetCalibrationTables}
 
-        assetAssignments={assetAssignments}
-        setAssetAssignments={setAssetAssignments}
-        reloadAssetAssignments={reloadAssetAssignments}
+          assetAssignments={assetAssignments}
+          setAssetAssignments={setAssetAssignments}
+          reloadAssetAssignments={reloadAssetAssignments}
 
-        rolePermissionAssignments={rolePermissionAssignments}
-        reloadRolePermissions={reloadRolePermissions}
+          rolePermissionAssignments={rolePermissionAssignments}
+          reloadRolePermissions={reloadRolePermissions}
 
-        userRoleAssignments={userRoleAssignments}
-        reloadUserRoleAssignments={reloadUserRoleAssignments}
+          userRoleAssignments={userRoleAssignments}
+          reloadUserRoleAssignments={reloadUserRoleAssignments}
 
-        userLocationAssignments={userLocationAssignments}
-        userLocationSummaries={userLocationSummaries}
-        reloadUserLocationAssignments={reloadUserLocationAssignments}
-        reloadUserLocationSummaries={reloadUserLocationSummaries}
+          userLocationAssignments={userLocationAssignments}
+          userLocationSummaries={userLocationSummaries}
+          reloadUserLocationAssignments={reloadUserLocationAssignments}
+          reloadUserLocationSummaries={reloadUserLocationSummaries}
 
-        operationTypes={operationTypes}
-        reloadOperationTypes={reloadOperationTypes}
+          operationTypes={operationTypes}
+          reloadOperationTypes={reloadOperationTypes}
 
-        operationTemplates={operationTemplates}
-        reloadOperationTemplates={reloadOperationTemplates}
+          operationTemplates={operationTemplates}
+          reloadOperationTemplates={reloadOperationTemplates}
 
-        operationEntries={operationEntries}
-        setOperationEntries={setOperationEntries}
-        reloadOperationEntries={reloadOperationEntries}
+          operationEntries={operationEntries}
+          setOperationEntries={setOperationEntries}
+          reloadOperationEntries={reloadOperationEntries}
 
-        operationTransactions={operationTransactions}
-        setOperationTransactions={setOperationTransactions}
-        reloadOperationTransactions={reloadOperationTransactions}
+          operationTransactions={operationTransactions}
+          setOperationTransactions={setOperationTransactions}
+          reloadOperationTransactions={reloadOperationTransactions}
 
-        locationOperationAvailability={locationOperationAvailability}
-        setLocationOperationAvailability={setLocationOperationAvailability}
-        reloadLocationOperationAvailability={reloadLocationOperationAvailability}
-      />
-      </BrowserRouter>
+          locationOperationAvailability={locationOperationAvailability}
+          setLocationOperationAvailability={setLocationOperationAvailability}
+          reloadLocationOperationAvailability={reloadLocationOperationAvailability}
+        />
+        </BrowserRouter>
+      </PrintProfileProvider>
     </AuthProvider>
   )
 }

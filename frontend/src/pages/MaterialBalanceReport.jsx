@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { getMaterialBalanceReport } from '../api/materialBalanceReportApi'
-import { getCompanyReportProfiles } from '../api/companyReportProfileApi'
+import { useCompanyPrintProfile } from '../hooks/useCompanyPrintProfile'
+import { usePrintDialog } from '../components/print/printProfileContext'
+import { logUiAction } from '../utils/actionLogger'
 import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
@@ -10,6 +12,9 @@ import useActionFeedback from '../hooks/useActionFeedback'
 import { formatCalendarDate } from '../utils/format'
 
 function MaterialBalanceReport({ locations, assets }) {
+  const profile = useCompanyPrintProfile()
+  const { requestPrint } = usePrintDialog()
+
   const emptyFilters = {
     locationCode: '',
     tankAssetCode: '',
@@ -123,17 +128,6 @@ function MaterialBalanceReport({ locations, assets }) {
     }
   }, [rows, sortedColumns])
 
-  const [profile, setProfile] = useState(null)
-
-  useEffect(() => {
-    ;(async () => {
-      try {
-        const profiles = await getCompanyReportProfiles()
-        const activeProfile = profiles.find((p) => p.status === 'Active') || profiles[0]
-        if (activeProfile) setProfile(activeProfile)
-      } catch { /* non-critical */ }
-    })()
-  }, [])
 
   const loadReport = async (activeFilters = filters) => {
     if (!activeFilters.locationCode) {
@@ -329,7 +323,13 @@ function MaterialBalanceReport({ locations, assets }) {
       return
     }
 
-    window.print()
+    requestPrint({
+      module: 'Material Balance Report',
+      reportName: 'Material Balance Report',
+      onBeforePrint: () => {
+        logUiAction('Material Balance Report', 'Print Report', filters)
+      },
+    })
   }
 
   return (

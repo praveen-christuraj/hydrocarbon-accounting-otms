@@ -58,6 +58,13 @@ if (!globalThis.ResizeObserver) {
 
 const errors = []
 const downloads = []
+const printCalls = []
+// happy-dom has no window.print; record the calls so the print-profile flow
+// can prove that the browser print dialog is opened only after a profile is
+// chosen.
+window.print = () => {
+  printCalls.push(new Date().toISOString())
+}
 
 // jspdf's node build writes `doc.save(name)` straight to disk via fs; record
 // those exports as downloads instead of leaving PDF files in the repo.
@@ -135,6 +142,37 @@ const locations = Array.from({ length: 43 }, (_, i) => ({
   created_at: now,
   updated_at: now,
 }))
+const reportProfiles = [
+  {
+    id: 1,
+    profile_name: 'Default Report Profile',
+    company_name: 'Acme Petroleum Ltd',
+    system_name: 'Hydrocarbon Accounting System',
+    report_subtitle: 'Tank Gauging Quantity Report',
+    logo_data_url: '',
+    logo_text: 'LOGO',
+    footer_formula: 'Formula: GOV = TOV - Free Water',
+    footer_note: 'This report is system-generated.',
+    status: 'Active',
+    created_at: now,
+    updated_at: now,
+  },
+  {
+    id: 2,
+    profile_name: 'Second Company Profile',
+    company_name: 'Beta Energy Ltd',
+    system_name: 'Hydrocarbon Accounting System',
+    report_subtitle: 'Marine Terminal Report',
+    logo_data_url: '',
+    logo_text: 'BEL',
+    footer_formula: 'Formula: GSV = GOV x VCF',
+    footer_note: 'Beta Energy printed report.',
+    status: 'Active',
+    created_at: now,
+    updated_at: now,
+  },
+]
+
 const auditLogs = Array.from({ length: 30 }, (_, i) => ({
   id: i + 1,
   module_name: 'Location Master',
@@ -319,6 +357,9 @@ globalThis.fetch = async (input, init = {}) => {
         { operation_type_code: 'BARGE_UNUSED', operation_type_name: 'Barge Unused', applicable_asset_type_code: 'BARGE', status: 'Active', mappings: [] },
       ],
     })
+  }
+  if (path.startsWith('/company-report-profiles')) {
+    return jsonResponse(reportProfiles)
   }
   if (path.startsWith('/tracking-module-configs')) {
     const idMatch = path.match(/^\/tracking-module-configs\/(\d+)/)
@@ -1105,10 +1146,61 @@ try {
       check('convoy comparison print action is present', Boolean(printButton))
 
       if (printButton) {
+        const printCallsBefore = printCalls.length
         click(printButton)
+        await flush(100)
+
+        // Every Print button must first ask for the company report profile.
+        // Nothing may be sent to the printer before a profile is confirmed.
+        const profileDialog = q('.print-profile-dialog')
+        check('print action prompts for a company report profile', Boolean(profileDialog))
+        check(
+          'no print job starts before a profile is chosen',
+          printCalls.length === printCallsBefore,
+          `${printCalls.length - printCallsBefore} print call(s)`
+        )
+
+        const profileSelect = q('#print-profile-select')
+        const profileOptions = qa('#print-profile-select option')
+        check(
+          'print dialog lists every company report profile from the master',
+          Boolean(profileSelect)
+            && profileOptions.length === reportProfiles.length
+            && text(profileSelect).includes('Default Report Profile')
+            && text(profileSelect).includes('Second Company Profile'),
+          profileOptions.map(text).join(' | ')
+        )
+
+        // Choose the second profile: the printed header must use it, not the
+        // first/default one.
+        if (profileSelect) setValue(profileSelect, '2')
+        await flush(60)
+        check(
+          'selected profile is previewed in the print dialog',
+          text(q('.print-profile-preview')).includes('Beta Energy Ltd'),
+          text(q('.print-profile-preview')).slice(0, 90)
+        )
+
+        const confirmPrint = qa('.print-profile-dialog button').find((b) => text(b) === 'Print Report')
+        check('print dialog has a Print Report action', Boolean(confirmPrint))
+        if (confirmPrint) click(confirmPrint)
         await flush(150)
+
+        check(
+          'print starts only after the profile is confirmed',
+          printCalls.length === printCallsBefore + 1,
+          `${printCalls.length - printCallsBefore} print call(s)`
+        )
+
         const report = q('.tanker-convoy-mtr-report')
         check('convoy comparison report renders', Boolean(report))
+        check(
+          'printed report carries the selected company report profile',
+          Boolean(report)
+            && text(report).includes('Beta Energy Ltd')
+            && !text(report).includes('Acme Petroleum Ltd'),
+          report ? text(report).slice(0, 120) : ''
+        )
         check(
           'convoy comparison report names the tanker and its tickets',
           Boolean(report)
@@ -1150,6 +1242,72 @@ try {
       check('fso summary shows ticket status', bodyText.includes('Approved'))
       check('fso summary shows voyage status', /Open|Closed/.test(bodyText))
       check('fso summary has pagination and filters', Boolean(q('.data-filter-bar')) && Boolean(q('.main-content table')))
+
+      // Owner rule: every Print button asks for the company report profile
+      // first. The FSO Print button only renders on the OTR / MB / OUTTURN
+      // report tabs, never on the Summary tab.
+      const summaryPrint = qa('.main-content button').find((b) => text(b) === 'Print')
+      check('fso summary tab has no Print button', !summaryPrint)
+
+      const otrTab = qa('.main-content button').find((b) => text(b) === 'OTR')
+      check('fso report tabs include OTR', Boolean(otrTab))
+
+      if (otrTab) {
+        click(otrTab)
+        await flush(150)
+
+        const printButton = qa('.main-content button').find((b) => text(b) === 'Print')
+        check('fso OTR tab has a Print button', Boolean(printButton))
+
+        if (printButton) {
+          const printCallsBefore = printCalls.length
+          click(printButton)
+          await flush(100)
+
+          check(
+            'fso print action prompts for a company report profile',
+            Boolean(q('.print-profile-dialog'))
+          )
+          check(
+            'fso print does not start before a profile is chosen',
+            printCalls.length === printCallsBefore,
+            `${printCalls.length - printCallsBefore} print call(s)`
+          )
+          check(
+            'fso print dialog lists every company report profile from the master',
+            qa('#print-profile-select option').length === reportProfiles.length,
+            `${qa('#print-profile-select option').length} option(s)`
+          )
+
+          const profileSelect = q('#print-profile-select')
+          if (profileSelect) setValue(profileSelect, '2')
+          await flush(60)
+          check(
+            'fso print dialog previews the selected profile',
+            text(q('.print-profile-preview')).includes('Beta Energy Ltd'),
+            text(q('.print-profile-preview')).slice(0, 90)
+          )
+
+          const confirmPrint = qa('.print-profile-dialog button').find((b) => text(b) === 'Print Report')
+          if (confirmPrint) click(confirmPrint)
+          await flush(200)
+
+          check(
+            'fso print starts only after the profile is confirmed',
+            printCalls.length === printCallsBefore + 1,
+            `${printCalls.length - printCallsBefore} print call(s)`
+          )
+
+          const printedReport = q('.mtr-page')
+          check(
+            'fso printed report carries the selected company report profile',
+            Boolean(printedReport)
+              && text(printedReport).includes('Beta Energy Ltd')
+              && !text(printedReport).includes('Acme Petroleum Ltd'),
+            printedReport ? text(printedReport).slice(0, 120) : ''
+          )
+        }
+      }
     }
 
     if (path === '/barge-seal-master') {

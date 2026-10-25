@@ -120,6 +120,38 @@ def get_company_report_profiles(
     ]
 
 
+@router.get("/print-options", response_model=list[CompanyReportProfileResponse])
+def get_company_report_profile_print_options(
+    current_user: User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db),
+):
+    """Company report profiles offered by the global print dialog.
+
+    Every module prints through the shared print dialog, and each print-out has
+    to be branded with a profile the user picks. The Company Report Profile
+    Master "View" permission is an administrative permission, so requiring it
+    here would leave operational users unable to print at all. This read-only
+    endpoint therefore requires a valid login only.
+
+    Profiles are global: a profile created once in the master is available to
+    every user, in every module. Active profiles are listed first.
+    """
+    profiles = db.query(CompanyReportProfile).all()
+
+    ordered_profiles = sorted(
+        profiles,
+        key=lambda profile: (
+            0 if profile.status == "Active" else 1,
+            (profile.profile_name or "").lower(),
+        ),
+    )
+
+    return [
+        build_company_report_profile_response(profile)
+        for profile in ordered_profiles
+    ]
+
+
 @router.post("", response_model=CompanyReportProfileResponse)
 def create_company_report_profile(
     profile: CompanyReportProfileCreate,

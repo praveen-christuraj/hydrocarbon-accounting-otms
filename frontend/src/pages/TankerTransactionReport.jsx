@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getTankerTransactionReport } from '../api/tankerTransactionReportApi'
-import { getCompanyReportProfiles } from '../api/companyReportProfileApi'
+import { useCompanyPrintProfile } from '../hooks/useCompanyPrintProfile'
+import { usePrintDialog } from '../components/print/printProfileContext'
+import { logUiAction } from '../utils/actionLogger'
 import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
@@ -113,19 +115,8 @@ function TankerTransactionReport({ locations = [], assets = [] }) {
     })
   }, [activeAssets])
 
-  const [profile, setProfile] = useState(null)
-
-  useEffect(() => {
-    ;(async () => {
-      try {
-        const profiles = await getCompanyReportProfiles()
-        const activeProfile = profiles.find((p) => p.status === 'Active') || profiles[0]
-        if (activeProfile) setProfile(activeProfile)
-      } catch {
-        // non-critical; print will fall back to plain header
-      }
-    })()
-  }, [])
+  const profile = useCompanyPrintProfile()
+  const { requestPrint } = usePrintDialog()
 
   const loadReport = async () => {
     try {
@@ -248,7 +239,13 @@ function TankerTransactionReport({ locations = [], assets = [] }) {
   }
 
   const handlePrint = () => {
-    window.print()
+    requestPrint({
+      module: 'Tanker Transaction Report',
+      reportName: 'Tanker Transaction Report',
+      onBeforePrint: () => {
+        logUiAction('Tanker Transaction Report', 'Print Report', filters)
+      },
+    })
   }
 
   const rowsFilters = useDataFilters(rows, useAutoColumns(rows), { module: 'Tanker Transaction Report' })

@@ -9,6 +9,7 @@ import {
   reopenTrip,
 } from '../api/bargeTrackingApi'
 import { useCompanyPrintProfile } from '../hooks/useCompanyPrintProfile'
+import { usePrintDialog } from '../components/print/printProfileContext'
 import { useDataFilters } from '../hooks/useDataFilters'
 import useActionFeedback from '../hooks/useActionFeedback'
 import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
@@ -51,6 +52,7 @@ const voyageColumns = [
 
 function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
   const profile = useCompanyPrintProfile()
+  const { requestPrint } = usePrintDialog()
 
   const [convoyNumber, setConvoyNumber] = useState('')
   const [loading, setLoading] = useState(false)
@@ -726,28 +728,29 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
     const receiverTicket = ticketById[String(cmp.right_transaction_id)]
     const senderLocationCode = resolveSenderCode(senderTicket) || resolveSenderCode(receiverTicket)
     const receiverLocationCode = resolveReceiverCode(receiverTicket) || resolveReceiverCode(senderTicket)
-    logUiAction('Barge Tracking', 'Print Comparison Report', { comparisonId: cmp.id, convoyNumber: convoy, assetCode })
+    requestPrint({
+      module: 'Barge Tracking',
+      reportName: `Barge MTR / Reconciliation Report - ${assetCode || ''}`.trim(),
+      onBeforePrint: () => {
+        logUiAction('Barge Tracking', 'Print Comparison Report', {
+          comparisonId: cmp.id,
+          convoyNumber: convoy,
+          assetCode,
+        })
 
-    setConvoyPrintOpen(false)
-    setPrintReport({
-      open: true,
-      convoyNumber: convoy,
-      assetCode: String(assetCode || ''),
-      assetName: String(assetNameValue || ''),
-      senderLocationCode,
-      receiverLocationCode,
-      comparison: cmp,
-      events: Array.isArray(bargeEvents) ? bargeEvents : [],
+        setConvoyPrintOpen(false)
+        setPrintReport({
+          open: true,
+          convoyNumber: convoy,
+          assetCode: String(assetCode || ''),
+          assetName: String(assetNameValue || ''),
+          senderLocationCode,
+          receiverLocationCode,
+          comparison: cmp,
+          events: Array.isArray(bargeEvents) ? bargeEvents : [],
+        })
+      },
     })
-
-    // Print after React renders the printable section
-    setTimeout(() => {
-      try {
-        window.print()
-      } catch {
-        // ignore
-      }
-    }, 250)
   }
 
   const openConvoyComparisonReport = () => {
@@ -758,20 +761,19 @@ function BargeTracking({ loggedInUser, assets = [], locations = [] }) {
       return
     }
 
-    logUiAction('Barge Tracking', 'Print Convoy Comparison Report', {
-      convoyNumber: convoy,
-      comparisonCount: comparisons.length,
-      bargeCount: (tracker?.assets || []).length,
+    requestPrint({
+      module: 'Barge Tracking',
+      reportName: `Barge Convoy Comparison Report - ${convoy}`,
+      onBeforePrint: () => {
+        logUiAction('Barge Tracking', 'Print Convoy Comparison Report', {
+          convoyNumber: convoy,
+          comparisonCount: comparisons.length,
+          bargeCount: (tracker?.assets || []).length,
+        })
+        setPrintReport((current) => ({ ...current, open: false }))
+        setConvoyPrintOpen(true)
+      },
     })
-    setPrintReport((current) => ({ ...current, open: false }))
-    setConvoyPrintOpen(true)
-    setTimeout(() => {
-      try {
-        window.print()
-      } catch {
-        // ignore
-      }
-    }, 250)
   }
 
   const closeComparisonReport = () => {

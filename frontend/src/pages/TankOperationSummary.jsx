@@ -3,7 +3,9 @@ import {
   getTankOperationSummary,
   getTankOperationSummaryColumns,
 } from '../api/tankOperationSummaryApi'
-import { getCompanyReportProfiles } from '../api/companyReportProfileApi'
+import { useCompanyPrintProfile } from '../hooks/useCompanyPrintProfile'
+import { usePrintDialog } from '../components/print/printProfileContext'
+import { logUiAction } from '../utils/actionLogger'
 import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
@@ -17,6 +19,9 @@ import {
 } from '../utils/format'
 
 function TankOperationSummary({ locations, assets, loggedInUser }) {
+  const profile = useCompanyPrintProfile()
+  const { requestPrint } = usePrintDialog()
+
   const emptyFilters = {
     locationCode: '',
     tankAssetCode: '',
@@ -37,7 +42,6 @@ function TankOperationSummary({ locations, assets, loggedInUser }) {
   const feedback = useActionFeedback()
   const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
 
-  const [profile, setProfile] = useState(null)
   const isAdminBootstrap =
     loggedInUser?.isAdmin === true ||
     String(loggedInUser?.username || '').trim().toLowerCase() === 'admin' ||
@@ -104,14 +108,10 @@ function TankOperationSummary({ locations, assets, loggedInUser }) {
     try {
       setLoading(true)
 
-      const [reportData, reportColumns, profiles] = await Promise.all([
+      const [reportData, reportColumns] = await Promise.all([
         getTankOperationSummary(activeFilters),
         getTankOperationSummaryColumns(activeFilters.locationCode),
-        getCompanyReportProfiles(),
       ])
-
-      const activeProfile = profiles.find((p) => p.status === 'Active') || profiles[0]
-      setProfile(activeProfile)
 
       setRows(reportData.rows || [])
       setColumns(reportData.columns || reportColumns)
@@ -361,7 +361,18 @@ function TankOperationSummary({ locations, assets, loggedInUser }) {
               ? `${rows.length} of ${reportMeta.totalRows} Ledger Rows`
               : `${rows.length} Ledger Rows`}
           </span>
-          <button type="button" onClick={() => window.print()}>
+          <button
+            type="button"
+            onClick={() =>
+              requestPrint({
+                module: 'Tank Operation Summary',
+                reportName: 'Tank Operation Summary',
+                onBeforePrint: () => {
+                  logUiAction('Tank Operation Summary', 'Print Report', filters)
+                },
+              })
+            }
+          >
             Print
           </button>
         </div>
