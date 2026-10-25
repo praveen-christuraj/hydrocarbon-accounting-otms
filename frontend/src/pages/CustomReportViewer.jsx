@@ -22,6 +22,36 @@ import {
 import { dateRangeDefaults, formatCellValue, formulaInWords } from '../utils/reportBuilder'
 import { logUiAction } from '../utils/actionLogger'
 
+const normalizeRunResult = (data) => {
+  const source = data && typeof data === 'object' ? data : {}
+  const columns = Array.isArray(source.columns) ? source.columns : []
+  const rows = Array.isArray(source.rows) ? source.rows : []
+  const rawMeta = source.meta && typeof source.meta === 'object' ? source.meta : {}
+  const numberOr = (value, fallback) => {
+    if (value === null || value === undefined || value === '') return fallback
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : fallback
+  }
+
+  return {
+    ...source,
+    columns,
+    rows,
+    totals: source.totals && typeof source.totals === 'object' ? source.totals : {},
+    meta: {
+      ...rawMeta,
+      total_rows: numberOr(rawMeta.total_rows, rows.length),
+      page: numberOr(rawMeta.page, 1),
+      page_size: numberOr(rawMeta.page_size, rows.length || 1),
+      scanned_rows: numberOr(rawMeta.scanned_rows, rows.length),
+      filtered_rows: numberOr(rawMeta.filtered_rows, rows.length),
+      generated_in_ms: numberOr(rawMeta.generated_in_ms, 0),
+      warnings: Array.isArray(rawMeta.warnings) ? rawMeta.warnings : [],
+      grouped: Boolean(rawMeta.grouped),
+    },
+  }
+}
+
 /**
  * Reporting-module home for Report Builder reports: pick a shared report,
  * answer its filters, then view / export (full result, server-side) / print
@@ -119,9 +149,10 @@ function CustomReportViewer({ loggedInUser }) {
     setError('')
     try {
       const data = await runMyReport(report.id, buildRun(overrides))
-      setResult(data)
+      const normalized = normalizeRunResult(data)
+      setResult(normalized)
       logUiAction('Custom Reports', 'Run Report', { report: report.report_name })
-      return data
+      return normalized
     } catch (err) {
       setError(err.message || 'The report could not be run.')
       return null
@@ -167,7 +198,7 @@ function CustomReportViewer({ loggedInUser }) {
         // Print the full result (up to 500 rows), not just the screen page.
         try {
           const full = await runMyReport(report.id, buildRun({ page: 1, page_size: 500 }))
-          setPrintResult(full)
+          setPrintResult(normalizeRunResult(full))
         } catch {
           setPrintResult(null)
         }

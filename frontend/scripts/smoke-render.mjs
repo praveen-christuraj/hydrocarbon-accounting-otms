@@ -107,6 +107,9 @@ const permissionNames = [
   'View Tank Stock Ledger', 'View Tank Operation Summary', 'View Out-Turn Summary', 'View Out-Turn Report',
   'View Material Balance Report', 'Review Operation Transaction', 'Approve Operation Transaction',
   'Reject Operation Transaction', 'Cancel Operation Transaction', 'Submit Operation Transaction',
+  'View Report Definition', 'Create Report Definition', 'Edit Report Definition',
+  'Delete Report Definition', 'Publish Report Definition', 'View Custom Report',
+  'Export Custom Report',
 ]
 const me = {
   id: 1,
@@ -172,6 +175,50 @@ const reportProfiles = [
     updated_at: now,
   },
 ]
+
+const customReportDefinition = {
+  schema_version: 1,
+  report_type: 'TABULAR',
+  source: { kind: 'operation_tickets', operation_type_codes: [], statuses: [] },
+  date_basis: 'ACCOUNTING_DATE',
+  columns: [
+    { key: 'ticket_number', label: 'Ticket No', kind: 'data', data_type: 'text', source: { type: 'column', column: 'operation_ticket_number' }, format: {} },
+    { key: 'nsv_bbl', label: 'NSV (BBL)', kind: 'data', data_type: 'number', source: { type: 'payload_path', field_code: 'tank_gauging_payload', path: 'calculated.nsvBbl' }, format: { decimals: 3 } },
+  ],
+  filters: [],
+  filter_logic: 'AND',
+  runtime_filters: [],
+  group_by: [],
+  sort: [],
+  options: { page_size: 50 },
+}
+const customReport = {
+  id: 1,
+  report_code: 'RPT-0001',
+  report_name: 'Published Tank Quantities',
+  description: 'Published report regression fixture',
+  report_type: 'TABULAR',
+  source_kind: 'operation_tickets',
+  source_table: null,
+  definition: customReportDefinition,
+  visibility: 'INTERNAL',
+  is_published: true,
+  status: 'Active',
+  version: 2,
+  owner_user_id: 1,
+  owner_name: 'System Administrator',
+  created_by: 'admin',
+  updated_by: 'admin',
+  created_at: now,
+  updated_at: now,
+  grants: [],
+  my_access: 'OWNER',
+  column_count: 2,
+}
+const customReportSummary = Object.fromEntries(
+  Object.entries(customReport).filter(([key]) => !['definition', 'grants', 'source_table', 'owner_user_id', 'updated_by', 'created_at'].includes(key))
+)
+let reportPreviewAttempts = 0
 
 const auditLogs = Array.from({ length: 30 }, (_, i) => ({
   id: i + 1,
@@ -322,6 +369,41 @@ globalThis.fetch = async (input, init = {}) => {
   apiCalls.push(`${method} ${path}`)
   if (path.startsWith('/auth/me')) return jsonResponse(me)
   if (path.startsWith('/auth/logout')) return jsonResponse({ ok: true })
+  if (path === '/report-builder/catalog' && method === 'GET') {
+    return jsonResponse({ datasets: [], tables: [], date_bases: [], formula_help: {}, operator_help: {} })
+  }
+  if (path === '/report-builder/lookups' && method === 'GET') {
+    return jsonResponse({ locations: [], operation_types: [], statuses: [], assets: [], users: [], roles: [] })
+  }
+  if (path === '/report-builder/operation-fields' && method === 'GET') {
+    return jsonResponse({ templates: [], saved_fields: [] })
+  }
+  if (path === '/report-builder/starter-templates' && method === 'GET') return jsonResponse([])
+  if (path === '/report-builder/definitions' && method === 'GET') return jsonResponse([customReportSummary])
+  if (path === '/report-builder/definitions/1' && method === 'GET') return jsonResponse(customReport)
+  if (path === '/report-builder/run-preview' && method === 'POST') {
+    reportPreviewAttempts += 1
+    if (reportPreviewAttempts === 1) {
+      return jsonResponse({ detail: 'A selected field is temporarily unavailable.' }, 400)
+    }
+    return jsonResponse({
+      columns: customReportDefinition.columns,
+      rows: [{ ticket_number: 'TKT-0001', nsv_bbl: 5152.1 }],
+      totals: {},
+      meta: { total_rows: 1, page: 1, page_size: 25, scanned_rows: 1, filtered_rows: 1, warnings: [], generated_in_ms: 2, date_basis_label: 'Accounting Date', grouped: false },
+    })
+  }
+  if (path === '/report-builder/my-reports' && method === 'GET') return jsonResponse([customReportSummary])
+  if (path === '/report-builder/my-reports/1' && method === 'GET') return jsonResponse(customReport)
+  if (path === '/report-builder/my-reports/1/run' && method === 'POST') {
+    // Older/custom deployments can omit `meta`; the viewer must still render
+    // the returned columns and rows instead of crashing to a blank route.
+    return jsonResponse({
+      columns: customReportDefinition.columns,
+      rows: [{ ticket_number: 'TKT-0001', nsv_bbl: 5152.1 }],
+      totals: {},
+    })
+  }
   if (path.startsWith('/users')) {
     if (method === 'POST') {
       const body = JSON.parse(init.body)
@@ -752,6 +834,48 @@ try {
     }
     if (process.env.DUMP) {
       console.log(document.querySelector('.main-content').innerHTML.slice(0, Number(process.env.DUMP)))
+    }
+
+    if (path === '/report-builder') {
+      const designButton = qa('.main-content button').find((button) => text(button).includes('Design'))
+      check('report builder lists the published report', Boolean(designButton), text(q('.main-content')).slice(0, 140))
+      if (designButton) {
+        click(designButton)
+        await flush(150)
+        const previewTab = qa('[role="tab"]').find((button) => text(button).includes('Preview & Save'))
+        click(previewTab)
+        await flush(80)
+        const previewButton = qa('.main-content button').find((button) => text(button).includes('Run preview'))
+        click(previewButton)
+        await flush(150)
+        check(
+          'report preview shows a failed-run message',
+          text(q('.alert-message')).includes('Preview could not run')
+        )
+        click(q('.alert-message-dismiss'))
+        await flush(60)
+        check(
+          'report preview error closes completely',
+          !text(q('.main-content')).includes('Preview could not run')
+        )
+        click(previewButton)
+        await flush(150)
+        check(
+          'successful report preview keeps the old error cleared',
+          !text(q('.main-content')).includes('Preview could not run')
+            && text(q('.main-content')).includes('TKT-0001')
+        )
+      }
+    }
+
+    if (path === '/reporting/custom-reports/1') {
+      check(
+        'published custom report renders rows without result metadata',
+        text(q('.main-content')).includes('Published Tank Quantities')
+          && text(q('.main-content')).includes('TKT-0001')
+          && text(q('.main-content')).includes('5,152.100'),
+        text(q('.main-content')).slice(0, 220)
+      )
     }
 
     if (path === '/locations') {

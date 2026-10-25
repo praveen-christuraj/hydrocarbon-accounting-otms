@@ -1158,7 +1158,14 @@ function ReportBuilder({ loggedInUser }) {
             <div className="rb-field"><label htmlFor="rb-to">Date to</label><input id="rb-to" type="date" value={previewDates.dateTo} onChange={(e) => setPreviewDates({ ...previewDates, dateTo: e.target.value })} /></div>
             <button type="submit" className="btn-secondary" disabled={previewBusy}><Icon name="refresh" size={15} /> {previewBusy ? 'Running…' : 'Run preview (first 25 rows)'}</button>
           </form>
-          <AlertMessage tone="error" title="Preview could not run" message={previewError} onDismiss={() => setPreviewError('')} />
+          {previewError && (
+            <AlertMessage
+              tone="error"
+              title="Preview could not run"
+              message={previewError}
+              onDismiss={() => setPreviewError('')}
+            />
+          )}
           {(previewResult?.meta?.warnings || []).map((warning) => (
             <AlertMessage key={warning} tone="warning" message={warning} />
           ))}
