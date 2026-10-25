@@ -393,15 +393,19 @@ globalThis.fetch = async (input, init = {}) => {
       meta: { total_rows: 1, page: 1, page_size: 25, scanned_rows: 1, filtered_rows: 1, warnings: [], generated_in_ms: 2, date_basis_label: 'Accounting Date', grouped: false },
     })
   }
-  if (path === '/report-builder/my-reports' && method === 'GET') return jsonResponse([customReportSummary])
-  if (path === '/report-builder/my-reports/1' && method === 'GET') return jsonResponse(customReport)
+  if (path === '/report-builder/my-reports' && method === 'GET') return jsonResponse({ data: { reports: [customReportSummary] } })
+  if (path === '/report-builder/my-reports/1' && method === 'GET') return jsonResponse({ data: { report: customReport } })
   if (path === '/report-builder/my-reports/1/run' && method === 'POST') {
     // Older/custom deployments can omit `meta`; the viewer must still render
     // the returned columns and rows instead of crashing to a blank route.
     return jsonResponse({
-      columns: customReportDefinition.columns,
-      rows: [{ ticket_number: 'TKT-0001', nsv_bbl: 5152.1 }],
-      totals: {},
+      data: {
+        result: {
+          columns: customReportDefinition.columns,
+          rows: [{ ticket_number: 'TKT-0001', nsv_bbl: 5152.1 }],
+          totals: {},
+        },
+      },
     })
   }
   if (path.startsWith('/users')) {
@@ -866,6 +870,15 @@ try {
             && text(q('.main-content')).includes('TKT-0001')
         )
       }
+    }
+
+    if (path === '/reporting/custom-reports') {
+      check(
+        'custom reports list renders reports from a wrapped API response',
+        text(q('.main-content')).includes('Published Tank Quantities')
+          && text(q('.main-content')).includes('Open report'),
+        text(q('.main-content')).slice(0, 220)
+      )
     }
 
     if (path === '/reporting/custom-reports/1') {

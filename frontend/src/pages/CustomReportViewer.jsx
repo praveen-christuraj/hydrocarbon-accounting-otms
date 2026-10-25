@@ -95,7 +95,7 @@ function CustomReportViewer({ loggedInUser }) {
     Promise.all([getMyReports(), getReportLookups()])
       .then(([list, look]) => {
         if (cancelled) return
-        setReports(list)
+        setReports(Array.isArray(list) ? list : [])
         setLookups(look)
       })
       .catch((err) => { if (!cancelled) setError(err.message || 'Could not load your reports.') })
@@ -118,6 +118,9 @@ function CustomReportViewer({ loggedInUser }) {
     getMyReport(reportId)
       .then((data) => {
         if (cancelled) return
+        if (!data || typeof data !== 'object' || Array.isArray(data) || !data.id) {
+          throw new Error('The server returned an invalid report. Return to Custom Reports and try opening it again.')
+        }
         setReport(data)
         setPageSize(data.definition?.options?.page_size || 50)
         const initial = {}
