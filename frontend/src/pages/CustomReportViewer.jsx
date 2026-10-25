@@ -23,7 +23,8 @@ import { dateRangeDefaults, formatCellValue, formulaInWords } from '../utils/rep
 import { logUiAction } from '../utils/actionLogger'
 
 const normalizeRunResult = (data) => {
-  const source = data && typeof data === 'object' ? data : {}
+  // Defend against wrapped responses, arrays, primitives and empty envelopes.
+  const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {}
   const columns = Array.isArray(source.columns) ? source.columns : []
   const rows = Array.isArray(source.rows) ? source.rows : []
   const rawMeta = source.meta && typeof source.meta === 'object' ? source.meta : {}
@@ -420,7 +421,13 @@ function CustomReportViewer({ loggedInUser }) {
           </div>
 
           <div className="rb-screen-table no-print">
-            {result ? <ReportDataTable result={result} emptyText={report.definition?.options?.empty_text || '—'} /> : !running && <div className="empty-table">Choose filters and Run Report.</div>}
+            {result ? (
+              <ReportDataTable result={result} emptyText={report.definition?.options?.empty_text || '—'} />
+            ) : running ? (
+              <div className="empty-table">Running the report…</div>
+            ) : (
+              <div className="empty-table">Choose filters and Run Report.</div>
+            )}
           </div>
           {printedResult && (
             <div className="print-only">

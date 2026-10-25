@@ -77,12 +77,28 @@ export const getMyReports = async () => unwrapReportList(await apiGet('/report-b
 
 export const getMyReport = async (reportId) => {
   const payload = unwrapResponse(await apiGet(`/report-builder/my-reports/${reportId}`))
-  return payload?.report && typeof payload.report === 'object' ? payload.report : payload
+  // Some gateways wrap the definition in a `report` envelope.
+  const inner = payload && typeof payload.report === 'object' && payload.report != null ? payload.report : null
+  // Prefer the direct payload when it carries the definition fields (defence
+  // against empty or malformed envelopes).
+  if (inner && (inner.id != null || inner.definition != null)) {
+    return inner
+  }
+  return payload
 }
 
 export const runMyReport = async (reportId, run = {}) => {
   const payload = unwrapResponse(await apiPost(`/report-builder/my-reports/${reportId}/run`, run))
-  return payload?.result && typeof payload.result === 'object' ? payload.result : payload
+  // Some gateways wrap the actual result in a `result` envelope; keep the
+  // feature tolerant but prefer the direct response when both forms exist.
+  const inner = payload && typeof payload.result === 'object' && payload.result != null ? payload.result : null
+  // If the inner result is missing the expected keys but the top-level payload
+  // has them, prefer the top-level payload (defence against empty envelopes).
+  if (inner && (Array.isArray(inner.columns) || Array.isArray(inner.rows) || (inner.meta && typeof inner.meta === 'object'))) {
+    return inner
+  }
+  // If there's no valid inner result, fall back to the full unwrapped payload.
+  return payload
 }
 
 /** POST download (server export of the full result set), with token refresh. */
