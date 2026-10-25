@@ -42,6 +42,7 @@ KNOWN_TABLES = {
     "export_entity_blocks", "export_blocks", "export_permits",
     "export_transactions", "export_permit_block_assignments",
     "export_consignees", "export_configs",
+    "report_definitions", "report_access_grants", "report_definition_versions",
 }
 
 # Column names whose values should be redacted

@@ -245,6 +245,16 @@ PERMISSION_CATALOG = [
                 "module_name": "Flowmeter Config",
                 "permissions": _crud("Flowmeter Config", "flowmeter configuration by location and asset"),
             },
+            {
+                "module_name": "Report Builder",
+                "permissions": [
+                    _perm("View Report Definition", VIEW, "Can view custom report designs in the Report Builder"),
+                    _perm("Create Report Definition", CREATE, "Can design new custom reports (tabular and matrix) in the Report Builder"),
+                    _perm("Edit Report Definition", EDIT, "Can edit custom report designs and their access grants"),
+                    _perm("Delete Report Definition", DELETE, "Can delete custom report designs"),
+                    _perm("Publish Report Definition", OTHER, "Can publish custom reports into the Reporting module (and unpublish them)"),
+                ],
+            },
         ],
     },
     {
@@ -469,6 +479,13 @@ PERMISSION_CATALOG = [
                 "module_name": "Out-Turn Report (Legacy)",
                 "permissions": [
                     _perm("View Out-Turn Report", VIEW, "Can view the legacy Out-Turn report"),
+                ],
+            },
+            {
+                "module_name": "Custom Reports",
+                "permissions": [
+                    _perm("View Custom Report", VIEW, "Can run published custom reports shared with the user, their roles or their locations"),
+                    _perm("Export Custom Report", OTHER, "Can download custom report results as Excel/CSV files"),
                 ],
             },
         ],

@@ -367,4 +367,30 @@ export const helpContent = {
       'All actions are audited in the Audit Log.',
     ],
   },
+  '/report-builder': {
+    title: 'Report Builder Help',
+    description:
+      'Report Builder lets you design your own tabular and matrix (cross-tab) reports from any saved data, in plain English — no SQL and no IT help. Published reports appear in the Reporting menu for exactly the people you choose.',
+    points: [
+      'Step 1: choose where the data comes from. “Operation Tickets” includes every answer typed on tickets; the Tank Stock Ledger covers stock movements; any other table can also be reported. Pick which date the From–To filter should use — Accounting Date is recommended for stock accounting.',
+      'Step 2: add columns. Values saved inside JSON payloads (Tank Gauging, Tanker, Multi-Tank/Barge, Flowmeter, FSO, Shuttle) are split into separate columns with “Split into columns”, including one-row-per-tank splits for per-tank dips.',
+      'Calculated columns do +, −, ×, ÷ and % (percent of) across two or more columns, plus IF, IFS, AND, OR, NOT and helpers like IFERROR and COALESCE. Build them by clicking or with the IF/Bands composers; the formula is checked as you type.',
+      'Step 3: choose detail rows or a grouped summary (Total/Average/Count per group), or lay out a matrix (rows × columns × values). Fixed conditions here always apply and cannot be changed by report users.',
+      'Step 4: add the questions report users answer at run time (location, operation type, status, asset, or a filter on any column).',
+      'Step 5: give access to named users, roles, or everyone at chosen locations (View = run/export/print, Edit = also redesign), or open the report to all report users. Publishing needs the Publish Report Definition permission.',
+      'Data is always limited to the runner’s own locations, passwords/secrets can never be reported, and every save keeps a design version for audit.',
+    ],
+  },
+  '/reporting/custom-reports': {
+    title: 'Custom Reports Help',
+    description:
+      'Custom Reports are built in Configurations → Report Builder and shared with specific users, roles or locations. Each shared report also appears by name in this Reporting menu.',
+    points: [
+      'Choose the date range and answer the report’s filter questions, then Run Report. Dates follow the date basis chosen by the designer (usually the Accounting Date).',
+      'You only ever see data for your own locations, even when a report is shared company-wide.',
+      'Excel/CSV buttons download all matching rows from the server; “Export this page / PDF” exports what is on screen; Print asks for a Company Report Profile and prints the full result with company branding.',
+      '“About this report” explains every calculated column in words, so figures can be verified without seeing the design.',
+      'Cells that could not be calculated (for example a division by zero) show blank with a ⚠ marker and are counted in the warnings above the table.',
+    ],
+  },
 }

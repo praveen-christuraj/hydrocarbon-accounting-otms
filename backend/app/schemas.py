@@ -3136,3 +3136,115 @@ class TrackingModuleConfigResponse(TrackingModuleConfigBase):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# -------------------------
+# Report Builder
+# -------------------------
+
+class ReportAccessGrantIn(BaseModel):
+    grant_type: str  # USER | ROLE | LOCATION
+    user_id: Optional[int] = None
+    role_id: Optional[int] = None
+    location_code: Optional[str] = None
+    access_level: str = "VIEW"  # VIEW | EDIT
+
+
+class ReportAccessGrantResponse(ReportAccessGrantIn):
+    id: Optional[int] = None
+    label: Optional[str] = None
+
+
+class ReportDefinitionCreate(BaseModel):
+    report_name: str = Field(min_length=2, max_length=200)
+    description: Optional[str] = None
+    definition: dict[str, Any]
+    visibility: str = "PRIVATE"  # PRIVATE | INTERNAL
+    is_published: bool = False
+    status: str = "Active"
+    grants: list[ReportAccessGrantIn] = []
+    change_note: Optional[str] = None
+
+
+class ReportDefinitionUpdate(ReportDefinitionCreate):
+    pass
+
+
+class ReportDefinitionResponse(BaseModel):
+    id: int
+    report_code: str
+    report_name: str
+    description: Optional[str] = None
+    report_type: str
+    source_kind: str
+    source_table: Optional[str] = None
+    definition: dict[str, Any]
+    visibility: str
+    is_published: bool
+    status: str
+    version: int
+    owner_user_id: Optional[int] = None
+    owner_name: Optional[str] = None
+    created_by: Optional[str] = None
+    updated_by: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    grants: list[ReportAccessGrantResponse] = []
+    my_access: str = "VIEW"  # OWNER | EDIT | VIEW
+    column_count: int = 0
+
+
+class ReportDefinitionSummary(BaseModel):
+    id: int
+    report_code: str
+    report_name: str
+    description: Optional[str] = None
+    report_type: str
+    source_kind: str
+    visibility: str
+    is_published: bool
+    status: str
+    version: int
+    owner_name: Optional[str] = None
+    created_by: Optional[str] = None
+    updated_at: datetime
+    my_access: str = "VIEW"
+    column_count: int = 0
+
+
+class ReportRunRequest(BaseModel):
+    date_from: Optional[date] = None
+    date_to: Optional[date] = None
+    location_codes: list[str] = []
+    runtime_values: dict[str, Any] = {}
+    search: Optional[str] = None
+    page: int = 1
+    page_size: int = 50
+    sort: Optional[list[dict[str, Any]]] = None
+
+
+class ReportPreviewRequest(ReportRunRequest):
+    definition: dict[str, Any]
+
+
+class ReportExportRequest(ReportRunRequest):
+    format: str = "xlsx"  # xlsx | csv
+
+
+class FormulaValidateRequest(BaseModel):
+    formula: str
+    column_keys: list[str] = []
+
+
+class JsonPathsRequest(BaseModel):
+    source_kind: str  # operation_tickets | tank_stock_ledger | table
+    table: Optional[str] = None
+    json_column: Optional[str] = None
+    field_code: Optional[str] = None
+    operation_type_codes: list[str] = []
+    sample_size: int = 100
+
+
+class ReportFromStarterRequest(BaseModel):
+    starter_id: str
+    report_name: Optional[str] = None

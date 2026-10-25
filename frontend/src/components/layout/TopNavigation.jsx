@@ -3,6 +3,7 @@ import { Link, NavLink, useLocation } from 'react-router-dom'
 import Icon from '../common/Icon'
 import { findNavigationItem, navigationItems } from '../../data/navigationItems'
 import { usePermissions } from '../../hooks/usePermissions'
+import { getMyReports } from '../../api/reportBuilderApi'
 
 /**
  * Top-side navigation with dropdown menus (owner rule 3).
@@ -73,14 +74,47 @@ function TopNavigation({ loggedInUser }) {
 
   useEffect(() => () => window.clearTimeout(hoverTimer.current), [])
 
+  // Published Report Builder reports shared with this user become their own
+  // Reporting-menu entries (refreshed when the route changes, so a report
+  // published a moment ago appears without a full reload).
+  const [customReportItems, setCustomReportItems] = useState([])
+  const canViewCustomReports = isAdmin || hasPermission('View Custom Report')
+  useEffect(() => {
+    if (!canViewCustomReports) {
+      setCustomReportItems([])
+      return undefined
+    }
+    let cancelled = false
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+    getMyReports()
+      .then((reports) => {
+        if (cancelled) return
+        setCustomReportItems(
+          (reports || []).map((report) => ({
+            label: report.report_name,
+            path: `/reporting/custom-reports/${report.id}`,
+            permission: 'View Custom Report',
+            customReport: true,
+          }))
+        )
+      })
+      .catch(() => {
+        if (!cancelled) setCustomReportItems([])
+      })
+    return () => { cancelled = true }
+  }, [canViewCustomReports, location.pathname])
+
   const visibleGroups = navigationItems
     .map((navItem, index) => {
       if (navItem.type === 'link') {
         return hasRequiredPermissions(navItem) ? { ...navItem, index } : null
       }
+      const sourceItems = navItem.label === 'Reporting'
+        ? [...navItem.items, ...customReportItems]
+        : navItem.items
       const items = isAdmin
-        ? navItem.items.filter((item) => !item.disabled)
-        : navItem.items.filter((item) => !item.disabled && hasRequiredPermissions(item))
+        ? sourceItems.filter((item) => !item.disabled)
+        : sourceItems.filter((item) => !item.disabled && hasRequiredPermissions(item))
       return items.length > 0 ? { ...navItem, items, index } : null
     })
     .filter(Boolean)
