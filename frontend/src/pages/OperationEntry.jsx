@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import useKeyboardShortcuts from '../hooks/useKeyboardShortcuts'
+import ShortcutsHelp from '../components/common/ShortcutsHelp'
 import { apiPost } from '../api/apiClient'
 import {
   createOperationEntry,
@@ -100,9 +102,28 @@ function OperationTemplateFields({
   handleValueChange,
   getInputType,
   excludedFieldCodes = [],
+  fieldErrors = {},
+  setFieldErrors,
+  notifyError,
+  notifySuccess,
 }) {
   if (!selectedTemplate) {
     return null
+  }
+
+  const setFieldError = (fieldCode, message) => {
+    setFieldErrors((current) => ({ ...current, [fieldCode]: message }))
+  }
+
+  const clearFieldError = (fieldCode) => {
+    setFieldErrors((current) => {
+      const next = { ...current }
+      if (next[fieldCode]) {
+        delete next[fieldCode]
+        return next
+      }
+      return current
+    })
   }
 
   const visibleValues = entry.values.filter((value) => {
@@ -149,6 +170,7 @@ function OperationTemplateFields({
             </label>
 
             <input
+              id={`field-${value.fieldCode}`}
               type={getInputType(value.dataType)}
               onWheel={(e) => e.target.blur()}
               value={
@@ -156,16 +178,90 @@ function OperationTemplateFields({
                   ? JSON.stringify(value.fieldValue)
                   : value.fieldValue
               }
-              onChange={(e) =>
+              onChange={(e) => {
                 handleValueChange(value.fieldCode, e.target.value)
-              }
+                clearFieldError(value.fieldCode)
+              }}
+              onBlur={(e) => {
+                const templateField = selectedTemplateFields.find(
+                  (field) => field.fieldCode === value.fieldCode
+                )
+                const isRequiredManual =
+                  templateField?.isRequired === 'Yes' &&
+                  templateField?.inputMode === 'Manual'
+                if (
+                  isRequiredManual &&
+                  String(e.target.value ?? '').trim() === ''
+                ) {
+                  setFieldError(value.fieldCode, `${value.fieldName} is required`)
+                } else {
+                  clearFieldError(value.fieldCode)
+                }
+              }}
               disabled={value.inputMode !== 'Manual'}
               placeholder={
                 value.inputMode === 'Manual'
                   ? `Enter ${value.fieldName}`
                   : `${value.inputMode} field - populated by system`
               }
+              aria-invalid={Boolean(fieldErrors[value.fieldCode])}
             />
+
+            {fieldErrors[value.fieldCode] && (
+              <div className="field-error">{fieldErrors[value.fieldCode]}</div>
+            )}
+
+            {value.inputMode === 'Manual' && value.dataType === 'Date' && (
+              <button
+                type="button"
+                className="field-shortcuts"
+                onClick={() =>
+                  handleValueChange(
+                    value.fieldCode,
+                    new Date().toISOString().slice(0, 10)
+                  )
+                }
+                title={`Set ${value.fieldName} to today`}
+              >
+                Today
+              </button>
+            )}
+
+            {value.inputMode === 'Manual' && value.dataType === 'DateTime' && (
+              <button
+                type="button"
+                className="field-shortcuts"
+                onClick={() =>
+                  handleValueChange(
+                    value.fieldCode,
+                    new Date().toISOString().slice(0, 16)
+                  )
+                }
+                title={`Set ${value.fieldName} to now`}
+              >
+                Now
+              </button>
+            )}
+
+            {value.dataType === 'JSON' && (
+              <button
+                type="button"
+                className="field-shortcuts"
+                onClick={async () => {
+                  try {
+                    const text = await navigator.clipboard.readText()
+                    const parsed = JSON.parse(text)
+                    handleValueChange(value.fieldCode, parsed)
+                    notifySuccess(`Pasted JSON into ${value.fieldName}`)
+                  } catch {
+                    notifyError('The clipboard does not contain valid JSON.')
+                  }
+                }}
+                title={`Paste JSON from clipboard into ${value.fieldName}`}
+              >
+                Paste JSON
+              </button>
+            )}
 
             <small>
               {value.fieldGroup} / {value.inputMode} / {value.calculationRole}
@@ -183,6 +279,10 @@ function OperationTemplateStructuredFields({
   templateLayout,
   handleValueChange,
   getInputType,
+  fieldErrors = {},
+  setFieldErrors,
+  notifyError,
+  notifySuccess,
 }) {
   if (!templateLayout || !Array.isArray(templateLayout.items)) {
     return null
@@ -190,6 +290,22 @@ function OperationTemplateStructuredFields({
 
   const valueByFieldCode = new Map((entry.values || []).map((v) => [v.fieldCode, v]))
   const fieldById = new Map((selectedTemplateFields || []).map((f) => [Number(f.id), f]))
+
+  const setFieldError = (fieldCode, message) => {
+    setFieldErrors((current) => ({ ...current, [fieldCode]: message }))
+  }
+
+  const clearFieldError = (fieldCode) => {
+    setFieldErrors((current) => {
+      const next = { ...current }
+      if (next[fieldCode]) {
+        delete next[fieldCode]
+        return next
+      }
+      return current
+    })
+  }
+
   const sectionBuckets = (templateLayout.sections || []).map((section) => {
     return {
       ...section,
@@ -269,15 +385,93 @@ function OperationTemplateStructuredFields({
                                 ? JSON.stringify(value.fieldValue)
                                 : value.fieldValue
                             }
-                            onChange={(e) => handleValueChange(value.fieldCode, e.target.value)}
+                            onChange={(e) => {
+                              handleValueChange(value.fieldCode, e.target.value)
+                              clearFieldError(value.fieldCode)
+                            }}
+                            onBlur={(e) => {
+                              const field = fieldById.get(Number(item.fieldId))
+                              const isRequiredManual =
+                                field?.isRequired === 'Yes' &&
+                                field?.inputMode === 'Manual'
+                              if (
+                                isRequiredManual &&
+                                String(e.target.value ?? '').trim() === ''
+                              ) {
+                                setFieldError(
+                                  value.fieldCode,
+                                  `${value.fieldName} is required`
+                                )
+                              } else {
+                                clearFieldError(value.fieldCode)
+                              }
+                            }}
                             disabled={value.inputMode !== 'Manual'}
+                            aria-invalid={Boolean(fieldErrors[value.fieldCode])}
                             placeholder={
                               item.placeholderOverride ||
                               (value.inputMode === 'Manual'
                                 ? `Enter ${value.fieldName}`
-                                : `${value.inputMode} field - populated by system`)
-                            }
+                                : `${value.inputMode} field - populated by system`)}
                           />
+
+                          {fieldErrors[value.fieldCode] && (
+                            <div className="field-error">{fieldErrors[value.fieldCode]}</div>
+                          )}
+
+                          {value.inputMode === 'Manual' && value.dataType === 'Date' && (
+                            <button
+                              type="button"
+                              className="field-shortcuts"
+                              onClick={() =>
+                                handleValueChange(
+                                  value.fieldCode,
+                                  new Date().toISOString().slice(0, 10)
+                                )
+                              }
+                              title={`Set ${value.fieldName} to today`}
+                            >
+                              Today
+                            </button>
+                          )}
+
+                          {value.inputMode === 'Manual' && value.dataType === 'DateTime' && (
+                            <button
+                              type="button"
+                              className="field-shortcuts"
+                              onClick={() =>
+                                handleValueChange(
+                                  value.fieldCode,
+                                  new Date().toISOString().slice(0, 16)
+                                )
+                              }
+                              title={`Set ${value.fieldName} to now`}
+                            >
+                              Now
+                            </button>
+                          )}
+
+                          {value.dataType === 'JSON' && (
+                            <button
+                              type="button"
+                              className="field-shortcuts"
+                              onClick={async () => {
+                                try {
+                                  const text = await navigator.clipboard.readText()
+                                  const parsed = JSON.parse(text)
+                                  handleValueChange(value.fieldCode, parsed)
+                                  notifySuccess(`Pasted JSON into ${value.fieldName}`)
+                                } catch {
+                                  notifyError(
+                                    'The clipboard does not contain valid JSON.'
+                                  )
+                                }
+                              }}
+                              title={`Paste JSON from clipboard into ${value.fieldName}`}
+                            >
+                              Paste JSON
+                            </button>
+                          )}
                         </div>
                       )
                     })}
@@ -308,6 +502,10 @@ function OperationLayoutRenderer({
   receiverMode = false,
   setEntryField,
   templateLayout = null,
+  fieldErrors = {},
+  setFieldErrors,
+  notifyError,
+  notifySuccess,
 }) {
   if (!selectedTemplate) {
     return (
@@ -362,6 +560,10 @@ function OperationLayoutRenderer({
           selectedTemplateFields={selectedTemplateFields}
           handleValueChange={handleValueChange}
           getInputType={getInputType}
+          fieldErrors={fieldErrors}
+          setFieldErrors={setFieldErrors}
+          notifyError={notifyError}
+          notifySuccess={notifySuccess}
           excludedFieldCodes={['tank_gauging_payload']}
         />
       </>
@@ -385,6 +587,10 @@ function OperationLayoutRenderer({
           selectedTemplateFields={selectedTemplateFields}
           handleValueChange={handleValueChange}
           getInputType={getInputType}
+          fieldErrors={fieldErrors}
+          setFieldErrors={setFieldErrors}
+          notifyError={notifyError}
+          notifySuccess={notifySuccess}
           excludedFieldCodes={[
             'vessel_operation_code',
             'movement_reference',
@@ -421,6 +627,10 @@ function OperationLayoutRenderer({
           selectedTemplateFields={selectedTemplateFields}
           handleValueChange={handleValueChange}
           getInputType={getInputType}
+          fieldErrors={fieldErrors}
+          setFieldErrors={setFieldErrors}
+          notifyError={notifyError}
+          notifySuccess={notifySuccess}
           excludedFieldCodes={['multi_tank_payload', 'barge_event_type']}
         />
       </>
@@ -445,6 +655,10 @@ function OperationLayoutRenderer({
           selectedTemplateFields={selectedTemplateFields}
           handleValueChange={handleValueChange}
           getInputType={getInputType}
+          fieldErrors={fieldErrors}
+          setFieldErrors={setFieldErrors}
+          notifyError={notifyError}
+          notifySuccess={notifySuccess}
           excludedFieldCodes={[
             'vessel_operation_code',
             'movement_reference',
@@ -478,6 +692,10 @@ function OperationLayoutRenderer({
           selectedTemplateFields={selectedTemplateFields}
           handleValueChange={handleValueChange}
           getInputType={getInputType}
+          fieldErrors={fieldErrors}
+          setFieldErrors={setFieldErrors}
+          notifyError={notifyError}
+          notifySuccess={notifySuccess}
           excludedFieldCodes={['shuttle_payload']}
         />
       </>
@@ -501,6 +719,10 @@ function OperationLayoutRenderer({
           selectedTemplateFields={selectedTemplateFields}
           handleValueChange={handleValueChange}
           getInputType={getInputType}
+          fieldErrors={fieldErrors}
+          setFieldErrors={setFieldErrors}
+          notifyError={notifyError}
+          notifySuccess={notifySuccess}
           excludedFieldCodes={['fso_payload']}
         />
       </>
@@ -533,6 +755,10 @@ function OperationLayoutRenderer({
               selectedTemplateFields={selectedTemplateFields}
               handleValueChange={handleValueChange}
               getInputType={getInputType}
+              fieldErrors={fieldErrors}
+              setFieldErrors={setFieldErrors}
+              notifyError={notifyError}
+              notifySuccess={notifySuccess}
               excludedFieldCodes={['tanker_payload']}
             />
           </>
@@ -560,6 +786,10 @@ function OperationLayoutRenderer({
             selectedTemplateFields={selectedTemplateFields}
             handleValueChange={handleValueChange}
             getInputType={getInputType}
+            fieldErrors={fieldErrors}
+            setFieldErrors={setFieldErrors}
+            notifyError={notifyError}
+            notifySuccess={notifySuccess}
             excludedFieldCodes={['tanker_payload']}
           />
         </>
@@ -582,6 +812,10 @@ function OperationLayoutRenderer({
           selectedTemplateFields={selectedTemplateFields}
           handleValueChange={handleValueChange}
           getInputType={getInputType}
+          fieldErrors={fieldErrors}
+          setFieldErrors={setFieldErrors}
+          notifyError={notifyError}
+          notifySuccess={notifySuccess}
           excludedFieldCodes={[
             'flowmeter_payload',
             'meter_label',
@@ -606,6 +840,10 @@ function OperationLayoutRenderer({
         templateLayout={templateLayout}
         handleValueChange={handleValueChange}
         getInputType={getInputType}
+        fieldErrors={fieldErrors}
+        setFieldErrors={setFieldErrors}
+        notifyError={notifyError}
+        notifySuccess={notifySuccess}
       />
 
       <OperationTemplateFields
@@ -614,6 +852,10 @@ function OperationLayoutRenderer({
         selectedTemplateFields={selectedTemplateFields}
         handleValueChange={handleValueChange}
         getInputType={getInputType}
+        fieldErrors={fieldErrors}
+        setFieldErrors={setFieldErrors}
+        notifyError={notifyError}
+        notifySuccess={notifySuccess}
         excludedFieldCodes={
           templateLayout
             ? (templateLayout.items || [])
@@ -630,6 +872,9 @@ function OperationLayoutRenderer({
     </>
   )
 }
+
+// Stable reference so useKeyboardShortcuts does not re-subscribe each render.
+const SHORTCUTS_ALWAYS_ON = ['escape']
 
 function OperationEntry({
   operationTypes,
@@ -780,7 +1025,13 @@ function OperationEntry({
   }, [entry.values, entry.operationDate])
 
   const [confirmAction, setConfirmAction] = useState(null)
+  const [fieldErrors, setFieldErrors] = useState({})
+  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false)
   const [bulkImportOpen, setBulkImportOpen] = useState(false)
+  const entryFormRef = useRef(null)
+  const handlerRef = useRef({ handleSubmit: null })
+  const cloneEntryRef = useRef(null)
+  const shortcutStateRef = useRef({ entry, editId, confirmAction, loading, canCreateOperationEntry })
   const [tankerSenderReference, setTankerSenderReference] = useState(null)
   const [tankerSenderReferenceLoading, setTankerSenderReferenceLoading] =
     useState(false)
@@ -1797,6 +2048,143 @@ function OperationEntry({
     })
   }
 
+  /**
+   * Clone an existing Draft/Rejected ticket into the form as a brand new
+   * draft, pre-filled with its metadata, locations, product and template
+   * values so the user only reviews and saves.
+   */
+  const cloneEntry = (source) => {
+    if (!canCreateOperationEntry) {
+      notifyError('You do not have permission to create operation entries')
+      return
+    }
+
+    setEntry({
+      linkedTicketId: null,
+      operationTypeCode: source.operationTypeCode,
+      operationTemplateId: String(source.operationTemplateId || ''),
+      primaryAssetCode: source.primaryAssetCode || '',
+      convoyNumber: source.convoyNumber || '',
+      originLocationCode: source.originLocationCode || '',
+      destinationLocationCode: source.destinationLocationCode || '',
+      senderLocationCode: source.senderLocationCode || '',
+      receiverLocationCode: source.receiverLocationCode || '',
+      operationDate: source.operationDate || '',
+      operationStartDatetime: '',
+      operationEndDatetime: '',
+      productName: source.productName || '',
+      createdBy: '',
+      remarks: source.remarks
+        ? `Clone of ${source.operationNumber || 'ticket'}: ${source.remarks}`
+        : '',
+      status: 'Draft',
+      values: (source.values || []).map((value) => ({
+        fieldCode: value.fieldCode,
+        fieldName: value.fieldName,
+        fieldGroup: value.fieldGroup,
+        dataType: value.dataType,
+        unit: value.unit,
+        inputMode: value.inputMode,
+        calculationRole: value.calculationRole,
+        fieldValue: value.fieldValue ?? '',
+        sortOrder: value.sortOrder,
+      })),
+    })
+    setEditId(null)
+    setConfirmAction(null)
+    setFieldErrors({})
+    if (entryFormRef.current) {
+      entryFormRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    } else {
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
+    notifySuccess('Ticket cloned as a new draft. Review the values and save.')
+    logUiAction('Operation Entry', 'Clone Ticket', {
+      source: source.operationNumber || source.id,
+    })
+  }
+  // Keep the latest submit handler, clone handler and page state in refs so
+  // the one-time keyboard listener (registered by useKeyboardShortcuts below)
+  // always reads current values without re-subscribing on every render. The
+  // sync runs in an effect (after commit) rather than during render.
+  useEffect(() => {
+    handlerRef.current = { handleSubmit }
+    shortcutStateRef.current = {
+      entry,
+      editId,
+      confirmAction,
+      loading,
+      canCreateOperationEntry,
+    }
+    cloneEntryRef.current = cloneEntry
+  })
+
+
+  // Stable shortcut handlers. They read refs that are synced every render,
+  // so the callbacks themselves never change and the hook subscribes once.
+  const saveDraftFromShortcut = useCallback(() => {
+    const current = shortcutStateRef.current
+    if (current.loading) return
+    const { handleSubmit: submit } = handlerRef.current
+    if (submit) submit({ preventDefault: () => {} })
+  }, [])
+
+  const dismissOrCancelEdit = useCallback(() => {
+    const current = shortcutStateRef.current
+    if (current.confirmAction) {
+      setConfirmAction(null)
+      return
+    }
+    if (current.editId !== null) {
+      setEntry(emptyEntry)
+      setEditId(null)
+      setFieldErrors({})
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const cloneFromShortcut = useCallback(() => {
+    const current = shortcutStateRef.current
+    if (current.editId !== null && cloneEntryRef.current) {
+      cloneEntryRef.current(current.entry)
+    }
+  }, [])
+
+  const focusSearchFromShortcut = useCallback(() => {
+    const searchInput = document.querySelector('.editable-entries-search')
+    if (searchInput) searchInput.focus()
+  }, [])
+
+  const openShortcutsHelp = useCallback(() => setShowShortcutsHelp(true), [])
+
+  const shortcutBindings = useMemo(
+    () => ({
+      'mod+s': saveDraftFromShortcut,
+      'mod+enter': saveDraftFromShortcut,
+      escape: dismissOrCancelEdit,
+      'mod+d': cloneFromShortcut,
+      'mod+/': focusSearchFromShortcut,
+      '?': openShortcutsHelp,
+    }),
+    [
+      saveDraftFromShortcut,
+      dismissOrCancelEdit,
+      cloneFromShortcut,
+      focusSearchFromShortcut,
+      openShortcutsHelp,
+    ]
+  )
+
+  useKeyboardShortcuts({
+    bindings: shortcutBindings,
+    // Escape dismisses a confirmation or cancels editing even while the focus
+    // is inside a field.
+    alwaysOn: SHORTCUTS_ALWAYS_ON,
+    // Do not steal keys while a full-screen dialog owns the interaction.
+    enabled: !bulkImportOpen && !showShortcutsHelp,
+  })
+
+
   const confirmSubmitAction = async () => {
     setConfirmAction(null)
     try {
@@ -1845,6 +2233,7 @@ function OperationEntry({
 
       setEntry(emptyEntry)
       setEditId(null)
+      setFieldErrors({})
     } catch (error) {
       notifyError(error.message)
     } finally {
@@ -1901,6 +2290,7 @@ function OperationEntry({
     })
 
     setEditId(entryToEdit.id)
+    setFieldErrors({})
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -1912,6 +2302,7 @@ function OperationEntry({
     setConfirmAction(null)
     setEntry(emptyEntry)
     setEditId(null)
+    setFieldErrors({})
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -1959,6 +2350,7 @@ function OperationEntry({
     setConfirmAction(null)
     setEntry(emptyEntry)
     setEditId(null)
+    setFieldErrors({})
   }
   const isShuttleTrackingLayout = useMemo(() => {
     return String(selectedTemplate?.entryLayoutType || '')
@@ -2004,7 +2396,7 @@ function OperationEntry({
   }
 
   return (
-    <div>
+    <div className="operation-entry-page">
       {confirmAction && (
         <div className="confirm-overlay">
           <div className="confirm-dialog">
@@ -2049,6 +2441,16 @@ function OperationEntry({
               Bulk Upload Tickets
             </button>
           )}
+
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => setShowShortcutsHelp(true)}
+            title="Keyboard shortcuts (?)"
+          >
+            <Icon name="help" size={13} />
+            Shortcuts (?)
+          </button>
         </div>
       </div>
 
@@ -2058,7 +2460,7 @@ function OperationEntry({
         </div>
       )}
 
-      <form onSubmit={handleSubmit}>
+      <form ref={entryFormRef} onSubmit={handleSubmit}>
         {prefill.mode === 'tanker-receiver' && (
           <div className="info-box full-width-field">
             <strong>Receiver Tanker Entry</strong>
@@ -2275,6 +2677,10 @@ function OperationEntry({
           receiverMode={prefill.mode === 'tanker-receiver'}
           setEntryField={setEntryField}
           templateLayout={selectedTemplateLayout}
+          fieldErrors={fieldErrors}
+          setFieldErrors={setFieldErrors}
+          notifyError={notifyError}
+          notifySuccess={notifySuccess}
         />
 
         {/* Action feedback lives right next to the Save / Update button
@@ -2335,6 +2741,7 @@ function OperationEntry({
               Search
             </label>
             <input
+              className="editable-entries-search"
               value={editableSearch}
               onChange={(e) => setEditableSearch(e.target.value)}
               placeholder="Search ticket / asset / sender / receiver / template / product…"
@@ -2400,6 +2807,10 @@ function OperationEntry({
                     Edit
                   </button>
 
+                  <button type="button" className="btn-sm" onClick={() => cloneEntry(item)} disabled={!canCreateOperationEntry || loading} title="Clone this ticket into a new draft (mod+d when editing)">
+                    Clone
+                  </button>
+
                   <button type="button" onClick={() => handleDelete(item.id)} disabled={!canCancelOperationTransaction}>
                     Cancel
                   </button>
@@ -2438,6 +2849,20 @@ function OperationEntry({
           onComplete={handleBulkImportComplete}
         />
       )}
+
+      <ShortcutsHelp
+        open={showShortcutsHelp}
+        onClose={() => setShowShortcutsHelp(false)}
+        module="Operation Entry"
+        shortcuts={[
+          { key: 'mod+s', label: 'mod+s', action: 'Save the draft ticket' },
+          { key: 'mod+enter', label: 'mod+enter', action: 'Save the draft ticket' },
+          { key: 'escape', label: 'escape', action: 'Dismiss confirmation or cancel editing' },
+          { key: 'mod+d', label: 'mod+d', action: 'Clone the ticket into a new draft (edit mode)' },
+          { key: 'mod+/', label: 'mod+/', action: 'Focus the editable entries search' },
+          { key: '?', label: '?', action: 'Open this shortcuts help' },
+        ]}
+      />
     </div>
   )
 }

@@ -4518,3 +4518,94 @@ td.preset-result-error {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Keyboard shortcuts (Operation Entry page + ShortcutsHelp dialog)
+   -------------------------------------------------------------------------- */
+
+/* Shortcut chips inside the help dialog. Rendered through a portal on
+   document.body, so this rule stays global - the class is unique. */
+.shortcut-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 62px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.shortcut-key kbd,
+.shortcut-key .kbd {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+/* Invalid inputs are highlighted only on the Operation Entry page so the
+   shared global input styling used by other modules stays untouched. */
+.operation-entry-page input[aria-invalid='true'],
+.operation-entry-page select[aria-invalid='true'],
+.operation-entry-page textarea[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+
+.operation-entry-page input[aria-invalid='true']:focus-visible,
+.operation-entry-page select[aria-invalid='true']:focus-visible,
+.operation-entry-page textarea[aria-invalid='true']:focus-visible {
+  outline-color: var(--focus-ring);
+}
+
+/* Inline "Today" / "Now" / "Paste JSON" chips rendered next to a field.
+   The class is applied directly to each <button>. */
+.operation-entry-page button.field-shortcuts {
+  display: inline-block;
+  min-height: auto;
+  margin: 4px 6px 0 0;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text-secondary);
+}
+
+.operation-entry-page button.field-shortcuts:hover:not(:disabled) {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+/* ---------------------------------------------------------------------------
+   Shortcuts help dialog
+   -------------------------------------------------------------------------- */
+.shortcuts-help-dialog table {
+  margin-top: 10px;
+  min-width: 420px;
+}
+
+.shortcuts-help-dialog th,
+.shortcuts-help-dialog td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--divider);
+  vertical-align: middle;
+}
+
+.shortcuts-help-dialog th {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.shortcuts-help-dialog td {
+  font-size: 13px;
+}
