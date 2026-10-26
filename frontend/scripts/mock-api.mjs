@@ -140,7 +140,15 @@ const db = {
   ].map(make),
 
   operation_templates: [
-    { id: 1, template_name: 'Tank Gauging', operation_type_code: 'TANK_GAUGING', entry_layout_type: 'Tank Gauging', calculation_engine: 'Tank Quantity', description: 'Standard tank gauging ticket', status: 'Active', fields: [] },
+    {
+      id: 1, template_name: 'Tank Gauging', operation_type_code: 'TANK_GAUGING',
+      entry_layout_type: 'Tank Gauging', calculation_engine: 'Tank Quantity',
+      description: 'Standard tank gauging ticket', status: 'Active',
+      fields: [
+        { id: 1, field_name: 'Tank Gauging', field_code: 'tank_gauging_payload', field_group: 'Payload', data_type: 'JSON', unit: null, is_required: 'No', input_mode: 'System', calculation_role: 'Input', sort_order: 1, status: 'Active' },
+        { id: 2, field_name: 'Sample Reference', field_code: 'sample_reference', field_group: 'General', data_type: 'Text', unit: null, is_required: 'No', input_mode: 'Manual', calculation_role: 'Input', sort_order: 2, status: 'Active' },
+      ],
+    },
   ].map(make),
 
   operation_workflow_policies: [
@@ -223,7 +231,13 @@ const db = {
     { id: 3, role_id: 3, location_code: 'WRR' },
   ],
   operation_entries: [],
-  operation_transactions: [],
+  // Register fixtures: one ticket per workflow state so the bulk selection and
+  // the bulk status actions can be tried out in the browser.
+  operation_transactions: [
+    { id: 1, operation_number: 'OP-0001', operation_ticket_number: 'TKT-0001', convoy_number: '', operation_date: '2026-10-20', operation_type_code: 'TANK_GAUGING', operation_type_name: 'Tank Gauging', origin_location_code: 'UTP', primary_asset_code: 'TK-101', status: 'Draft' },
+    { id: 2, operation_number: 'OP-0002', operation_ticket_number: 'TKT-0002', convoy_number: '', operation_date: '2026-10-19', operation_type_code: 'TANK_GAUGING', operation_type_name: 'Tank Gauging', origin_location_code: 'UTP', primary_asset_code: 'TK-102', status: 'Submitted' },
+    { id: 3, operation_number: 'OP-0003', operation_ticket_number: 'TKT-0003', convoy_number: 'CNV-2026-001', operation_date: '2026-10-18', operation_type_code: 'BARGE_MOVE', operation_type_name: 'Barge Move', origin_location_code: 'UTP', primary_asset_code: 'BRG-001', status: 'Approved' },
+  ].map(make),
   audit_logs: [],
   system_notifications: [],
 }
@@ -1219,6 +1233,62 @@ const server = http.createServer(async (req, res) => {
       }
     }
     sendJson(res, 404, { detail: 'Not found in mock API' })
+    return
+  }
+
+  /* ----------------------------------- operation transaction register (mock) */
+  if (pathname.startsWith('/operation-transactions/paged') && method === 'GET') {
+    const status = url.searchParams.get('status') || ''
+    const search = (url.searchParams.get('search') || '').toLowerCase()
+    const matches = db.operation_transactions.filter((row) => {
+      if (status && row.status !== status) return false
+      if (!search) return true
+      return [row.operation_ticket_number, row.operation_number, row.operation_type_name, row.primary_asset_code, row.origin_location_code, row.status]
+        .join(' ')
+        .toLowerCase()
+        .includes(search)
+    })
+    const counts = db.operation_transactions.reduce((acc, row) => {
+      acc[row.status] = (acc[row.status] || 0) + 1
+      return acc
+    }, {})
+    sendJson(res, 200, {
+      rows: matches.map((row) => ({
+        id: row.id,
+        ticket_number: row.operation_ticket_number || row.operation_number || '',
+        operation_number: row.operation_number || '',
+        convoy_number: row.convoy_number || '',
+        operation_date: row.operation_date || '',
+        operation_type_name: row.operation_type_name || '',
+        operation_type_code: row.operation_type_code || '',
+        location_name: (db.locations.find((item) => item.location_code === row.origin_location_code) || {}).location_name || '',
+        location_code: row.origin_location_code || '',
+        primary_asset_name: (db.assets.find((item) => item.asset_code === row.primary_asset_code) || {}).asset_name || '',
+        primary_asset_code: row.primary_asset_code || '',
+        field_count: 0,
+        status: row.status || '',
+        created_at: row.created_at || null,
+      })),
+      total_rows: matches.length,
+      page: Number(url.searchParams.get('page') || 1),
+      page_size: Number(url.searchParams.get('page_size') || 20),
+      has_more: false,
+      status_counts: Object.entries(counts).map(([key, count]) => ({ status: key, count })),
+    })
+    return
+  }
+
+  const statusMatch = pathname.match(/^\/operation-transactions\/(\d+)\/status$/)
+  if (statusMatch && method === 'PATCH') {
+    const body = await readBody(req)
+    const row = db.operation_transactions.find((item) => String(item.id) === statusMatch[1])
+    if (!row) {
+      sendJson(res, 404, { detail: 'Operation transaction not found' })
+      return
+    }
+    row.status = body.status || row.status
+    row.updated_at = now()
+    sendJson(res, 200, { message: `Transaction status changed to ${row.status}`, id: row.id, status: row.status })
     return
   }
 

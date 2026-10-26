@@ -21,7 +21,10 @@ import FSOTrackingLayout from '../components/operationLayouts/FSOTrackingLayout.
 import FlowmeterReadingLayout from '../components/operationLayouts/FlowmeterReadingLayout'
 import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
 import AlertMessage from '../components/common/AlertMessage'
+import OperationEntryBulkImportDialog from '../components/operationEntry/OperationEntryBulkImportDialog'
+import Icon from '../components/common/Icon'
 import useActionFeedback from '../hooks/useActionFeedback'
+import { logUiAction } from '../utils/actionLogger'
 import {
   entryReceiverCode,
   entrySenderCode,
@@ -777,6 +780,7 @@ function OperationEntry({
   }, [entry.values, entry.operationDate])
 
   const [confirmAction, setConfirmAction] = useState(null)
+  const [bulkImportOpen, setBulkImportOpen] = useState(false)
   const [tankerSenderReference, setTankerSenderReference] = useState(null)
   const [tankerSenderReferenceLoading, setTankerSenderReferenceLoading] =
     useState(false)
@@ -1978,6 +1982,27 @@ function OperationEntry({
     return 'Convoy Number'
   })()
 
+  // Bulk upload may only use operation types the signed-in user can pick in the
+  // form (location availability + Active). The dialog checks each row again.
+  const bulkAllowedOperationTypeCodes = useMemo(() => {
+    if (isAdminBootstrap || hasAllLocationsAccess) return null
+    return new Set(
+      availableOperationTypes.map((item) => normalizeCode(item.operationTypeCode))
+    )
+  }, [availableOperationTypes, isAdminBootstrap, hasAllLocationsAccess])
+
+  const handleBulkImportComplete = async (summary) => {
+    await reloadOperationEntries()
+    if (typeof reloadOperationTransactions === 'function') {
+      await reloadOperationTransactions()
+    }
+    if (summary?.success > 0) {
+      notifySuccess(
+        `${summary.success} draft ticket${summary.success === 1 ? '' : 's'} created by bulk upload. Review and submit them from the Operation Transaction Register.`
+      )
+    }
+  }
+
   return (
     <div>
       {confirmAction && (
@@ -2006,9 +2031,25 @@ function OperationEntry({
           </p>
         </div>
 
-        <span className="record-count">
-          {filteredEditableEntries.length} Editable Entries
-        </span>
+        <div className="operation-entry-title-actions">
+          <span className="record-count">
+            {filteredEditableEntries.length} Editable Entries
+          </span>
+
+          {canCreateOperationEntry && (
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => {
+                setBulkImportOpen(true)
+                logUiAction('Operation Entry', 'Open Bulk Upload Dialog')
+              }}
+            >
+              <Icon name="upload" size={15} />
+              Bulk Upload Tickets
+            </button>
+          )}
+        </div>
       </div>
 
       {!canCreateOperationEntry && (
@@ -2380,6 +2421,23 @@ function OperationEntry({
         tickets. The official full ticket list remains Operation Transaction
         Register.
       </div>
+
+      {canCreateOperationEntry && (
+        <OperationEntryBulkImportDialog
+          open={bulkImportOpen}
+          onClose={() => setBulkImportOpen(false)}
+          operationTypes={operationTypes}
+          operationTemplates={operationTemplates}
+          locations={allActiveLocations}
+          assets={assets}
+          operationEntries={operationEntries}
+          assetCalibrationTables={assetCalibrationTables}
+          calibrationTemplates={calibrationTemplates}
+          loggedInUser={loggedInUser}
+          allowedOperationTypeCodes={bulkAllowedOperationTypeCodes}
+          onComplete={handleBulkImportComplete}
+        />
+      )}
     </div>
   )
 }

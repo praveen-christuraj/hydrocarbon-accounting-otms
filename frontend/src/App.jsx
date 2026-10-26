@@ -1083,6 +1083,7 @@ function AppContent({
                   operationTypes={operationTypes}
                   locations={locations}
                   assets={assets}
+                  loggedInUser={loggedInUser}
                 />
               </PermissionGuard>
             }

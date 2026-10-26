@@ -144,10 +144,19 @@ Summary, Tanker Tracking, Barge Tracking, Tanker Transaction Report, Material Ba
 Export Reports, Backup Recovery — get **export in all three formats**, with no upload button,
 because there is no create API behind them.
 
-Still outside this change (Operations / Tracking / Dashboards, which were not in scope):
-Operation Entry, Operation Transaction Register, Operation Task Manager, Movement Mapping,
-Location Operation Summary, Flowmeter Record Entry, FSO / Shuttle Tracking, Dashboard,
-Dashboard Builder and Database Browser. Say the word and they get the same treatment.
+### Operations
+
+| Page | Upload | Export |
+| --- | --- | --- |
+| Operation Entry | **yes** – spreadsheet of complete tickets (metadata + template fields + asset payload), one Draft ticket per row | – |
+| Operation Transaction Register | – (server-side paging) | CSV from the backend; **Export selected** (xlsx / csv / pdf) |
+
+See `OPERATION_BULK_ENTRY_AND_BULK_ACTIONS.md` for the operation-entry upload layout, the
+payload column convention and the register's bulk workflow actions.
+
+Still outside this change: Operation Task Manager, Movement Mapping, Location Operation
+Summary, Flowmeter Record Entry, FSO / Shuttle Tracking, Dashboard, Dashboard Builder and
+Database Browser. Say the word and they get the same treatment.
 
 ---
 
@@ -162,7 +171,9 @@ npm run dev:mock        # Vite on 0.0.0.0:5173, proxies /api -> the mock server
 
 `npm run mock-api` is a dev-only, dependency-free Node server (`frontend/scripts/mock-api.mjs`)
 seeded with locations, asset types, assets, calibration templates and tables, barge seals,
-Table 11 factors, users, roles and permissions. It is never part of the production build.
+Table 11 factors, users, roles, permissions, operation types/templates, and three register
+tickets (Draft / Submitted / Approved) so the bulk upload and the register bulk actions can be
+exercised end to end. It is never part of the production build.
 `MOCK_API_TARGET` overrides the proxy target; `MOCK_API_PORT` overrides the mock port.
 
 Production (`npm run dev`, `npm run build`, Docker) is untouched: the `/api` proxy is only
@@ -173,11 +184,12 @@ installed when `MOCK_API=1`.
 ## 6. Tests
 
 ```bash
-npm run smoke         # renders every route in happy-dom, asserts 0 runtime errors
-npm run test:bulk     # round-trips real .xlsx/.csv through the parser, mapper, template
-                      # store and the three exporters
-npm run test:bulk:ui  # boots the mock API, renders the app and drives the new controls
-npx eslint src        # lint
+npm run smoke                      # renders every route in happy-dom, asserts 0 runtime errors
+npm run test:bulk                  # round-trips real .xlsx/.csv through the parser, mapper,
+                                   # template store and the three exporters
+npm run test:bulk:ui               # boots the mock API, renders the app and drives the controls
+npm run test:operation-entry-bulk  # operation-entry spreadsheet ⇄ ticket engine
+npx eslint src                     # lint
 ```
 
 `npm run test:bulk:ui` currently asserts 53 checks, including that every upload dialog accepts

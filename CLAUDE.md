@@ -110,6 +110,40 @@ Rules:
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
 
+## Recent Changes (2026-10-26) - Operation Entry Bulk Upload + Register Bulk Actions
+
+**Owner request:** capture operation-entry data (metadata **and** payload) in bulk from
+Excel/CSV, save every row as its own Draft ticket, and let users who may submit / approve /
+cancel act on several register tickets at once.
+
+- **Bulk upload of operation entries** – `Operation Entry → Bulk Upload Tickets`.
+  `utils/operationEntryBulkImport.js` (pure logic, tested) builds the upload layout from
+  the selected Operation Template: every operation-entry metadata column, one column per
+  template field, and flat `payload.<payload_field>.<path>` columns for the asset-specific
+  JSON payload (any extra path is accepted, numeric segments build arrays, so per-tank dips
+  and per-meter readings work; a raw JSON column is also accepted). Rows are validated
+  against operation types, location availability, assets/asset types, required template
+  fields, mandatory payload sections (mirroring the on-screen layout rules), duplicate rows
+  and duplicate shuttle numbers. Tank-gauging quantities are calculated during the upload
+  with the active calibration table + Table 11; other layouts complete their derived values
+  when the ticket is opened. Every valid row is created through the existing
+  `POST /operation-entries` as **Draft** – partial success, per-row results and a
+  “Download rows to fix” file. Layered upload templates work exactly as on master pages.
+- **Register bulk actions** – `pages/OperationTransactionRegister.jsx` gained per-row
+  checkboxes (actionable statuses only), select-all for the page, selection across pages,
+  “Select all matching filters” (1 000 cap), export of the selection and a bulk toolbar:
+  Submit / Approve / Reject / Recall to Draft / Cancel. Buttons are permission-gated
+  (Submit/Approve also need **Review Operation Transaction** and a review confirmation;
+  Reject/Cancel require remarks); the server still validates permission, workflow policy
+  and the transition per ticket. Processing is one ticket at a time with progress and
+  per-ticket results; failures stay selected for retry and keep their own audit rows.
+  `App.jsx` now passes `loggedInUser` to the register.
+- **No backend change.**
+- **Tests:** `npm run test:operation-entry-bulk` (62 checks) and `npm run smoke`
+  (105 checks, now renders `/operation-transactions`, opens the upload dialog, uploads a
+  CSV and imports it end to end). Detail:
+  `OPERATION_BULK_ENTRY_AND_BULK_ACTIONS.md`.
+
 ## Recent Changes (2026-10-25) - Global Company Report Profile Selection On Every Print
 
 **Rule (product owner):** every Print button in every module must first ask which

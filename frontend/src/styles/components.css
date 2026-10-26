@@ -4419,3 +4419,102 @@ td.preset-result-error {
   .custom-report-page .rb-table th { position: static; }
   .custom-report-page .rb-table .rb-sticky-col { position: static; box-shadow: none; }
 }
+
+/* ------------------------------------------ Operation Transaction Register
+   Bulk selection: the checkbox column, the selected-row tint and the bulk
+   action toolbar reuse the Task Manager patterns so both screens behave and
+   look the same. */
+.op-transaction-register-page table .task-select-col {
+  width: 42px;
+  text-align: center;
+}
+
+.op-transaction-register-page table .task-select-col input[type='checkbox'] {
+  margin: 0;
+  width: 16px;
+  height: 16px;
+}
+
+.op-transaction-register-page table tbody tr.row-selected {
+  background: var(--primary-soft);
+}
+
+.op-transaction-register-page .task-bulk-toolbar {
+  margin-bottom: 12px;
+}
+
+.op-transaction-register-page .register-selection-summary {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.op-transaction-register-page .bulk-approval-dialog .import-progress {
+  margin-top: 12px;
+}
+
+.op-transaction-register-page .bulk-approval-dialog .import-results {
+  margin-top: 12px;
+}
+
+/* --------------------------------------------- Operation Entry bulk upload */
+.operation-entry-title-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.operation-entry-import-scope,
+.operation-entry-import-defaults {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.operation-entry-import-field-group {
+  margin-top: 12px;
+}
+
+.operation-entry-import-field-group > strong {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.operation-entry-import-field-group ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.operation-entry-import-dialog .operation-layout-banner {
+  margin-bottom: 14px;
+}
+
+.operation-entry-import-dialog code {
+  font-size: 12px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-2);
+}
+
+.import-detected {
+  margin-left: 6px;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-style: normal;
+  color: var(--primary);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+}
+
+@media (max-width: 900px) {
+  .operation-entry-import-scope,
+  .operation-entry-import-defaults {
+    grid-template-columns: 1fr;
+  }
+}
