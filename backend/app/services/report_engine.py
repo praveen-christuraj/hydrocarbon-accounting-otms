@@ -13,8 +13,9 @@ rows, safely and reproducibly:
 4. calculated columns run through the Decimal formula engine in dependency
    order; per-cell errors (e.g. divide-by-zero) blank the cell and are
    counted in the result warnings instead of failing the report;
-5. fixed + runtime filters, grouping/aggregation or matrix pivoting,
-   sorting, totals and pagination are applied in that order.
+5. per-column comparison rules can blank only a matching measure (without
+   dropping the source row), then fixed + runtime filters, grouping/aggregation
+   or matrix pivoting, sorting, totals and pagination are applied in that order.
 
 Definition schema (``schema_version: 1``) — see REPORT_BUILDER.md for the
 full reference with examples.
@@ -80,6 +81,8 @@ MAX_MATRIX_COLUMNS = 60
 TIME_BUDGET_SECONDS = 25
 MAX_COLUMNS = 60
 MAX_TEXT_CELL = 2000
+MAX_VALUE_CONDITIONS_PER_COLUMN = 20
+MAX_VALUE_CONDITIONS = 100
 
 COLUMN_KEY_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 FIELD_CODE_RE = re.compile(r"^[A-Za-z0-9_]+$")
@@ -186,6 +189,55 @@ def _json_ref_of(spec: dict) -> str | None:
     return None
 
 
+def _register_explode_ref(spec: dict, explode_refs: set[tuple[str, str]]):
+    """Add a source's repeated-JSON section to the single-explosion check."""
+    json_ref = _json_ref_of(spec)
+    if not json_ref or not spec.get("path"):
+        return
+    prefix = explode_prefix_of(spec["path"])
+    if prefix is None and str(spec["path"]).endswith(".@key"):
+        prefix = str(spec["path"])[: -len(".@key")]
+    if prefix is not None:
+        explode_refs.add((json_ref, prefix))
+
+
+def _value_condition_target(column_key: str, index: int) -> str:
+    """Private extracted-cell key for one conditional-measure rule."""
+    return f"__cv_{column_key}_{index}"
+
+
+def _validate_value_conditions(column: dict, kind: str, table_columns: dict, errors: list[str], owner: str, explode_refs: set[tuple[str, str]]):
+    """Validate per-column conditions used to make conditional measures.
+
+    Unlike report ``filters``, these rules never remove a source row. They only
+    decide whether this one output column receives the row's source value.
+    """
+    conditions = column.get("value_conditions")
+    if conditions is None:
+        return
+    if not isinstance(conditions, list):
+        errors.append(f"{owner}: comparison rules must be a list.")
+        return
+    if len(conditions) > MAX_VALUE_CONDITIONS_PER_COLUMN:
+        errors.append(f"{owner}: use at most {MAX_VALUE_CONDITIONS_PER_COLUMN} comparison rules.")
+    logic = str(column.get("value_condition_logic") or "AND").upper()
+    if logic not in {"AND", "OR"}:
+        errors.append(f"{owner}: comparison rules must use ALL (AND) or ANY (OR).")
+    else:
+        column["value_condition_logic"] = logic
+    for position, entry in enumerate(conditions):
+        condition_owner = f"{owner} comparison rule {position + 1}"
+        if not isinstance(entry, dict):
+            errors.append(f"{condition_owner} is not valid.")
+            continue
+        if entry.get("operator") not in FILTER_OPERATORS:
+            errors.append(f"{condition_owner}: choose a valid condition.")
+        spec = entry.get("source")
+        _validate_source_spec(spec, kind, table_columns, errors, condition_owner)
+        if isinstance(spec, dict):
+            _register_explode_ref(spec, explode_refs)
+
+
 def validate_definition(definition) -> dict:
     """Validate + normalise a definition. Raises ReportDefinitionError."""
     if not isinstance(definition, dict):
@@ -234,6 +286,7 @@ def validate_definition(definition) -> dict:
     keys: set[str] = set()
     explode_refs: set[tuple[str, str]] = set()
     parsed_formulas: dict[str, object] = {}
+    value_condition_count = 0
     for index, column in enumerate(columns):
         if not isinstance(column, dict):
             errors.append(f"Column {index + 1} is not valid.")
@@ -249,6 +302,8 @@ def validate_definition(definition) -> dict:
             errors.append(f"{owner}: give the column a heading.")
         column_kind = column.get("kind") or "data"
         if column_kind == "calculated":
+            if column.get("value_conditions") is not None:
+                errors.append(f"{owner}: comparison rules can only be used on a saved data column, not a calculated column.")
             try:
                 node = parse_formula(str(column.get("formula") or ""))
                 parsed_formulas[key] = node
@@ -257,18 +312,19 @@ def validate_definition(definition) -> dict:
         elif column_kind == "data":
             spec = column.get("source") or {}
             _validate_source_spec(spec, kind, table_columns, errors, owner)
-            json_ref = _json_ref_of(spec)
-            if json_ref and spec.get("path"):
-                prefix = explode_prefix_of(spec["path"])
-                if prefix is None and str(spec["path"]).endswith(".@key"):
-                    prefix = str(spec["path"])[: -len(".@key")]
-                if prefix is not None:
-                    explode_refs.add((json_ref, prefix))
+            _register_explode_ref(spec, explode_refs)
+            value_conditions = column.get("value_conditions")
+            if isinstance(value_conditions, list):
+                value_condition_count += len(value_conditions)
+            _validate_value_conditions(column, kind, table_columns, errors, owner, explode_refs)
         else:
             errors.append(f"{owner}: unknown column kind '{column_kind}'.")
         aggregate = column.get("aggregate")
         if aggregate and str(aggregate).upper() not in AGGREGATES:
             errors.append(f"{owner}: unknown summary type '{aggregate}'.")
+
+    if value_condition_count > MAX_VALUE_CONDITIONS:
+        errors.append(f"A report can have at most {MAX_VALUE_CONDITIONS} comparison rules across all columns.")
 
     if len(explode_refs) > 1:
         errors.append(
@@ -423,6 +479,14 @@ def _extraction_plan(definition: dict) -> list[dict]:
         if (column.get("kind") or "data") == "data":
             plan.append({"target": column["key"], "spec": column.get("source") or {}})
             seen_targets.add(column["key"])
+            # A comparison condition reads its own source field privately. It
+            # must be part of the plan even when Location / Operation Category
+            # is not displayed as a report column.
+            for index, condition in enumerate(column.get("value_conditions") or []):
+                target = _value_condition_target(column["key"], index)
+                if target not in seen_targets:
+                    plan.append({"target": target, "spec": condition.get("source") or {}})
+                    seen_targets.add(target)
     extras = list(definition.get("filters") or []) + list(definition.get("runtime_filters") or [])
     for index, entry in enumerate(extras):
         if entry.get("source"):
@@ -774,6 +838,7 @@ def _extract_rows(contexts, definition, plan, warnings):
     for context in contexts:
         if not explode_ref:
             row = {item["target"]: _extract_value(context, item["spec"], kind) for item in plan}
+            _apply_value_conditions(row, definition)
             row["__date"] = context["row_date"]
             rows.append(row)
             continue
@@ -800,6 +865,7 @@ def _extract_rows(contexts, definition, plan, warnings):
                     )
                 else:
                     row[plan_item["target"]] = _extract_value(context, spec, kind)
+            _apply_value_conditions(row, definition)
             row["__date"] = context["row_date"]
             rows.append(row)
             if len(rows) > EXPLODED_CAP:
@@ -835,6 +901,42 @@ def _apply_operator(operator: str, value, expected, expected2=None) -> bool:
         return compare_values(">=", value, expected) and compare_values("<=", value, expected2)
     symbol = {"eq": "=", "ne": "<>", "gt": ">", "gte": ">=", "lt": "<", "lte": "<="}.get(operator, "=")
     return compare_values(symbol, value, expected)
+
+
+def _row_passes_value_conditions(row: dict, column: dict) -> bool:
+    """Whether one source row contributes to this conditional data column."""
+    conditions = column.get("value_conditions") or []
+    if not conditions:
+        return True
+    verdicts = []
+    for index, condition in enumerate(conditions):
+        if condition.get("enabled") is False:
+            continue
+        target = _value_condition_target(column["key"], index)
+        verdicts.append(_apply_operator(
+            condition.get("operator") or "eq",
+            row.get(target),
+            condition.get("value"),
+            condition.get("value2"),
+        ))
+    if not verdicts:
+        return True
+    logic = str(column.get("value_condition_logic") or "AND").upper()
+    return any(verdicts) if logic == "OR" else all(verdicts)
+
+
+def _apply_value_conditions(row: dict, definition: dict):
+    """Blank only measures that do not match their own comparison rules.
+
+    Rows themselves stay available to other comparison measures, formulas and
+    fixed report filters. Grouped SUMs then naturally place each matching
+    measure into its own column without dropping the counterpart's row.
+    """
+    for column in definition.get("columns") or []:
+        if (column.get("kind") or "data") != "data" or not column.get("value_conditions"):
+            continue
+        if not _row_passes_value_conditions(row, column):
+            row[column["key"]] = None
 
 
 def _row_passes_filters(row, definition, params):

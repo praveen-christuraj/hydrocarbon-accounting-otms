@@ -8,6 +8,7 @@ import { useConfirm } from '../components/common/ConfirmProvider'
 import { usePermissions } from '../hooks/usePermissions'
 import FormulaBuilder from '../components/reportBuilder/FormulaBuilder'
 import JsonColumnPicker from '../components/reportBuilder/JsonColumnPicker'
+import ComparisonConditionsEditor from '../components/reportBuilder/ComparisonConditionsEditor'
 import ReportDataTable from '../components/reportBuilder/ReportDataTable'
 import {
   createFromStarter,
@@ -308,6 +309,25 @@ function ReportBuilder({ loggedInUser }) {
     })
   }
 
+  // A comparison measure intentionally reuses the same source. Its own rules
+  // decide which base rows contribute to it, while other copies of the source
+  // can use different locations, assets, operation labels, or any other field.
+  const duplicateForComparison = (column) => {
+    if ((column.kind || 'data') !== 'data') return
+    const key = slugColumnKey(`${column.label} comparison`, (definition.columns || []).map((item) => item.key))
+    const copy = {
+      ...column,
+      key,
+      label: `${column.label} (comparison)`,
+      source: { ...(column.source || {}) },
+      format: { ...(column.format || {}) },
+      value_conditions: [],
+      value_condition_logic: 'AND',
+    }
+    setDefinition((current) => ({ ...current, columns: [...(current.columns || []), copy] }))
+    setExpandedColumn(key)
+  }
+
   const handleFormulaSave = ({ label, formula }) => {
     if (formulaTarget && formulaTarget !== 'new') {
       updateColumn(formulaTarget, { label, formula })
@@ -417,10 +437,90 @@ function ReportBuilder({ loggedInUser }) {
     return []
   }, [definition.source, operationFields, activeTable])
 
+  // Fields available inside a comparison rule. They are extracted privately
+  // for the rule, so a designer does not need to add and hide Location or
+  // Operation Category merely to filter a quantity column by it. Existing
+  // JSON/payload columns are included too, because they may be useful rules.
+  const comparisonFields = useMemo(() => {
+    const fields = []
+    const seen = new Set()
+    const add = (label, source, dataType = 'text', group = 'Available values') => {
+      if (!source?.type) return
+      const id = sourceSignature(source)
+      if (seen.has(id)) return
+      seen.add(id)
+      fields.push({ id, label, source, data_type: dataType || 'text', group })
+    }
+
+    const kind = definition.source.kind
+    if (kind === 'operation_tickets' || kind === 'tank_stock_ledger') {
+      ;(dataset?.virtual_fields || []).forEach((field) => add(
+        field.label,
+        { type: 'virtual', field: field.field },
+        field.data_type,
+        field.group || 'Derived ticket / ledger values',
+      ))
+      ;(dataset?.columns || []).filter((field) => !field.is_json).forEach((field) => add(
+        field.label,
+        { type: 'column', column: field.column },
+        field.data_type,
+        kind === 'operation_tickets' ? 'Ticket header' : 'Ledger columns',
+      ))
+    }
+    if (kind === 'operation_tickets') {
+      ;(operationFields.saved_fields || []).filter((field) => !field.is_payload).forEach((field) => add(
+        field.label || field.field_code,
+        { type: 'ticket_field', field_code: field.field_code },
+        field.data_type,
+        'Answers typed on tickets',
+      ))
+    }
+    if (kind === 'table') {
+      ;(activeTable?.columns || []).filter((field) => !field.is_json).forEach((field) => add(
+        field.label,
+        { type: 'column', column: field.column },
+        field.data_type,
+        `${activeTable.label} columns`,
+      ))
+    }
+    ;(definition.columns || []).filter((column) => (
+      (column.kind || 'data') === 'data' && ['payload_path', 'json_path'].includes(column.source?.type)
+    )).forEach((column) => add(
+      column.label,
+      column.source,
+      column.data_type,
+      'Values already added (including JSON / payloads)',
+    ))
+    return fields
+  }, [activeTable, dataset, definition.columns, definition.source.kind, operationFields])
+
   // ---- save ---------------------------------------------------------------
   const normalisedDefinition = useCallback(() => {
     const copy = JSON.parse(JSON.stringify(definition))
-    copy.columns = (copy.columns || []).map((c) => ({ ...c, aggregate: c.aggregate || undefined }))
+    const coerceComparisonValue = (entry) => {
+      const out = { ...entry }
+      const numeric = out.data_type === 'number'
+      const coerce = (value) => {
+        if (value === '' || value === undefined) return value
+        if (numeric && !Number.isNaN(Number(value))) return Number(value)
+        return value
+      }
+      if (out.operator === 'in' || out.operator === 'not_in') {
+        out.value = String(out.value ?? '').split(',').map((value) => coerce(value.trim())).filter((value) => value !== '')
+      } else {
+        out.value = coerce(out.value)
+        if (out.operator === 'between') out.value2 = coerce(out.value2)
+      }
+      return out
+    }
+    copy.columns = (copy.columns || []).map((column) => {
+      const out = { ...column, aggregate: column.aggregate || undefined }
+      if (Array.isArray(out.value_conditions)) {
+        out.value_conditions = out.value_conditions.map(coerceComparisonValue)
+        out.value_condition_logic = out.value_condition_logic || 'AND'
+      }
+      return out
+    })
     copy.filters = (copy.filters || []).map((entry) => {
       const out = { ...entry }
       const column = (definition.columns || []).find((c) => c.key === entry.column_key)
@@ -591,6 +691,9 @@ function ReportBuilder({ loggedInUser }) {
   // ---- designer -------------------------------------------------------------
   const groupedMode = definition.report_type === 'TABULAR' && (definition.group_by || []).length > 0
   const groupKeys = (definition.group_by || []).map((g) => g.key || g)
+  const comparisonMeasureCount = (definition.columns || []).filter((column) => (
+    (column.kind || 'data') === 'data' && (column.value_conditions || []).length > 0
+  )).length
 
   return (
     <div>
@@ -798,6 +901,9 @@ function ReportBuilder({ loggedInUser }) {
                   <h4>{section.title}</h4>
                   {section.items.map((item) => {
                     const added = existingSignatures.has(sourceSignature(item.source))
+                    const sourceColumn = (definition.columns || []).find((column) => (
+                      (column.kind || 'data') === 'data' && sourceSignature(column.source) === sourceSignature(item.source)
+                    ))
                     return (
                       <div key={`${section.title}-${item.tech || item.label}`} className="rb-available-row">
                         <span>
@@ -813,8 +919,13 @@ function ReportBuilder({ loggedInUser }) {
                             { type: 'json_path', json_column: item.jsonColumn }
                           )}>Split JSON</button>
                         ) : (
-                          <button type="button" className="btn-secondary btn-sm" disabled={added} onClick={() => addDataColumns([item])}>
-                            {added ? 'Added' : '+ Add'}
+                          <button
+                            type="button"
+                            className="btn-secondary btn-sm"
+                            onClick={() => (added && sourceColumn ? duplicateForComparison(sourceColumn) : addDataColumns([item]))}
+                            title={added ? 'Add the same saved value again with its own comparison rules' : undefined}
+                          >
+                            {added ? <><Icon name="copy" size={13} /> Compare</> : '+ Add'}
                           </button>
                         )}
                       </div>
@@ -832,6 +943,10 @@ function ReportBuilder({ loggedInUser }) {
                   <Icon name="calculator" size={14} /> Add calculated column
                 </button>
               </div>
+              <div className="rb-comparison-callout">
+                <Icon name="copy" size={15} />
+                <span><strong>Need a comparison?</strong> Add a quantity once, then select <strong>Compare</strong> on that column to make a second version with its own Receipt / Dispatch, location, asset or other rules.</span>
+              </div>
               {(definition.columns || []).length === 0 && (
                 <div className="empty-table">No columns yet — add values from the left, split a JSON payload, or add a calculated column.</div>
               )}
@@ -844,12 +959,20 @@ function ReportBuilder({ loggedInUser }) {
                     <div className="rb-row-actions">
                       <button type="button" className="btn-secondary btn-sm" onClick={() => moveColumn(column.key, -1)} disabled={index === 0} aria-label="Move left">↑</button>
                       <button type="button" className="btn-secondary btn-sm" onClick={() => moveColumn(column.key, 1)} disabled={index === definition.columns.length - 1} aria-label="Move right">↓</button>
-                      <button type="button" className="btn-secondary btn-sm" onClick={() => setExpandedColumn(expandedColumn === column.key ? null : column.key)}><Icon name="sliders" size={14} /></button>
+                      {(column.kind || 'data') === 'data' && (
+                        <button type="button" className="btn-secondary btn-sm" onClick={() => duplicateForComparison(column)} title="Add the same saved value again with different comparison rules">
+                          <Icon name="copy" size={14} /> Compare
+                        </button>
+                      )}
+                      <button type="button" className="btn-secondary btn-sm" onClick={() => setExpandedColumn(expandedColumn === column.key ? null : column.key)} title="Column settings"><Icon name="sliders" size={14} /></button>
                       <button type="button" className="btn-secondary btn-sm" onClick={() => removeColumn(column.key)} aria-label="Remove column"><Icon name="trash" size={14} /></button>
                     </div>
                   </div>
                   <div className="rb-muted rb-col-origin">
                     {(column.kind || 'data') === 'calculated' ? formulaInWords(column.formula, definition.columns) : columnOriginLabel(column)}
+                    {(column.kind || 'data') === 'data' && (column.value_conditions || []).length > 0 && (
+                      <span className="rb-badge rb-badge-compare">Conditional value · {(column.value_conditions || []).length} rule{(column.value_conditions || []).length === 1 ? '' : 's'} {(column.value_condition_logic || 'AND') === 'OR' ? '(any)' : '(all)'}</span>
+                    )}
                     {(column.kind || 'data') === 'calculated' && (
                       <button type="button" className="btn-secondary btn-sm" onClick={() => setFormulaTarget(column.key)}><Icon name="edit" size={13} /> Edit calculation</button>
                     )}
@@ -879,6 +1002,13 @@ function ReportBuilder({ loggedInUser }) {
                       </div>
                       <label className="rb-check"><input type="checkbox" checked={Boolean(column.show_total)} onChange={(e) => updateColumn(column.key, { show_total: e.target.checked })} /> Show in TOTAL row</label>
                       <label className="rb-check"><input type="checkbox" checked={Boolean(column.hidden)} onChange={(e) => updateColumn(column.key, { hidden: e.target.checked })} /> Hide (use only inside calculations/filters)</label>
+                      {(column.kind || 'data') === 'data' && (
+                        <ComparisonConditionsEditor
+                          column={column}
+                          fields={comparisonFields}
+                          onChange={(patch) => updateColumn(column.key, patch)}
+                        />
+                      )}
                     </div>
                   )}
                 </div>
@@ -890,6 +1020,19 @@ function ReportBuilder({ loggedInUser }) {
 
       {step === 2 && (
         <section className="rb-panel">
+          {comparisonMeasureCount > 0 && definition.report_type === 'TABULAR' && !groupedMode && (
+            <AlertMessage
+              tone="warning"
+              title="Comparison values are still on separate source rows"
+              message="To place Dispatch and Receipt (or other sides) in separate columns on the same line, choose Grouped summary and group only by the common date / product / transfer reference. Do not group by the side-specific location or operation label."
+            />
+          )}
+          {comparisonMeasureCount > 0 && definition.report_type === 'MATRIX' && (
+            <AlertMessage
+              tone="info"
+              message="A matrix can pivot one selected value across its headers. For two independently filtered comparison values side by side, use a Tabular grouped summary instead."
+            />
+          )}
           {definition.report_type === 'TABULAR' && (
             <>
               <div className="rb-field">

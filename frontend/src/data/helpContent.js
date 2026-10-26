@@ -370,15 +370,16 @@ export const helpContent = {
   '/report-builder': {
     title: 'Report Builder Help',
     description:
-      'Report Builder lets you design your own tabular and matrix (cross-tab) reports from any saved data, in plain English — no SQL and no IT help. Published reports appear in the Reporting menu for exactly the people you choose.',
+      'Report Builder lets you design tabular, grouped and matrix reports from saved operational data without SQL. It also supports comparison columns: the same stored quantity can appear more than once, with independent rules for locations, assets, operation labels, products or other saved fields.',
     points: [
-      'Step 1: choose where the data comes from. “Operation Tickets” includes every answer typed on tickets; the Tank Stock Ledger covers stock movements; any other table can also be reported. Pick which date the From–To filter should use — Accounting Date is recommended for stock accounting.',
-      'Step 2: add columns. Values saved inside JSON payloads (Tank Gauging, Tanker, Multi-Tank/Barge, Flowmeter, FSO, Shuttle) are split into separate columns with “Split into columns”, including one-row-per-tank splits for per-tank dips.',
-      'Calculated columns do +, −, ×, ÷ and % (percent of) across two or more columns, plus IF, IFS, AND, OR, NOT and helpers like IFERROR and COALESCE. Build them by clicking or with the IF/Bands composers; the formula is checked as you type.',
-      'Step 3: choose detail rows or a grouped summary (Total/Average/Count per group), or lay out a matrix (rows × columns × values). Fixed conditions here always apply and cannot be changed by report users.',
-      'Step 4: add the questions report users answer at run time (location, operation type, status, asset, or a filter on any column).',
-      'Step 5: give access to named users, roles, or everyone at chosen locations (View = run/export/print, Edit = also redesign), or open the report to all report users. Publishing needs the Publish Report Definition permission.',
-      'Data is always limited to the runner’s own locations, passwords/secrets can never be reported, and every save keeps a design version for audit.',
+      'Step 1 — Report & Data: choose the source and date basis. For Receipt-versus-Dispatch quantity comparisons, start with Tank Stock Ledger: it contains Location Code, Tank / Asset, Tank Operation Label and Category, and Movement GSV / NSV / LT / MT in each ledger row. Use Operation Tickets when the shared transfer reference or the quantity is on the ticket instead.',
+      'Step 2 — add the common grouping fields you need (for example Accounting Date, product, convoy / transfer reference) and add the quantity once, such as Movement NSV (BBL). Rename the first quantity “Location A Dispatch”. Click Compare on that data column to create a second copy of the exact same saved value; this is intentional and safe.',
+      'Open the ⚙ settings on each comparison quantity. Under “Comparison rules”, add the rules for that column only. Example: for Location A Dispatch use Location Code = A AND Tank Operation Category (or Label) = DISPATCH. For Location B Receipt use Location Code = B AND Category = RECEIPT. Use ALL rules for the normal case; ANY is available when either rule may qualify a value. The rule fields do not have to be visible report columns.',
+      'Step 3 — Rows & Layout: choose Grouped summary and group only by fields the two sides truly share, such as Accounting Date plus product / transfer reference. Do not group by the side-specific Location or Operation Label, otherwise Dispatch and Receipt will be split into different rows. Set each comparison quantity to Total (sum), and tick Show in TOTAL row if required. Preview before saving.',
+      'Optional variance: add a calculated column with COALESCE([location_a_dispatch], 0) - COALESCE([location_b_receipt], 0), then set its grouped summary to Total. COALESCE makes the grouped variance work even though Dispatch and Receipt are separate source rows. Use IFERROR for safe percentages.',
+      'A comparison column filters its own value; it does not remove the underlying row and it does not automatically join unrelated tickets. To put two events on the same line, group by a real shared date, convoy, movement / transfer reference, product or other common key available in your chosen source.',
+      'Step 2 also supports JSON payload splitting. Calculated columns do +, −, ×, ÷ and % (percent of), plus IF, IFS, AND, OR, NOT, IFERROR and COALESCE. Step 4 adds runtime questions; Step 5 sets who can run or redesign the report; Step 6 previews, saves and publishes it.',
+      'Data always remains limited to the runner’s location scope. A person comparing two locations must have access to both, and must leave a runtime Location question empty or select both locations. Passwords/secrets can never be reported, and every save keeps a version for audit.',
     ],
   },
   '/reporting/custom-reports': {
@@ -389,7 +390,7 @@ export const helpContent = {
       'Choose the date range and answer the report’s filter questions, then Run Report. Dates follow the date basis chosen by the designer (usually the Accounting Date).',
       'You only ever see data for your own locations, even when a report is shared company-wide.',
       'Excel/CSV buttons download all matching rows from the server; “Export this page / PDF” exports what is on screen; Print asks for a Company Report Profile and prints the full result with company branding.',
-      '“About this report” explains every calculated column in words, so figures can be verified without seeing the design.',
+      '“About this report” explains calculated columns and any comparison-column rules in words, so figures can be verified without seeing the design.',
       'Cells that could not be calculated (for example a division by zero) show blank with a ⚠ marker and are counted in the warnings above the table.',
     ],
   },
