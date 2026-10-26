@@ -141,7 +141,8 @@ const locations = Array.from({ length: 43 }, (_, i) => ({
   location_type: i % 3 === 0 ? 'Terminal' : i % 3 === 1 ? 'Depot' : 'Refinery',
   parent_location_code: i > 2 ? 'LOC001' : null,
   description: `Location number ${i + 1}`,
-  status: i % 7 === 0 ? 'Inactive' : 'Active',
+  // LOC001 stays Active: it owns the tank fixture used by Operation Entry.
+  status: i > 0 && i % 7 === 0 ? 'Inactive' : 'Active',
   created_at: now,
   updated_at: now,
 }))
@@ -273,6 +274,41 @@ const calibrationTables = [
   },
 ]
 
+
+// Operation Type / Template masters, used by Operation Entry (and its bulk
+// upload dialog). The template carries the tank-gauging payload field so the
+// upload layout includes the payload columns.
+const operationTypesFixture = [
+  {
+    id: 1, operation_type_name: 'Tank Gauging', operation_type_code: 'TANK_GAUGING',
+    operation_category: 'Tank', applicable_asset_type_code: 'TANK',
+    requires_sender_location: 'Yes', requires_receiver_location: 'No',
+    requires_comparison: 'No', requires_approval: 'Yes', description: '', status: 'Active',
+    created_at: now, updated_at: now,
+  },
+]
+
+const operationTemplatesFixture = [
+  {
+    id: 1, template_name: 'Tank Gauging – Crude', operation_type_code: 'TANK_GAUGING',
+    operation_type_name: 'Tank Gauging', entry_layout_type: 'Tank Gauging',
+    calculation_engine: 'Tank Quantity', description: '', status: 'Active',
+    created_at: now, updated_at: now,
+    fields: [
+      {
+        id: 1, field_name: 'Tank Gauging', field_code: 'tank_gauging_payload', field_group: 'Payload',
+        data_type: 'JSON', unit: null, is_required: 'No', input_mode: 'System',
+        calculation_role: 'Input', sort_order: 1, status: 'Active',
+      },
+      {
+        id: 2, field_name: 'Sample Reference', field_code: 'sample_reference', field_group: 'General',
+        data_type: 'Text', unit: null, is_required: 'Yes', input_mode: 'Manual',
+        calculation_role: 'Input', sort_order: 2, status: 'Active',
+      },
+    ],
+  },
+]
+
 // A non-tank (shuttle) ticket in Submitted status: the review / approve screen
 // must show the saved sample values, not only the structured payload modules.
 const operationTransactions = [
@@ -362,6 +398,7 @@ const jsonResponse = (body, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 
 const apiCalls = []
+const createdEntries = []
 globalThis.fetch = async (input, init = {}) => {
   const url = typeof input === 'string' ? input : input.url
   const method = (init.method || 'GET').toUpperCase()
@@ -640,7 +677,76 @@ globalThis.fetch = async (input, init = {}) => {
     return jsonResponse({ rows, total_groups: rows.length, page: 1, page_size: 200, has_more: false })
   }
 
+  if (path.startsWith('/operation-types')) return jsonResponse(operationTypesFixture)
+  if (path.startsWith('/operation-entries') && method === 'POST') {
+    const body = JSON.parse(init.body || '{}')
+    createdEntries.push(body)
+    return jsonResponse(
+      {
+        id: createdEntries.length,
+        operation_template_id: body.operation_template_id,
+        operation_template_name: 'Tank Gauging – Crude',
+        transaction: {
+          id: createdEntries.length,
+          operation_number: `OP-900${createdEntries.length}`,
+          operation_ticket_number: `OP-900${createdEntries.length}`,
+          ...body.transaction,
+        },
+        values: (body.values || []).map((value, index) => ({
+          id: index + 1,
+          field_code: value.field_code,
+          field_name: value.field_code,
+          data_type: 'JSON',
+          field_value: value.field_value,
+        })),
+      },
+      201
+    )
+  }
+  if (path.startsWith('/operation-entries')) return jsonResponse([])
+  if (path.startsWith('/operation-templates')) return jsonResponse(operationTemplatesFixture)
   if (path.startsWith('/operation-transactions')) {
+    if (path.startsWith('/operation-transactions/paged')) {
+      // The register reads `rows` and `status_counts` (server-side paging).
+      const params = new URL(path, 'http://x').searchParams
+      const status = params.get('status') || ''
+      const registerRows = [
+        {
+          id: 1, ticket_number: 'SHU-2026-0001', operation_number: 'OP-0001', convoy_number: '',
+          operation_date: '2026-10-15', operation_type_name: 'Shuttle Operation',
+          location_name: 'Agge Terminal', location_code: 'LOC001',
+          primary_asset_name: 'Barge Ada', primary_asset_code: 'BRG-001',
+          field_count: 4, status: 'Submitted', created_at: now,
+        },
+        {
+          id: 2, ticket_number: 'TNK-2026-0002', operation_number: 'OP-0002', convoy_number: 'CNV-7',
+          operation_date: '2026-10-14', operation_type_name: 'Tank Gauging',
+          location_name: 'Agge Terminal', location_code: 'LOC001',
+          primary_asset_name: 'Agge Tank 1', primary_asset_code: 'AGGE-TANK-1',
+          field_count: 2, status: 'Draft', created_at: now,
+        },
+        {
+          id: 3, ticket_number: 'TNK-2026-0003', operation_number: 'OP-0003', convoy_number: '',
+          operation_date: '2026-10-13', operation_type_name: 'Tank Gauging',
+          location_name: 'Agge Terminal', location_code: 'LOC001',
+          primary_asset_name: 'Agge Tank 1', primary_asset_code: 'AGGE-TANK-1',
+          field_count: 2, status: 'Approved', created_at: now,
+        },
+      ]
+      const visible = status ? registerRows.filter((row) => row.status === status) : registerRows
+      const counts = registerRows.reduce((acc, row) => {
+        acc[row.status] = (acc[row.status] || 0) + 1
+        return acc
+      }, {})
+      return jsonResponse({
+        rows: visible,
+        total_rows: visible.length,
+        page: 1,
+        page_size: 20,
+        has_more: false,
+        status_counts: Object.entries(counts).map(([key, count]) => ({ status: key, count })),
+      })
+    }
     const historyMatch = path.match(/^\/operation-transactions\/(\d+)\/status-history/)
     if (historyMatch) return jsonResponse([])
     const correctionMatch = path.match(/^\/operation-transactions\/(\d+)\/correction-requests/)
@@ -649,15 +755,17 @@ globalThis.fetch = async (input, init = {}) => {
     if (statusMatch) {
       const target = operationTransactions.find((t) => String(t.id) === statusMatch[1])
       const body = JSON.parse(init.body || '{}')
-      if (target) target.status = body.status || target.status
-      return jsonResponse(target || {})
+      // Answer with the new status without mutating the shared fixture: the
+      // register bulk test and the detail-page checks reuse the same tickets.
+      return jsonResponse(target ? { ...target, status: body.status || target.status } : {})
     }
     const detailMatch = path.match(/^\/operation-transactions\/(\d+)$/)
     if (detailMatch) {
       const target = operationTransactions.find((t) => String(t.id) === detailMatch[1])
       return target ? jsonResponse(target) : jsonResponse({ detail: 'Operation transaction not found' }, 404)
     }
-    return jsonResponse(paged(operationTransactions, path))
+    // The plain list endpoint returns an array (the register uses /paged).
+    return jsonResponse(operationTransactions)
   }
   if (path.startsWith('/operation-workflow-policies')) return jsonResponse({ allowed: true, reason: '', matched_policy_name: '' })
   if (path.startsWith('/audit-logs')) return jsonResponse(paged(auditLogs, path))
@@ -803,7 +911,7 @@ try {
   await flush()
 
   // Navigate to pages requested on the CLI (default set)
-  const pages = process.argv.slice(2).length ? process.argv.slice(2) : ['/locations', '/users', '/role-locations', '/audit-logs', '/operation-transactions/1', '/tracking-module-configuration', '/operation-entry']
+  const pages = process.argv.slice(2).length ? process.argv.slice(2) : ['/locations', '/users', '/role-locations', '/audit-logs', '/operation-transactions', '/operation-transactions/1', '/tracking-module-configuration', '/operation-entry']
   for (const path of pages) {
     const before = errors.length
     const link = qa('a[href]').find((a) => a.getAttribute('href') === path)
@@ -1019,6 +1127,167 @@ try {
         q('.main-content select[name="senderLocationCode"]').value === (firstCode || ''),
         firstCode || '(no locations in the mock)',
       )
+
+      // Bulk upload of complete tickets: the wizard builds its layout from the
+      // selected operation template (metadata + template fields + payload).
+      const bulkButton = qa('.main-content button').find((button) => text(button).includes('Bulk Upload Tickets'))
+      check('operation entry offers bulk upload', Boolean(bulkButton))
+      if (bulkButton) {
+        click(bulkButton)
+        await flush(150)
+        check('bulk upload dialog opens', Boolean(q('.operation-entry-import-dialog')), text(q('.app-modal-title')))
+
+        const typeSelect = q('#bulk-operation-type')
+        check('the dialog asks for the operation type', Boolean(typeSelect))
+        if (typeSelect) {
+          setValue(typeSelect, 'TANK_GAUGING')
+          await flush(150)
+          const templateSelect = q('#bulk-operation-template')
+          check('the dialog asks for the operation template', Boolean(templateSelect))
+          setValue(templateSelect, '1')
+          await flush(200)
+
+          const columnCount = qa('.operation-entry-import-field-group li').length
+          check('the expected columns are listed', columnCount > 20, `${columnCount} columns`)
+          check(
+            'payload columns are grouped separately',
+            text(q('.operation-entry-import-dialog')).includes('Payload values')
+          )
+          check(
+            'the dialog explains how the layout is calculated',
+            text(q('.operation-entry-import-dialog')).includes('calibration table')
+          )
+
+          const templateButtons = qa('.operation-entry-import-dialog .import-template-downloads button')
+          check(
+            'bulk upload offers xlsx and csv templates',
+            templateButtons.length === 2,
+            templateButtons.map(text).join(' | ')
+          )
+          const beforeDownload = errors.length
+          click(templateButtons.find((button) => text(button).includes('XLSX')))
+          await flush(600)
+          check('bulk template download runs without error', errors.length === beforeDownload)
+
+          // The same layered-template controls as the master-data upload dialogs.
+          const configureButton = qa('.operation-entry-import-dialog .import-template-actions button').find(
+            (button) => text(button).includes('Configure columns')
+          )
+          click(configureButton)
+          await flush(150)
+          const configuredColumns = qa('.operation-entry-import-dialog .import-column-config li')
+          check(
+            'bulk upload templates can hide / reorder columns',
+            configuredColumns.length === columnCount,
+            `${configuredColumns.length} configurable columns`
+          )
+          const saveAsButton = qa('.operation-entry-import-dialog .import-template-actions button').find(
+            (button) => text(button).includes('Save as')
+          )
+          click(saveAsButton)
+          await flush(120)
+          check(
+            'bulk upload templates can be saved as a named variant',
+            Boolean(q('#operation-entry-template-name'))
+          )
+
+          // End-to-end: build a CSV out of the very columns the dialog lists,
+          // upload it, then import it against the mocked API.
+          const columnLabels = qa('.operation-entry-import-dialog .import-column-config li span').map(text)
+          const valueFor = (label) => {
+            const lower = label.toLowerCase()
+            if (lower.includes('unit') || lower.includes('raw json')) return ''
+            if (lower.includes('operation type')) return 'TANK_GAUGING'
+            if (lower.includes('primary asset')) return 'AGGE-TANK-1'
+            if (lower.includes('sender')) return 'LOC001'
+            if (lower.includes('sample reference')) return 'S-1001'
+            if (lower.includes('date')) return '2026-10-20'
+            if (lower.includes('time')) return '08:30'
+            if (lower.includes('water')) return '1.2'
+            if (lower.includes('dip')) return '845'
+            if (lower.includes('sample temp')) return '28.4'
+            if (lower.includes('tank temp')) return '38.2'
+            if (lower.includes('bs&w') || lower.includes('bsw')) return '0.5'
+            if (lower.includes('input type')) return 'Observed API'
+            if (lower.includes('api')) return '34.5'
+            return ''
+          }
+          const csvCell = (value) => (/[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value)
+          const csv = [
+            columnLabels.map(csvCell).join(','),
+            columnLabels.map((label) => csvCell(valueFor(label))).join(','),
+          ].join('\n')
+
+          const fileInput = q('.operation-entry-import-dialog input[type=file]')
+          check('bulk upload accepts a spreadsheet file', Boolean(fileInput))
+          const csvFile = new window.File([csv], 'operation-entries.csv', { type: 'text/csv' })
+          Object.defineProperty(fileInput, 'files', { value: [csvFile], configurable: true })
+          fileInput.dispatchEvent(new window.Event('change', { bubbles: true }))
+          await flush(500)
+          check(
+            'a complete row is validated and previewed',
+            text(q('.operation-entry-import-dialog')).includes('1 of 1 rows are ready to import'),
+            text(q('.operation-entry-import-dialog .info-box'))
+          )
+
+          const importButton = qa('.app-modal-footer button').find((button) =>
+            text(button).startsWith('Import 1 valid row')
+          )
+          check('the dialog offers to import the valid rows as Draft', Boolean(importButton))
+          if (importButton) {
+            const beforeImport = errors.length
+            click(importButton)
+            await flush(900)
+            check(
+              'the upload creates the ticket through the normal endpoint',
+              apiCalls.includes('POST /operation-entries'),
+              apiCalls.filter((call) => call.includes('/operation-entries')).join(', ')
+            )
+            check(
+              'uploaded tickets are saved as Draft',
+              createdEntries.length === 1 && createdEntries[0].transaction?.status === 'Draft',
+              createdEntries.map((entry) => entry.transaction?.status).join(', ')
+            )
+            const importedPayload = createdEntries[0]?.values?.find(
+              (item) => item.field_code === 'tank_gauging_payload'
+            )?.field_value
+            check(
+              'the imported payload carries the calculated quantities',
+              Number(importedPayload?.calculated?.nsvBbl) > 0,
+              `${Object.keys(importedPayload?.calculated || {}).join(', ')} = ${JSON.stringify(
+                importedPayload?.calculated || {}
+              ).slice(0, 200)}`
+            )
+            check(
+              'the imported payload keeps the entered observations',
+              Number(importedPayload?.inputs?.dipCm) === 845 &&
+                Number(importedPayload?.inputs?.observedApi) === 34.5,
+              JSON.stringify(importedPayload?.inputs || {}).slice(0, 200)
+            )
+            check(
+              'the results step reports the created draft ticket',
+              text(q('.operation-entry-import-dialog')).includes('draft tickets created') &&
+                text(q('.operation-entry-import-dialog')).includes('OP-9001') &&
+                text(q('.operation-entry-import-dialog')).includes('Draft ticket OP-9001 created') &&
+                errors.length === beforeImport,
+              text(q('.operation-entry-import-dialog .import-summary'))
+            )
+            check(
+              'the results step offers the rows to fix',
+              Boolean(
+                qa('.operation-entry-import-dialog button').find((button) =>
+                  text(button).includes('Download rows to fix')
+                )
+              )
+            )
+          }
+
+          const cancelButton = qa('.app-modal-footer button').find((button) => text(button).trim() === 'Close')
+          click(cancelButton)
+          await flush()
+          check('bulk upload dialog closes after the run', !q('.operation-entry-import-dialog'))
+        }
+      }
     }
 
     if (path === '/user-locations') {
@@ -1165,6 +1434,80 @@ try {
           check('role location save calls the API', apiCalls.includes('PUT /role-locations/2'), apiCalls.filter((c) => c.includes('role-locations')).join(', '))
           check('role location save runs without error', errors.length === before && !q('.toast.tone-error'), qa('.toast').map(text).join(' | '))
         }
+      }
+    }
+
+    if (path === '/operation-transactions') {
+      // Bulk selection + bulk workflow actions: checkboxes per ticket, an
+      // action toolbar, and a confirmation dialog that mirrors the server rules
+      // (review confirmation, shared remarks, one API call per ticket).
+      const registerRows = qa('.main-content table tbody tr')
+      check('register lists the mocked tickets', registerRows.length === 3, `${registerRows.length} rows`)
+
+      const selectBoxes = qa('.main-content table tbody input[type="checkbox"]')
+      check('every ticket row carries a selection checkbox', selectBoxes.length === 3, `${selectBoxes.length} boxes`)
+      check(
+        'approved tickets cannot be selected',
+        selectBoxes.filter((box) => box.disabled).length === 1,
+        `${selectBoxes.filter((box) => box.disabled).length} disabled`
+      )
+      check(
+        'the header offers select-all for the page',
+        Boolean(q('.main-content table thead input[type="checkbox"]'))
+      )
+
+      const submittedBox = selectBoxes.find((box) => !box.disabled)
+      click(submittedBox)
+      await flush(120)
+      check(
+        'the toolbar reports the selection count',
+        text(q('.task-bulk-toolbar')).includes('1 ticket selected'),
+        text(q('.task-bulk-toolbar')).slice(0, 90)
+      )
+
+      const approveButton = qa('.task-bulk-toolbar button').find((button) => text(button) === 'Approve selected')
+      check('bulk approve action is offered', Boolean(approveButton))
+      if (approveButton) {
+        click(approveButton)
+        await flush(150)
+        const dialog = q('.bulk-approval-dialog')
+        check('the bulk action dialog opens', Boolean(dialog), text(q('.app-modal-title')))
+        check(
+          'the dialog lists the selected ticket',
+          text(dialog).includes('SHU-2026-0001'),
+          text(dialog).slice(0, 120)
+        )
+
+        const confirmButton = () =>
+          qa('.app-modal-footer button').find((button) => text(button).startsWith('Approve selected'))
+        check('confirm stays disabled until the review is confirmed', Boolean(confirmButton()?.disabled))
+
+        const reviewBox = qa('.bulk-approval-dialog input[type="checkbox"]')[0]
+        click(reviewBox)
+        await flush(120)
+        check('confirm is enabled after confirming the review', confirmButton()?.disabled === false)
+
+        const before = errors.length
+        click(confirmButton())
+        await flush(400)
+        check(
+          'bulk approve calls the status endpoint for the ticket',
+          apiCalls.includes('PATCH /operation-transactions/1/status'),
+          apiCalls.filter((call) => call.includes('/status')).join(', ')
+        )
+        check(
+          'the dialog reports the result of every ticket',
+          text(q('.bulk-approval-dialog .import-results')).includes('SHU-2026-0001'),
+          text(q('.bulk-approval-dialog .import-results')).slice(0, 120)
+        )
+        check('the bulk run raises no runtime errors', errors.length === before, errors.slice(before).join(' | '))
+
+        const closeButton = qa('.app-modal-footer button').find((button) => text(button) === 'Close')
+        if (closeButton) {
+          click(closeButton)
+          await flush()
+        }
+        check('the bulk action dialog closes', !q('.bulk-approval-dialog'))
       }
     }
 
