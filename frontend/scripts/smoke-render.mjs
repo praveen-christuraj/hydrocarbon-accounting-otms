@@ -882,6 +882,14 @@ try {
     }
 
     if (path === '/reporting/custom-reports/1') {
+      const customReportPage = q('.custom-report-page')
+      check(
+        'published custom report uses a visible screen container',
+        Boolean(customReportPage)
+          && !customReportPage.classList.contains('printable-report')
+          && Boolean(q('.custom-report-page > .custom-report-print.printable-report')),
+        customReportPage ? customReportPage.className : 'page missing'
+      )
       check(
         'published custom report renders rows without result metadata',
         text(q('.main-content')).includes('Published Tank Quantities')

@@ -305,7 +305,7 @@ function CustomReportViewer({ loggedInUser }) {
   ].filter(Boolean).join(' · ')
 
   return (
-    <div className="printable-report custom-report-page">
+    <div className="custom-report-page">
       <div className="no-print">
         <PageHeader
           title={report?.report_name || 'Custom Report'}
@@ -412,14 +412,6 @@ function CustomReportViewer({ loggedInUser }) {
             <div className="no-print" key={warning}><AlertMessage tone="warning" message={warning} /></div>
           ))}
 
-          {/* Print-only branded header (Company Report Profile) */}
-          <CompanyPrintHeader profile={profile} defaultSubtitle={report.report_name} />
-          <div className="print-only rb-print-meta">
-            <h2>{report.report_name}</h2>
-            <p>{filterSummary}</p>
-            <p>Generated {printedResult?.meta?.generated_at ? new Date(printedResult.meta.generated_at).toLocaleString() : ''} by {loggedInUser?.fullName || loggedInUser?.full_name || loggedInUser?.username || ''} · {printedResult?.meta?.total_rows?.toLocaleString() || 0} row(s){(printedResult?.meta?.total_rows || 0) > 500 ? ' (first 500 printed)' : ''}</p>
-          </div>
-
           <div className="rb-screen-table no-print">
             {result ? (
               <ReportDataTable result={result} emptyText={report.definition?.options?.empty_text || '—'} />
@@ -429,12 +421,6 @@ function CustomReportViewer({ loggedInUser }) {
               <div className="empty-table">Choose filters and Run Report.</div>
             )}
           </div>
-          {printedResult && (
-            <div className="print-only">
-              <ReportDataTable result={printedResult} emptyText={report.definition?.options?.empty_text || '—'} compact />
-            </div>
-          )}
-
           {result && (
             <div className="no-print">
               <PaginationControls
@@ -448,7 +434,18 @@ function CustomReportViewer({ loggedInUser }) {
               <p className="rb-muted">Made in {result.meta.generated_in_ms} ms · read {result.meta.scanned_rows.toLocaleString()} record(s) · {result.meta.filtered_rows.toLocaleString()} after filters{result.meta.grouped ? ' · grouped summary' : ''}.</p>
             </div>
           )}
-          <CompanyPrintFooter profile={profile} />
+          {printedResult && (
+            <div className="printable-report custom-report-print">
+              <CompanyPrintHeader profile={profile} defaultSubtitle={report.report_name} />
+              <div className="rb-print-meta">
+                <h2>{report.report_name}</h2>
+                <p>{filterSummary}</p>
+                <p>Generated {printedResult.meta?.generated_at ? new Date(printedResult.meta.generated_at).toLocaleString() : ''} by {loggedInUser?.fullName || loggedInUser?.full_name || loggedInUser?.username || ''} · {printedResult.meta?.total_rows?.toLocaleString() || 0} row(s){(printedResult.meta?.total_rows || 0) > 500 ? ' (first 500 printed)' : ''}</p>
+              </div>
+              <ReportDataTable result={printedResult} emptyText={report.definition?.options?.empty_text || '—'} compact />
+              <CompanyPrintFooter profile={profile} />
+            </div>
+          )}
         </>
       )}
     </div>
