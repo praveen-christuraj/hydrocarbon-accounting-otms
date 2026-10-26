@@ -1,8 +1,12 @@
 # Report Builder — User & Technical Guide
 
 The **Report Builder** (Configurations → Report Builder) lets authorised users
-design their own **tabular** and **matrix (cross-tab)** reports from any saved
-data in the system — in plain English, without SQL and without IT help.
+design their own **tabular**, **grouped-summary**, and **matrix (cross-tab)**
+reports from any saved data in the system — in plain English, without SQL and
+without IT help. It can also make **comparison columns**: the same stored
+quantity can appear more than once, with a different location, asset,
+operation-label, product, or other rule on each copy.
+
 Published reports appear by name in the **Reporting** menu for exactly the
 users, roles or locations chosen while the report is being created. Every
 report has a date range, filters, export (Excel / CSV / PDF / print) and
@@ -40,10 +44,14 @@ location scope. Only **published + Active** reports appear in Reporting.
    Date* is recommended for stock accounting.
 2. **Columns** — click values to add them; rename headings; reorder; set
    decimal places / suffix (e.g. ` %`), TOTAL-row membership and summaries.
-   **Calculated columns** are built by clicking columns + operators, with the
-   *IF…then…else* and *Bands (IFS)* composers, or by typing the formula.
-   **Split saved JSON into columns** opens any payload / JSON column and
-   lists every value actually saved inside it (see §5).
+   To use the **same saved quantity more than once**, click **Compare** on an
+   added data column. Its copy has its own **Comparison rules — only include
+   this value when…** section: add location / asset / operation-label / any
+   available-field rules without having to show those fields in the report
+   (see §6). **Calculated columns** are built by clicking columns + operators,
+   with the *IF…then…else* and *Bands (IFS)* composers, or by typing the
+   formula. **Split saved JSON into columns** opens any payload / JSON column
+   and lists every value actually saved inside it (see §5).
 3. **Rows & Layout** — detail rows or a **grouped summary**
    (Total / Average / Count / Min / Max per group, with Day/Week/Month/Year
    date grouping); for matrix reports choose rows (up to 3), columns
@@ -126,23 +134,106 @@ array item. One repeated section per report (to keep rows unambiguous).
 Stringified (double-encoded) JSON payloads are unwrapped the same way the
 accounting reports unwrap them.
 
-## 6. Running, exporting and printing (Reporting module)
+## 6. Comparison columns — Receipt vs Dispatch, location vs location
+
+A **comparison column** is a conditional copy of a saved data value. It does
+not filter the entire report; it blanks *that one measure* when its rule does
+not match. This means separate source rows can be totalled into two values on
+the same grouped-summary line.
+
+### The standard location A Dispatch vs location B Receipt setup
+
+The **Tank Stock Ledger** is normally the right source for this case. It stores
+one row per approved movement with `location_code`, `tank_asset_code`,
+`tank_operation_code`, `tank_operation_label`, `tank_operation_category`, and
+quantities such as `movement_nsv_bbl`, `movement_gsv_bbl`, `movement_lt` and
+`movement_mt`. Receipt and Dispatch are therefore values of the *same quantity
+column*, distinguished by the operation fields — not separate database
+quantity columns.
+
+1. In **Step 1**, choose **Tank Stock Ledger** and an accounting date basis.
+2. In **Step 2**, add fields that identify the common comparison line, for
+   example **Accounting Date**, **Product**, and a shared movement / convoy /
+   transfer reference where it exists. Add **Movement NSV (BBL)** and rename it
+   **Location A Dispatch NSV**.
+3. Click **Compare** on that quantity. Rename the new copy **Location B
+   Receipt NSV**. The two columns intentionally have the same source.
+4. Open the first column’s **⚙** settings and add rules using **ALL rules
+   (AND)**:
+
+   ```text
+   Location Code                 is equal to  A
+   Tank Operation Category       is equal to  DISPATCH
+   ```
+
+   Open the second copy’s settings and add:
+
+   ```text
+   Location Code                 is equal to  B
+   Tank Operation Category       is equal to  RECEIPT
+   ```
+
+   Use **Tank Operation Label** instead of Category when the business rule is
+   label-specific. Any basic header/ledger field or already-added JSON/payload
+   value can be a rule. The rule fields are loaded privately; they do not have
+   to be shown as report columns.
+5. In **Step 3**, choose **Grouped summary**. Group by fields that both sides
+   truly share — commonly Accounting Date + product + convoy/reference. **Do
+   not group by Location Code or Tank Operation Label** for this comparison:
+   that would create a separate group for each side. Set both comparison
+   quantities to **Total (sum)** and optionally tick **Show in TOTAL row**.
+6. For a variance, add a calculated column and set its grouped summary to
+   **Total (sum)**:
+
+   ```text
+   COALESCE([location_a_dispatch_nsv], 0) - COALESCE([location_b_receipt_nsv], 0)
+   ```
+
+   `COALESCE` is important: Dispatch and Receipt normally occur on different
+   source rows, so it treats the other side’s blank cell as zero before the
+   grouped total is calculated. For a rate or percentage, use `IFERROR` around
+   the division.
+7. Preview with real data in **Step 6** before saving. The preview, total row,
+   CSV/XLSX export and printed report use the same conditional-measure logic.
+
+### Important comparison safeguards
+
+- A comparison rule does **not** join or guess links between unrelated tickets.
+  Values share one output row only when you group by a real common key
+  available in the selected source (date, convoy, transfer/movement reference,
+  product, etc.). Choose a source with that key when individual transfer
+  matching is required.
+- The normal **Matrix** layout is still ideal when only one field splits a
+  quantity (for example operation category across the top). Use comparison
+  columns when each side needs a different *combination* of criteria, such as
+  one location + Dispatch versus another location + Receipt.
+- A runner must have location access to **both** locations. If the report has a
+  runtime Location question, leave it empty (all locations in the runner’s
+  scope) or select both sides; selecting only location A deliberately excludes
+  location B’s Receipt rows.
+- Rules are validated against the same live safe catalog as every report
+  column. They cannot access password/security fields, invent a column, or
+  inject SQL. At most 20 rules per comparison column and 100 per report are
+  accepted to keep reports predictable.
+
+## 7. Running, exporting and printing (Reporting module)
 
 Each published report appears under **Reporting → (its name)** and in
 **Reporting → Custom Reports**. The viewer offers: date range (on the
 report’s date basis), the designer’s filter questions, quick search,
 server-side pagination, TOTAL row, ⚠ cell warnings with run statistics,
-**About this report** (calculations explained in words), **Excel / CSV
+**About this report** (calculations and comparison rules explained in words), **Excel / CSV
 (all rows, server-generated)**, screen-page export incl. PDF via the shared
 export menu, and **Print** through the global Company Report Profile dialog
 (branded header/footer, full result up to 500 rows, compact print layout).
 
-## 7. Accuracy & safety rules
+## 8. Accuracy & safety rules
 
 - Definitions are re-validated against the live catalog on every save and
-  run: unknown/sensitive tables, columns, payload fields or JSON paths are
-  rejected, so hand-crafted definitions cannot reach secrets or inject SQL
-  (all data access is parameterised SQLAlchemy on catalogued columns).
+  run: unknown/sensitive tables, columns, payload fields, JSON paths and
+  comparison-rule fields are rejected, so hand-crafted definitions cannot
+  reach secrets or inject SQL (all data access is parameterised SQLAlchemy on
+  catalogued columns).
 - Location scope = grant ∩ runner scope ∩ runtime choice; ticket party
   locations (origin/destination/sender/receiver) follow the same
   party-visibility rule as the built-in reports.
@@ -154,7 +245,7 @@ export menu, and **Print** through the global Company Report Profile dialog
 - Everything is audited (create / update / publish / delete / export) and
   designs are versioned (`report_definition_versions`).
 
-## 8. Technical reference
+## 9. Technical reference
 
 **Backend** — `backend/app/routers/report_builder.py` (prefix
 `/report-builder`), services `report_catalog.py` (live catalog + JSON
@@ -187,7 +278,9 @@ Reports` under *Reporting*).
 (`TABULAR|MATRIX`), `source` (`kind`, `table`, `operation_type_codes`,
 `template_ids`, `statuses`), `date_basis` (+`date_column`), `columns[]`
 (`key`, `label`, `kind: data|calculated`, `source: {type: column|virtual|
-ticket_field|payload_path|json_path, …}`, `formula`, `data_type`, `format
+ticket_field|payload_path|json_path, …}`, `value_conditions[]` (data columns
+only; each has `source`, `operator`, `value`, `value2`) plus
+`value_condition_logic: AND|OR`, `formula`, `data_type`, `format
 {decimals,prefix,suffix}`, `aggregate`, `show_total`, `hidden`), `filters[]`
 + `filter_logic`, `runtime_filters[]` (`type: location|operation_type|
 status|asset|text|number|date|select`, `column_key`, `operator`, `options`,
@@ -200,7 +293,8 @@ totals), `sort[]`, `options` (`show_totals`, `page_size`, `empty_text`,
 `/report-builder`), `frontend/src/pages/CustomReportViewer.jsx` (Reporting,
 `/reporting/custom-reports[/:reportId]`), components in
 `frontend/src/components/reportBuilder/` (`FormulaBuilder`,
-`JsonColumnPicker`, `ReportDataTable`), `frontend/src/api/reportBuilderApi.js`,
+`ComparisonConditionsEditor`, `JsonColumnPicker`, `ReportDataTable`),
+`frontend/src/api/reportBuilderApi.js`,
 `frontend/src/utils/reportBuilder.js`. The Reporting menu gains one entry per
 published report shared with the signed-in user (`TopNavigation` fetches
 `/my-reports`). The dev mock API (`frontend/scripts/mock-api.mjs`) implements
@@ -210,5 +304,6 @@ the same surface with sample rows for frontend-only work.
 (precedence, %, IF/IFS/AND/OR, DIV0/IFERROR, blank rules, Decimal accuracy,
 injection rejection, cycles), catalog safety (no secrets), JSON discovery +
 per-tank explosion, payload/accounting-date runs, grouping, matrix totals,
-grants (role/location/user), publish permission, runner location scoping,
-exports, starters and versioning.
+conditional comparison measures (including two location/operation rules on one
+quantity source), grants (role/location/user), publish permission, runner
+location scoping, exports, starters and versioning.

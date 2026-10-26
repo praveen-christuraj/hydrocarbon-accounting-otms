@@ -390,6 +390,107 @@ def test_grouped_and_matrix_ledger_reports(client, db):
     assert bonny[opening_key] == 990.0 and bonny[receipt_key] == 990.0 and bonny["__row_total"] == 1980.0
 
 
+def test_grouped_comparison_columns_reuse_one_quantity_with_private_rules(client, db):
+    """One DB quantity can become Dispatch and Receipt columns independently."""
+    template = _seed(db)
+    headers, _, _ = _make_user(db, client, "comparison_designer", BUILDER_PERMS, all_locations=True)
+
+    dispatch_ticket = OperationTransaction(
+        operation_number="OP-DISPATCH-COMP", operation_ticket_number="TKT-DISPATCH-COMP",
+        operation_type_code="TANK_GAUGE", operation_template_id=template.id,
+        origin_location_code="BONNY", primary_asset_type_code="TANK", primary_asset_code="TK101",
+        product_name="Bonny Light", operation_date=date(2026, 10, 21), status="Approved", created_by="Tester",
+    )
+    receipt_ticket = OperationTransaction(
+        operation_number="OP-RECEIPT-COMP", operation_ticket_number="TKT-RECEIPT-COMP",
+        operation_type_code="TANK_GAUGE", operation_template_id=template.id,
+        origin_location_code="ESC", primary_asset_type_code="TANK", primary_asset_code="TK201",
+        product_name="Bonny Light", operation_date=date(2026, 10, 21), status="Approved", created_by="Tester",
+    )
+    db.add_all([dispatch_ticket, receipt_ticket])
+    db.flush()
+    db.add_all([
+        TankStockLedger(
+            transaction_id=dispatch_ticket.id, ticket_number=dispatch_ticket.operation_ticket_number,
+            operation_number=dispatch_ticket.operation_number, location_code="BONNY", tank_asset_code="TK101",
+            operation_date=date(2026, 10, 21), accounting_date=date(2026, 10, 21),
+            tank_operation_code="DISPATCH", tank_operation_label="Dispatch",
+            tank_operation_category="DISPATCH", tank_operation_sign="OUT",
+            movement_nsv_bbl=100.0, movement_gsv_bbl=100.0, movement_mt=10.0, status="Active",
+        ),
+        TankStockLedger(
+            transaction_id=receipt_ticket.id, ticket_number=receipt_ticket.operation_ticket_number,
+            operation_number=receipt_ticket.operation_number, location_code="ESC", tank_asset_code="TK201",
+            operation_date=date(2026, 10, 21), accounting_date=date(2026, 10, 21),
+            tank_operation_code="RECEIPT", tank_operation_label="Receipt",
+            tank_operation_category="RECEIPT", tank_operation_sign="IN",
+            movement_nsv_bbl=97.0, movement_gsv_bbl=97.0, movement_mt=9.7, status="Active",
+        ),
+    ])
+    db.commit()
+
+    # The condition fields (location + operation category) are deliberately
+    # not report columns. The engine must load them privately for each measure.
+    definition = {
+        "schema_version": 1, "report_type": "TABULAR",
+        "source": {"kind": "tank_stock_ledger"}, "date_basis": "ACCOUNTING_DATE",
+        "columns": [
+            {"key": "accounting_date", "label": "Accounting Date", "kind": "data", "source": {"type": "column", "column": "accounting_date"}, "data_type": "date"},
+            {
+                "key": "bonny_dispatch", "label": "Bonny Dispatch NSV", "kind": "data",
+                "source": {"type": "column", "column": "movement_nsv_bbl"}, "data_type": "number",
+                "aggregate": "SUM", "show_total": True,
+                "value_conditions": [
+                    {"source": {"type": "column", "column": "location_code"}, "operator": "eq", "value": "BONNY"},
+                    {"source": {"type": "column", "column": "tank_operation_category"}, "operator": "eq", "value": "DISPATCH"},
+                ],
+                "value_condition_logic": "AND",
+            },
+            {
+                "key": "esc_receipt", "label": "Escravos Receipt NSV", "kind": "data",
+                "source": {"type": "column", "column": "movement_nsv_bbl"}, "data_type": "number",
+                "aggregate": "SUM", "show_total": True,
+                "value_conditions": [
+                    {"source": {"type": "column", "column": "location_code"}, "operator": "eq", "value": "ESC"},
+                    {"source": {"type": "column", "column": "tank_operation_category"}, "operator": "eq", "value": "RECEIPT"},
+                ],
+                "value_condition_logic": "AND",
+            },
+            {
+                "key": "variance", "label": "Dispatch − Receipt", "kind": "calculated",
+                "formula": "COALESCE([bonny_dispatch], 0) - COALESCE([esc_receipt], 0)", "data_type": "number",
+                "aggregate": "SUM", "show_total": True,
+            },
+        ],
+        "group_by": [{"key": "accounting_date", "bucket": "DAY"}],
+        "sort": [{"key": "accounting_date", "direction": "asc"}],
+        "options": {"show_totals": True},
+    }
+    res = client.post(
+        "/report-builder/run-preview",
+        json={"definition": definition, "date_from": "2026-10-21", "date_to": "2026-10-21"},
+        headers=headers,
+    )
+    assert res.status_code == 200, res.text
+    result = res.json()
+    assert result["rows"] == [{
+        "accounting_date": "2026-10-21", "bonny_dispatch": 100.0,
+        "esc_receipt": 97.0, "variance": 3.0,
+    }]
+    assert result["totals"] == {"bonny_dispatch": 100.0, "esc_receipt": 97.0, "variance": 3.0}
+    assert [column["key"] for column in result["columns"]] == [
+        "accounting_date", "bonny_dispatch", "esc_receipt", "variance",
+    ]
+
+    bad = {**definition, "columns": [*definition["columns"]]}
+    bad["columns"][1] = {
+        **definition["columns"][1],
+        "value_conditions": [{"source": {"type": "column", "column": "password_hash"}, "operator": "eq", "value": "x"}],
+    }
+    with pytest.raises(ReportDefinitionError):
+        validate_definition(bad)
+
+
 def _create_report(client, headers, name="Gauging NSV Report", **kwargs):
     payload = {
         "report_name": name,

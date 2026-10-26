@@ -22,6 +22,20 @@ import {
 import { dateRangeDefaults, formatCellValue, formulaInWords } from '../utils/reportBuilder'
 import { logUiAction } from '../utils/actionLogger'
 
+const comparisonOperatorLabels = {
+  eq: 'is', ne: 'is not', gt: 'is greater than', gte: 'is at least', lt: 'is less than', lte: 'is at most',
+  contains: 'contains', not_contains: 'does not contain', starts_with: 'starts with', ends_with: 'ends with',
+  in: 'is one of', not_in: 'is none of', between: 'is between', is_blank: 'is blank', is_not_blank: 'is not blank',
+}
+
+const comparisonRuleText = (rule) => {
+  const field = rule.label || rule.source?.column || rule.source?.field || rule.source?.field_code || rule.source?.path || 'a field'
+  const operator = comparisonOperatorLabels[rule.operator] || rule.operator || 'is'
+  if (rule.operator === 'is_blank' || rule.operator === 'is_not_blank') return `${field} ${operator}`
+  const value = Array.isArray(rule.value) ? rule.value.join(', ') : rule.value ?? '…'
+  return rule.operator === 'between' ? `${field} ${operator} ${value} and ${rule.value2 ?? '…'}` : `${field} ${operator} ${value}`
+}
+
 const normalizeRunResult = (data) => {
   // Defend against wrapped responses, arrays, primitives and empty envelopes.
   const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {}
@@ -212,6 +226,9 @@ function CustomReportViewer({ loggedInUser }) {
 
   const runtimeFilters = report?.definition?.runtime_filters || []
   const calculatedColumns = (report?.definition?.columns || []).filter((c) => (c.kind || 'data') === 'calculated')
+  const comparisonColumns = (report?.definition?.columns || []).filter((c) => (
+    (c.kind || 'data') === 'data' && Array.isArray(c.value_conditions) && c.value_conditions.length > 0
+  ))
   const exportColumns = useMemo(
     () => (result?.columns || []).map((column) => ({
       key: column.key, label: column.label,
@@ -395,6 +412,18 @@ function CustomReportViewer({ loggedInUser }) {
               <strong>About “{report.report_name}”</strong> (design v{report.version}, by {report.owner_name || report.created_by || '—'}).
               Dates use <em>{result?.meta?.date_basis_label || 'the report’s chosen date'}</em>.
               Data is always limited to your own locations.
+              {comparisonColumns.length > 0 && (
+                <>
+                  <br />Comparison columns:
+                  <ul>
+                    {comparisonColumns.map((column) => (
+                      <li key={column.key}>
+                        <strong>{column.label}</strong> includes a value only when {(column.value_conditions || []).map(comparisonRuleText).join((column.value_condition_logic || 'AND') === 'OR' ? ' OR ' : ' AND ')}.
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
               {calculatedColumns.length > 0 && (
                 <>
                   <br />Calculated columns:

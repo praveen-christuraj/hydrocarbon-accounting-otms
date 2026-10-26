@@ -4323,6 +4323,25 @@ td.preset-result-error {
 .rb-col-origin { margin-top: 6px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .rb-column-settings { margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; border-top: 1px dashed var(--border); padding-top: 10px; }
 .rb-row-actions { display: inline-flex; gap: 5px; flex-wrap: wrap; }
+.rb-comparison-callout { display: flex; gap: 8px; align-items: flex-start; padding: 9px 10px; border: 1px solid var(--navy-300); border-radius: 8px; background: var(--navy-50); color: var(--text-secondary); font-size: 12.5px; line-height: 1.45; }
+.rb-badge-compare { background: var(--primary-soft); color: var(--primary); border-color: var(--primary); }
+.rb-comparison-panel { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 8px; margin-top: 2px; padding: 12px; border: 1px solid var(--navy-300); border-radius: 8px; background: var(--navy-50); }
+.rb-comparison-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.rb-comparison-head strong { font-size: 13px; color: var(--text); }
+.rb-comparison-head .rb-muted { margin: 3px 0 0; font-size: 12px; }
+.rb-comparison-logic { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; }
+.rb-comparison-logic select { min-width: 180px; }
+.rb-comparison-rule { padding-top: 8px; border-top: 1px dashed var(--border); }
+.rb-comparison-rule .rb-filter-row { margin: 0; align-items: flex-end; }
+.rb-comparison-rule .rb-field { min-width: 160px; }
+.rb-comparison-rule .rb-field:first-child { flex: 2 1 240px; }
+.rb-comparison-remove { margin-bottom: 1px; }
+.rb-comparison-empty { margin: 0; font-size: 12px; }
+@media (max-width: 650px) {
+  .rb-comparison-head { flex-direction: column; }
+  .rb-comparison-head .btn-secondary { align-self: flex-start; }
+}
+
 
 .rb-group-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
 .rb-group-row { display: flex; gap: 10px; align-items: center; }
