@@ -30,6 +30,7 @@
  */
 import { toIsoDateString } from './format'
 import { resolveOperationDate } from './operationDate'
+import { calculateFsoVariance } from './fsoVariance'
 import {
   calculateTankQuantity,
   getCalibrationColumnsByRole,
@@ -792,7 +793,7 @@ const decoratePayload = ({ payload, fieldCode, layoutType, entry }) => {
           net_stock_bbl: netStock,
           net_water_bbl: netWater,
           ...(typeof vesselQty === 'number'
-            ? { variance_bbl: vesselQty - Math.abs(netStock + netWater) }
+            ? { variance_bbl: calculateFsoVariance(netStock, netWater, vesselQty) }
             : {}),
         },
       }

@@ -99,6 +99,17 @@ const shuttleTemplate = {
   ],
 }
 
+const fsoTemplate = {
+  id: 15,
+  templateName: 'FSO Tracking',
+  operationTypeCode: 'FSO_RECEIPT',
+  entryLayoutType: 'FSO Tracking',
+  status: 'Active',
+  fields: [
+    field({ id: 8, fieldCode: 'fso_payload', fieldName: 'FSO Payload', dataType: 'JSON', inputMode: 'System' }),
+  ],
+}
+
 const multiTankTemplate = {
   id: 13,
   templateName: 'Multi-Tank Before/After',
@@ -448,7 +459,33 @@ check('flowmeter meter label follows the stream name', flowPayload.inputs.meter_
 const flowBadMeter = prepare({ record: { ...flowmeterRecord, 'payload.flowmeter_payload.inputs.meters.0.closing_reading': '900' }, rowNumber: 3, template: flowmeterTemplate, layoutType: 'Meter Reading' })
 check('a closing reading below the opening reading is rejected', flowBadMeter.result.status === 'skipped' && flowBadMeter.result.message.includes('below Opening'), flowBadMeter.result.message.slice(0, 140))
 
-/* -------------------------------- 8. calculated tank gauging quantities */
+/* --------------------------- 8. FSO movement-minus-vessel variance */
+
+const fsoEntry = bulk.buildOperationEntryFromRecord({
+  record: {
+    'metadata.operationTypeCode': 'FSO_RECEIPT',
+    'metadata.primaryAssetCode': 'FSO-001',
+    'metadata.senderLocationCode': 'UTP',
+    'metadata.convoyNumber': 'SH-100',
+    'payload.fso_payload.inputs.operation_date': '2026-10-20',
+    'payload.fso_payload.inputs.vessel_quantity_bbl': '1000',
+    'payload.fso_payload.inputs.opening_stock_bbl': '0',
+    'payload.fso_payload.inputs.opening_water_bbl': '0',
+    'payload.fso_payload.inputs.closing_stock_bbl': '800',
+    'payload.fso_payload.inputs.closing_water_bbl': '0',
+  },
+  template: fsoTemplate,
+  layoutType: 'FSO Tracking',
+  asset: { assetName: 'FSO Unity', assetTypeCode: 'FSO' },
+})
+const fsoPayload = fsoEntry.entry.values[0].fieldValue
+check(
+  'FSO bulk payload variance is movement quantity minus vessel quantity',
+  fsoPayload.calculated.net.variance_bbl === -200,
+  String(fsoPayload.calculated.net.variance_bbl)
+)
+
+/* -------------------------------- 9. calculated tank gauging quantities */
 
 const calibrationTemplates = [
   {

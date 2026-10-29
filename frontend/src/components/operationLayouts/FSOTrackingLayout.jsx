@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { getVesselOperations } from '../../api/vesselOperationApi'
 import { getShuttleTracking } from '../../api/shuttleTrackingApi'
 import { todayDateOnly } from '../../utils/operationDate'
+import { calculateFsoVariance } from '../../utils/fsoVariance'
 import { useToast } from '../common/Toast'
 
 const parseObject = (value) => {
@@ -147,7 +148,7 @@ function FSOTrackingLayout({ entry, selectedAsset, handleValueChange, setEntryFi
 
     const netStock = closingStock - openingStock
     const netWater = closingWater - openingWater
-    const variance = vesselQty - Math.abs(netStock + netWater)
+    const variance = calculateFsoVariance(netStock, netWater, vesselQty)
 
     return {
       openingStock,
@@ -181,7 +182,7 @@ function FSOTrackingLayout({ entry, selectedAsset, handleValueChange, setEntryFi
 
     const netStock = closingStock - openingStock
     const netWater = closingWater - openingWater
-    const variance = vesselQty - Math.abs(netStock + netWater)
+    const variance = calculateFsoVariance(netStock, netWater, vesselQty)
 
     const existingMeta = currentPayload?.meta || {}
 

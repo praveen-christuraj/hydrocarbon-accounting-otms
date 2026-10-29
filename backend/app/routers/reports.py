@@ -1612,10 +1612,10 @@ def build_fso_otr_report(
         movement_qty = abs(net_stock) + abs(net_water)
 
         vessel_qty = float(safe_float(inputs.get("vessel_quantity_bbl")))
-        variance = vessel_qty - movement_qty if op_sign == "IN" else 0.0
+        variance = movement_qty - vessel_qty if op_sign == "IN" else 0.0
 
         src_discharge = float(safe_float(meta.get("source_shuttle_discharge_bbl")))
-        compare_var = src_discharge - movement_qty if op_sign == "IN" and src_discharge > 0 else 0.0
+        compare_var = movement_qty - src_discharge if op_sign == "IN" and src_discharge > 0 else 0.0
 
         p_date, p_time = get_payload_operation_parts(payload, "fso_payload")
         payload_operation_date = p_date or tx.operation_date
@@ -1868,8 +1868,8 @@ def build_fso_outturn_report(
     for (acc_date, shuttle_no) in sorted(buckets.keys()):
         discharge = float(buckets[(acc_date, shuttle_no)]["discharge"])
         receipt = float(buckets[(acc_date, shuttle_no)]["receipt"])
-        # FSO variance = shuttle discharge - FSO receipt.
-        variance = discharge - receipt
+        # FSO variance = FSO receipt - shuttle discharge.
+        variance = receipt - discharge
         pct = (variance / discharge * 100.0) if discharge != 0 else 0.0
 
         rows.append(

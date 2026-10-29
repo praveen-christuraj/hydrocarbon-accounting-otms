@@ -1099,10 +1099,10 @@ def get_fso_tracking(
             vessel_qty = _sf(inputs.get("vessel_quantity_bbl") or meta.get("vessel_quantity_bbl"))
 
             qty_bbl = _abs_qty(net_stock, net_water)
-            # FSO variance = shuttle discharge (vessel qty) - FSO movement.
+            # FSO variance = FSO movement - shuttle discharge (vessel qty).
             # Recomputed from the ticket inputs so that tickets saved under the
             # previous sign convention aggregate consistently with new ones.
-            variance = vessel_qty - qty_bbl
+            variance = qty_bbl - vessel_qty
             if op_sign == "IN":
                 totals_map[k]["fso_receipt_bbl"] += qty_bbl
                 totals_map[k]["shuttle_discharge_meta"] = max(totals_map[k]["shuttle_discharge_meta"], _sf(meta.get("source_shuttle_discharge_bbl")))
@@ -1141,7 +1141,7 @@ def get_fso_tracking(
             fallback = float(shuttle_fallback.get(f"{r.location_code}|{r.shuttle_number}", 0.0))
             shuttle_discharge_bbl = shuttle_discharge_meta if shuttle_discharge_meta > 0 else fallback
             fso_receipt_bbl = float(t.get("fso_receipt_bbl") or 0.0)
-            variance_bbl = shuttle_discharge_bbl - fso_receipt_bbl
+            variance_bbl = fso_receipt_bbl - shuttle_discharge_bbl
 
             rows.append({
                 "group_key": k,
@@ -1267,10 +1267,10 @@ def get_fso_tracking(
         net_water = _safe_float(net_calc.get("net_water_bbl"))
         inputs = payload.get("inputs") or {}
         vessel_qty = _safe_float(input_value("vessel_quantity_bbl"))
-        # FSO variance = shuttle discharge (vessel qty) - FSO movement (|net stock + net water|).
+        # FSO variance = FSO movement (|net stock + net water|) - shuttle discharge (vessel qty).
         # Export tickets carry no variance, matching the group total below.
         movement_qty = _abs_qty(net_stock, net_water)
-        variance = (vessel_qty - movement_qty) if op_norm != "export" else 0.0
+        variance = (movement_qty - vessel_qty) if op_norm != "export" else 0.0
 
         ticket = {
             "transaction_id": tx.id,
@@ -1338,7 +1338,7 @@ def get_fso_tracking(
         sh_num = str(groups[k].get("shuttle_number") or "").strip()
         if float(groups[k].get("shuttle_discharge_bbl") or 0.0) <= 0.0:
             groups[k]["shuttle_discharge_bbl"] = float(shuttle_fallback.get(f"{loc_code}|{sh_num}", 0.0))
-        groups[k]["variance_bbl"] = float(groups[k]["shuttle_discharge_bbl"]) - float(groups[k]["fso_receipt_bbl"])
+        groups[k]["variance_bbl"] = float(groups[k]["fso_receipt_bbl"]) - float(groups[k]["shuttle_discharge_bbl"])
 
     return {
         "rows": list(groups.values()),
