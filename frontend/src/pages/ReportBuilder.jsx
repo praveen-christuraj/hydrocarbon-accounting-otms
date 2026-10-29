@@ -398,9 +398,19 @@ function ReportBuilder({ loggedInUser }) {
           jsonColumn: c.is_json ? c.column : null,
         }))
       if (items.length) sections.push({ title: `${activeTable.label} columns`, items })
+      ;(activeTable.relationships || []).forEach((rel) => {
+        const related = catalog.tables.find((t) => t.table === rel.table)
+        if (!related) return
+        const relatedItems = related.columns.filter((c) => !c.is_json && matches(c.label)).map((c) => ({
+          label: `${related.label} — ${c.label}`, data_type: c.data_type,
+          tech: `${rel.local_column} → ${rel.table}.${c.column}`,
+          source: { type: 'related_column', ...rel, column: c.column },
+        }))
+        if (relatedItems.length) sections.push({ title: `${related.label} (via ${rel.local_column})`, items: relatedItems })
+      })
     }
     return sections
-  }, [dataset, activeTable, definition.source.kind, operationFields, fieldSearch])
+  }, [catalog, dataset, activeTable, definition.source.kind, operationFields, fieldSearch])
 
   const payloadChoices = useMemo(() => {
     if (definition.source.kind === 'operation_tickets') {

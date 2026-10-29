@@ -156,6 +156,31 @@ LEDGER_VIRTUAL_FIELDS = [
 ]
 
 
+def reportable_relationships(table_name: str) -> list[dict]:
+    """Direct many-to-one foreign keys, never arbitrary or composite joins."""
+    table = Base.metadata.tables.get(table_name)
+    if table is None or table_name in DENIED_TABLES or table_name.startswith("report_"):
+        return []
+    result = []
+    for constraint in table.foreign_key_constraints:
+        if len(constraint.elements) != 1:
+            continue
+        fk = constraint.elements[0]
+        try:
+            target = fk.column
+        except Exception:
+            continue
+        parent = target.table
+        if parent is table or parent.name in DENIED_TABLES or parent.name.startswith("report_"):
+            continue
+        if is_sensitive_column(fk.parent.name) or is_sensitive_column(target.name):
+            continue
+        if not (target.primary_key and len(parent.primary_key.columns) == 1) and not target.unique:
+            continue
+        result.append({"local_column": fk.parent.name, "table": parent.name, "remote_column": target.name})
+    return sorted(result, key=lambda r: (r["table"], r["local_column"]))
+
+
 def build_catalog() -> dict:
     """Full pickable catalog: featured datasets + every reportable table."""
     tables = []
@@ -185,6 +210,7 @@ def build_catalog() -> dict:
             "json_columns": [c["column"] for c in columns if c["is_json"]],
             "location_columns": [c["column"] for c in columns if c["is_location"]],
             "date_columns": [c["column"] for c in columns if c["is_date"]],
+            "relationships": reportable_relationships(table_name),
         })
 
     by_name = {t["table"]: t for t in tables}

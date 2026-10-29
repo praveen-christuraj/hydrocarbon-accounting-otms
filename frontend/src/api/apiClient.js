@@ -57,9 +57,12 @@ const fetchWithTimeout = async (url, options = {}, timeoutMs = REQUEST_TIMEOUT_M
   } catch (error) {
     if (error?.name === 'AbortError') {
       throw new Error(
-        'The server took too long to respond. Please try a narrower date range or fewer filters.',
+        'The server took too long to respond. Check the operation status before retrying, particularly for backups and restores.',
         { cause: error }
       )
+    }
+    if (error instanceof TypeError) {
+      throw new Error('Unable to reach the server. Check your connection and API configuration; for backup or restore operations, check the operation status before retrying.', { cause: error })
     }
     throw error
   } finally {
@@ -67,7 +70,7 @@ const fetchWithTimeout = async (url, options = {}, timeoutMs = REQUEST_TIMEOUT_M
   }
 }
 
-const tryRefreshAndRetry = async (endpoint, options) => {
+const tryRefreshAndRetry = async (endpoint, options, timeoutMs) => {
   // Only one concurrent refresh attempt
   if (!refreshPromise) {
     refreshPromise = refreshAccessToken().finally(() => {
@@ -85,7 +88,7 @@ const tryRefreshAndRetry = async (endpoint, options) => {
   const retryResponse = await fetchWithTimeout(`${API_BASE_URL}${endpoint}`, {
     ...options,
     headers: buildHeaders(options.headers || {}),
-  })
+  }, timeoutMs)
 
   const retryData = await readResponseData(retryResponse)
   if (!retryResponse.ok) {
@@ -94,11 +97,11 @@ const tryRefreshAndRetry = async (endpoint, options) => {
   return retryData
 }
 
-export const apiRequest = async (endpoint, options = {}) => {
+export const apiRequest = async (endpoint, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) => {
   const response = await fetchWithTimeout(`${API_BASE_URL}${endpoint}`, {
     ...options,
     headers: buildHeaders(options.headers || {}),
-  })
+  }, timeoutMs)
 
   const data = await readResponseData(response)
 
@@ -111,7 +114,7 @@ export const apiRequest = async (endpoint, options = {}) => {
         endpoint.startsWith('/auth/2fa/verify') ||
         endpoint.startsWith('/auth/refresh')
       if (!isAuthEndpoint) {
-        return tryRefreshAndRetry(endpoint, options)
+        return tryRefreshAndRetry(endpoint, options, timeoutMs)
       }
       clearAccessToken()
     }
@@ -126,14 +129,14 @@ export const apiGet = async (endpoint) => {
   return apiRequest(endpoint)
 }
 
-export const apiPost = async (endpoint, body) => {
+export const apiPost = async (endpoint, body, timeoutMs) => {
   return apiRequest(endpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
-  })
+  }, timeoutMs)
 }
 
 export const apiPut = async (endpoint, body) => {

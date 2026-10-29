@@ -61,6 +61,7 @@ from app.services.report_catalog import (
     get_path,
     humanize,
     resolve_wildcard,
+    reportable_relationships,
     split_path,
 )
 from app.services.report_formula import (
@@ -142,7 +143,7 @@ def _validate_path(path: str, errors: list[str], owner: str):
         _ = cleaned
 
 
-def _validate_source_spec(spec, kind: str, table_columns: dict, errors: list[str], owner: str):
+def _validate_source_spec(spec, kind: str, table_columns: dict, errors: list[str], owner: str, table_name=None):
     if not isinstance(spec, dict):
         errors.append(f"{owner}: data source is missing.")
         return
@@ -151,6 +152,10 @@ def _validate_source_spec(spec, kind: str, table_columns: dict, errors: list[str
         column = spec.get("column")
         if column not in table_columns:
             errors.append(f"{owner}: column '{column}' is not available for this data source.")
+    elif spec_type == "related_column":
+        relation = {"local_column": spec.get("local_column"), "table": spec.get("table"), "remote_column": spec.get("remote_column")}
+        if kind != "table" or relation not in reportable_relationships(table_name) or spec.get("column") not in allowed_columns(spec.get("table")):
+            errors.append(f"{owner}: related column or relationship is not available for this data source.")
     elif spec_type == "virtual":
         if spec.get("field") not in _virtual_fields_for(kind):
             errors.append(f"{owner}: field '{spec.get('field')}' is not available for this data source.")
@@ -206,7 +211,7 @@ def _value_condition_target(column_key: str, index: int) -> str:
     return f"__cv_{column_key}_{index}"
 
 
-def _validate_value_conditions(column: dict, kind: str, table_columns: dict, errors: list[str], owner: str, explode_refs: set[tuple[str, str]]):
+def _validate_value_conditions(column: dict, kind: str, table_columns: dict, errors: list[str], owner: str, explode_refs: set[tuple[str, str]], table_name=None):
     """Validate per-column conditions used to make conditional measures.
 
     Unlike report ``filters``, these rules never remove a source row. They only
@@ -233,7 +238,7 @@ def _validate_value_conditions(column: dict, kind: str, table_columns: dict, err
         if entry.get("operator") not in FILTER_OPERATORS:
             errors.append(f"{condition_owner}: choose a valid condition.")
         spec = entry.get("source")
-        _validate_source_spec(spec, kind, table_columns, errors, condition_owner)
+        _validate_source_spec(spec, kind, table_columns, errors, condition_owner, table_name)
         if isinstance(spec, dict):
             _register_explode_ref(spec, explode_refs)
 
@@ -311,12 +316,12 @@ def validate_definition(definition) -> dict:
                 errors.append(f"{owner}: formula error — {exc}")
         elif column_kind == "data":
             spec = column.get("source") or {}
-            _validate_source_spec(spec, kind, table_columns, errors, owner)
+            _validate_source_spec(spec, kind, table_columns, errors, owner, table_name)
             _register_explode_ref(spec, explode_refs)
             value_conditions = column.get("value_conditions")
             if isinstance(value_conditions, list):
                 value_condition_count += len(value_conditions)
-            _validate_value_conditions(column, kind, table_columns, errors, owner, explode_refs)
+            _validate_value_conditions(column, kind, table_columns, errors, owner, explode_refs, table_name)
         else:
             errors.append(f"{owner}: unknown column kind '{column_kind}'.")
         aggregate = column.get("aggregate")
@@ -357,7 +362,7 @@ def validate_definition(definition) -> dict:
             if entry["column_key"] not in keys:
                 errors.append(f"{owner}: column [{entry['column_key']}] does not exist.")
         elif entry.get("source"):
-            _validate_source_spec(entry["source"], kind, table_columns, errors, owner)
+            _validate_source_spec(entry["source"], kind, table_columns, errors, owner, table_name)
         else:
             errors.append(f"{owner}: choose what to filter on.")
 
@@ -380,7 +385,7 @@ def validate_definition(definition) -> dict:
             if entry.get("column_key") and entry["column_key"] not in keys:
                 errors.append(f"{owner}: column [{entry['column_key']}] does not exist.")
             if entry.get("source"):
-                _validate_source_spec(entry["source"], kind, table_columns, errors, owner)
+                _validate_source_spec(entry["source"], kind, table_columns, errors, owner, table_name)
 
     group_by = definition.get("group_by") or []
     group_keys = []
@@ -725,8 +730,18 @@ def _load_table_rows(db, user, definition, params, plan, warnings, table_name):
         select_names = list(columns_meta)[:1]
 
     scope, effective_locations = _requested_locations(db, user, params, definition)
-    stmt = select(*[table.c[name] for name in select_names])
-    if location_columns and effective_locations:
+    related_specs = [item for item in plan if item["spec"].get("type") == "related_column"]
+    related_selects = []
+    for index, item in enumerate(related_specs):
+        spec = item["spec"]
+        parent = Base.metadata.tables[spec["table"]].alias(f"related_{index}")
+        subquery = select(parent.c[spec["column"]]).where(parent.c[spec["remote_column"]] == table.c[spec["local_column"]])
+        parent_locations = [name for name, meta in allowed_columns(spec["table"]).items() if meta.get("is_location")]
+        if scope is not None and parent_locations:
+            subquery = subquery.where(or_(*[func.upper(parent.c[name]).in_([code.upper() for code in scope]) for name in parent_locations]))
+        related_selects.append(subquery.correlate(table).scalar_subquery().label(f"__related_{index}"))
+    stmt = select(*[table.c[name] for name in select_names], *related_selects)
+    if location_columns and (effective_locations or scope is not None):
         upper_codes = [code.upper() for code in effective_locations]
         stmt = stmt.where(or_(*[func.upper(table.c[name]).in_(upper_codes) for name in location_columns]))
     runtime_status = [str(v) for v in _as_list(_builtin_runtime(definition, params, "status"))]
@@ -770,6 +785,7 @@ def _load_table_rows(db, user, definition, params, plan, warnings, table_name):
                 row_date = parse_date_value(row_date)
         contexts.append({
             "plain": plain,
+            "related": {item["target"]: mapping.get(f"__related_{index}") for index, item in enumerate(related_specs)},
             "virtuals": virtuals,
             "ticket_fields": {},
             "json": {name: plain.get(name) for name in json_columns_needed},
@@ -813,8 +829,10 @@ def _json_document(context, spec, kind):
     return None
 
 
-def _extract_value(context, spec, kind):
+def _extract_value(context, spec, kind, target=None):
     stype = spec.get("type")
+    if stype == "related_column":
+        return context.get("related", {}).get(target)
     if stype == "column":
         return context["plain"].get(spec.get("column"))
     if stype == "virtual":
@@ -837,7 +855,7 @@ def _extract_rows(contexts, definition, plan, warnings):
     dropped_empty = 0
     for context in contexts:
         if not explode_ref:
-            row = {item["target"]: _extract_value(context, item["spec"], kind) for item in plan}
+            row = {item["target"]: _extract_value(context, item["spec"], kind, item["target"]) for item in plan}
             _apply_value_conditions(row, definition)
             row["__date"] = context["row_date"]
             rows.append(row)
@@ -864,7 +882,7 @@ def _extract_rows(contexts, definition, plan, warnings):
                         else None
                     )
                 else:
-                    row[plan_item["target"]] = _extract_value(context, spec, kind)
+                    row[plan_item["target"]] = _extract_value(context, spec, kind, plan_item["target"])
             _apply_value_conditions(row, definition)
             row["__date"] = context["row_date"]
             rows.append(row)
