@@ -606,3 +606,29 @@ def test_update_creates_version_and_owner_only_delete(client, db):
     # Editor (not owner) cannot delete
     assert client.delete(f"/report-builder/definitions/{report['id']}", headers=editor_headers).status_code == 404
     assert client.delete(f"/report-builder/definitions/{report['id']}", headers=owner_headers).status_code == 200
+
+
+def test_related_table_columns_and_calculation(client, db):
+    _seed(db)
+    headers, _, _ = _make_user(db, client, "joined_designer", BUILDER_PERMS, locations=["BONNY"])
+    relation = {"type": "related_column", "table": "operation_transactions", "local_column": "transaction_id", "remote_column": "id"}
+    definition = {
+        "schema_version": 1, "report_type": "TABULAR",
+        "source": {"kind": "table", "table": "tank_stock_ledger"}, "date_basis": "NONE",
+        "columns": [
+            {"key": "ledger_id", "label": "Ledger ID", "kind": "data", "source": {"type": "column", "column": "id"}, "data_type": "number"},
+            {"key": "ticket_id", "label": "Ticket ID", "kind": "data", "source": {**relation, "column": "id"}, "data_type": "number"},
+            {"key": "total", "label": "Total", "kind": "calculated", "formula": "[ledger_id] + [ticket_id]", "data_type": "number"},
+        ],
+    }
+    response = client.post('/report-builder/run-preview', json={"definition": definition}, headers=headers)
+    assert response.status_code == 200, response.text
+    rows = response.json()["rows"]
+    assert len(rows) == 2
+    assert all(float(r["total"]) == r["ledger_id"] + r["ticket_id"] for r in rows)
+    definition["columns"][1]["source"]["column"] = "password_hash"
+    response = client.post('/report-builder/run-preview', json={"definition": definition}, headers=headers)
+    assert response.status_code == 400
+    definition["columns"][1]["source"].update(column="id", local_column="id")
+    response = client.post('/report-builder/run-preview', json={"definition": definition}, headers=headers)
+    assert response.status_code == 400

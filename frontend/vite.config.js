@@ -8,8 +8,8 @@ import react from '@vitejs/plugin-react'
 // the browser only ever talks to the dev server (works behind any preview
 // hostname). The production/Docker setup is unaffected: it passes
 // VITE_API_BASE_URL explicitly and never sets MOCK_API.
-const useMockApi = process.env.MOCK_API === '1'
-const mockTarget = process.env.MOCK_API_TARGET || 'http://127.0.0.1:8000'
+const useMockApi = process.env.MOCK_API === '1' || Boolean(process.env.API_PROXY_TARGET)
+const mockTarget = process.env.API_PROXY_TARGET || process.env.MOCK_API_TARGET || 'http://127.0.0.1:8000'
 
 export default defineConfig({
   plugins: [react()],

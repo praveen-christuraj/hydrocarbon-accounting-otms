@@ -307,3 +307,17 @@ per-tank explosion, payload/accounting-date runs, grouping, matrix totals,
 conditional comparison measures (including two location/operation rules on one
 quantity source), grants (role/location/user), publish permission, runner
 location scoping, exports, starters and versioning.
+
+### Related table columns
+
+For **Any other saved table**, choose the base table first. The Columns step
+also lists scalar columns from directly related tables under headings such as
+“Operation Transactions (via transaction_id)”. Add these like other fields;
+calculated columns may refer to them by their report keys. Related values are
+looked up using a declared, single-column foreign key to a unique parent key;
+missing or inaccessible related rows produce blank cells. This preserves one
+output row per base row, rather than multiplying totals. Only catalog-approved
+columns are available and related location-bearing rows are restricted to the
+runner's location scope. Arbitrary joins, reverse/one-to-many relationships,
+related JSON paths and the featured ticket/ledger datasets are not supported by
+this extension. Existing designs continue to use their original source.

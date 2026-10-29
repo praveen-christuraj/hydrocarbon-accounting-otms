@@ -390,10 +390,9 @@ def get_validation_database_url():
 
     if production_parsed:
         same_host = validation_parsed.host == production_parsed.host
-        same_port = validation_parsed.port == production_parsed.port
+        same_port = (validation_parsed.port or 5432) == (production_parsed.port or 5432)
         same_database = validation_parsed.database == production_parsed.database
-        same_username = validation_parsed.username == production_parsed.username
-        if same_host and same_port and same_database and same_username:
+        if same_host and same_port and same_database:
             raise HTTPException(
                 status_code=400,
                 detail="Validation database URL cannot point to the production database",
@@ -510,6 +509,8 @@ def run_restore_validation(
         "pg_restore",
         "--clean",
         "--if-exists",
+        "--single-transaction",
+        "--exit-on-error",
         "--no-owner",
         "--no-privileges",
         "--dbname",
@@ -657,6 +658,8 @@ def run_production_restore(
         "pg_restore",
         "--clean",
         "--if-exists",
+        "--single-transaction",
+        "--exit-on-error",
         "--no-owner",
         "--no-privileges",
         "--dbname",

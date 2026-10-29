@@ -41,6 +41,11 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       ENVIRONMENT: ${ENVIRONMENT:-development}
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      BACKUP_DIRECTORY: /app/backups
+      BACKUP_VALIDATION_DATABASE_URL: ${BACKUP_VALIDATION_DATABASE_URL:-}
+
+    volumes:
+      - backup_data:/app/backups
 
 
   frontend:
@@ -56,7 +61,8 @@ services:
       - "5173:5173"
 
     environment:
-      VITE_API_BASE_URL: http://${VM_HOST:-localhost}:8000
+      VITE_API_BASE_URL: /api
+      API_PROXY_TARGET: http://backend:8000
 
     volumes:
       - ./frontend:/app
@@ -65,3 +71,4 @@ services:
 
 volumes:
   postgres_data:
+  backup_data:

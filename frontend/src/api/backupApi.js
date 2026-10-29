@@ -1,5 +1,8 @@
 import { apiDelete, apiGet, apiPost, apiPut, apiDownload } from './apiClient'
 
+// Server-side PostgreSQL operations can take up to an hour.
+const BACKUP_OPERATION_TIMEOUT_MS = 75 * 60 * 1000
+
 const fromSettingsApi = (row) => ({
   id: row.id,
   enabled: Boolean(row.enabled),
@@ -117,7 +120,7 @@ export const getBackupJobs = async (filters = {}) => {
 export const createManualBackup = async (description) => {
   const data = await apiPost('/backup/manual', {
     description,
-  })
+  }, BACKUP_OPERATION_TIMEOUT_MS)
   return fromJobApi(data)
 }
 
@@ -179,7 +182,7 @@ export const cancelBackupRestoreRequest = async (requestId, remarks = '') => {
 }
 
 export const validateBackupRestoreRequest = async (requestId) => {
-  const data = await apiPost(`/backup/restore-requests/${requestId}/validate`, {})
+  const data = await apiPost(`/backup/restore-requests/${requestId}/validate`, {}, BACKUP_OPERATION_TIMEOUT_MS)
   return fromValidationApi(data)
 }
 
@@ -191,7 +194,7 @@ export const executeBackupRestoreRequest = async (
   const data = await apiPost(`/backup/restore-requests/${requestId}/execute`, {
     confirmation_text: confirmationText,
     remarks,
-  })
+  }, 2 * BACKUP_OPERATION_TIMEOUT_MS)
   return fromRestoreRequestApi(data)
 }
 
