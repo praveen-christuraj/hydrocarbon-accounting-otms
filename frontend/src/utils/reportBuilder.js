@@ -60,6 +60,7 @@ export const FILTER_OPERATORS = [
 
 export const AGGREGATES = [
   { value: 'SUM', label: 'Total (sum)' },
+  { value: 'PRODUCT', label: 'Product (multiply)' },
   { value: 'AVG', label: 'Average' },
   { value: 'COUNT', label: 'Count of values' },
   { value: 'MIN', label: 'Smallest' },
@@ -73,6 +74,7 @@ export const BUCKETS = [
   { value: 'DAY', label: 'Day' },
   { value: 'WEEK', label: 'Week (starting Monday)' },
   { value: 'MONTH', label: 'Month' },
+  { value: 'QUARTER', label: 'Quarter' },
   { value: 'YEAR', label: 'Year' },
 ]
 
@@ -128,6 +130,7 @@ export const formatCellValue = (value, column = {}, emptyText = '—') => {
   const format = column.format || {}
   const type = format.number_format || column.data_type
   if (typeof value === 'boolean') return value ? 'Yes' : 'No'
+  if (typeof value === 'string' && /^\d{4}(-Q[1-4]|-\d{2})?$/.test(value) && (type === 'date' || type === 'datetime')) return value
   if (type === 'date') return formatCalendarDate(value, String(value))
   if (type === 'datetime') return formatDateTime(value, String(value))
   if (type === 'number' || (isNumericValue(value) && type !== 'text')) {

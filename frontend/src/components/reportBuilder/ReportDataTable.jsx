@@ -5,7 +5,7 @@ import { formatCellValue, isNumericValue } from '../../utils/reportBuilder'
  * returned it: formatted cells, totals footer, per-cell calculation
  * warnings and a frozen first column for wide matrix reports.
  */
-function ReportDataTable({ result, emptyText = '—', compact = false }) {
+function ReportDataTable({ result, emptyText = '—', compact = false, drillColumn, onDrill }) {
   const columns = result?.columns || []
   const rows = result?.rows || []
   const totals = result?.totals || {}
@@ -53,7 +53,9 @@ function ReportDataTable({ result, emptyText = '—', compact = false }) {
                     title={error ? `Could not be calculated: ${error}` : undefined}
                   >
                     {error ? '⚠ ' : ''}
-                    {formatCellValue(row[column.key], column, emptyText)}
+                    {onDrill && column.key === drillColumn && typeof row[column.key] === 'string' && row[column.key] ? (
+                      <button type="button" className="btn-secondary btn-sm" title="Drill into this date period" onClick={() => onDrill(row[column.key])}>{formatCellValue(row[column.key], column, emptyText)} ↓</button>
+                    ) : formatCellValue(row[column.key], column, emptyText)}
                   </td>
                 )
               })}

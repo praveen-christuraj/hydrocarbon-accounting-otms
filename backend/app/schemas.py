@@ -3221,6 +3221,7 @@ class ReportRunRequest(BaseModel):
     page: int = 1
     page_size: int = 50
     sort: Optional[list[dict[str, Any]]] = None
+    date_drill: Optional[dict[str, Any]] = None
 
 
 class ReportPreviewRequest(ReportRunRequest):

@@ -101,12 +101,14 @@ function CustomReportViewer({ loggedInUser }) {
   const [exporting, setExporting] = useState('')
   const [printResult, setPrintResult] = useState(null)
   const [showAbout, setShowAbout] = useState(false)
+  const [dateDrill, setDateDrill] = useState(null)
   const autoRanFor = useRef(null)
 
   useEffect(() => {
     let cancelled = false
+    // Loading state tracks the asynchronous request.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true)
-  // eslint-disable-next-line react-hooks/set-state-in-effect
     Promise.all([getMyReports(), getReportLookups()])
       .then(([list, look]) => {
         if (cancelled) return
@@ -120,6 +122,7 @@ function CustomReportViewer({ loggedInUser }) {
 
   useEffect(() => {
     if (!reportId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setReport(null)
       setResult(null)
       return
@@ -128,8 +131,8 @@ function CustomReportViewer({ loggedInUser }) {
     setLoading(true)
     setError('')
     setResult(null)
+    setDateDrill(null)
     setPage(1)
-  // eslint-disable-next-line react-hooks/set-state-in-effect
     getMyReport(reportId)
       .then((data) => {
         if (cancelled) return
@@ -158,8 +161,9 @@ function CustomReportViewer({ loggedInUser }) {
     search: search || '',
     page,
     page_size: pageSize,
+    date_drill: dateDrill,
     ...overrides,
-  }), [dateFrom, dateTo, locationCodes, runtimeValues, search, page, pageSize])
+  }), [dateFrom, dateTo, locationCodes, runtimeValues, search, page, pageSize, dateDrill])
 
   const handleRun = useCallback(async (overrides = {}) => {
     if (!report) return null
@@ -191,6 +195,28 @@ function CustomReportViewer({ loggedInUser }) {
   const handlePageChange = (nextPage) => {
     setPage(nextPage)
     handleRun({ page: nextPage })
+  }
+
+  // Date drill-down changes only this run; the saved report remains untouched.
+  const dateGroups = (report?.definition?.group_by || []).map((entry) => {
+    const key = typeof entry === 'string' ? entry : entry.key
+    const column = (report?.definition?.columns || []).find((c) => c.key === key)
+    return column && !column.hidden && ['date', 'datetime'].includes(column.data_type)
+      ? { key, label: column.label || key, bucket: typeof entry === 'string' ? 'VALUE' : (entry.bucket || 'VALUE') } : null
+  }).filter(Boolean)
+  const activeGroup = dateGroups.find((group) => group.key === dateDrill?.key) || dateGroups[0]
+  const activePeriod = dateDrill?.bucket || activeGroup?.bucket
+  const nextPeriod = { YEAR: 'QUARTER', QUARTER: 'MONTH', MONTH: 'DAY', WEEK: 'DAY', DAY: 'DETAIL' }[activePeriod]
+  const changeDrill = async (next) => {
+    const previous = dateDrill
+    setDateDrill(next)
+    setPage(1)
+    const updated = await handleRun({ page: 1, date_drill: next })
+    if (!updated) setDateDrill(previous)
+  }
+  const drillInto = (value) => {
+    if (!activeGroup || !nextPeriod) return
+    changeDrill({ key: activeGroup.key, bucket: nextPeriod, path: [...(dateDrill?.path || []), { bucket: activePeriod, value }] })
   }
 
   const handleExport = async (format) => {
@@ -319,6 +345,7 @@ function CustomReportViewer({ loggedInUser }) {
     dateFrom || dateTo ? `Dates (${printedResult?.meta?.date_basis_label || 'Accounting Date'}): ${dateFrom || '…'} to ${dateTo || '…'}` : null,
     locationCodes.length ? `Locations: ${locationCodes.join(', ')}` : 'Locations: all of mine',
     search ? `Search: “${search}”` : null,
+    dateDrill ? `Date view: ${dateDrill.bucket}${dateDrill.path.length ? ` within ${dateDrill.path.map((p) => p.value).join(' / ')}` : ''}` : null,
   ].filter(Boolean).join(' · ')
 
   return (
@@ -441,9 +468,33 @@ function CustomReportViewer({ loggedInUser }) {
             <div className="no-print" key={warning}><AlertMessage tone="warning" message={warning} /></div>
           ))}
 
+          {dateGroups.length > 0 && result && (
+            <div className="no-print rb-field">
+              <label htmlFor="date-drill-group">Explore grouped dates</label>
+              <div className="rb-choice-row">
+                <select id="date-drill-group" value={activeGroup.key} disabled={running} onChange={(e) => {
+                  const group = dateGroups.find((item) => item.key === e.target.value)
+                  changeDrill({ key: group.key, bucket: ['YEAR', 'QUARTER', 'MONTH', 'WEEK', 'DAY'].includes(group.bucket) ? group.bucket : 'DAY', path: [] })
+                }}>
+                  {dateGroups.map((group) => <option key={group.key} value={group.key}>{group.label}</option>)}
+                </select>
+                <select aria-label="Date view period" value={activePeriod || 'VALUE'} disabled={running} onChange={(e) => changeDrill({ key: activeGroup.key, bucket: e.target.value, path: [] })}>
+                  {activePeriod === 'VALUE' && <option value="VALUE" disabled>Exact value</option>}
+                  <option value="YEAR">Year</option><option value="QUARTER">Quarter</option><option value="MONTH">Month</option><option value="WEEK">Week</option><option value="DAY">Day</option><option value="DETAIL">Source records</option>
+                </select>
+                {dateDrill?.path?.length > 0 && <button type="button" className="btn-secondary btn-sm" disabled={running} onClick={() => {
+                  const path = dateDrill.path.slice(0, -1)
+                  changeDrill({ ...dateDrill, bucket: dateDrill.path[dateDrill.path.length - 1].bucket, path })
+                }}>Drill up</button>}
+                {dateDrill && <button type="button" className="btn-secondary btn-sm" disabled={running} onClick={() => changeDrill(null)}>Reset view</button>}
+              </div>
+              <span className="rb-muted">{dateDrill?.path?.length ? `Within ${dateDrill.path.map((p) => p.value).join(' → ')}. ` : ''}{nextPeriod ? 'Select a date to drill into that period across all groups.' : 'Choose a period to explore dates. Source records show the underlying report columns.'}</span>
+            </div>
+          )}
+
           <div className="rb-screen-table no-print">
             {result ? (
-              <ReportDataTable result={result} emptyText={report.definition?.options?.empty_text || '—'} />
+              <ReportDataTable result={result} emptyText={report.definition?.options?.empty_text || '—'} drillColumn={nextPeriod && !running ? activeGroup?.key : null} onDrill={drillInto} />
             ) : running ? (
               <div className="empty-table">Running the report…</div>
             ) : (

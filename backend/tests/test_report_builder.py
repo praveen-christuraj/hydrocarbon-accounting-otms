@@ -632,3 +632,85 @@ def test_related_table_columns_and_calculation(client, db):
     definition["columns"][1]["source"].update(column="id", local_column="id")
     response = client.post('/report-builder/run-preview', json={"definition": definition}, headers=headers)
     assert response.status_code == 400
+
+
+def _date_group_definition(aggregate="SUM", period="YEAR"):
+    return {
+        "schema_version": 1, "report_type": "TABULAR",
+        "source": {"kind": "tank_stock_ledger"}, "date_basis": "ACCOUNTING_DATE",
+        "columns": [
+            {"key": "date", "label": "Accounting Date", "source": {"type": "column", "column": "accounting_date"}, "data_type": "date"},
+            {"key": "movement", "label": "Movement", "source": {"type": "column", "column": "movement_nsv_bbl"}, "data_type": "number", "aggregate": aggregate, "show_total": True},
+        ],
+        "group_by": [{"key": "date", "bucket": period}],
+        "sort": [{"key": "date", "direction": "asc"}],
+        "options": {"show_totals": True},
+    }
+
+
+def test_date_periods_products_and_group_totals(client, db):
+    from app.services.report_engine import _aggregate, _bucket_value
+
+    assert [_bucket_value(date(2026, m, 1), "QUARTER") for m in (1, 3, 4, 6, 7, 9, 10, 12)] == ["2026-Q1"] * 2 + ["2026-Q2"] * 2 + ["2026-Q3"] * 2 + ["2026-Q4"] * 2
+    assert _bucket_value(date(2025, 12, 31), "QUARTER") == "2025-Q4"
+    assert _aggregate([None, "", 2, 0, 4], "PRODUCT") == 0
+    assert _aggregate([None, ""], "PRODUCT") is None
+    assert _aggregate([Decimal("1e300")] * 3 + [0], "PRODUCT") == 0
+    with pytest.raises(ReportDefinitionError, match="too large"):
+        _aggregate([Decimal("1e300")] * 3, "PRODUCT")
+    _seed(db)
+    headers, _, _ = _make_user(db, client, "date_period_designer", BUILDER_PERMS, all_locations=True)
+    ledgers = db.query(TankStockLedger).order_by(TankStockLedger.id).all()
+    ledgers[0].accounting_date = date(2025, 12, 31)
+    ledgers[0].movement_nsv_bbl = 2
+    ledgers[1].accounting_date = date(2026, 1, 1)
+    ledgers[1].movement_nsv_bbl = 3
+    ledgers[2].accounting_date = date(2026, 2, 1)
+    ledgers[2].movement_nsv_bbl = 4
+    db.commit()
+    expected = {"SUM": (7, 9), "PRODUCT": (12, 24), "MIN": (3, 2), "MAX": (4, 4), "AVG": (3.5, 3), "COUNT": (2, 3)}
+    for aggregate, (second, total) in expected.items():
+        definition = _date_group_definition(aggregate, "YEAR")
+        response = client.post("/report-builder/run-preview", json={"definition": definition}, headers=headers)
+        assert response.status_code == 200, response.text
+        assert response.json()["rows"][1]["movement"] == second
+        assert response.json()["totals"]["movement"] == total
+    definition = _date_group_definition("PRODUCT", "QUARTER")
+    response = client.post("/report-builder/run-preview", json={"definition": definition}, headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["rows"] == [{"date": "2025-Q4", "movement": 2.0}, {"date": "2026-Q1", "movement": 12.0}]
+    matrix = {**definition, "report_type": "MATRIX", "group_by": [], "matrix": {"row_keys": ["movement"], "column_key": "date", "column_bucket": "QUARTER", "value_key": "movement", "aggregate": "PRODUCT"}}
+    response = client.post("/report-builder/run-preview", json={"definition": matrix}, headers=headers)
+    assert response.status_code == 200, response.text
+    assert [c["label"] for c in response.json()["columns"]] == ["Movement", "2025-Q4", "2026-Q1", "Total"]
+    assert response.json()["totals"]["__row_total"] == 24
+
+
+def test_saved_date_drill_and_export_preserve_filters_and_access(client, db):
+    _seed(db)
+    owner_headers, _, _ = _make_user(db, client, "drill_owner", BUILDER_PERMS, all_locations=True)
+    viewer_headers, _, role = _make_user(db, client, "drill_viewer", ["View Custom Report", "Export Custom Report"], locations=["BONNY"])
+    definition = _date_group_definition("SUM", "YEAR")
+    create = client.post("/report-builder/definitions", json={"report_name": "Drill Dates", "definition": definition, "is_published": True, "grants": [{"grant_type": "ROLE", "role_id": role.id, "access_level": "VIEW"}]}, headers=owner_headers)
+    assert create.status_code == 200, create.text
+    report_id = create.json()["id"]
+    base = f"/report-builder/my-reports/{report_id}"
+    path = [{"bucket": "YEAR", "value": "2026"}, {"bucket": "QUARTER", "value": "2026-Q4"}]
+    drill = {"key": "date", "bucket": "MONTH", "path": path}
+    run = client.post(base + "/run", json={"date_drill": drill}, headers=viewer_headers)
+    assert run.status_code == 200, run.text
+    assert run.json()["rows"] == [{"date": "2026-10", "movement": 1980.0}]
+    drill.update(bucket="DAY", path=path + [{"bucket": "MONTH", "value": "2026-10"}])
+    run = client.post(base + "/run", json={"date_drill": drill, "date_from": "2026-10-20"}, headers=viewer_headers)
+    assert run.status_code == 200, run.text
+    assert run.json()["rows"] == [{"date": "2026-10-20", "movement": 990.0}]
+    drill.update(bucket="DETAIL", path=drill["path"] + [{"bucket": "DAY", "value": "2026-10-20"}])
+    run = client.post(base + "/run", json={"date_drill": drill}, headers=viewer_headers)
+    assert run.status_code == 200, run.text
+    assert run.json()["rows"] == [{"date": "2026-10-20", "movement": 990.0}]
+    export = client.post(base + "/export", json={"date_drill": drill, "format": "csv"}, headers=viewer_headers)
+    assert export.status_code == 200
+    assert "2026-10-20" in export.text and "2026-10-19" not in export.text
+    assert client.get(f"/report-builder/definitions/{report_id}", headers=owner_headers).json()["definition"]["group_by"] == [{"key": "date", "bucket": "YEAR"}]
+    invalid = client.post(base + "/run", json={"date_drill": {"key": "movement", "bucket": "DAY", "path": []}}, headers=viewer_headers)
+    assert invalid.status_code == 400

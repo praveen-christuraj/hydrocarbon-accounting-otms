@@ -25,11 +25,12 @@ from __future__ import annotations
 
 import csv
 import io
+import math
 import re
 import time as time_module
 from collections import Counter, defaultdict
 from datetime import date, datetime, time as datetime_time, timedelta
-from decimal import Decimal
+from decimal import Decimal, DecimalException
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
@@ -92,8 +93,8 @@ PATH_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_@*\- ]+$|^\[\]$|^[A-Za-z0-9_\- ]+\[\]
 REPORT_TYPES = {"TABULAR", "MATRIX"}
 SOURCE_KINDS = {"operation_tickets", "tank_stock_ledger", "table"}
 DATE_BASES = {"PAYLOAD_OPERATION_DATE", "ACCOUNTING_DATE", "OPERATION_DATE", "CREATED_AT", "COLUMN", "NONE"}
-AGGREGATES = {"SUM", "AVG", "COUNT", "MIN", "MAX", "FIRST", "LAST"}
-BUCKETS = {"VALUE", "DAY", "WEEK", "MONTH", "YEAR"}
+AGGREGATES = {"SUM", "AVG", "COUNT", "MIN", "MAX", "PRODUCT", "FIRST", "LAST"}
+BUCKETS = {"VALUE", "DAY", "WEEK", "MONTH", "QUARTER", "YEAR"}
 FILTER_OPERATORS = {
     "eq", "ne", "gt", "gte", "lt", "lte", "contains", "not_contains",
     "starts_with", "ends_with", "in", "not_in", "between", "is_blank", "is_not_blank",
@@ -420,8 +421,8 @@ def validate_definition(definition) -> dict:
             errors.append("Choose an existing column for the matrix columns.")
         if matrix.get("value_key") not in keys:
             errors.append("Choose an existing column for the matrix values.")
-        if str(matrix.get("aggregate") or "SUM").upper() not in {"SUM", "AVG", "COUNT", "MIN", "MAX"}:
-            errors.append("Matrix values need a Total / Average / Count / Min / Max summary.")
+        if str(matrix.get("aggregate") or "SUM").upper() not in {"SUM", "AVG", "COUNT", "MIN", "MAX", "PRODUCT"}:
+            errors.append("Matrix values need a Total / Average / Count / Min / Max / Product summary.")
         if str(matrix.get("column_bucket") or "VALUE").upper() not in BUCKETS:
             errors.append("Matrix column period is not valid.")
 
@@ -1041,6 +1042,8 @@ def _bucket_value(value, bucket: str):
         return (parsed - timedelta(days=parsed.weekday())).isoformat()
     if bucket == "MONTH":
         return f"{parsed.year:04d}-{parsed.month:02d}"
+    if bucket == "QUARTER":
+        return f"{parsed.year:04d}-Q{(parsed.month - 1) // 3 + 1}"
     if bucket == "YEAR":
         return f"{parsed.year:04d}"
     return value
@@ -1059,6 +1062,20 @@ def _aggregate(values: list, aggregate: str):
         return None
     if aggregate == "SUM":
         return sum(numbers, Decimal(0))
+    if aggregate == "PRODUCT":
+        # Test zero first so a large partial product cannot overflow when
+        # the mathematical result would ultimately be zero.
+        if any(number == 0 for number in numbers):
+            return Decimal(0)
+        try:
+            result = Decimal(1)
+            for number in numbers:
+                result *= number
+            if not math.isfinite(float(result)):
+                raise ReportDefinitionError("Product is too large to display. Narrow the date range or filters.")
+        except DecimalException as exc:
+            raise ReportDefinitionError("Product is too large to display. Narrow the date range or filters.") from exc
+        return result
     if aggregate == "AVG":
         return sum(numbers, Decimal(0)) / Decimal(len(numbers))
     if aggregate == "MIN":
@@ -1077,6 +1094,7 @@ def _apply_grouping(rows, definition):
          str((entry.get("bucket") if isinstance(entry, dict) else None) or "VALUE").upper())
         for entry in group_by
     ]
+    dimension_keys = {dim for dim, _bucket in dimensions}
     groups: dict[tuple, list[dict]] = {}
     order: list[tuple] = []
     for row in rows:
@@ -1097,6 +1115,7 @@ def _apply_grouping(rows, definition):
             if col_key in out:
                 continue
             out[col_key] = _aggregate([member.get(col_key) for member in members], column.get("aggregate") or "FIRST")
+        out["__aggregate_values"] = {column["key"]: [member.get(column["key"]) for member in members] for column in (definition.get("columns") or []) if column["key"] not in dimension_keys}
         out["__group_count"] = len(members)
         grouped.append(out)
     return grouped
@@ -1184,12 +1203,12 @@ def _matrix_transform(rows, definition, warnings):
     if show_row_totals:
         out_columns.append({
             "key": "__row_total", "label": "Total", "kind": "data", "data_type": "number",
-            "format": value_column.get("format") or {}, "show_total": True, "is_matrix_total": True,
+            "format": value_column.get("format") or {}, "aggregate": aggregate, "show_total": True, "is_matrix_total": True,
         })
 
     out_rows = []
     for row_key in row_order:
-        out = {}
+        out = {"__aggregate_values": {}}
         for (dim, _bucket), value in zip(row_dims, row_key):
             out[dim] = value
         all_values: list = []
@@ -1197,8 +1216,10 @@ def _matrix_transform(rows, definition, warnings):
             values = list(cells[row_key].get(label, []))
             all_values.extend(values)
             out[mkey] = _aggregate(values, aggregate) if values else None
+            out["__aggregate_values"][mkey] = values
         if show_row_totals:
             out["__row_total"] = _aggregate(all_values, aggregate) if all_values else None
+            out["__aggregate_values"]["__row_total"] = all_values
         out_rows.append(out)
     return out_rows, out_columns
 
@@ -1262,6 +1283,28 @@ def _output_columns(definition, matrix_columns=None):
     return out
 
 
+def _validate_date_drill(definition: dict, drill: dict):
+    """Only regroup a visible date dimension already authorised by the definition."""
+    if not isinstance(drill, dict) or definition.get("report_type") != "TABULAR":
+        raise ReportDefinitionError("Date drill-down is available for grouped tabular reports only.")
+    key = drill.get("key")
+    columns = {c.get("key"): c for c in definition.get("columns", [])}
+    if not isinstance(key, str):
+        raise ReportDefinitionError("Invalid date drill-down column.")
+    column = columns.get(key) or {}
+    group_keys = [g.get("key") if isinstance(g, dict) else g for g in definition.get("group_by", [])]
+    if key not in group_keys or column.get("hidden") or column.get("data_type") not in ("date", "datetime"):
+        raise ReportDefinitionError("Date drill-down requires a visible grouped date column.")
+    if not isinstance(drill.get("bucket"), str) or drill["bucket"] not in {"DAY", "WEEK", "MONTH", "QUARTER", "YEAR", "DETAIL"}:
+        raise ReportDefinitionError("Invalid date drill-down period.")
+    path = drill.get("path", [])
+    if not isinstance(path, list) or len(path) > 5:
+        raise ReportDefinitionError("Invalid date drill-down path.")
+    for parent in path:
+        if not isinstance(parent, dict) or not isinstance(parent.get("bucket"), str) or parent["bucket"] not in {"DAY", "WEEK", "MONTH", "QUARTER", "YEAR"} or not isinstance(parent.get("value"), str) or len(parent["value"]) > 10:
+            raise ReportDefinitionError("Invalid date drill-down path.")
+
+
 def run_report(db: Session, user: User, definition_in: dict, params_in: dict | None = None) -> dict:
     """Execute a definition for ``user`` and return the result payload."""
     started = time_module.monotonic()
@@ -1270,6 +1313,9 @@ def run_report(db: Session, user: User, definition_in: dict, params_in: dict | N
     params = dict(params_in or {})
     params.setdefault("runtime_values", {})
     _check_required_runtime(definition, params)
+    drill = params.get("date_drill")
+    if drill:
+        _validate_date_drill(definition, drill)
     warnings: list[str] = []
     plan = _extraction_plan(definition)
     kind = (definition.get("source") or {}).get("kind")
@@ -1312,6 +1358,17 @@ def run_report(db: Session, user: User, definition_in: dict, params_in: dict | N
 
     _apply_calculations(rows, definition, warnings, deadline)
     rows = [row for row in rows if _row_passes_filters(row, definition, params)]
+    if drill:
+        for parent in drill.get("path", []):
+            rows = [row for row in rows if _bucket_value(row.get(drill["key"]), parent["bucket"]) == parent["value"]]
+        if drill["bucket"] == "DETAIL":
+            definition["group_by"] = []
+        else:
+            definition["group_by"] = [
+                {"key": entry.get("key") if isinstance(entry, dict) else entry,
+                 "bucket": drill["bucket"] if (entry.get("key") if isinstance(entry, dict) else entry) == drill["key"] else (entry.get("bucket", "VALUE") if isinstance(entry, dict) else "VALUE")}
+                for entry in definition["group_by"]
+            ]
     filtered_count = len(rows)
 
     matrix_columns = None
@@ -1350,7 +1407,10 @@ def run_report(db: Session, user: User, definition_in: dict, params_in: dict | N
             aggregate = str(column.get("aggregate") or "SUM").upper()
             if aggregate in ("FIRST", "LAST"):
                 continue
-            totals[column["key"]] = _serialise(_aggregate([row.get(column["key"]) for row in rows], aggregate), serialise_warnings)
+            values = []
+            for row in rows:
+                values.extend(row.get("__aggregate_values", {}).get(column["key"], [row.get(column["key"])]))
+            totals[column["key"]] = _serialise(_aggregate(values, aggregate), serialise_warnings)
 
     total_rows = len(rows)
     for_export = bool(params.get("for_export"))
