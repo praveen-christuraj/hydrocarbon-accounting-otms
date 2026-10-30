@@ -1057,7 +1057,7 @@ function ReportBuilder({ loggedInUser }) {
                       const firstText = (definition.columns || []).find((c) => c.data_type !== 'number') || definition.columns?.[0]
                       patchDefinition({ group_by: firstText ? [{ key: firstText.key, bucket: 'VALUE' }] : [] })
                     }} />
-                    <strong>Grouped summary</strong><span>Combine rows with the same values and total/average the numbers.</span>
+                    <strong>Grouped summary</strong><span>Combine rows by date period or other values and summarise the numbers.</span>
                   </label>
                 </div>
               </div>
@@ -1143,7 +1143,7 @@ function ReportBuilder({ loggedInUser }) {
                 <div className="rb-field">
                   <label>Combine values as</label>
                   <select value={definition.matrix?.aggregate || 'SUM'} onChange={(e) => patchDefinition({ matrix: { ...definition.matrix, aggregate: e.target.value } })}>
-                    {AGGREGATES.filter((a) => ['SUM', 'AVG', 'COUNT', 'MIN', 'MAX'].includes(a.value)).map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
+                    {AGGREGATES.filter((a) => ['SUM', 'AVG', 'COUNT', 'MIN', 'MAX', 'PRODUCT'].includes(a.value)).map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
                   </select>
                 </div>
                 <label className="rb-check"><input type="checkbox" checked={definition.matrix?.show_row_totals !== false} onChange={(e) => patchDefinition({ matrix: { ...definition.matrix, show_row_totals: e.target.checked } })} /> Total at the end of each row</label>

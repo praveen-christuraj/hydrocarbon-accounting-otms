@@ -53,9 +53,9 @@ location scope. Only **published + Active** reports appear in Reporting.
    formula. **Split saved JSON into columns** opens any payload / JSON column
    and lists every value actually saved inside it (see §5).
 3. **Rows & Layout** — detail rows or a **grouped summary**
-   (Total / Average / Count / Min / Max per group, with Day/Week/Month/Year
+   (Total / Product / Average / Count / Min / Max per group, with Day/Week/Month/Quarter/Year
    date grouping); for matrix reports choose rows (up to 3), columns
-   (optionally one per Day/Week/Month/Year) and the value. Add **fixed
+   (optionally one per Day/Week/Month/Quarter/Year) and the value. Add **fixed
    conditions** (always applied) and sorting.
 4. **Filters for Users** — questions asked at run time: Location, Operation
    Type, Status, Asset, or a filter (text / number / date / choice list) on
@@ -67,6 +67,40 @@ location scope. Only **published + Active** reports appear in Reporting.
 Five one-click **starter reports** (Ticket Register, Tank Gauging Quantities
 with payload split, Daily Stock Movements, Tank × Operation Category matrix,
 Tank × Month matrix) can be copied and adjusted.
+
+### Date summaries and drill-down
+
+To prepare a monthly, quarterly or yearly report directly from daily data:
+
+1. Add the date **column** you want to group by and the numeric measures in
+   Step 2. The grouped column can differ from the date basis used by the
+   From–To filter, so check both choices.
+2. In Step 3 choose **Grouped summary**, tick the date column and select Month,
+   Quarter or Year. Add any other grouping dimensions (e.g. product). In each
+   non-grouping column's settings choose its summary: Total (sum), Product
+   (multiply), Smallest (min), Largest (max), Average, Count, First or Last.
+   Auto-fill summaries is available for a quick start. Matrix reports also
+   support these date periods and the numeric summaries, including Product.
+3. Preview and save/publish as usual. Quarters are calendar quarters (Jan–Mar,
+   Apr–Jun, Jul–Sep, Oct–Dec), labelled with their year; weeks start Monday.
+   Numeric summaries ignore blanks and non-numeric values. Product of no
+   numeric values is blank, and any zero produces zero. If a product is too
+   large to display, narrow the date range or filters. Totals for grouped
+   numeric measures use the original matching values, not averages or counts
+   of already-aggregated rows.
+
+In a published **grouped tabular report** with a visible date grouping, the
+viewer can select a date period or click a date to drill from year → quarter →
+month → day → source records (week → day is also available). Drill up and
+Reset view return to broader results. Clicking a date narrows to that period
+**across all other groups**, rather than selecting the other dimensions of the
+clicked row; use report filters to narrow those dimensions. Source records
+show the report's visible columns with the configured calculations and
+comparison rules applied. Matrix and ungrouped reports do not offer this
+interactive drill control; matrix date grouping can be configured in the
+builder. The drill view is temporary, included in export and print, and never
+changes the saved definition. Existing date ranges, fixed/runtime filters and
+location access restrictions remain in force at every level.
 
 ## 3. Data sources — built around the operation payloads
 

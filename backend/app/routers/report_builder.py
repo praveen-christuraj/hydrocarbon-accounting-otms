@@ -286,6 +286,7 @@ def _run_params(payload: ReportRunRequest, *, for_export: bool = False) -> dict:
         "page": payload.page or 1,
         "page_size": payload.page_size or 50,
         "sort": payload.sort,
+        "date_drill": payload.date_drill,
         "for_export": for_export,
     }
 
