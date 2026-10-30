@@ -3249,3 +3249,165 @@ class JsonPathsRequest(BaseModel):
 class ReportFromStarterRequest(BaseModel):
     starter_id: str
     report_name: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Government Data — Book Stock Management
+# ---------------------------------------------------------------------------
+
+class BookStockProductBase(BaseModel):
+    product_code: str = Field(min_length=1, max_length=50)
+    product_name: str = Field(min_length=1, max_length=150)
+    unit: str = Field(default="BBL", max_length=30)
+    description: Optional[str] = None
+    display_order: int = 0
+    status: str = "Active"
+
+
+class BookStockProductCreate(BookStockProductBase):
+    pass
+
+
+class BookStockProductUpdate(BookStockProductBase):
+    pass
+
+
+class BookStockProductResponse(BookStockProductBase):
+    id: int
+    created_by: Optional[str] = None
+    updated_by: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BookStockFieldBase(BaseModel):
+    field_code: str = Field(min_length=1, max_length=50)
+    field_name: str = Field(min_length=1, max_length=200)
+    entity_code: str = Field(min_length=1, max_length=50)
+    block_code: str = Field(min_length=1, max_length=50)
+    product_codes: list[str] = Field(default_factory=list)
+    description: Optional[str] = None
+    status: str = "Active"
+
+
+class BookStockFieldCreate(BookStockFieldBase):
+    pass
+
+
+class BookStockFieldUpdate(BookStockFieldBase):
+    pass
+
+
+class BookStockFieldResponse(BookStockFieldBase):
+    id: int
+    entity_name: Optional[str] = None
+    block_name: Optional[str] = None
+    product_names: list[str] = Field(default_factory=list)
+    created_by: Optional[str] = None
+    updated_by: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BookStockFieldProductionInput(BaseModel):
+    field_code: str = Field(min_length=1, max_length=50)
+    production_qty: float = 0
+
+
+class BookStockFieldProductionResponse(BaseModel):
+    id: int
+    field_id: Optional[int] = None
+    field_code: str
+    field_name: str
+    product_code: str
+    production_qty: float
+
+
+class BookStockDailyEntryCreate(BaseModel):
+    entry_date: date
+    entity_code: str = Field(min_length=1, max_length=50)
+    block_code: str = Field(min_length=1, max_length=50)
+    product_code: str = Field(min_length=1, max_length=50)
+    opening_stock: Optional[float] = None
+    dispatch: float = 0
+    adjustment: float = 0
+    carry_opening: bool = True
+    remarks: Optional[str] = None
+    field_productions: list[BookStockFieldProductionInput] = Field(default_factory=list)
+
+
+class BookStockDailyEntryUpdate(BaseModel):
+    entry_date: Optional[date] = None
+    entity_code: Optional[str] = None
+    block_code: Optional[str] = None
+    product_code: Optional[str] = None
+    opening_stock: Optional[float] = None
+    dispatch: Optional[float] = None
+    adjustment: Optional[float] = None
+    carry_opening: Optional[bool] = None
+    remarks: Optional[str] = None
+    field_productions: Optional[list[BookStockFieldProductionInput]] = None
+
+
+class BookStockDailyEntryResponse(BaseModel):
+    id: int
+    entry_date: date
+    entity_code: str
+    block_code: str
+    product_code: str
+    entity_name: Optional[str] = None
+    block_name: Optional[str] = None
+    product_name: Optional[str] = None
+    unit: Optional[str] = None
+    opening_stock: float
+    production: float
+    dispatch: float
+    adjustment: float
+    closing_stock: float
+    opening_carried: str = "No"
+    remarks: Optional[str] = None
+    field_productions: list[BookStockFieldProductionResponse] = Field(default_factory=list)
+    created_by: Optional[str] = None
+    updated_by: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BookStockConfigItem(BaseModel):
+    config_key: str
+    config_value: Optional[str] = None
+    description: Optional[str] = None
+    status: str = "Active"
+
+
+class BookStockSettingsUpdate(BaseModel):
+    settings: list[BookStockConfigItem]
+
+
+class BookStockBulkUploadRequest(BaseModel):
+    items: list[BookStockDailyEntryCreate]
+
+
+class BookStockFieldBulkUploadRequest(BaseModel):
+    items: list[BookStockFieldCreate]
+
+
+class BookStockFieldProductionBulkRow(BaseModel):
+    """Bulk-upload row for a daily stock entry.
+
+    ``field_productions`` accepts either structured rows or the compact text
+    form ``FIELD_CODE=QTY; FIELD_CODE=QTY`` used in the upload template.
+    """
+
+    entry_date: date
+    entity_code: str
+    block_code: str
+    product_code: str
+    opening_stock: Optional[float] = None
+    dispatch: float = 0
+    adjustment: float = 0
+    remarks: Optional[str] = None
+    field_productions: list[BookStockFieldProductionInput] | str | None = None

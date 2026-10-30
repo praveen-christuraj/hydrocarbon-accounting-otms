@@ -32,13 +32,14 @@ from collections import Counter, defaultdict
 from datetime import date, datetime, time as datetime_time, timedelta
 from decimal import Decimal, DecimalException
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import false, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.database import Base
 from app.dependencies.permissions import get_user_location_codes, normalize_location_code
 from app.models import (
     Asset,
+    ExportLocationEntity,
     Location,
     OperationTemplate,
     OperationTransaction,
@@ -75,6 +76,16 @@ from app.services.report_formula import (
     evaluate as evaluate_formula,
     _compare as compare_values,
 )
+
+# Government Data / Book Stock tables carry entity_code instead of a single
+# location_code. The generic table source applies the Export Operations
+# location-to-entity mapping so a location-scoped report never leaks another
+# entity's stock.
+BOOK_STOCK_SCOPED_TABLES = {
+    "book_stock_daily_entries",
+    "book_stock_field_productions",
+    "book_stock_fields",
+}
 
 SCAN_CAP = 50_000
 EXPLODED_CAP = 100_000
@@ -709,6 +720,23 @@ def _load_ticket_rows(db, user, definition, params, plan, warnings):
     return contexts
 
 
+def _book_stock_entity_codes(db, scope) -> list[str]:
+    """Entity codes linked to the given location scope (Export Operations)."""
+    if scope is None:
+        return []
+    rows = (
+        db.query(ExportLocationEntity.entity_code)
+        .filter(
+            func.lower(func.trim(ExportLocationEntity.location_code)).in_(
+                [normalize_location_code(code) for code in scope if normalize_location_code(code)]
+            ),
+            func.lower(func.trim(ExportLocationEntity.status)) == "active",
+        )
+        .all()
+    )
+    return [str(code).strip() for (code,) in rows if str(code or "").strip()]
+
+
 def _load_table_rows(db, user, definition, params, plan, warnings, table_name):
     plain_needed, virtuals_needed, _, _ = _needed_from_plan(plan)
     table = Base.metadata.tables[table_name]
@@ -727,10 +755,16 @@ def _load_table_rows(db, user, definition, params, plan, warnings, table_name):
     for name in location_columns:
         if name not in select_names:
             select_names.append(name)
-    if not select_names:
-        select_names = list(columns_meta)[:1]
 
     scope, effective_locations = _requested_locations(db, user, params, definition)
+    book_stock_scope = table_name in BOOK_STOCK_SCOPED_TABLES and scope is not None
+    allowed_entities: list[str] = []
+    if book_stock_scope and "entity_code" in columns_meta:
+        allowed_entities = _book_stock_entity_codes(db, scope)
+        if "entity_code" not in select_names:
+            select_names.append("entity_code")
+    if not select_names:
+        select_names = list(columns_meta)[:1]
     related_specs = [item for item in plan if item["spec"].get("type") == "related_column"]
     related_selects = []
     for index, item in enumerate(related_specs):
@@ -745,6 +779,11 @@ def _load_table_rows(db, user, definition, params, plan, warnings, table_name):
     if location_columns and (effective_locations or scope is not None):
         upper_codes = [code.upper() for code in effective_locations]
         stmt = stmt.where(or_(*[func.upper(table.c[name]).in_(upper_codes) for name in location_columns]))
+    if book_stock_scope and "entity_code" in columns_meta:
+        if not allowed_entities:
+            stmt = stmt.where(false())
+        else:
+            stmt = stmt.where(func.upper(table.c["entity_code"]).in_([item.upper() for item in allowed_entities]))
     runtime_status = [str(v) for v in _as_list(_builtin_runtime(definition, params, "status"))]
     if runtime_status and "status" in columns_meta:
         stmt = stmt.where(table.c["status"].in_(runtime_status))
@@ -773,6 +812,11 @@ def _load_table_rows(db, user, definition, params, plan, warnings, table_name):
         if scope is not None and location_columns:
             codes = {normalize_location_code(plain.get(name)) for name in location_columns if plain.get(name)}
             if codes and not (codes & scope):
+                continue
+        if book_stock_scope:
+            if normalize_location_code(plain.get("entity_code")) not in {
+                normalize_location_code(item) for item in allowed_entities
+            }:
                 continue
         virtuals = {
             "tank_asset_name_lookup": plain.get("tank_asset_name") or assets_by_code.get(plain.get("tank_asset_code")),
@@ -1665,7 +1709,33 @@ def starter_templates() -> list[dict]:
         "sort": [], "options": {"show_totals": True, "page_size": 100},
     }
 
+    book_stock_daily = {
+        "schema_version": 1, "report_type": "TABULAR",
+        "source": {"kind": "table", "table": "book_stock_daily_entries"},
+        "date_basis": "COLUMN", "date_column": "entry_date",
+        "columns": [
+            _col("entry_date", "Stock Date", {"type": "column", "column": "entry_date"}, data_type="date"),
+            _col("entity", "Entity", {"type": "column", "column": "entity_code"}),
+            _col("block", "Block", {"type": "column", "column": "block_code"}),
+            _col("product", "Product", {"type": "column", "column": "product_code"}),
+            _col("opening", "Opening Stock", {"type": "column", "column": "opening_stock"}, data_type="number", format={"decimals": 3}, aggregate="SUM", show_total=True),
+            _col("production", "Production", {"type": "column", "column": "production"}, data_type="number", format={"decimals": 3}, aggregate="SUM", show_total=True),
+            _col("dispatch", "Dispatch", {"type": "column", "column": "dispatch"}, data_type="number", format={"decimals": 3}, aggregate="SUM", show_total=True),
+            _col("adjustment", "Adjustment", {"type": "column", "column": "adjustment"}, data_type="number", format={"decimals": 3}, aggregate="SUM", show_total=True),
+            _col("closing", "Closing Stock", {"type": "column", "column": "closing_stock"}, data_type="number", format={"decimals": 3}, aggregate="SUM", show_total=True),
+            _calc("net_movement", "Net Movement (Production − Dispatch + Adjustment)", "[production] - [dispatch] + [adjustment]", aggregate="SUM", show_total=True),
+        ],
+        "filters": [], "filter_logic": "AND",
+        "runtime_filters": [
+            {"key": "product", "label": "Product", "type": "text"},
+        ],
+        "group_by": [{"key": "entry_date", "bucket": "DAY"}, {"key": "entity"}, {"key": "block"}, {"key": "product"}],
+        "sort": [{"key": "entry_date", "direction": "asc"}, {"key": "entity", "direction": "asc"}],
+        "options": {"show_totals": True, "page_size": 100},
+    }
+
     return [
+        {"id": "book-stock-daily", "name": "Book Stock — Daily Stock by Entity, Block & Product", "description": "Government Data Book Stock Management: opening, field production, dispatch, signed adjustment and closing stock per day, entity, block and product. Products stay separate.", "report_type": "TABULAR", "definition": book_stock_daily},
         {"id": "ticket-register", "name": "Operation Ticket Register", "description": "All approved tickets with payload operation dates and accounting dates. Filter by location, operation type and status.", "report_type": "TABULAR", "definition": ticket_register},
         {"id": "gauging-quantities", "name": "Tank Gauging Quantities (payload split)", "description": "GSV / NSV / LT / MT pulled out of the saved Tank Gauging payload JSON, with calculated GSV−NSV and NSV % of GSV columns.", "report_type": "TABULAR", "definition": gauging_quantities},
         {"id": "daily-movements", "name": "Daily Stock Movements by Tank & Operation", "description": "Grouped Tank Stock Ledger movements per accounting day, tank and tank operation, with totals.", "report_type": "TABULAR", "definition": daily_movements},

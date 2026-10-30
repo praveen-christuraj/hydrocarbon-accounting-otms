@@ -435,6 +435,53 @@ PERMISSION_CATALOG = [
         ],
     },
     {
+        "category": "Government Data",
+        "modules": [
+            {
+                "module_name": "Book Stock Dashboard",
+                "permissions": [
+                    _perm("View Book Stock Dashboard", VIEW, "Can view the Book Stock Management dashboard and visualisations"),
+                ],
+            },
+            {
+                "module_name": "Book Stock Daily Entries",
+                "permissions": [
+                    _perm("View Book Stock Entry", VIEW, "Can view daily book stock entries for entities and blocks"),
+                    _perm("Create Book Stock Entry", CREATE, "Can create daily book stock entries and their field production lines"),
+                    _perm("Edit Book Stock Entry", EDIT, "Can edit daily book stock entries and opening / dispatch / adjustment values"),
+                    _perm("Delete Book Stock Entry", DELETE, "Can delete daily book stock entries"),
+                ],
+            },
+            {
+                "module_name": "Book Stock Reports",
+                "permissions": [
+                    _perm("View Book Stock Report", VIEW, "Can view and print the block and entity book stock summaries"),
+                ],
+            },
+            {
+                "module_name": "Book Stock Fields",
+                "permissions": _crud("Book Stock Field", "book stock producing fields inside export blocks"),
+            },
+            {
+                "module_name": "Book Stock Products",
+                "permissions": _crud("Book Stock Product", "the two Book Stock products"),
+            },
+            {
+                "module_name": "Book Stock Settings",
+                "permissions": [
+                    _perm("View Book Stock Settings", VIEW, "Can view the general Book Stock Management configuration"),
+                    _perm("Edit Book Stock Settings", EDIT, "Can change the general Book Stock Management configuration"),
+                ],
+            },
+            {
+                "module_name": "Book Stock Export Operations",
+                "permissions": [
+                    _perm("View Book Stock Export Operations", VIEW, "Can view the Export Operations configuration used by Book Stock Management"),
+                ],
+            },
+        ],
+    },
+    {
         "category": "Reporting",
         "modules": [
             {
@@ -614,6 +661,23 @@ _EXPORT_MODULES = [
 # any of them so data-entry users can fill dropdowns without being granted the
 # configuration screens.
 EXPORT_VIEW_PERMISSIONS = _names_by_action(_EXPORT_MODULES, {VIEW})
+
+
+_BOOK_STOCK_MODULES = [
+    "Book Stock Dashboard",
+    "Book Stock Daily Entries",
+    "Book Stock Reports",
+    "Book Stock Fields",
+    "Book Stock Products",
+    "Book Stock Settings",
+    "Book Stock Export Operations",
+]
+
+# Every "View" permission of the Government Data / Book Stock Management
+# module. Shared reference endpoints (entities, blocks, products, fields)
+# accept any of them, so a data-entry operator does not need the configuration
+# screens' permissions just to fill a dropdown.
+BOOK_STOCK_VIEW_PERMISSIONS = _names_by_action(_BOOK_STOCK_MODULES, {VIEW})
 
 
 # Legacy permission -> catalog permissions that replace it. On the first

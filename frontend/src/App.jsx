@@ -78,6 +78,14 @@ import {
   ExportConsignees,
   ExportSettings,
 } from './pages/exportOperations'
+import BookStockDashboard from './pages/bookStock/BookStockDashboard'
+import BookStockDailyEntry from './pages/bookStock/BookStockDailyEntry'
+import BookStockBlockSummary from './pages/bookStock/BookStockBlockSummary'
+import BookStockEntitySummary from './pages/bookStock/BookStockEntitySummary'
+import BookStockProducts from './pages/bookStock/BookStockProducts'
+import BookStockFields from './pages/bookStock/BookStockFields'
+import BookStockExportOperations from './pages/bookStock/BookStockExportOperations'
+import BookStockSettings from './pages/bookStock/BookStockSettings'
 
 import { getCurrentUser, logoutUser } from './api/authApi'
 import AppShell from './components/layout/AppShell'
@@ -115,6 +123,19 @@ const EXPORT_OPERATION_ROUTES = [
   { path: '/export-operations/blocks', permission: 'View Export Block', label: 'Export Blocks', Component: ExportBlocks },
   { path: '/export-operations/consignees', permission: 'View Export Consignee', label: 'Export Consignees', Component: ExportConsignees },
   { path: '/export-operations/settings', permission: 'View Export Settings', label: 'Export Settings', Component: ExportSettings },
+]
+
+// Government Data — Book Stock Management. One route (and one View permission)
+// per screen; every action inside each screen is separately permission-gated.
+const BOOK_STOCK_ROUTES = [
+  { path: '/book-stock/dashboard', permission: 'View Book Stock Dashboard', label: 'the Book Stock Dashboard', Component: BookStockDashboard },
+  { path: '/book-stock/daily-entries', permission: 'View Book Stock Entry', label: 'Book Stock Daily Entries', Component: BookStockDailyEntry },
+  { path: '/book-stock/block-summary', permission: 'View Book Stock Report', label: 'the Block Stock Summary', Component: BookStockBlockSummary },
+  { path: '/book-stock/entity-summary', permission: 'View Book Stock Report', label: 'the Entity Stock Summary', Component: BookStockEntitySummary },
+  { path: '/book-stock/products', permission: 'View Book Stock Product', label: 'Book Stock Products', Component: BookStockProducts },
+  { path: '/book-stock/fields', permission: 'View Book Stock Field', label: 'Book Stock Fields', Component: BookStockFields },
+  { path: '/book-stock/export-operations', permission: 'View Book Stock Export Operations', label: 'Book Stock Export Operations', Component: BookStockExportOperations },
+  { path: '/book-stock/settings', permission: 'View Book Stock Settings', label: 'Book Stock Settings', Component: BookStockSettings },
 ]
 
 function PageHelp() {
@@ -740,6 +761,21 @@ function AppContent({
               </PermissionGuard>
             }
           />
+          {BOOK_STOCK_ROUTES.map(({ path, permission, label, Component }) => (
+            <Route
+              key={path}
+              path={path}
+              element={
+                <PermissionGuard
+                  loggedInUser={loggedInUser}
+                  requiredPermission={permission}
+                  fallbackMessage={`You do not have permission to view ${label}.`}
+                >
+                  <Component loggedInUser={loggedInUser} />
+                </PermissionGuard>
+              }
+            />
+          ))}
           {EXPORT_OPERATION_ROUTES.map(({ path, permission, label, Component }) => (
             <Route
               key={path}

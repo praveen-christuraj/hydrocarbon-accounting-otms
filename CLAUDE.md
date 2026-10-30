@@ -32,9 +32,9 @@
 
 ### Permission model (read before gating any control)
 
-* **Single source of truth:** `backend/app/utils/default_permissions.py` – 194 permissions in
-  8 categories that mirror the top menu: User Management, Master Data Management, Configurations,
-  Operations, Operation Tracking, Export Operations, Reporting, Administration.
+* **Single source of truth:** `backend/app/utils/default_permissions.py` – 226 permissions in
+  9 categories that mirror the top menu: User Management, Master Data Management, Configurations,
+  Operations, Operation Tracking, Export Operations, Government Data, Reporting, Administration.
 * Per module the catalog defines **View / Create / Edit / Delete** plus named workflow actions
   (`Submit Operation Transaction`, `Close Movement Mapping`, `Approve Backup Restore`, …).
   `GET /permissions/catalog` serves the same structure to the UI.
@@ -109,6 +109,50 @@ Rules:
 - If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+
+## Recent Changes (2026-10-30) - Government Data: Book Stock Management
+
+**Owner request:** a self-contained Book Stock module under the **Government Data**
+streamline (Corporate Data stays separate). Entity → Block → Field uses Export
+Operations' entity / block / location configuration as its only external input;
+the module duplicates no other module's business logic and owns its own entry,
+reports and visualisations.
+
+- **Backend:** `routers/book_stock.py` (products, producing fields, settings,
+  `/reference-data`, `/export-operations`), `routers/book_stock_entries.py`
+  (daily entries + bulk upload + block / entity summaries + dashboard),
+  `routers/book_stock_common.py` (scope, validation, opening carry, roll-forward),
+  `services/book_stock_calculations.py` (pure arithmetic). Six tables:
+  `book_stock_products`, `book_stock_fields`, `book_stock_field_products`,
+  `book_stock_daily_entries`, `book_stock_field_productions`, `book_stock_configs`.
+- **Rules:** exactly **two active products**, never mixed in any calculation;
+  one daily entry per **date + entity + block + product**; production is entered
+  per producing field and summed; dispatch is at block level; adjustments are
+  signed. `Closing = Opening + Production − Dispatch + Adjustment`.
+  Opening auto-carries from the previous day's closing but is always editable.
+  No approval workflow and no editing window: Edit/Delete are always available
+  to holders of the action permission and every action is audited.
+- **Roll-forward:** editing/deleting an earlier date recalculates later
+  **auto-carried** openings and audits each changed row as
+  `Recalculate Book Stock Entry`. Manually entered openings are never
+  overwritten.
+- **Permissions (Government Data):** `View/Create/Edit/Delete Book Stock Field`,
+  `… Book Stock Product`, `View/Create/Edit/Delete Book Stock Entry`,
+  `View Book Stock Dashboard`, `View Book Stock Report`,
+  `View/Edit Book Stock Settings`, `View Book Stock Export Operations`.
+- **Frontend:** `pages/bookStock/*` — Dashboard, Daily Entry, Block Summary,
+  Entity Summary, Products, Fields, Export Operations, Settings; `bookStockApi.js`,
+  `bookStockUtils.js`, shared filter/KPI/bar components. Nav group
+  **Government Data** and routes `/book-stock/*`; all list pages use
+  `DataTableToolbar` (bulk xlsx/csv upload, xlsx/csv/pdf export) and every print
+  uses the Company Report Profile dialog.
+- **Report Builder:** six new datasets in the **Government Data — Book Stock**
+  table group plus the `book-stock-daily` starter template; reports are scoped by
+  the runner's entity scope. See `REPORT_BUILDER.md` appendix.
+- **Tests:** `backend/tests/test_book_stock.py` (11 tests: arithmetic, product
+  separation, auto-carry, roll-forward, RBAC/entity scope, bulk upload, reference
+  data, Report Builder). `npm run smoke` renders all module routes and opens the
+  entry dialog. Full backend suite: 290 passed.
 
 ## Recent Changes (2026-10-26) - Operation Entry Bulk Upload + Register Bulk Actions
 

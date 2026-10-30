@@ -78,6 +78,7 @@ def test_catalog_is_module_wise_with_crud_actions():
         "Operations",
         "Operation Tracking",
         "Export Operations",
+        "Government Data",
         "Reporting",
         "Administration",
     ]

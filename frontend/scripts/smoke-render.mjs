@@ -110,6 +110,12 @@ const permissionNames = [
   'View Report Definition', 'Create Report Definition', 'Edit Report Definition',
   'Delete Report Definition', 'Publish Report Definition', 'View Custom Report',
   'Export Custom Report',
+  'View Book Stock Dashboard', 'View Book Stock Entry', 'Create Book Stock Entry',
+  'Edit Book Stock Entry', 'Delete Book Stock Entry', 'View Book Stock Report',
+  'View Book Stock Field', 'Create Book Stock Field', 'Edit Book Stock Field',
+  'Delete Book Stock Field', 'View Book Stock Product', 'Create Book Stock Product',
+  'Edit Book Stock Product', 'Delete Book Stock Product', 'View Book Stock Settings',
+  'Edit Book Stock Settings', 'View Book Stock Export Operations',
 ]
 const me = {
   id: 1,
@@ -444,6 +450,80 @@ globalThis.fetch = async (input, init = {}) => {
         },
       },
     })
+  }
+  /* Government Data — Book Stock Management */
+  if (path.startsWith('/book-stock/')) {
+    const bsProducts = [
+      { id: 1, product_code: 'OIL', product_name: 'Crude Oil', unit: 'BBL', description: 'Crude oil stock', display_order: 1, status: 'Active', updated_by: 'admin', updated_at: now },
+      { id: 2, product_code: 'GAS', product_name: 'Natural Gas', unit: 'BBL', description: 'Associated gas stock', display_order: 2, status: 'Active', updated_by: 'admin', updated_at: now },
+    ]
+    const bsEntities = [
+      { entity_code: 'ENT001', entity_name: 'Government Entity One', location_codes: ['LOC001'], block_codes: ['BLK001'] },
+    ]
+    const bsBlocks = [{ block_code: 'BLK001', block_name: 'Block One' }]
+    const bsFields = [
+      { id: 1, field_code: 'F1', field_name: 'Field One', entity_code: 'ENT001', block_code: 'BLK001', entity_name: 'Government Entity One', block_name: 'Block One', product_codes: ['OIL', 'GAS'], product_names: ['Crude Oil', 'Natural Gas'], description: '', status: 'Active', updated_by: 'admin', updated_at: now },
+      { id: 2, field_code: 'F2', field_name: 'Field Two', entity_code: 'ENT001', block_code: 'BLK001', entity_name: 'Government Entity One', block_name: 'Block One', product_codes: ['OIL'], product_names: ['Crude Oil'], description: '', status: 'Active', updated_by: 'admin', updated_at: now },
+    ]
+    const bsEntries = [
+      { id: 1, entry_date: '2026-10-29', entity_code: 'ENT001', entity_name: 'Government Entity One', block_code: 'BLK001', block_name: 'Block One', product_code: 'OIL', product_name: 'Crude Oil', unit: 'BBL', opening_stock: 1000, production: 300, dispatch: 100, adjustment: -25, closing_stock: 1175, opening_carried: 'No', remarks: 'Opening day', field_productions: [{ id: 1, field_id: 1, field_code: 'F1', field_name: 'Field One', product_code: 'OIL', production_qty: 300 }], created_by: 'admin', updated_by: 'admin', created_at: now, updated_at: now },
+      { id: 2, entry_date: '2026-10-29', entity_code: 'ENT001', entity_name: 'Government Entity One', block_code: 'BLK001', block_name: 'Block One', product_code: 'GAS', product_name: 'Natural Gas', unit: 'BBL', opening_stock: 500, production: 80, dispatch: 20, adjustment: 5, closing_stock: 565, opening_carried: 'Yes', remarks: '', field_productions: [{ id: 2, field_id: 1, field_code: 'F1', field_name: 'Field One', product_code: 'GAS', production_qty: 80 }], created_by: 'admin', updated_by: 'admin', created_at: now, updated_at: now },
+    ]
+    const bsTotals = [
+      { product_code: 'OIL', product_name: 'Crude Oil', unit: 'BBL', opening_stock: 1000, production: 300, dispatch: 100, adjustment: -25, closing_stock: 1175, block_count: 1, closing_date: '2026-10-29' },
+      { product_code: 'GAS', product_name: 'Natural Gas', unit: 'BBL', opening_stock: 500, production: 80, dispatch: 20, adjustment: 5, closing_stock: 565, block_count: 1, closing_date: '2026-10-29' },
+    ]
+    const bsBlockTotals = [
+      { entity_code: 'ENT001', entity_name: 'Government Entity One', block_code: 'BLK001', block_name: 'Block One', product_code: 'OIL', product_name: 'Crude Oil', entry_count: 1, first_date: '2026-10-29', last_date: '2026-10-29', opening_stock: 1000, production: 300, dispatch: 100, adjustment: -25, closing_stock: 1175 },
+      { entity_code: 'ENT001', entity_name: 'Government Entity One', block_code: 'BLK001', block_name: 'Block One', product_code: 'GAS', product_name: 'Natural Gas', entry_count: 1, first_date: '2026-10-29', last_date: '2026-10-29', opening_stock: 500, production: 80, dispatch: 20, adjustment: 5, closing_stock: 565 },
+    ]
+    if (path === '/book-stock/reference-data') {
+      return jsonResponse({
+        products: bsProducts, active_products: bsProducts, fields: bsFields, entities: bsEntities,
+        blocks: bsBlocks, entity_blocks: [{ entity_code: 'ENT001', block_code: 'BLK001' }],
+        locations: [{ location_code: 'LOC001', location_name: 'Terminal 1' }],
+        settings: { auto_carry_opening: 'Yes', allow_negative_closing: 'Yes', allow_negative_adjustment: 'Yes', default_unit: 'BBL', max_active_products: '2' },
+        settings_list: [], product_limit: 2, active_product_count: 2,
+      })
+    }
+    if (path === '/book-stock/settings') {
+      return jsonResponse([
+        { config_key: 'auto_carry_opening', config_value: 'Yes', description: 'Carry previous closing', status: 'Active', updated_at: now },
+        { config_key: 'allow_negative_closing', config_value: 'Yes', description: 'Allow negative closing', status: 'Active', updated_at: now },
+        { config_key: 'allow_negative_adjustment', config_value: 'Yes', description: 'Allow negative adjustment', status: 'Active', updated_at: now },
+        { config_key: 'default_unit', config_value: 'BBL', description: 'Default unit', status: 'Active', updated_at: now },
+        { config_key: 'max_active_products', config_value: '2', description: 'Two-product limit', status: 'Active', updated_at: now },
+      ])
+    }
+    if (path.startsWith('/book-stock/products')) return jsonResponse(bsProducts)
+    if (path.startsWith('/book-stock/fields')) return jsonResponse(bsFields)
+    if (path === '/book-stock/export-operations') {
+      return jsonResponse({ total: 1, entities: [{ entity_code: 'ENT001', entity_name: 'Government Entity One', location_names: ['Terminal 1'], block_count: 1, field_count: 2, stock_entry_count: 2, latest_entry_date: '2026-10-29', blocks: [{ block_code: 'BLK001', block_name: 'Block One', field_count: 2, stock_entry_count: 2, latest_entry_date: '2026-10-29' }] }] })
+    }
+    if (path.startsWith('/book-stock/daily-entries/opening')) {
+      return jsonResponse({ opening_stock: 1175, previous_entry_date: '2026-10-29', previous_closing_stock: 1175, auto_carry_enabled: true, allow_negative_closing: true, entity_code: 'ENT001', block_code: 'BLK001', product_code: 'OIL', product_name: 'Crude Oil', unit: 'BBL' })
+    }
+    if (path === '/book-stock/daily-entries/bulk-upload') {
+      return jsonResponse({ imported: 1, failed: 0, total: 1, results: [{ row: 1, status: 'imported', message: 'Imported' }] })
+    }
+    if (path.startsWith('/book-stock/daily-entries')) {
+      const body = method === 'POST' || method === 'PUT' ? JSON.parse(init.body || '{}') : {}
+      if (method === 'POST' || method === 'PUT') {
+        return jsonResponse({ ...bsEntries[0], ...body, id: bsEntries[0].id, entry_date: body.entry_date || bsEntries[0].entry_date, closing_stock: 1175 })
+      }
+      if (method === 'DELETE') return jsonResponse({ detail: 'Book stock entry deleted.', id: 1 })
+      return jsonResponse({ items: bsEntries, total: bsEntries.length, skip: 0, limit: 1000, has_more: false })
+    }
+    if (path.startsWith('/book-stock/block-summary')) {
+      return jsonResponse({ items: bsEntries, block_totals: bsBlockTotals, totals_by_product: bsTotals, products: bsProducts, date_from: '2026-10-29', date_to: '2026-10-29', entry_count: 2 })
+    }
+    if (path.startsWith('/book-stock/entity-summary')) {
+      return jsonResponse({ items: bsBlockTotals, latest: bsBlockTotals, block_totals: bsBlockTotals, totals_by_product: bsTotals, products: bsProducts, date_from: '2026-10-29', date_to: '2026-10-29', entry_count: 2 })
+    }
+    if (path.startsWith('/book-stock/dashboard')) {
+      return jsonResponse({ totals_by_product: bsTotals, entity_totals: bsBlockTotals, block_totals: bsBlockTotals, daily_trend: bsBlockTotals.map((row) => ({ ...row, entry_date: '2026-10-29' })), products: bsProducts, date_from: '2026-10-29', date_to: '2026-10-29', entry_count: 2 })
+    }
+    return jsonResponse({ detail: 'Not found' }, 404)
   }
   if (path.startsWith('/users')) {
     if (method === 'POST') {
@@ -911,7 +991,7 @@ try {
   await flush()
 
   // Navigate to pages requested on the CLI (default set)
-  const pages = process.argv.slice(2).length ? process.argv.slice(2) : ['/locations', '/users', '/role-locations', '/audit-logs', '/operation-transactions', '/operation-transactions/1', '/tracking-module-configuration', '/operation-entry']
+  const pages = process.argv.slice(2).length ? process.argv.slice(2) : ['/locations', '/users', '/role-locations', '/audit-logs', '/operation-transactions', '/operation-transactions/1', '/tracking-module-configuration', '/operation-entry', '/book-stock/dashboard', '/book-stock/daily-entries', '/book-stock/block-summary', '/book-stock/fields', '/book-stock/settings']
   for (const path of pages) {
     const before = errors.length
     const link = qa('a[href]').find((a) => a.getAttribute('href') === path)
@@ -946,6 +1026,34 @@ try {
     }
     if (process.env.DUMP) {
       console.log(document.querySelector('.main-content').innerHTML.slice(0, Number(process.env.DUMP)))
+    }
+
+    if (path === '/book-stock/daily-entries') {
+      const newButton = qa('.main-content button').find((button) => text(button).includes('New Stock Entry'))
+      check('book stock new-entry button is permission-gated and rendered', Boolean(newButton))
+      const editButton = qa('.main-content tbody button').find((button) => text(button) === 'Edit')
+      check('book stock entry row is editable without an approval step', Boolean(editButton))
+      if (editButton) {
+        click(editButton)
+        await flush(120)
+        check('book stock entry dialog opens prefilled from the saved row', q('#bs-entry-opening')?.value === '500')
+        check('field production lines are shown per field', qa('.bs-field-production input').length >= 1)
+        check('edit dialog previews the stored closing stock', text(q('.bs-calculation-preview')).includes('565'))
+        const cancelButton = qa('.form-dialog button').find((button) => text(button) === 'Cancel')
+        if (cancelButton) click(cancelButton)
+        await flush(80)
+        check('book stock entry dialog closes on Cancel', !q('#bs-entry-opening'))
+      }
+    }
+
+    if (path === '/book-stock/dashboard') {
+      const printButton = qa('.main-content button').find((button) => text(button).includes('Print'))
+      click(printButton)
+      await flush(120)
+      check('book stock print asks for a company report profile first', Boolean(q('.print-profile-dialog')) && printCalls.length === 0)
+      const cancelPrint = qa('.print-profile-dialog button').find((button) => text(button) === 'Cancel')
+      if (cancelPrint) click(cancelPrint)
+      await flush(60)
     }
 
     if (path === '/report-builder') {
