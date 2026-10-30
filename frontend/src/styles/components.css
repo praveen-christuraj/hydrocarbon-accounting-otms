@@ -4609,3 +4609,407 @@ td.preset-result-error {
 .shortcuts-help-dialog td {
   font-size: 13px;
 }
+
+/* ---------------------------------------------------------------------------
+   Book Stock Management (Government Data)
+   Daily stock entry, products, fields, summaries, dashboard and settings.
+   --------------------------------------------------------------------------- */
+
+.book-stock-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.book-stock-page .report-filter-panel {
+  margin-bottom: 0;
+}
+
+.compact-filter-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 14px;
+}
+
+.kpi-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--primary);
+  border-radius: 10px;
+  padding: 14px 16px;
+  box-shadow: 0 1px 2px rgba(15, 31, 61, 0.05);
+}
+
+.kpi-card .kpi-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.kpi-card .kpi-value {
+  display: block;
+  margin-top: 4px;
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.kpi-card .kpi-footnote {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.kpi-card.kpi-negative {
+  border-left-color: var(--danger);
+}
+
+.kpi-card.kpi-negative .kpi-value {
+  color: var(--danger-text);
+}
+
+.bs-bars {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.bs-bars h3,
+.bs-section-title,
+.bs-trend h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.bs-bar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bs-bar-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 240px) 1fr minmax(110px, auto);
+  gap: 10px;
+  align-items: center;
+  font-size: 12.5px;
+}
+
+.bs-bar-label {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bs-bar-track {
+  position: relative;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.bs-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--primary), var(--link));
+}
+
+.bs-bar-fill.negative {
+  background: linear-gradient(90deg, var(--danger), #d9776f);
+}
+
+.bs-bar-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.bs-section-title {
+  margin-top: 8px;
+}
+
+.bs-field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.bs-field-production {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--surface-2);
+}
+
+.bs-field-production h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.bs-field-production label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.bs-field-production input {
+  width: 100%;
+}
+
+.bs-field-production .field-hint {
+  display: block;
+  margin-top: 3px;
+}
+
+.bs-calculation-preview {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+  align-items: center;
+  border: 1px solid var(--info-border);
+  background: var(--info-soft);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.bs-calculation-preview strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.bs-preview-closing {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.bs-preview-closing.is-negative {
+  color: var(--danger-text);
+}
+
+.bs-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.bs-check input[type='checkbox'] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--primary);
+}
+
+.bs-product-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+  margin: 6px 0;
+}
+
+.bs-form-wide {
+  grid-column: 1 / -1;
+}
+
+.bs-expanded-row > td {
+  background: var(--surface-2);
+  padding: 12px 18px;
+}
+
+.bs-block-detail h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.bs-block-detail table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.bs-block-detail th,
+.bs-block-detail td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--divider);
+  text-align: left;
+}
+
+.bs-block-detail th {
+  background: var(--surface-3);
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.bs-trend {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.bs-trend .table-scroll {
+  max-height: 320px;
+  overflow: auto;
+}
+
+.strong-cell {
+  font-weight: 700;
+}
+
+.value-negative {
+  color: var(--danger-text);
+}
+
+.value-positive {
+  color: var(--success-text);
+}
+
+.bs-field-production .field-hint,
+.field-hint {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.book-stock-page .field-hint {
+  display: block;
+  margin-top: 4px;
+}
+
+.settings-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.settings-section h3 {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 620px;
+}
+
+.settings-field > label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.settings-field input[type='text'],
+.settings-field input:not([type]),
+.settings-field input[type='number'] {
+  max-width: 260px;
+}
+
+.book-stock-page .button-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--link);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.book-stock-page .button-link:hover {
+  background: var(--primary-soft);
+}
+
+.book-stock-page .row-actions {
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .bs-bar-row {
+    grid-template-columns: 1fr;
+  }
+
+  .bs-bar-value {
+    text-align: left;
+  }
+}
+
+@media print {
+  .book-stock-page .kpi-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .book-stock-page .bs-bars {
+    break-inside: avoid;
+  }
+
+  .book-stock-page .bs-bar-track {
+    border: 1px solid var(--border-strong);
+    background: #fff;
+  }
+
+  .book-stock-page .bs-bar-fill {
+    background: #12315f;
+    print-color-adjust: exact;
+  }
+
+  .book-stock-page .table-scroll {
+    max-height: none;
+    overflow: visible;
+  }
+}
+
+.book-stock-page .kpi-label small {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-muted);
+}
+
+.book-stock-page .bs-bar-label small {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+}

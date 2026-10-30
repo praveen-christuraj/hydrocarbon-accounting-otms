@@ -1827,3 +1827,122 @@ def ensure_asset_calibration_table_indexes():
     with engine.begin() as connection:
         for statement in statements:
             connection.execute(text(statement))
+
+
+def ensure_book_stock_tables():
+    """Government Data — Book Stock Management tables + default settings.
+
+    Idempotent: safe on fresh databases (Base.metadata.create_all already
+    created the tables) and on existing installations.
+    """
+    from app.services.book_stock_calculations import DEFAULT_SETTINGS, SETTING_DESCRIPTIONS
+
+    with engine.begin() as connection:
+        connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS book_stock_products (
+                id SERIAL PRIMARY KEY,
+                product_code VARCHAR(50) NOT NULL UNIQUE,
+                product_name VARCHAR(150) NOT NULL,
+                unit VARCHAR(30) NOT NULL DEFAULT 'BBL',
+                description TEXT,
+                display_order INTEGER NOT NULL DEFAULT 0,
+                status VARCHAR(20) NOT NULL DEFAULT 'Active',
+                created_by VARCHAR(150),
+                updated_by VARCHAR(150),
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            );
+        """))
+        connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS book_stock_fields (
+                id SERIAL PRIMARY KEY,
+                field_code VARCHAR(50) NOT NULL UNIQUE,
+                field_name VARCHAR(200) NOT NULL,
+                entity_code VARCHAR(50) NOT NULL,
+                block_code VARCHAR(50) NOT NULL,
+                description TEXT,
+                status VARCHAR(20) NOT NULL DEFAULT 'Active',
+                created_by VARCHAR(150),
+                updated_by VARCHAR(150),
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                CONSTRAINT unique_book_stock_field_name UNIQUE (entity_code, block_code, field_name)
+            );
+        """))
+        connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS book_stock_field_products (
+                id SERIAL PRIMARY KEY,
+                field_id INTEGER NOT NULL REFERENCES book_stock_fields(id) ON DELETE CASCADE,
+                product_code VARCHAR(50) NOT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'Active',
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                CONSTRAINT unique_book_stock_field_product UNIQUE (field_id, product_code)
+            );
+        """))
+        connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS book_stock_daily_entries (
+                id SERIAL PRIMARY KEY,
+                entry_date DATE NOT NULL,
+                entity_code VARCHAR(50) NOT NULL,
+                block_code VARCHAR(50) NOT NULL,
+                product_code VARCHAR(50) NOT NULL,
+                opening_stock DOUBLE PRECISION NOT NULL DEFAULT 0,
+                production DOUBLE PRECISION NOT NULL DEFAULT 0,
+                dispatch DOUBLE PRECISION NOT NULL DEFAULT 0,
+                adjustment DOUBLE PRECISION NOT NULL DEFAULT 0,
+                closing_stock DOUBLE PRECISION NOT NULL DEFAULT 0,
+                opening_carried VARCHAR(10) NOT NULL DEFAULT 'No',
+                remarks TEXT,
+                created_by VARCHAR(150),
+                updated_by VARCHAR(150),
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                CONSTRAINT unique_book_stock_daily_entry UNIQUE (entry_date, entity_code, block_code, product_code)
+            );
+        """))
+        connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS book_stock_field_productions (
+                id SERIAL PRIMARY KEY,
+                entry_id INTEGER NOT NULL REFERENCES book_stock_daily_entries(id) ON DELETE CASCADE,
+                field_id INTEGER,
+                field_code VARCHAR(50) NOT NULL,
+                field_name VARCHAR(200) NOT NULL,
+                entity_code VARCHAR(50) NOT NULL,
+                block_code VARCHAR(50) NOT NULL,
+                product_code VARCHAR(50) NOT NULL,
+                production_qty DOUBLE PRECISION NOT NULL DEFAULT 0,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                CONSTRAINT unique_book_stock_entry_field UNIQUE (entry_id, field_code)
+            );
+        """))
+        connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS book_stock_configs (
+                id SERIAL PRIMARY KEY,
+                config_key VARCHAR(100) NOT NULL UNIQUE,
+                config_value TEXT,
+                description TEXT,
+                status VARCHAR(20) NOT NULL DEFAULT 'Active',
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+            );
+        """))
+        for statement in (
+            "CREATE INDEX IF NOT EXISTS ix_book_stock_fields_entity_block ON book_stock_fields(entity_code, block_code);",
+            "CREATE INDEX IF NOT EXISTS ix_book_stock_field_products_product ON book_stock_field_products(product_code);",
+            "CREATE INDEX IF NOT EXISTS ix_book_stock_daily_entries_date ON book_stock_daily_entries(entry_date);",
+            "CREATE INDEX IF NOT EXISTS ix_book_stock_daily_entries_entity ON book_stock_daily_entries(entity_code);",
+            "CREATE INDEX IF NOT EXISTS ix_book_stock_daily_entries_block ON book_stock_daily_entries(block_code);",
+            "CREATE INDEX IF NOT EXISTS ix_book_stock_daily_entries_product ON book_stock_daily_entries(product_code);",
+            "CREATE INDEX IF NOT EXISTS ix_book_stock_field_productions_entry ON book_stock_field_productions(entry_id);",
+            "CREATE INDEX IF NOT EXISTS ix_book_stock_field_productions_entity ON book_stock_field_productions(entity_code);",
+        ):
+            connection.execute(text(statement))
+        for key, value in DEFAULT_SETTINGS.items():
+            connection.execute(
+                text("""
+                    INSERT INTO book_stock_configs (config_key, config_value, description, status)
+                    VALUES (:key, :value, :description, 'Active')
+                    ON CONFLICT (config_key) DO NOTHING;
+                """),
+                {"key": key, "value": value, "description": SETTING_DESCRIPTIONS.get(key)},
+            )

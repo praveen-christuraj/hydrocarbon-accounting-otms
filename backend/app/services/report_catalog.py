@@ -67,6 +67,12 @@ TABLE_LABELS = {
     "export_transactions": "Export Transactions",
     "export_permits": "Export Permits",
     "material_balance_templates": "Material Balance Templates",
+    "book_stock_products": "Book Stock — Products (Government Data)",
+    "book_stock_fields": "Book Stock — Producing Fields",
+    "book_stock_field_products": "Book Stock — Field Products",
+    "book_stock_daily_entries": "Book Stock — Daily Stock Entries",
+    "book_stock_field_productions": "Book Stock — Field Daily Production",
+    "book_stock_configs": "Book Stock — Settings",
     "audit_logs": "Audit Logs",
     "users": "Users (no passwords)",
     "roles": "Roles",
@@ -78,6 +84,7 @@ TABLE_GROUPS = [
     ("Masters — Locations & Assets", ["locations", "location_accounting_day_settings", "assets", "asset_types", "asset_assignments", "prime_mover_tanker_links", "asset_calibration_tables", "asset_calibration_data", "calibration_templates", "calibration_template_columns"]),
     ("Configuration Masters", ["operation_types", "operation_templates", "operation_template_fields", "tank_operations", "vessel_operations", "location_operation_availability", "material_balance_templates", "material_balance_template_columns", "flowmeter_configs", "flowmeter_config_history", "table11_factors", "company_report_profiles", "barge_seal_master", "tracking_module_configs", "out_turn_summary_configs"]),
     ("Export Operations", ["export_transactions", "export_permits", "export_locations", "export_entities", "export_blocks", "export_consignees", "export_configs", "export_location_entities", "export_entity_blocks", "export_permit_block_assignments"]),
+    ("Government Data — Book Stock", ["book_stock_daily_entries", "book_stock_field_productions", "book_stock_fields", "book_stock_field_products", "book_stock_products", "book_stock_configs"]),
     ("Users, Roles & Audit", ["users", "roles", "permissions", "role_permissions", "user_roles", "user_locations", "role_locations", "audit_logs", "system_notifications"]),
 ]
 

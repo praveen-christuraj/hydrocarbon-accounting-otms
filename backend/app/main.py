@@ -55,6 +55,7 @@ from app.utils.db_migrations import (
     ensure_user_location_columns,
     ensure_role_location_table,
     ensure_export_operations_tables,
+    ensure_book_stock_tables,
     ensure_user_role_multi_role_constraint,
     ensure_operation_transaction_indexes,
     ensure_asset_calibration_table_indexes,
@@ -88,6 +89,7 @@ async def lifespan(app: FastAPI):
     ensure_user_location_columns()
     ensure_role_location_table()
     ensure_export_operations_tables()
+    ensure_book_stock_tables()
     ensure_operation_transaction_indexes()
     ensure_asset_calibration_table_indexes()
     ensure_movement_mapping_management_columns()
@@ -122,6 +124,8 @@ from app.routers import (
     audit_logs, auth, backup_restore, barge_seal_master, barge_trip_tracking,
     calibration_templates, company_report_profiles, correction_requests, dashboard,
     export_operations,
+    book_stock,
+    book_stock_entries,
     flowmeter_configs_records, location_operation_availability, locations,
     material_balance_templates, movement_mappings, operation_entries,
     operation_tasks, operation_templates, operation_transactions, operation_types,
@@ -135,6 +139,8 @@ from app.routers import (
 app.include_router(admin_db_browser.router)
 app.include_router(asset_assignments.router)
 app.include_router(export_operations.router)
+app.include_router(book_stock.router)
+app.include_router(book_stock_entries.router)
 app.include_router(asset_calibration_tables.router)
 app.include_router(asset_types.router)
 app.include_router(assets.router)

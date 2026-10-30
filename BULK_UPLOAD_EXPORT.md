@@ -195,3 +195,61 @@ npx eslint src                     # lint
 `npm run test:bulk:ui` currently asserts 53 checks, including that every upload dialog accepts
 both `.xlsx` and `.csv`, that the layered template picker renders and swaps dynamic columns, and
 that each export menu offers all three formats.
+
+---
+
+## 7. Government Data — Book Stock Management
+
+All Book Stock list pages use `DataTableToolbar`, so both upload (`.xlsx` + `.csv`) and export
+(`.xlsx` / `.csv` / `.pdf`) behave exactly like the rest of the application, including layered
+upload templates and row-by-row error reporting.
+
+| Page | Upload | Export |
+| --- | --- | --- |
+| Book Stock Products | yes (creates products) | xlsx / csv / pdf |
+| Book Stock Fields | yes (one row per producing field) | xlsx / csv / pdf |
+| Book Stock Daily Entries | yes (bulk-upload endpoint, partial success) | xlsx / csv / pdf |
+| Block Stock Summary | read-only | xlsx / csv / pdf |
+| Entity Stock Summary | read-only | xlsx / csv / pdf |
+| Book Stock Dashboard | read-only | xlsx / csv / pdf |
+| Export Operations (Book Stock) | read-only | xlsx / csv / pdf |
+
+### Products upload
+
+`product_code`, `product_name`, `unit`, `display_order`, `description`, `status`. The server keeps
+the **two active products** rule: a row that would create a third active product is rejected for
+that row only.
+
+### Fields upload
+
+`entity_code`, `block_code`, `field_code`, `field_name`, `product_codes` (comma separated, e.g.
+`OIL,GAS`), `description`, `status`. The row is validated against the Export Operations
+entity/block mapping and the active products before it is sent.
+
+### Daily entries upload
+
+One row per **stock date + entity + block + product**:
+
+| Column | Notes |
+| --- | --- |
+| `entry_date` | `YYYY-MM-DD` |
+| `entity_code`, `block_code` | Must be an active Export Operations mapping |
+| `product_code` | Must be one of the two active products |
+| `opening_stock` | Blank = auto-carry the previous day's closing for the same entity + block + product |
+| `dispatch` | Block-level dispatch, zero or more |
+| `adjustment` | Signed: negative deducts, positive adds |
+| `field_productions` | `FIELD_CODE=QTY` pairs separated by `;` (e.g. `F1=120; F2=80`) |
+| `remarks` | Free text |
+
+Rows are saved through `POST /book-stock/daily-entries/bulk-upload`. A blank `opening_stock`
+uses the same auto-carry rule as the entry form. Valid rows are committed even when other rows
+fail; each failed row keeps the server's message (duplicate date + entity + block + product,
+unknown/inactive product, field that does not produce the product, negative closing when
+disabled in settings, …) so only those rows need correcting. Dispatch is always at block level;
+field production lines are summed into the entry's production before the closing stock is
+calculated: **Closing = Opening + Production − Dispatch + Adjustment**.
+
+After a create, edit or delete, later entries whose opening was auto-carried are re-flowed
+from the corrected closing stock, and each changed row is audited as *Recalculate Book Stock
+Entry*. Rows whose opening was entered manually are left untouched and act as the new starting
+point for the days that follow.

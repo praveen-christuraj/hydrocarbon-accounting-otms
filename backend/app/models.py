@@ -2189,3 +2189,164 @@ class ReportDefinitionVersion(Base):
             name="unique_report_definition_version",
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# Government Data — Book Stock Management
+# ---------------------------------------------------------------------------
+# The module is self-contained: its products, fields and daily stock records
+# live here. Entity / block references come from the Export Operations
+# configuration (export_entities / export_blocks / export_entity_blocks) and are
+# stored as codes so a configuration rename never rewrites historical entries.
+#
+# Stock rule (Government Data, product-wise):
+#     closing stock = opening stock + production - dispatch + adjustment
+# Production is captured per field (a block has several fields) and summed into
+# the block. A block's closing stock rolls up into the entity's closing stock.
+# Products are never mixed: every stock row, calculation and report is keyed by
+# product_code.
+
+class BookStockProduct(Base):
+    __tablename__ = "book_stock_products"
+
+    id = Column(Integer, primary_key=True, index=True)
+    product_code = Column(String(50), nullable=False, unique=True, index=True)
+    product_name = Column(String(150), nullable=False)
+    unit = Column(String(30), nullable=False, default="BBL")
+    description = Column(Text, nullable=True)
+    display_order = Column(Integer, nullable=False, default=0)
+    status = Column(String(20), nullable=False, default="Active", index=True)
+    created_by = Column(String(150), nullable=True)
+    updated_by = Column(String(150), nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class BookStockField(Base):
+    """A producing field inside an export entity / block.
+
+    ``entity_code`` and ``block_code`` point at the Export Operations
+    configuration. One field can produce one or both Book Stock products
+    (``BookStockFieldProduct``).
+    """
+
+    __tablename__ = "book_stock_fields"
+
+    id = Column(Integer, primary_key=True, index=True)
+    field_code = Column(String(50), nullable=False, unique=True, index=True)
+    field_name = Column(String(200), nullable=False)
+    entity_code = Column(String(50), nullable=False, index=True)
+    block_code = Column(String(50), nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    status = Column(String(20), nullable=False, default="Active", index=True)
+    created_by = Column(String(150), nullable=True)
+    updated_by = Column(String(150), nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("entity_code", "block_code", "field_name", name="unique_book_stock_field_name"),
+    )
+
+
+class BookStockFieldProduct(Base):
+    """Products produced by one Book Stock field (one or two rows per field)."""
+
+    __tablename__ = "book_stock_field_products"
+
+    id = Column(Integer, primary_key=True, index=True)
+    field_id = Column(
+        Integer,
+        ForeignKey("book_stock_fields.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    product_code = Column(String(50), nullable=False, index=True)
+    status = Column(String(20), nullable=False, default="Active")
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("field_id", "product_code", name="unique_book_stock_field_product"),
+    )
+
+
+class BookStockDailyEntry(Base):
+    """One Block + Product + Date stock sheet.
+
+    ``production`` is the server-computed sum of the entry's field production
+    lines. ``closing_stock`` is always recomputed server-side from
+    opening + production - dispatch + adjustment.
+    """
+
+    __tablename__ = "book_stock_daily_entries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    entry_date = Column(Date, nullable=False, index=True)
+    entity_code = Column(String(50), nullable=False, index=True)
+    block_code = Column(String(50), nullable=False, index=True)
+    product_code = Column(String(50), nullable=False, index=True)
+    opening_stock = Column(Float, nullable=False, default=0)
+    production = Column(Float, nullable=False, default=0)
+    dispatch = Column(Float, nullable=False, default=0)
+    adjustment = Column(Float, nullable=False, default=0)
+    closing_stock = Column(Float, nullable=False, default=0)
+    opening_carried = Column(String(10), nullable=False, default="No")
+    remarks = Column(Text, nullable=True)
+    created_by = Column(String(150), nullable=True)
+    updated_by = Column(String(150), nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "entry_date",
+            "entity_code",
+            "block_code",
+            "product_code",
+            name="unique_book_stock_daily_entry",
+        ),
+    )
+
+
+class BookStockFieldProduction(Base):
+    """Daily production of one field, inside one block stock entry.
+
+    ``entity_code`` / ``block_code`` are denormalised so the Report Builder can
+    apply the same entity scope as the stock rows without a join.
+    """
+
+    __tablename__ = "book_stock_field_productions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    entry_id = Column(
+        Integer,
+        ForeignKey("book_stock_daily_entries.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    field_id = Column(Integer, nullable=True, index=True)
+    field_code = Column(String(50), nullable=False, index=True)
+    field_name = Column(String(200), nullable=False)
+    entity_code = Column(String(50), nullable=False, index=True)
+    block_code = Column(String(50), nullable=False, index=True)
+    product_code = Column(String(50), nullable=False, index=True)
+    production_qty = Column(Float, nullable=False, default=0)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("entry_id", "field_code", name="unique_book_stock_entry_field"),
+    )
+
+
+class BookStockConfig(Base):
+    """General configuration of the Book Stock Management module."""
+
+    __tablename__ = "book_stock_configs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    config_key = Column(String(100), nullable=False, unique=True, index=True)
+    config_value = Column(Text, nullable=True)
+    description = Column(Text, nullable=True)
+    status = Column(String(20), nullable=False, default="Active")
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())

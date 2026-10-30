@@ -64,9 +64,10 @@ location scope. Only **published + Active** reports appear in Reporting.
 6. **Preview & Save** — run against real data (first 25 rows + warnings),
    then *Save as draft* or *Save & publish*. Every save keeps a version.
 
-Five one-click **starter reports** (Ticket Register, Tank Gauging Quantities
+Six one-click **starter reports** (Ticket Register, Tank Gauging Quantities
 with payload split, Daily Stock Movements, Tank × Operation Category matrix,
-Tank × Month matrix) can be copied and adjusted.
+Tank × Month matrix and Government Data **Book Stock Daily**) can be copied and
+adjusted.
 
 ### Date summaries and drill-down
 
@@ -355,3 +356,48 @@ columns are available and related location-bearing rows are restricted to the
 runner's location scope. Arbitrary joins, reverse/one-to-many relationships,
 related JSON paths and the featured ticket/ledger datasets are not supported by
 this extension. Existing designs continue to use their original source.
+
+---
+
+## Appendix — Government Data: Book Stock Management datasets
+
+The Report Builder catalogs the Government Data module as its own table group,
+**Government Data — Book Stock**. Reports over these tables obey the same
+location scope as the module: rows are limited to the entity codes reachable
+from the runner's assigned locations through the Export Operations
+location → entity mapping.
+
+| Dataset | Table | Key fields |
+| --- | --- | --- |
+| Book Stock — Daily Stock Entries | `book_stock_daily_entries` | `entry_date`, `entity_code`, `block_code`, `product_code`, `opening_stock`, `production`, `dispatch`, `adjustment`, `closing_stock`, `opening_carried`, `remarks`, audit columns |
+| Book Stock — Field Daily Production | `book_stock_field_productions` | `entry_id`, `field_id`, `field_code`, `field_name`, `entity_code`, `block_code`, `product_code`, `production_qty` |
+| Book Stock — Producing Fields | `book_stock_fields` | `field_code`, `field_name`, `entity_code`, `block_code`, `status` |
+| Book Stock — Field Products | `book_stock_field_products` | `field_id`, `product_code`, `status` |
+| Book Stock — Products | `book_stock_products` | `product_code`, `product_name`, `unit`, `display_order`, `status` |
+| Book Stock — Settings | `book_stock_configs` | `config_key`, `config_value`, `description`, `status` |
+
+Rules for reporting over Book Stock data:
+
+1. **Always group or filter by `product_code`.** The two products are never
+   combined; a report that totals `closing_stock` without grouping by product
+   adds oil stock to gas stock.
+2. Use **Daily Stock Entries** for opening / production / dispatch /
+   adjustment / closing values, and **Field Daily Production** when the
+   report needs the per-field breakdown of production.
+3. `production` on a daily entry is the sum of that entry's field production
+   lines, so summing both tables doubles production.
+4. `closing_stock` is a stored value per date, entity, block and product. For a
+   period total, use the last date's closing (or a grouped report on
+   `entry_date`), not `SUM(closing_stock)`.
+5. The `book-stock-daily` **starter report** is pre-built with grouped output,
+   SUM summaries for opening / production / dispatch / adjustment / closing and
+   a `net_movement` calculated column. It is grouped by entity, block, product
+   and date so the two products remain separate.
+6. Reports are point-in-time: editing or deleting a daily entry (allowed at any
+   time, permission-gated and audited) changes the numbers a saved report will
+   produce the next time it is run. Saved report definitions do not snapshot
+   data.
+7. Correcting an earlier date **rolls later auto-carried openings forward**
+   from the corrected closing (audited as *Recalculate Book Stock Entry*).
+   An opening that was entered manually is never overwritten; it stays as the
+   user typed it and becomes the new starting point for the following days.
