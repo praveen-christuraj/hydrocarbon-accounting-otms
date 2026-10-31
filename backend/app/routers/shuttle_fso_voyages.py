@@ -42,6 +42,7 @@ from app.services.operation_datetime import (
 )
 from app.utils.helpers import (
     clean_optional_text,
+    escape_like,
     get_transaction_ticket_number,
     get_current_user_label,
     get_current_user_display_name,
@@ -986,10 +987,10 @@ def get_fso_tracking(
         s = str(search).strip()
         base_q = base_q.filter(
             or_(
-                OperationTransaction.origin_location_code.ilike(f"%{s}%"),
-                OperationTransaction.primary_asset_code.ilike(f"%{s}%"),
-                OperationTransaction.convoy_number.ilike(f"%{s}%"),
-                OperationTransaction.operation_ticket_number.ilike(f"%{s}%"),
+                OperationTransaction.origin_location_code.ilike(f"%{escape_like(s)}%", escape="\\"),
+                OperationTransaction.primary_asset_code.ilike(f"%{escape_like(s)}%", escape="\\"),
+                OperationTransaction.convoy_number.ilike(f"%{escape_like(s)}%", escape="\\"),
+                OperationTransaction.operation_ticket_number.ilike(f"%{escape_like(s)}%", escape="\\"),
             )
         )
 

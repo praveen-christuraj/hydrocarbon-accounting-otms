@@ -11,7 +11,7 @@ from app.dependencies.permissions import (
     require_user_permission,
 )
 from app.services.audit_service import create_audit_log
-from app.utils.helpers import clean_optional_text
+from app.utils.helpers import clean_optional_text, escape_like
 from app.utils.pagination import paginate_query
 
 router = APIRouter(prefix="/roles", tags=["Roles"])
@@ -28,7 +28,7 @@ def get_roles(
     require_user_permission(current_user, "View Role", db)
     query = db.query(Role).order_by(Role.id)
     if search:
-        query = query.filter(Role.role_name.ilike(f"%{search}%"))
+        query = query.filter(Role.role_name.ilike(f"%{escape_like(search)}%", escape="\\"))
     result = paginate_query(query, skip, limit)
     return {
         "items": [RoleResponse.model_validate(r) for r in result["items"]],

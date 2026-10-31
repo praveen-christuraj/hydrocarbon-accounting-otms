@@ -30,6 +30,7 @@ from app.dependencies.permissions import (
     require_any_user_permission,
 )
 from app.services.audit_service import create_audit_log
+from app.utils.errors import log_exception
 
 router = APIRouter(prefix="/export-operations", tags=["Export Operations"])
 
@@ -1213,8 +1214,16 @@ def bulk_upload_export_transactions(data: BulkUploadRequest, db: Session = Depen
             )
             db.add(tx)
             created += 1
-        except Exception as e:
-            errors.append({"item": item.model_dump(), "error": str(e)})
+        except HTTPException as exc:
+            errors.append({"item": item.model_dump(), "error": str(exc.detail)})
+        except Exception as exc:
+            log_exception("Export transaction bulk upload", exc)
+            errors.append(
+                {
+                    "item": item.model_dump(),
+                    "error": "Row rejected: the value does not satisfy a validation or database constraint.",
+                }
+            )
     db.commit()
     create_audit_log(db, "Export Operations", "Bulk Upload", current_user, details={"created": created, "errors": len(errors)})
     return {"created": created, "errors": errors, "total": len(data.items)}
@@ -1253,8 +1262,16 @@ def bulk_upload_export_permits(data: PermitBulkUploadRequest, db: Session = Depe
             db.add(permit)
             created_permits.append(permit)
             created += 1
-        except Exception as e:
-            errors.append({"item": item.model_dump(), "error": str(e)})
+        except HTTPException as exc:
+            errors.append({"item": item.model_dump(), "error": str(exc.detail)})
+        except Exception as exc:
+            log_exception("Export permit bulk upload", exc)
+            errors.append(
+                {
+                    "item": item.model_dump(),
+                    "error": "Row rejected: the value does not satisfy a validation or database constraint.",
+                }
+            )
     db.commit()
     for permit in created_permits:
         db.refresh(permit)

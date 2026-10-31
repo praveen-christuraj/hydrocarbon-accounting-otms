@@ -1,54 +1,44 @@
-// Shared token management — extracted from authApi.js to break circular dependency
-// apiClient.js and authApi.js both import from here.
+// Shared token management.
+//
+// Security model: the access token lives ONLY in JavaScript memory (never in
+// localStorage/sessionStorage, never in a cookie readable by scripts). The
+// refresh token is delivered by the API as an HttpOnly, SameSite=Strict cookie
+// and is never readable or storable from JavaScript.
 
-const AUTH_TOKEN_KEY = 'hydrocarbonAccessToken'
-const REFRESH_TOKEN_KEY = 'hydrocarbonRefreshToken'
-const TOKEN_STORAGE_KEYS = [
-  AUTH_TOKEN_KEY,
+const LEGACY_STORAGE_KEYS = [
+  'hydrocarbonAccessToken',
   'hydrocarbon_access_token',
   'access_token',
   'accessToken',
+  'hydrocarbonRefreshToken',
 ]
+
 let accessToken = ''
-let legacyRefreshToken = ''
 let legacyStorageMigrated = false
 
-const migrateLegacyStorage = () => {
+const purgeLegacyStorage = () => {
   if (legacyStorageMigrated || typeof localStorage === 'undefined') return
   legacyStorageMigrated = true
-  for (const key of TOKEN_STORAGE_KEYS) {
-    const token = localStorage.getItem(key)
-    if (!accessToken && token && token.trim()) accessToken = token.trim()
-    localStorage.removeItem(key)
+  for (const key of LEGACY_STORAGE_KEYS) {
+    try {
+      localStorage.removeItem(key)
+    } catch {
+      // Storage can be blocked (private mode / policy). Nothing to purge.
+    }
   }
-  legacyRefreshToken = String(localStorage.getItem(REFRESH_TOKEN_KEY) || '').trim()
-  localStorage.removeItem(REFRESH_TOKEN_KEY)
 }
 
 export const getStoredAccessToken = () => {
-  migrateLegacyStorage()
+  purgeLegacyStorage()
   return accessToken
 }
 
 export const saveAccessToken = (token) => {
-  migrateLegacyStorage()
+  purgeLegacyStorage()
   accessToken = String(token || '').trim()
 }
 
 export const clearAccessToken = () => {
   accessToken = ''
-  legacyRefreshToken = ''
-  if (typeof localStorage !== 'undefined') {
-    TOKEN_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key))
-    localStorage.removeItem(REFRESH_TOKEN_KEY)
-  }
-}
-
-export const getStoredRefreshToken = () => {
-  migrateLegacyStorage()
-  return legacyRefreshToken
-}
-
-export const clearStoredRefreshToken = () => {
-  legacyRefreshToken = ''
+  purgeLegacyStorage()
 }

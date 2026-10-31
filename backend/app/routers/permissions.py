@@ -10,7 +10,7 @@ from app.dependencies.permissions import is_admin_user, require_user_permission
 from app.services.audit_service import create_audit_log
 from app.services.permission_catalog import apply_permission_catalog
 from app.utils.default_permissions import ACTION_ORDER, STANDARD_PERMISSIONS, get_permission_catalog
-from app.utils.helpers import clean_optional_text
+from app.utils.helpers import clean_optional_text, escape_like
 from app.utils.pagination import paginate_query
 
 STANDARD_PERMISSION_NAMES = {
@@ -47,9 +47,9 @@ def get_permissions(
     require_user_permission(current_user, "View Permission", db)
     query = db.query(Permission).order_by(Permission.id)
     if search:
-        query = query.filter(Permission.permission_name.ilike(f"%{search}%"))
+        query = query.filter(Permission.permission_name.ilike(f"%{escape_like(search)}%", escape="\\"))
     if module_name:
-        query = query.filter(Permission.module_name.ilike(f"%{module_name}%"))
+        query = query.filter(Permission.module_name.ilike(f"%{escape_like(module_name)}%", escape="\\"))
     result = paginate_query(query, skip, limit)
     return {
         "items": [PermissionResponse.model_validate(p) for p in result["items"]],

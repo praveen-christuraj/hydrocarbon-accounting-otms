@@ -47,8 +47,25 @@ export const formatApiError = (data) => {
   if (!data) return 'API request failed'
   if (typeof data.detail === 'string') return sanitizeErrorText(data.detail)
   if (Array.isArray(data.detail)) return sanitizeErrorText(data.detail.map(d => d?.msg || '').join('; '))
-  if (typeof data.detail === 'object') return sanitizeErrorText(JSON.stringify(data.detail))
+  if (data.detail && typeof data.detail === 'object') {
+    // Structured API errors (for example PASSWORD_CHANGE_REQUIRED) carry a
+    // human-readable message plus a machine-readable code.
+    if (typeof data.detail.message === 'string') return sanitizeErrorText(data.detail.message)
+    return sanitizeErrorText(JSON.stringify(data.detail))
+  }
   return 'API request failed'
+}
+
+export const PASSWORD_CHANGE_REQUIRED_EVENT = 'hydrocarbon:password-change-required'
+
+const notifyPasswordChangeRequired = (data) => {
+  if (data?.detail?.code === 'PASSWORD_CHANGE_REQUIRED') {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(PASSWORD_CHANGE_REQUIRED_EVENT))
+    }
+    return true
+  }
+  return false
 }
 
 // Track whether a refresh is in flight to avoid duplicate calls
@@ -121,6 +138,8 @@ export const apiRequest = async (endpoint, options = {}, timeoutMs = REQUEST_TIM
   const data = await readResponseData(response)
 
   if (!response.ok) {
+    notifyPasswordChangeRequired(data)
+
     // On 401, try to silently refresh the token and retry once
     if (response.status === 401) {
       // Don't try refresh for auth endpoints themselves (prevent loops)
@@ -134,7 +153,13 @@ export const apiRequest = async (endpoint, options = {}, timeoutMs = REQUEST_TIM
       clearAccessToken()
     }
 
-    throw new Error(formatApiError(data))
+    const retryAfter = response.headers.get('retry-after')
+    const baseMessage = formatApiError(data)
+    throw new Error(
+      response.status === 429 && retryAfter
+        ? `${baseMessage} Try again in ${retryAfter} seconds.`
+        : baseMessage
+    )
   }
 
   return data

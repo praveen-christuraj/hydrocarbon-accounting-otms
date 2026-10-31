@@ -14,7 +14,7 @@ from app.dependencies.permissions import (
     require_user_permission,
 )
 from app.services.audit_service import create_audit_log
-from app.utils.helpers import clean_optional_text
+from app.utils.helpers import clean_optional_text, escape_like
 from app.utils.pagination import paginate_query
 
 router = APIRouter(prefix="/assets", tags=["Assets"])
@@ -49,8 +49,8 @@ def get_assets(
     if search:
         query = query.filter(
             or_(
-                Asset.asset_name.ilike(f"%{search}%"),
-                Asset.asset_code.ilike(f"%{search}%"),
+                Asset.asset_name.ilike(f"%{escape_like(search)}%", escape="\\"),
+                Asset.asset_code.ilike(f"%{escape_like(search)}%", escape="\\"),
             )
         )
     if asset_type_code:

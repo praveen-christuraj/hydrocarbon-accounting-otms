@@ -26,7 +26,7 @@ from app.services.report_engine import ReportDefinitionError, starter_templates,
 from app.services.report_formula import FormulaError, evaluate, parse_formula, validate_formula
 from tests.conftest import create_user
 
-PASSWORD = "[SECURITY_DATA]"
+PASSWORD = "Triton#Vault9!2026"
 
 BUILDER_PERMS = [
     "View Report Definition",

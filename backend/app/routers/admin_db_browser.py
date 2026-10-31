@@ -7,6 +7,7 @@ from app.database import engine, get_db
 from app.models import User
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import is_admin_user
+from app.services.audit_service import create_audit_log
 
 router = APIRouter(prefix="/admin/db", tags=["Admin DB Browser"])
 
@@ -142,9 +143,43 @@ def get_table_data(
         rows = db.execute(query).mappings().all()
         total = db.execute(select(func.count()).select_from(table)).scalar()
     except Exception:
+        create_audit_log(
+            db=db,
+            module_name="System Settings",
+            action="Database Browser Read Failed",
+            current_user=current_user,
+            entity_type="DatabaseTable",
+            entity_label=table_name,
+            remarks="Table read failed",
+            request_path=f"/admin/db/tables/{table_name}",
+            details={"table_name": table_name},
+        )
+        db.commit()
         raise HTTPException(status_code=500, detail="Unable to read the requested table")
 
     data = [_redact_row(dict(row), columns) for row in rows]
+
+    # Reading raw tables is a privileged diagnostic action: record who read
+    # what, without copying row contents into the audit log.
+    create_audit_log(
+        db=db,
+        module_name="System Settings",
+        action="Browse Database Table",
+        current_user=current_user,
+        entity_type="DatabaseTable",
+        entity_label=table_name,
+        remarks="Administrator browsed a database table",
+        request_path=f"/admin/db/tables/{table_name}",
+        details={
+            "table_name": table_name,
+            "page": page,
+            "per_page": per_page,
+            "returned_rows": len(data),
+            "total_rows": total,
+            "sensitive_columns_redacted": [c for c in columns if _is_sensitive_column(c)],
+        },
+    )
+    db.commit()
 
     return {
         "table_name": table_name,

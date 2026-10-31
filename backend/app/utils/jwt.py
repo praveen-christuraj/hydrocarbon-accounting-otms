@@ -4,7 +4,15 @@ import secrets
 from fastapi import HTTPException
 import jwt
 
-from app.config import JWT_SECRET_KEY, JWT_ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS
+from app.config import (
+    ACCESS_TOKEN_EXPIRE_MINUTES,
+    JWT_ALGORITHM,
+    JWT_AUDIENCE,
+    JWT_ISSUER,
+    JWT_LEEWAY_SECONDS,
+    JWT_SECRET_KEY,
+    REFRESH_TOKEN_EXPIRE_DAYS,
+)
 
 
 def create_access_token(data: dict, expires_delta: timedelta | None = None):
@@ -17,7 +25,15 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None):
         expire = now + expires_delta
 
     token_data.update(
-        {"exp": expire, "iat": now, "token_type": "access", "jti": secrets.token_urlsafe(16)}
+        {
+            "exp": expire,
+            "iat": now,
+            "nbf": now,
+            "token_type": "access",
+            "jti": secrets.token_urlsafe(16),
+            "iss": JWT_ISSUER,
+            "aud": JWT_AUDIENCE,
+        }
     )
 
     encoded_jwt = jwt.encode(
@@ -39,7 +55,15 @@ def create_refresh_token(data: dict, expires_delta: timedelta | None = None):
         expire = now + expires_delta
 
     token_data.update(
-        {"exp": expire, "iat": now, "token_type": "refresh", "jti": secrets.token_urlsafe(16)}
+        {
+            "exp": expire,
+            "iat": now,
+            "nbf": now,
+            "token_type": "refresh",
+            "jti": secrets.token_urlsafe(16),
+            "iss": JWT_ISSUER,
+            "aud": JWT_AUDIENCE,
+        }
     )
 
     encoded_jwt = jwt.encode(
@@ -57,7 +81,18 @@ def decode_access_token(token: str):
             token,
             JWT_SECRET_KEY,
             algorithms=[JWT_ALGORITHM],
-            options={"require": ["exp", "iat", "token_type", "user_id", "jti"]},
+            audience=JWT_AUDIENCE,
+            issuer=JWT_ISSUER,
+            leeway=JWT_LEEWAY_SECONDS,
+            options={
+                "require": ["exp", "iat", "nbf", "token_type", "user_id", "jti", "iss", "aud"],
+                "verify_signature": True,
+                "verify_exp": True,
+                "verify_nbf": True,
+                "verify_iat": True,
+                "verify_aud": True,
+                "verify_iss": True,
+            },
         )
         if payload.get("token_type") != "access":
             raise HTTPException(status_code=401, detail="Invalid token type")
@@ -77,7 +112,18 @@ def decode_refresh_token(token: str):
             token,
             JWT_SECRET_KEY,
             algorithms=[JWT_ALGORITHM],
-            options={"require": ["exp", "iat", "token_type", "user_id", "jti"]},
+            audience=JWT_AUDIENCE,
+            issuer=JWT_ISSUER,
+            leeway=JWT_LEEWAY_SECONDS,
+            options={
+                "require": ["exp", "iat", "nbf", "token_type", "user_id", "jti", "iss", "aud"],
+                "verify_signature": True,
+                "verify_exp": True,
+                "verify_nbf": True,
+                "verify_iat": True,
+                "verify_aud": True,
+                "verify_iss": True,
+            },
         )
 
         if payload.get("token_type") != "refresh":

@@ -8,6 +8,7 @@ from app.schemas import AssetTypeCreate, AssetTypeResponse
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import require_user_permission
 from app.services.audit_service import create_audit_log
+from app.utils.helpers import escape_like
 from app.utils.pagination import paginate_query
 
 router = APIRouter(prefix="/asset-types", tags=["Asset Types"])
@@ -26,8 +27,8 @@ def get_asset_types(
     if search:
         query = query.filter(
             or_(
-                AssetType.asset_type_name.ilike(f"%{search}%"),
-                AssetType.asset_type_code.ilike(f"%{search}%"),
+                AssetType.asset_type_name.ilike(f"%{escape_like(search)}%", escape="\\"),
+                AssetType.asset_type_code.ilike(f"%{escape_like(search)}%", escape="\\"),
             )
         )
     result = paginate_query(query, skip, limit)

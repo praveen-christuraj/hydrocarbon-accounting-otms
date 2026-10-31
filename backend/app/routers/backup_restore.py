@@ -1,6 +1,9 @@
 from datetime import datetime, timedelta
 import hashlib
+import hmac
+import logging
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -28,9 +31,11 @@ from app.schemas import (
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import require_user_permission, user_has_permission
 from app.services.audit_service import create_audit_log
+from app.utils.errors import log_exception, safe_client_error, stored_error_message
 from app.utils.helpers import clean_optional_text, normalize_yes_no, get_current_user_display_name
 
 router = APIRouter(prefix="/backup", tags=["Backup & Restore"])
+logger = logging.getLogger("app.backup")
 
 BACKUP_SCHEDULE_MODES = {"Minutes", "Hours", "Daily", "Weekly"}
 BACKUP_JOB_RUNNING_STATUSES = {"Pending", "Running"}
@@ -363,7 +368,7 @@ def verify_backup_job_checksum(
     path = get_backup_file_path_or_404(job)
     actual_checksum = calculate_file_sha256(path)
     expected_checksum = str(job.checksum_sha256 or "").strip()
-    matched = actual_checksum == expected_checksum
+    matched = hmac.compare_digest(actual_checksum, expected_checksum)
     old_status = job.status
 
     if not matched:
@@ -443,6 +448,9 @@ def get_validation_database_url():
     return validation_url, validation_parsed
 
 
+_SAFE_TABLE_NAME = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
+
+
 def collect_validation_table_counts(validation_database_url: str):
     validation_engine = create_engine(validation_database_url)
     critical_tables = [
@@ -482,7 +490,14 @@ def collect_validation_table_counts(validation_database_url: str):
                         "row_count": None,
                     }
                     continue
-                row_count = connection.execute(text(f'SELECT COUNT(*) FROM "{table_name}"')).scalar()
+                if not _SAFE_TABLE_NAME.match(str(table_name)):
+                    # Defence in depth: table names are a hardcoded allowlist,
+                    # but never interpolate anything that is not a bare
+                    # identifier (no quotes, spaces, or statement separators).
+                    raise RuntimeError("Refusing to query an unexpected table name")
+                row_count = connection.execute(
+                    text(f'SELECT COUNT(*) FROM "{table_name}"')
+                ).scalar()
                 counts[table_name] = {
                     "exists": True,
                     "row_count": int(row_count or 0),
@@ -631,9 +646,10 @@ def run_restore_validation(
         db.refresh(validation)
         return validation
     except Exception as exc:
+        log_exception("Restore validation", exc)
         validation.status = "Failed"
         validation.completed_at = datetime.now()
-        validation.error_message = str(exc)
+        validation.error_message = stored_error_message("Restore validation", exc)
         validation.updated_at = datetime.now()
 
         restore_request.status = "Validation Failed"
@@ -644,7 +660,7 @@ def run_restore_validation(
             "validation_number": validation.validation_number,
             "status": validation.status,
             "failed_at": validation.completed_at.isoformat(),
-            "error": str(exc),
+            "error": validation.error_message,
             "production_restore_executed": False,
         }
         restore_request.metadata_json = metadata
@@ -665,7 +681,7 @@ def run_restore_validation(
                 "restore_request_id": restore_request.id,
                 "request_number": restore_request.request_number,
                 "backup_number": job.backup_number,
-                "error": str(exc),
+                "error": validation.error_message,
                 "production_restore_executed": False,
             },
         )
@@ -904,9 +920,10 @@ def execute_backup_job(
         db.refresh(job)
         return job
     except Exception as exc:
+        log_exception("Backup job", exc)
         job.status = "Failed"
         job.completed_at = datetime.now()
-        job.error_message = str(exc)
+        job.error_message = stored_error_message("Backup", exc)
         job.updated_at = datetime.now()
         if file_path.exists():
             try:
@@ -931,7 +948,7 @@ def execute_backup_job(
             details={
                 "backup_type": job.backup_type,
                 "trigger_source": job.trigger_source,
-                "error": str(exc),
+                "error": job.error_message,
                 "database_name": job.database_name,
             },
         )
@@ -1233,7 +1250,7 @@ def create_manual_backup(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Backup failed: {exc}")
+        raise HTTPException(status_code=500, detail=safe_client_error("Backup"))
 
 
 @router.post("/{backup_id}/verify-checksum")
@@ -1706,7 +1723,7 @@ def validate_backup_restore_request(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Restore validation failed: {exc}")
+        raise HTTPException(status_code=500, detail=safe_client_error("Restore validation"))
 
 
 @router.post(
@@ -1878,7 +1895,8 @@ def execute_backup_restore_request(
                 )
             except Exception:
                 pass
-        raise HTTPException(status_code=500, detail=f"Backup restore failed: {exc}")
+        log_exception("Backup restore", exc)
+        raise HTTPException(status_code=500, detail=safe_client_error("Backup restore"))
     finally:
         restore_maintenance_state["active"] = False
         restore_maintenance_state["started_at"] = None

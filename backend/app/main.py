@@ -3,14 +3,44 @@ from datetime import datetime, timedelta, date, time as datetime_time
 from zoneinfo import ZoneInfo
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+import logging
 import os
 from pathlib import Path
 
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from app.config import ENVIRONMENT, allowed_origins
+from app.config import (
+    ENVIRONMENT,
+    IS_PRODUCTION,
+    MAX_REQUEST_BODY_BYTES,
+    TRUSTED_HOSTS,
+    allowed_origins,
+)
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import require_user_permission
+from app.utils.http_hardening import (
+    RequestBodyLimitMiddleware,
+    RequestContextMiddleware,
+    SECURITY_HEADERS,
+)
+from app.utils.logging_config import configure_logging
+
+
+def api_docs_path(path: str) -> str | None:
+    """Expose the interactive API docs only in non-production deployments.
+
+    ``ENABLE_API_DOCS=true`` is the single, explicit escape hatch for an
+    isolated staging environment. Everything else returns ``None`` so FastAPI
+    never registers the route at all (no 404-vs-401 oracle, no schema leak).
+    """
+    if not IS_PRODUCTION:
+        return path
+    enabled = str(os.getenv("ENABLE_API_DOCS", "")).strip().lower() in {"1", "true", "yes"}
+    return path if enabled else None
+
+configure_logging()
+logger = logging.getLogger("app.main")
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -43,6 +73,7 @@ from app.models import (
 
 from app.utils.db_migrations import (
     ensure_user_security_columns,
+    ensure_security_hardening_columns,
     ensure_auth_login_challenge_columns,
     ensure_operation_ticket_number_column,
     ensure_operation_template_layout_columns,
@@ -76,6 +107,7 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     ensure_user_role_multi_role_constraint()
     ensure_user_security_columns()
+    ensure_security_hardening_columns()
     ensure_auth_login_challenge_columns()
     ensure_operation_ticket_number_column()
     ensure_operation_template_layout_columns()
@@ -111,31 +143,63 @@ app = FastAPI(
     title="Hydrocarbon Accounting API",
     version="1.0.0",
     lifespan=lifespan,
+    # Interactive documentation exposes the whole internal API surface. It is
+    # disabled in production and can be re-enabled explicitly for a controlled
+    # environment with ENABLE_API_DOCS=true.
+    docs_url=api_docs_path("/docs"),
+    redoc_url=api_docs_path("/redoc"),
+    openapi_url=api_docs_path("/openapi.json"),
 )
 
+# Middleware order: the last added runs first. RequestContextMiddleware is
+# outermost so every response (including 413/429/500) carries a request id;
+# CORS runs before the body limit so browsers receive CORS headers on errors.
+app.add_middleware(RequestBodyLimitMiddleware, max_bytes=MAX_REQUEST_BODY_BYTES)
+app.add_middleware(RequestContextMiddleware)
+if TRUSTED_HOSTS:
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=TRUSTED_HOSTS)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "Accept", "X-Requested-With"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Requested-With", "X-Request-ID"],
+    expose_headers=["X-Request-ID", "Retry-After"],
+    max_age=600,
 )
 
 
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=(), payment=()"
-    response.headers["Content-Security-Policy"] = (
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
-    )
-    if ENVIRONMENT == "production":
-        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    for header, value in SECURITY_HEADERS.items():
+        response.headers[header] = value
+    # API responses can contain operational data; never let a browser or proxy
+    # cache them. Static documentation, when enabled, remains cacheable.
+    if not request.url.path.startswith(("/docs", "/redoc", "/openapi.json")):
+        response.headers.setdefault("Cache-Control", "no-store")
+        response.headers.setdefault("Pragma", "no-cache")
+    response.headers.setdefault("X-Request-ID", getattr(request.state, "request_id", "-"))
     return response
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Log the full error server-side and return an opaque client response."""
+    request_id = getattr(request.state, "request_id", "-")
+    logger.exception(
+        "Unhandled error on %s %s",
+        request.method,
+        request.url.path,
+        extra={"request_id": request_id},
+    )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "An internal error occurred. Quote the request id when contacting support.",
+            "request_id": request_id,
+        },
+    )
 
 from app.routers import (
     admin_db_browser, asset_assignments, asset_calibration_tables, asset_types, assets,

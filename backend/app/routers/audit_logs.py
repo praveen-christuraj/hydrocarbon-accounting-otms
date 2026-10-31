@@ -35,24 +35,24 @@ def get_audit_logs(
     query = db.query(AuditLog)
 
     if module_name:
-        query = query.filter(AuditLog.module_name.ilike(f"%{module_name.strip()}%"))
+        query = query.filter(AuditLog.module_name.ilike(f"%{escape_like(module_name)}%", escape="\\"))
 
     if action:
-        query = query.filter(AuditLog.action.ilike(f"%{action.strip()}%"))
+        query = query.filter(AuditLog.action.ilike(f"%{escape_like(action)}%", escape="\\"))
 
     if entity_type:
-        query = query.filter(AuditLog.entity_type.ilike(f"%{entity_type.strip()}%"))
+        query = query.filter(AuditLog.entity_type.ilike(f"%{escape_like(entity_type)}%", escape="\\"))
 
     if ticket_number:
-        query = query.filter(AuditLog.ticket_number.ilike(f"%{ticket_number.strip()}%"))
+        query = query.filter(AuditLog.ticket_number.ilike(f"%{escape_like(ticket_number)}%", escape="\\"))
 
     if operation_number:
         query = query.filter(
-            AuditLog.operation_number.ilike(f"%{operation_number.strip()}%")
+            AuditLog.operation_number.ilike(f"%{escape_like(operation_number)}%", escape="\\")
         )
 
     if performed_by:
-        query = query.filter(AuditLog.performed_by.ilike(f"%{performed_by.strip()}%"))
+        query = query.filter(AuditLog.performed_by.ilike(f"%{escape_like(performed_by)}%", escape="\\"))
 
     if date_from:
         try:

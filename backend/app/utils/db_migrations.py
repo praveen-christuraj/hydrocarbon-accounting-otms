@@ -20,6 +20,74 @@ from app.models import (
 from datetime import datetime, timezone
 
 
+def ensure_security_hardening_columns():
+    """Add the session-revocation, password-history and TOTP-replay columns.
+
+    Also enforces case-insensitive username uniqueness and starts the password
+    expiry clock for legacy accounts that never recorded a change timestamp.
+    Safe to run on every startup; every statement is idempotent.
+    """
+    inspector = inspect(engine)
+    if "users" not in inspector.get_table_names():
+        return
+
+    cols = {c["name"] for c in inspector.get_columns("users")}
+    with engine.begin() as connection:
+        for col_name, sql in {
+            "password_history_json": "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_history_json JSONB;",
+            "session_revoked_at": "ALTER TABLE users ADD COLUMN IF NOT EXISTS session_revoked_at TIMESTAMP;",
+            "session_epoch": "ALTER TABLE users ADD COLUMN IF NOT EXISTS session_epoch INTEGER NOT NULL DEFAULT 0;",
+            "totp_last_used_step": "ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_last_used_step INTEGER;",
+        }.items():
+            if col_name not in cols:
+                connection.execute(text(sql))
+
+        # Legacy rows with no change timestamp would otherwise never expire.
+        # Starting the clock now gives every account a full policy window
+        # instead of locking anyone out at upgrade time.
+        connection.execute(
+            text("UPDATE users SET password_changed_at = NOW() WHERE password_changed_at IS NULL;")
+        )
+        connection.execute(
+            text(
+                "UPDATE users SET password_expiry_days = :days "
+                "WHERE password_expiry_days IS NULL OR password_expiry_days < 1;"
+            ),
+            {"days": 30},
+        )
+        # The reserved bootstrap administrator must never hold a non-expiring
+        # password. This also repairs databases seeded before the control existed.
+        connection.execute(
+            text(
+                "UPDATE users SET password_never_expires = 'No', "
+                "password_expiry_days = LEAST(COALESCE(password_expiry_days, 60), 60) "
+                "WHERE LOWER(TRIM(username)) = 'admin';"
+            )
+        )
+
+        # Case/whitespace-insensitive uniqueness: login uses a case-insensitive
+        # lookup, so 'Admin' and 'admin ' must not coexist. If a legacy database
+        # already contains duplicates the index creation is skipped with a
+        # warning rather than blocking startup.
+        try:
+            connection.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_users_username_normalized "
+                    "ON users (LOWER(TRIM(username)));"
+                )
+            )
+        except Exception as exc:  # pragma: no cover - depends on legacy data
+            print(f"[SECURITY] Could not create normalized username index: {exc}")
+
+        # Expired artefacts are useless once their token/challenge has expired.
+        try:
+            connection.execute(
+                text("DELETE FROM auth_login_challenges WHERE expires_at < NOW() - INTERVAL '1 day';")
+            )
+        except Exception:
+            pass
+
+
 def ensure_user_security_columns():
     inspector = inspect(engine)
     if "users" not in inspector.get_table_names():

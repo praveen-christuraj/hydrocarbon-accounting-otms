@@ -17,6 +17,9 @@ def compile_jsonb_for_sqlite(_type, _compiler, **_kw):
     return "JSON"
 
 os.environ.setdefault("JWT_SECRET_KEY", secrets.token_urlsafe(32))
+# Throttling is process-global by design; the suite would otherwise share one
+# failure budget across unrelated tests. Rate-limit tests enable it explicitly.
+os.environ.setdefault("RATE_LIMIT_ENABLED", "false")
 os.environ.setdefault("ENCRYPTION_KEY", secrets.token_urlsafe(32))
 _xdist_worker = os.environ.get("PYTEST_XDIST_WORKER")
 os.environ.setdefault(

@@ -2,6 +2,23 @@ from sqlalchemy.orm import Session
 
 from app.models import Location, Asset, OperationTransaction, User
 
+LIKE_ESCAPE_CHARACTER = "\\"
+
+
+def escape_like(value: str | None, max_length: int = 200) -> str:
+    """Escape LIKE/ILIKE wildcards in user-supplied search text.
+
+    Without this, a search value of "%" scans the whole table and "_" matches
+    arbitrary characters, which turns a filter box into an unbounded query.
+    The returned value is intended for ``column.ilike(f"%{escaped}%", escape="\\")``.
+    """
+    text = str(value or "").strip()[:max_length]
+    return (
+        text.replace(LIKE_ESCAPE_CHARACTER, LIKE_ESCAPE_CHARACTER * 2)
+        .replace("%", LIKE_ESCAPE_CHARACTER + "%")
+        .replace("_", LIKE_ESCAPE_CHARACTER + "_")
+    )
+
 
 def normalize_code(value: str):
     return str(value or "").strip().upper()

@@ -28,8 +28,10 @@ function ForcePasswordChange({ loggedInUser, onComplete, onLogout }) {
       buildPolicyChecks(form.newPassword, {
         currentPassword: form.currentPassword,
         username: loggedInUser?.username || '',
+        fullName: loggedInUser?.full_name || '',
+        email: loggedInUser?.email || '',
       }),
-    [form.newPassword, form.currentPassword, loggedInUser?.username]
+    [form.newPassword, form.currentPassword, loggedInUser]
   )
   const strength = useMemo(() => calcPasswordStrength(form.newPassword), [form.newPassword])
 

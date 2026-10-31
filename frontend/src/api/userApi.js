@@ -25,6 +25,9 @@ const convertUserToApi = (user) => {
     department: user.department || null,
     designation: user.designation || null,
     password: user.password || '',
+    // Required by the API only when an administrator changes their own
+    // password through User Master (identity re-verification).
+    current_password: user.currentPassword || null,
     status: user.status || 'Active',
   }
 }

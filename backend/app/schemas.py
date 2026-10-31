@@ -1,3 +1,4 @@
+import re
 from datetime import date, datetime, time
 from typing import Any, Optional
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, ValidationInfo, field_validator
@@ -10,80 +11,133 @@ from app.utils.helpers import normalize_yes_no
 # ---------------------------------------------------------------------------
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    username: str = Field(min_length=1, max_length=80)
+    password: str = Field(min_length=1, max_length=256)
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class TwoFAVerifyRequest(BaseModel):
-    challenge_id: str
-    code: str
+    challenge_id: str = Field(min_length=20, max_length=200)
+    code: str = Field(min_length=1, max_length=32)
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class ChangePasswordRequest(BaseModel):
-    current_password: str
-    new_password: str = Field(min_length=12)
-    confirm_password: str
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=12, max_length=128)
+    confirm_password: str = Field(min_length=12, max_length=128)
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class ForgotPasswordRequest(BaseModel):
-    username: str
-    reason: str | None = None
+    username: str = Field(min_length=1, max_length=80)
+    reason: str | None = Field(default=None, max_length=500)
     reset_2fa: bool = False
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class AdminResetPasswordRequest(BaseModel):
-    new_password: str = Field(min_length=12)
+    new_password: str = Field(min_length=12, max_length=128)
+    # Retained for client compatibility; the server always forces a change.
     force_password_change: bool = True
     reset_2fa: bool = False
-    remarks: str | None = None
+    remarks: str | None = Field(default=None, max_length=500)
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class TwoFASetupVerifyRequest(BaseModel):
-    code: str
+    code: str = Field(min_length=1, max_length=32)
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class TwoFADisableRequest(BaseModel):
-    current_password: str
-    code: str
+    current_password: str = Field(min_length=1, max_length=256)
+    code: str = Field(min_length=1, max_length=32)
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class DevResetPasswordRequest(BaseModel):
-    username: str
-    new_password: str = Field(min_length=12)
+    username: str = Field(min_length=1, max_length=80)
+    new_password: str = Field(min_length=12, max_length=128)
 
 
 class DeclinePasswordResetRequest(BaseModel):
-    notes: Optional[str] = None
+    notes: Optional[str] = Field(default=None, max_length=500)
 
 
 class RefreshTokenRequest(BaseModel):
-    refresh_token: str | None = None
+    refresh_token: str | None = Field(default=None, max_length=4096)
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class LogoutRequest(BaseModel):
-    refresh_token: str | None = None
+    refresh_token: str | None = Field(default=None, max_length=4096)
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class PasswordPolicyUpdate(BaseModel):
+    """Administrator-controlled per-account password expiry policy."""
+
+    password_expiry_days: int = Field(ge=1, le=730)
+    password_never_expires: bool | str = False
+
+    model_config = ConfigDict(extra="forbid")
 
 
 # ---------------------------------------------------------------------------
 # User schemas
 # ---------------------------------------------------------------------------
 
+USER_STATUS_VALUES = ("Active", "Inactive", "Blocked")
+USERNAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$"
+
+
 class UserBase(BaseModel):
-    full_name: str
-    username: str
-    email: EmailStr
-    phone: Optional[str] = None
-    department: Optional[str] = None
-    designation: Optional[str] = None
-    status: str = "Active"
+    full_name: str = Field(min_length=1, max_length=150)
+    username: str = Field(min_length=3, max_length=80)
+    email: EmailStr = Field(max_length=150)
+    phone: Optional[str] = Field(default=None, max_length=50)
+    department: Optional[str] = Field(default=None, max_length=100)
+    designation: Optional[str] = Field(default=None, max_length=100)
+    status: str = Field(default="Active", max_length=20)
+
+    @field_validator("status")
+    @classmethod
+    def _validate_status(cls, value: str) -> str:
+        cleaned = str(value or "").strip()
+        if cleaned not in USER_STATUS_VALUES:
+            raise ValueError(f"Status must be one of {', '.join(USER_STATUS_VALUES)}")
+        return cleaned
 
 
 class UserCreate(UserBase):
-    password: str
+    password: str = Field(min_length=12, max_length=128)
+
+    @field_validator("username")
+    @classmethod
+    def _validate_new_username(cls, value: str) -> str:
+        cleaned = str(value or "").strip()
+        if not re.match(USERNAME_PATTERN, cleaned):
+            raise ValueError(
+                "Username must be 3-80 characters using letters, numbers, dot, underscore or hyphen"
+            )
+        return cleaned
 
 
 class UserUpdate(UserBase):
-    password: Optional[str] = None
+    password: Optional[str] = Field(default=None, max_length=128)
+    # Required only when an administrator rotates their own password through
+    # User Master; the standard flow is POST /auth/change-password.
+    current_password: Optional[str] = Field(default=None, max_length=256)
 
 
 class UserResponse(UserBase):
