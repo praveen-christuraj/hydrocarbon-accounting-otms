@@ -305,7 +305,7 @@ def delete_daily_entry(
         details={"before": before},
     )
     db.commit()
-    return {"detail": "Book stock entry deleted.", "id": entry_id}
+    return {"detail": "Book stock entry permanently deleted.", "id": entry_id}
 
 
 @router.post("/daily-entries/bulk-upload")

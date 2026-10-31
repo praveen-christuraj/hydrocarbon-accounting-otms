@@ -296,6 +296,7 @@ def test_book_stock_end_to_end_flow(client, db):
     # Delete is audited too.
     deleted = client.delete(f"/book-stock/daily-entries/{gas_entry['id']}", headers=headers)
     assert deleted.status_code == 200
+    assert "permanently" in deleted.json()["detail"].lower()
     assert db.query(BookStockDailyEntry).filter(BookStockDailyEntry.product_code == "GAS").count() == 0
     assert db.query(BookStockFieldProduction).filter(BookStockFieldProduction.product_code == "GAS").count() == 0
     assert db.query(AuditLog).filter(AuditLog.action == "Delete Book Stock Entry").count() == 1

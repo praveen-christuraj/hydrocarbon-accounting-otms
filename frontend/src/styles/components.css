@@ -5013,3 +5013,24 @@ td.preset-result-error {
   font-size: 11px;
   color: var(--text-muted);
 }
+
+/* Export transaction multi-delete selection (active and legacy-inactive rows). */
+.export-transaction-table {
+  min-width: 1120px;
+}
+
+.export-transaction-table .task-select-col {
+  width: 42px;
+  text-align: center;
+}
+
+.export-transaction-table .task-select-col input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.export-transaction-table tbody tr.row-selected {
+  background: var(--primary-soft);
+}

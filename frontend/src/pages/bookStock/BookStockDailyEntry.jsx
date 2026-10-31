@@ -418,17 +418,17 @@ function BookStockDailyEntry({ loggedInUser }) {
     setError('')
     setSuccess('')
     const confirmed = await confirm({
-      title: 'Delete book stock entry',
-      message: `Delete the ${entry.product_name || entry.product_code} entry for ${entry.block_name || entry.block_code} on ${entry.entry_date}? The audit trail keeps a copy of the values.`,
+      title: 'Permanently delete Book Stock entry',
+      message: `Permanently delete the ${entry.product_name || entry.product_code} entry for ${entry.block_name || entry.block_code} on ${entry.entry_date}? This cannot be undone. The audit trail keeps a copy of the values.`,
       tone: 'danger',
-      confirmLabel: 'Delete',
+      confirmLabel: 'Permanently delete',
       module: MODULE,
     })
     if (!confirmed) return
     try {
       await deleteBookStockDailyEntry(entry.id)
-      setSuccess('Book stock entry deleted.')
-      logUiAction(MODULE, 'Delete Daily Stock Entry', { id: entry.id, entry_date: entry.entry_date })
+      setSuccess('Book Stock entry permanently deleted.')
+      logUiAction(MODULE, 'Permanently Delete Daily Stock Entry', { id: entry.id, entry_date: entry.entry_date })
       await loadEntries()
     } catch (err) {
       setError(err.message)

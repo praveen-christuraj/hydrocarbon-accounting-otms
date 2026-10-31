@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
+  bulkDeleteExportTransactions,
   createExportTransaction,
   deleteExportTransaction,
   getExportTransactions,
@@ -26,6 +28,7 @@ import {
 } from './exportShared'
 
 const MODULE = 'Export Transactions'
+const MAX_BULK_DELETE = 500
 
 const COLUMNS = [
   { key: 'bl_date', label: 'BL Date', type: 'date' },
@@ -59,7 +62,7 @@ const emptyForm = {
 
 function ExportTransactions({ loggedInUser }) {
   const confirm = useConfirm()
-  const { canCreate, canEdit, canDelete } = useExportPermissions(loggedInUser, 'Export Transaction')
+  const { canView, canCreate, canEdit, canDelete } = useExportPermissions(loggedInUser, 'Export Transaction')
   const reference = useExportReferenceData(['locations', 'entities', 'blocks', 'entityBlocks', 'consignees', 'permits'])
   const { locations, entities, blocks, entityBlocks, consignees, permits } = reference.data
 
@@ -74,6 +77,7 @@ function ExportTransactions({ loggedInUser }) {
   const [formError, setFormError] = useState('')
   const [permitOverride, setPermitOverride] = useState(false)
   const [page, setPage] = useState(1)
+  const [selectedIds, setSelectedIds] = useState([])
   const pageSize = usePageSize()
 
   const loadTransactions = useCallback(async () => {
@@ -117,6 +121,39 @@ function ExportTransactions({ loggedInUser }) {
   const filters = useDataFilters(rows, COLUMNS, { module: MODULE })
   const visibleRows = paginateRows(filters.filteredRows, page, pageSize)
   const totalVolume = filters.filteredRows.reduce((sum, row) => sum + Number(row.volume || 0), 0)
+  const showActions = canEdit || canDelete
+  const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds])
+  const allVisibleSelected = visibleRows.length > 0 && visibleRows.every((row) => selectedIdSet.has(row.id))
+  const columnCount = 11 + (showActions ? 1 : 0) + (canDelete ? 1 : 0)
+
+  const toggleTransactionSelection = (id, checked) => {
+    if (!checked) {
+      setSelectedIds((current) => current.filter((selectedId) => selectedId !== id))
+      return
+    }
+    if (selectedIdSet.has(id)) return
+    if (selectedIds.length >= MAX_BULK_DELETE) {
+      setError(`Select no more than ${MAX_BULK_DELETE} transactions per permanent-delete batch.`)
+      return
+    }
+    setError('')
+    setSelectedIds((current) => [...new Set([...current, id])])
+  }
+
+  const toggleVisibleSelection = (checked) => {
+    const visibleIds = visibleRows.map((row) => row.id)
+    if (!checked) {
+      setSelectedIds((current) => current.filter((id) => !visibleIds.includes(id)))
+      return
+    }
+    const additions = visibleIds.filter((id) => !selectedIdSet.has(id))
+    if (selectedIds.length + additions.length > MAX_BULK_DELETE) {
+      setError(`Select no more than ${MAX_BULK_DELETE} transactions per permanent-delete batch.`)
+      return
+    }
+    setError('')
+    setSelectedIds((current) => [...new Set([...current, ...visibleIds])])
+  }
 
   const linkedBlocks = useMemo(
     () => blocksForEntity(blocks, entityBlocks, form.entity_code),
@@ -284,20 +321,51 @@ function ExportTransactions({ loggedInUser }) {
     setError('')
     setSuccess('')
     const confirmed = await confirm({
-      title: 'Delete export transaction',
-      message: `Delete the ${tx.bl_date} export of ${fmt(tx.volume)} from block ${tx.block_name || tx.block_code}?`,
+      title: 'Permanently delete export transaction',
+      message: `Permanently delete the ${tx.bl_date} export of ${fmt(tx.volume)} from block ${tx.block_name || tx.block_code}? This cannot be undone.`,
+      details: 'The transaction will be removed from reports. An audit snapshot will be retained.',
       tone: 'danger',
-      confirmLabel: 'Delete',
+      confirmLabel: 'Permanently delete',
       module: EXPORT_MODULE,
     })
     if (!confirmed) return
     try {
       setLoading(true)
       await deleteExportTransaction(tx.id)
-      setSuccess('Export transaction deleted.')
+      setSelectedIds((current) => current.filter((id) => id !== tx.id))
+      setSuccess('Export transaction permanently deleted.')
       await Promise.all([loadTransactions(), reference.reload()])
     } catch (err) {
       setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleBulkDelete = async () => {
+    if (!canDelete || selectedIds.length === 0 || loading) return
+    const transactionIds = [...new Set(selectedIds)]
+    const count = transactionIds.length
+    const confirmed = await confirm({
+      title: 'Permanently delete selected export transactions',
+      message: `Permanently delete ${count} selected export transaction${count === 1 ? '' : 's'}? This cannot be undone.`,
+      details: 'These records will be removed from reports. Audit snapshots will be retained for each transaction.',
+      tone: 'danger',
+      confirmLabel: `Permanently delete ${count}`,
+      module: EXPORT_MODULE,
+    })
+    if (!confirmed) return
+    setError('')
+    setSuccess('')
+    try {
+      setLoading(true)
+      const result = await bulkDeleteExportTransactions(transactionIds)
+      const deletedCount = Number(result?.deleted ?? count)
+      setSelectedIds([])
+      setSuccess(`${deletedCount} export transaction${deletedCount === 1 ? '' : 's'} permanently deleted.`)
+      await Promise.all([loadTransactions(), reference.reload()])
+    } catch (err) {
+      setError(err.message || 'Unable to permanently delete the selected export transactions.')
     } finally {
       setLoading(false)
     }
@@ -350,7 +418,6 @@ function ExportTransactions({ loggedInUser }) {
     },
   }
 
-  const showActions = canEdit || canDelete
   const blockTotal = form.block_entries.reduce((sum, entry) => sum + Number(entry.volume || 0), 0)
 
   return (
@@ -360,12 +427,20 @@ function ExportTransactions({ loggedInUser }) {
         description="Export liftings by BL date, with volumes per block checked against permits."
         count={`${transactions.length} Transactions`}
         actions={
-          canCreate && (
-            <button type="button" className="btn-primary" onClick={openCreate}>
-              <Icon name="plus" size={15} />
-              New Export
-            </button>
-          )
+          <>
+            {canView && (
+              <Link to="/export-operations/deleted-entries" className="btn-secondary">
+                <Icon name="archive" size={15} />
+                Deleted Entries
+              </Link>
+            )}
+            {canCreate && (
+              <button type="button" className="btn-primary" onClick={openCreate}>
+                <Icon name="plus" size={15} />
+                New Export
+              </button>
+            )}
+          </>
         }
       />
 
@@ -384,13 +459,49 @@ function ExportTransactions({ loggedInUser }) {
         importConfig={importConfig}
         canImport={canCreate}
         searchPlaceholder="Search vessel, consignee, permit…"
-        extraActions={<span className="toolbar-total">Total volume: <strong>{fmt(totalVolume)}</strong></span>}
+        extraActions={
+          <>
+            {canDelete && (
+              <>
+                <span className="toolbar-total">
+                  Selected: <strong>{selectedIds.length}</strong> / {MAX_BULK_DELETE}
+                </span>
+                <button
+                  type="button"
+                  className="btn-danger btn-sm"
+                  onClick={handleBulkDelete}
+                  disabled={loading || saving || selectedIds.length === 0}
+                >
+                  <Icon name="trash" size={15} />
+                  Permanently delete selected
+                </button>
+                {selectedIds.length > 0 && (
+                  <button type="button" className="btn-secondary btn-sm" onClick={() => setSelectedIds([])} disabled={loading}>
+                    Clear selection
+                  </button>
+                )}
+              </>
+            )}
+            <span className="toolbar-total">Total volume: <strong>{fmt(totalVolume)}</strong></span>
+          </>
+        }
       />
 
       <div className="table-scroll">
-        <table>
+        <table className="export-transaction-table">
           <thead>
             <tr>
+              {canDelete && (
+                <th className="task-select-col">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all export transactions on this page"
+                    checked={allVisibleSelected}
+                    onChange={(event) => toggleVisibleSelection(event.target.checked)}
+                    disabled={loading || visibleRows.length === 0}
+                  />
+                </th>
+              )}
               <th>BL Date</th>
               <th>Vessel</th>
               <th>Quarter</th>
@@ -408,13 +519,24 @@ function ExportTransactions({ loggedInUser }) {
           <tbody>
             {visibleRows.length === 0 ? (
               <tr>
-                <td colSpan={showActions ? 12 : 11} className="empty-table">
+                <td colSpan={columnCount} className="empty-table">
                   {loading ? 'Loading…' : transactions.length === 0 ? 'No export transactions yet.' : 'No transactions match the filters.'}
                 </td>
               </tr>
             ) : (
               visibleRows.map((tx) => (
-                <tr key={tx.id}>
+                <tr key={tx.id} className={selectedIdSet.has(tx.id) ? 'row-selected' : ''}>
+                  {canDelete && (
+                    <td className="task-select-col">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select export transaction ${tx.id}`}
+                        checked={selectedIdSet.has(tx.id)}
+                        onChange={(event) => toggleTransactionSelection(tx.id, event.target.checked)}
+                        disabled={loading || (!selectedIdSet.has(tx.id) && selectedIds.length >= MAX_BULK_DELETE)}
+                      />
+                    </td>
+                  )}
                   <td>{tx.bl_date}</td>
                   <td>{tx.vessel_name || '—'}</td>
                   <td>{tx.quarter}</td>

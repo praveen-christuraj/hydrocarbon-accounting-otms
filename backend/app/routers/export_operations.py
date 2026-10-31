@@ -18,6 +18,7 @@ from app.schemas import (
     ExportConsigneeCreate, ExportConsigneeUpdate, ExportConsigneeResponse,
     ExportDashboardResponse, BulkUploadRequest, BulkUploadItem,
     PermitBulkUploadRequest, PermitBulkUploadItem,
+    ExportTransactionBulkDeleteRequest,
 )
 from app.dependencies.auth import get_current_user_from_token
 from app.utils.default_permissions import EXPORT_VIEW_PERMISSIONS
@@ -200,7 +201,7 @@ def expire_permits_if_needed(db: Session, as_of_date: date | None = None):
 def calculate_used_permit_volume(db: Session, permit: ExportPermit) -> float:
     return db.query(func.coalesce(func.sum(ExportTransaction.volume), 0)).filter(
         ExportTransaction.permit_number == permit.permit_number,
-        ExportTransaction.status == "Active",
+        func.lower(func.trim(ExportTransaction.status)) == "active",
     ).scalar() or 0
 
 
@@ -209,7 +210,7 @@ def calculate_used_permit_volume_for_block(db: Session, location_code: str, bloc
         ExportTransaction.location_code == location_code,
         ExportTransaction.block_code == block_code,
         ExportTransaction.quarter == quarter,
-        ExportTransaction.status == "Active",
+        func.lower(func.trim(ExportTransaction.status)) == "active",
     ).scalar() or 0
 
 
@@ -442,6 +443,34 @@ def build_transaction_response(tx, db):
         "status": tx.status,
         "created_at": tx.created_at,
         "updated_at": tx.updated_at,
+    }
+
+
+def active_export_transaction_query(query):
+    """Keep inactive export transactions out of every operational total/report."""
+    return query.filter(func.lower(func.trim(ExportTransaction.status)) == "active")
+
+
+def export_transaction_audit_snapshot(tx: ExportTransaction) -> dict:
+    """Retain the deleted record's business values in the audit log."""
+    return {
+        "id": tx.id,
+        "bl_date": tx.bl_date.isoformat() if tx.bl_date else None,
+        "location_code": tx.location_code,
+        "entity_code": tx.entity_code,
+        "block_code": tx.block_code,
+        "volume": tx.volume,
+        "consignee": tx.consignee,
+        "destination": tx.destination,
+        "country": tx.country,
+        "quarter": tx.quarter,
+        "permit_number": tx.permit_number,
+        "vessel_name": tx.vessel_name,
+        "remarks": tx.remarks,
+        "created_by": tx.created_by,
+        "status": tx.status,
+        "created_at": tx.created_at.isoformat() if tx.created_at else None,
+        "updated_at": tx.updated_at.isoformat() if tx.updated_at else None,
     }
 
 
@@ -928,7 +957,32 @@ def list_export_transactions(
     current_user: User = Depends(get_current_user_from_token),
 ):
     require_user_permission(current_user, "View Export Transaction", db)
-    q = db.query(ExportTransaction).filter(ExportTransaction.status == "Active")
+    q = active_export_transaction_query(db.query(ExportTransaction))
+    if location_code:
+        ensure_export_location_scope(current_user, db, location_code)
+        q = q.filter(ExportTransaction.location_code == location_code)
+    else:
+        q = apply_export_location_scope(q, ExportTransaction.location_code, current_user, db)
+    if entity_code:
+        q = q.filter(ExportTransaction.entity_code == entity_code)
+    if quarter:
+        q = q.filter(ExportTransaction.quarter == quarter)
+    return [build_transaction_response(tx, db) for tx in q.order_by(ExportTransaction.bl_date.desc()).all()]
+
+
+@router.get("/transactions/deleted", response_model=list[ExportTransactionResponse])
+def list_deleted_export_transactions(
+    location_code: str = Query(None),
+    entity_code: str = Query(None),
+    quarter: str = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_from_token),
+):
+    """Expose legacy soft-deleted rows for review and permanent cleanup."""
+    require_user_permission(current_user, "View Export Transaction", db)
+    q = db.query(ExportTransaction).filter(
+        func.lower(func.trim(ExportTransaction.status)) == "inactive"
+    )
     if location_code:
         ensure_export_location_scope(current_user, db, location_code)
         q = q.filter(ExportTransaction.location_code == location_code)
@@ -1047,17 +1101,86 @@ def update_export_transaction(transaction_id: int, data: ExportTransactionUpdate
     return build_transaction_response(tx, db)
 
 
+def _permanently_delete_export_transactions(
+    transactions: list[ExportTransaction], current_user: User, db: Session
+) -> list[int]:
+    """Hard-delete scoped transactions while retaining an audit snapshot.
+
+    Scope is checked for every row before any deletion is staged, so a mixed
+    in-scope/out-of-scope bulk request can never partially succeed.
+    """
+    for tx in transactions:
+        ensure_export_location_scope(current_user, db, tx.location_code)
+
+    deleted_ids = []
+    for tx in transactions:
+        before = export_transaction_audit_snapshot(tx)
+        entity_label = (
+            f"{tx.bl_date.isoformat()} · {tx.location_code} / "
+            f"{tx.entity_code} / {tx.block_code}"
+        )
+        db.delete(tx)
+        create_audit_log(
+            db,
+            "Export Operations",
+            "Permanently Delete Export Transaction",
+            current_user,
+            entity_type="ExportTransaction",
+            entity_id=tx.id,
+            entity_label=entity_label,
+            old_status=tx.status,
+            details={"deletion_type": "permanent", "before": before},
+        )
+        deleted_ids.append(tx.id)
+
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return deleted_ids
+
+
 @router.delete("/transactions/{transaction_id}")
 def delete_export_transaction(transaction_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_from_token)):
     require_user_permission(current_user, "Delete Export Transaction", db)
     tx = db.query(ExportTransaction).filter(ExportTransaction.id == transaction_id).first()
     if not tx:
         raise HTTPException(status_code=404, detail="Export transaction not found")
-    ensure_export_location_scope(current_user, db, tx.location_code)
-    tx.status = "Inactive"
-    db.commit()
-    create_audit_log(db, "Export Operations", "Delete Export Transaction", current_user, entity_type="ExportTransaction", entity_id=tx.id)
-    return {"detail": "Export transaction deleted"}
+    deleted_ids = _permanently_delete_export_transactions([tx], current_user, db)
+    return {"detail": "Export transaction permanently deleted", "id": deleted_ids[0]}
+
+
+@router.post("/transactions/bulk-delete")
+def bulk_delete_export_transactions(
+    data: ExportTransactionBulkDeleteRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_from_token),
+):
+    require_user_permission(current_user, "Delete Export Transaction", db)
+    transaction_ids = list(dict.fromkeys(data.transaction_ids))
+    transactions = (
+        db.query(ExportTransaction)
+        .filter(ExportTransaction.id.in_(transaction_ids))
+        .all()
+    )
+    found_by_id = {tx.id: tx for tx in transactions}
+    missing_ids = [transaction_id for transaction_id in transaction_ids if transaction_id not in found_by_id]
+    if missing_ids:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Export transaction(s) not found: {', '.join(map(str, missing_ids))}",
+        )
+
+    # Keep the response and audit order deterministic, independent of the
+    # database's IN-clause row ordering.
+    ordered_transactions = [found_by_id[transaction_id] for transaction_id in transaction_ids]
+    deleted_ids = _permanently_delete_export_transactions(ordered_transactions, current_user, db)
+    return {
+        "detail": f"{len(deleted_ids)} export transaction(s) permanently deleted",
+        "deleted": len(deleted_ids),
+        "transaction_ids": deleted_ids,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1298,7 +1421,7 @@ def get_export_dashboard(
     require_user_permission(current_user, "View Export Dashboard", db)
     if location_code:
         ensure_export_location_scope(current_user, db, location_code)
-    tx_q = db.query(ExportTransaction).filter(ExportTransaction.status == "Active")
+    tx_q = active_export_transaction_query(db.query(ExportTransaction))
     if location_code:
         tx_q = tx_q.filter(ExportTransaction.location_code == location_code)
     else:
@@ -1354,7 +1477,7 @@ def get_export_dashboard(
     tx_loc_q = db.query(
         ExportTransaction.location_code,
         func.coalesce(func.sum(ExportTransaction.volume), 0).label("total"),
-    ).filter(ExportTransaction.status == "Active")
+    ).filter(func.lower(func.trim(ExportTransaction.status)) == "active")
     tx_loc_q = apply_export_location_scope(tx_loc_q, ExportTransaction.location_code, current_user, db)
     if location_code:
         tx_loc_q = tx_loc_q.filter(ExportTransaction.location_code == location_code)
@@ -1390,7 +1513,7 @@ def get_export_dashboard(
         ExportTransaction.location_code,
         ExportTransaction.block_code,
         func.coalesce(func.sum(ExportTransaction.volume), 0).label("export_vol"),
-    ).filter(ExportTransaction.status == "Active")
+    ).filter(func.lower(func.trim(ExportTransaction.status)) == "active")
     tx_block_q = apply_export_location_scope(tx_block_q, ExportTransaction.location_code, current_user, db)
     if location_code:
         tx_block_q = tx_block_q.filter(ExportTransaction.location_code == location_code)
@@ -1514,7 +1637,7 @@ def get_export_report(
     require_user_permission(current_user, "View Export Report", db)
     if location_code:
         ensure_export_location_scope(current_user, db, location_code)
-    q = db.query(ExportTransaction).filter(ExportTransaction.status == "Active")
+    q = active_export_transaction_query(db.query(ExportTransaction))
     if location_code:
         q = q.filter(ExportTransaction.location_code == location_code)
     else:

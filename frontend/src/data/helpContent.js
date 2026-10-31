@@ -367,6 +367,17 @@ export const helpContent = {
       'All actions are audited in the Audit Log.',
     ],
   },
+  '/export-operations/deleted-entries': {
+    title: 'Deleted Export Entries Help',
+    description:
+      'This page is for legacy export transactions that were previously deactivated instead of permanently deleted.',
+    points: [
+      'Inactive export transactions are excluded from export reports and report-builder outputs.',
+      'Select one or more entries with the checkboxes, then choose Permanently delete selected.',
+      'Permanent deletion cannot be undone. The complete transaction snapshot is retained in the Audit Log.',
+      'A user needs Delete Export Transaction permission to remove entries; location-scoped users can only delete entries from their assigned locations.',
+    ],
+  },
   '/report-builder': {
     title: 'Report Builder Help',
     description:

@@ -3004,6 +3004,10 @@ class ExportTransactionResponse(ExportTransactionBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ExportTransactionBulkDeleteRequest(BaseModel):
+    transaction_ids: list[int] = Field(min_length=1, max_length=500)
+
+
 class ExportConfigBase(BaseModel):
     config_key: str
     config_value: Optional[str] = None
