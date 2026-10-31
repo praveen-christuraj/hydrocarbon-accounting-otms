@@ -1,11 +1,5 @@
 import { apiPost, apiGet } from './apiClient'
-import {
-  clearAccessToken,
-  clearStoredRefreshToken,
-  getStoredAccessToken,
-  getStoredRefreshToken,
-  saveAccessToken,
-} from './authToken'
+import { clearAccessToken, getStoredAccessToken, saveAccessToken } from './authToken'
 
 const convertLoggedInUserFromApi = (data) => {
   const user = data.user || data
@@ -122,11 +116,9 @@ export const getCurrentUser = async () => {
 }
 
 export const refreshAccessToken = async () => {
-  const legacyToken = getStoredRefreshToken()
-
   try {
-    const data = await apiPost('/auth/refresh', legacyToken ? { refresh_token: legacyToken } : {})
-    clearStoredRefreshToken()
+    // The refresh token travels only in the HttpOnly cookie.
+    const data = await apiPost('/auth/refresh', {})
     if (data.access_token) {
       saveAccessToken(data.access_token)
     }
@@ -139,9 +131,18 @@ export const refreshAccessToken = async () => {
 
 export const logoutUser = async () => {
   try {
-    await apiPost('/auth/logout', { refresh_token: getStoredRefreshToken() || null })
+    await apiPost('/auth/logout', {})
   } catch {
     // Best-effort: clear locally even if server call fails
   }
   clearAccessToken()
+}
+
+/** Revoke every session for the signed-in account (all devices). */
+export const logoutAllDevices = async () => {
+  try {
+    await apiPost('/auth/logout-all', {})
+  } finally {
+    clearAccessToken()
+  }
 }

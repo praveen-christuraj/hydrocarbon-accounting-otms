@@ -63,6 +63,14 @@ export const adminRequirePasswordChange = async (userId) => {
   return apiPost(`/auth/users/${userId}/security/require-password-change`, {})
 }
 
+export const adminRevokeUserSessions = async (userId) => {
+  return apiPost(`/auth/users/${userId}/security/revoke-sessions`, {})
+}
+
+export const getPasswordPolicy = async () => {
+  return apiGet('/auth/password-policy')
+}
+
 export const getPasswordResetRequests = async (status = 'Pending') => {
   const query = status && status !== 'All' ? `?status=${encodeURIComponent(status)}` : '?status=All'
   return apiGet(`/auth/password-reset-requests${query}`)

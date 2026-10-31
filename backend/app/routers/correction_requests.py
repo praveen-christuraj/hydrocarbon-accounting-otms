@@ -324,6 +324,19 @@ def get_transaction_correction_requests(
     db: Session = Depends(get_db),
 ):
     require_user_permission(current_user, "View Operation Transaction", db)
+    # Object-level check: the permission is granted per location scope, so a
+    # caller who can view transactions in one terminal must not be able to read
+    # the correction history of a transaction belonging to another.
+    transaction = (
+        db.query(OperationTransaction)
+        .filter(OperationTransaction.id == transaction_id)
+        .first()
+    )
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Operation transaction not found")
+    ensure_location_in_user_scope(
+        current_user, db, transaction.origin_location_code, "Origin location"
+    )
     rows = (
         db.query(ApprovedTransactionCorrectionRequest)
         .filter(ApprovedTransactionCorrectionRequest.transaction_id == transaction_id)

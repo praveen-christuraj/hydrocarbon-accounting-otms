@@ -89,6 +89,7 @@ import BookStockExportOperations from './pages/bookStock/BookStockExportOperatio
 import BookStockSettings from './pages/bookStock/BookStockSettings'
 
 import { getCurrentUser, logoutUser } from './api/authApi'
+import { PASSWORD_CHANGE_REQUIRED_EVENT } from './api/apiClient'
 import AppShell from './components/layout/AppShell'
 import Modal from './components/common/Modal'
 import { useToast } from './components/common/Toast'
@@ -1338,6 +1339,17 @@ function App() {
       console.error('refreshLoggedInUser failed:', error)
     }
   }
+  // If the API refuses an action with PASSWORD_CHANGE_REQUIRED (password
+  // expired mid-session), re-pull the security flags so the full-screen gate
+  // appears without waiting for a page reload.
+  useEffect(() => {
+    const handler = () => {
+      refreshLoggedInUser()
+    }
+    window.addEventListener(PASSWORD_CHANGE_REQUIRED_EVENT, handler)
+    return () => window.removeEventListener(PASSWORD_CHANGE_REQUIRED_EVENT, handler)
+  }, [])
+
   const reloadUsers = async () => {
     try {
       const usersFromApi = await getUsers({ limit: 200 })

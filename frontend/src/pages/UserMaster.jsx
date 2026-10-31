@@ -36,6 +36,7 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
     department: '',
     designation: '',
     password: '',
+    currentPassword: '',
     status: 'Active',
   }
 
@@ -69,6 +70,7 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
   const isSelfEdit = editId !== null && editId === loggedInUser?.id
 
   const pwStrength = useMemo(() => calcPasswordStrength(user.password), [user.password])
+  const requiresCurrentPassword = isSelfEdit && user.password.length > 0
 
   const clearError = () => setError('')
   const clearSuccess = () => setSuccess('')
@@ -127,6 +129,9 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
     }
 
     if (user.password) {
+      if (editId !== null && editId === loggedInUser?.id && !String(user.currentPassword || '').trim()) {
+        errors.currentPassword = 'Enter your current password to confirm this change'
+      }
       if (user.password.length < 12 && editId === null) {
         errors.password = 'Password must be at least 12 characters'
       } else if (user.password.length < 12 && editId !== null) {
@@ -208,6 +213,7 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
       department: u.department || '',
       designation: u.designation || '',
       password: '',
+      currentPassword: '',
       status: u.status,
     })
     setConfirmPassword('')
@@ -436,6 +442,24 @@ function UserMaster({ reloadUsers: appReloadUsers, loggedInUser }) {
             </small>
           )}
         </div>
+
+        {requiresCurrentPassword && (
+          <div>
+            <label>Current Password (required to change your own)</label>
+            <input
+              name="currentPassword"
+              type="password"
+              value={user.currentPassword || ''}
+              onChange={handleChange}
+              placeholder="Enter your current password"
+              autoComplete="current-password"
+              aria-invalid={fieldErrors.currentPassword ? 'true' : undefined}
+            />
+            {fieldErrors.currentPassword && (
+              <small className="field-error">{fieldErrors.currentPassword}</small>
+            )}
+          </div>
+        )}
 
         {user.password.length > 0 && (
           <div>

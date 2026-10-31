@@ -1,77 +1,159 @@
-# Password Management & 2FA — Security Module
+# Password Management, Sessions & 2FA — Security Module
 
-For the full 24-finding assessment disposition and deployment requirements,
-see [`SECURITY_REMEDIATION.md`](SECURITY_REMEDIATION.md).
+For the 24-finding disposition, the deployment runbook, and residual risks see
+[`SECURITY_REMEDIATION.md`](SECURITY_REMEDIATION.md),
+[`DEPLOYMENT_SECURITY.md`](DEPLOYMENT_SECURITY.md) and
+[`SECURITY_AUDIT_REPORT.md`](SECURITY_AUDIT_REPORT.md).
 
-How authentication security works after the 2026-10 overhaul of the Profile &
-Security module. Single source of truth for the flows an administrator or a
-user can trigger.
+Single source of truth for the password lifecycle, session model and 2FA flows
+after the October 2026 overhaul and the Pass-2 hardening.
 
-## What was broken before (and is now fixed)
+## 1. Password policy
 
-| # | Defect | Root cause | Fix |
-|---|--------|-----------|-----|
-| 1 | Enabling 2FA always failed with HTTP 500 | `verify_2fa_setup` used `pyotp` that was only imported inside another function (`NameError`) | Module-level import; full flow covered by `backend/tests/test_security_module.py` |
-| 2 | 2FA sign-in verification crashed with HTTP 500 | Naive DB timestamp compared with a timezone-aware `datetime` (`TypeError`) | All auth timestamps normalized to naive UTC (`utc_now_naive` / `as_naive_utc`) |
-| 3 | Locked accounts invisible, no unlock | No API exposed `locked_until` / `failed_login_count`; no unlock endpoint | `GET /auth/users/security-overview` + `POST /auth/users/{id}/security/unlock` + admin console UI |
-| 4 | Admin could not change own password in User Master | Frontend turned the self-password caution into a blocking validation error | Caution is now non-blocking and explains the session sign-out |
-| 5 | 2FA setup showed "Manual code: undefined" | `/auth/2fa/setup/start` never returned the secret | Response now includes `secret`, `issuer`, `account` |
-| 6 | Reset requests unmanageable | No list/decline endpoints; only an Operation Task existed | Queue endpoints + approve/decline UI in Profile & Security |
-| 7 | `force_password_change` was never enforced | Flag set on user create / admin reset, never checked | Full-screen forced password change gate before the app renders |
-| 8 | Password policy not enforced server-side on user create/update | Only the 12-char check in the frontend | `validate_password_policy` on `/users` create & update |
+Enforced server-side in `backend/app/utils/password_policy.py` and mirrored for
+instant feedback in `frontend/src/utils/passwordPolicy.js`. The API publishes
+the machine-readable version at `GET /auth/password-policy`.
 
-## Policies
+| Rule | Value |
+|---|---|
+| Length | 12–128 characters |
+| Character classes | at least one uppercase, lowercase, digit and special character |
+| Identity containment | must not contain the username, full name or e-mail (case/ punctuation insensitive) |
+| Common passwords | rejected, including leet substitutions (`P@ssw0rd`, `Adm1n123` …) |
+| Patterns | no 4 identical characters in a row; no 4-character keyboard or numeric sequence (`1234`, `qwer`, `asdf`, `zxcv`) |
+| Current password | the new password must differ from the current one |
+| History | the last 5 bcrypt hashes are stored in `users.password_history_json` and reuse is refused with HTTP 400 |
+| Generator | the UI generates 16-character passwords with `crypto.getRandomValues` |
 
-* **Password policy** (`backend/app/utils/password_policy.py`, mirrored in
-  `frontend/src/utils/passwordPolicy.js`): ≥12 and ≤128 chars, upper + lower +
-  digit + special, must not contain the username, must differ from the current
-  password. Enforced on self change, admin reset, user create and user update.
-* **Account lockout**: 5 failed sign-ins → locked 15 minutes (HTTP 423 with
-  remaining time). An `Account Locked` audit row is written. Administrators
-  unlock instantly from the console.
-* **2FA brute force**: a login challenge accepts at most 5 wrong codes, then
-  it is burned and the user must sign in again. TOTP accepts ±1 time step of
-  clock drift. Backup codes are single-use (bcrypt-hashed).
-* **Session revocation**: access/refresh tokens carry `iat`; any token issued
-  more than 60 s before the user's `password_changed_at` is rejected. An admin
-  reset therefore ends every open session of the target user. Self-service
-  password change returns a fresh access token and rotates the HttpOnly refresh
-  cookie so the active session continues.
-* **Forced password change**: `force_password_change=Yes` or an expired
-  password (per-user `password_expiry_days`, default 30, unless
-  `password_never_expires=Yes`) routes the user to a full-screen change form
-  before anything else loads. Changing one's own password is an inherent right
-  of every authenticated account and is NOT permission-gated (new users have
-  no role yet); 2FA self-management stays behind `Edit Own Security Settings`.
+`GET /auth/password-policy` is deliberately public: it contains no secrets and
+lets the login/forced-change screens describe the rules before authentication.
 
-## Endpoints (all under `/auth`, all audited)
+## 2. Expiry and forced rotation
 
-| Endpoint | Permission | Purpose |
-|----------|-----------|---------|
-| `POST /change-password` | authenticated | Rotate own password, return a fresh access token, and rotate the refresh cookie |
-| `POST /2fa/setup/start` / `setup/verify` | Edit Own Security Settings | Enrol TOTP, returns QR + manual secret, then 10 backup codes |
-| `POST /2fa/backup-codes/regenerate` / `2fa/disable` | Edit Own Security Settings | Backup code / disable management |
-| `GET /users/security-overview` | Reset User Password or Reset User 2FA | Lock state, failed counts, 2FA, password age for every user in scope |
-| `POST /users/{id}/security/reset-password` | Reset User Password (+ Reset User 2FA for the 2FA flag) | Hard reset; clears lock; auto-completes pending reset requests and their tasks |
-| `POST /users/{id}/security/unlock` | Reset User Password | Clear lockout + failed counter |
-| `POST /users/{id}/security/reset-2fa` | Reset User 2FA | Remove 2FA enrolment (lost device) |
-| `POST /users/{id}/security/require-password-change` | Reset User Password | Flag account for forced change at next sign-in |
-| `GET /password-reset-requests` | Reset User Password | Queue (`?status=Pending/Completed/Declined/All`) |
-| `POST /password-reset-requests/{id}/decline` | Reset User Password | Close a request without a reset (closes its task) |
-| `POST /forgot-password` | anonymous, rate-limited 3/15 min/IP | Creates request + `PASSWORD_RESET_REQUEST` task |
+| Account type | Default expiry | Hard limit |
+|---|---|---|
+| Standard user | 30 days (`DEFAULT_PASSWORD_EXPIRY_DAYS`) | 365 days (`MAX_PASSWORD_EXPIRY_DAYS`) |
+| Admin-role account | 60 days (`ADMIN_PASSWORD_EXPIRY_DAYS`) | 90 days, never-expiry refused |
 
-Admin-account shield: a non-admin holding `Reset User Password` can never
-reset/unlock/alter the reserved Admin account, and all admin security actions
-respect the actor's location scope.
+- `password_changed_at` drives the clock. Startup migration backfills legacy
+  rows so upgrading does not lock anyone out.
+- An expired password or `force_password_change=Yes` sets
+  `must_change_password` on the login response **and** makes the API return
+  HTTP 403 `{"code": "PASSWORD_CHANGE_REQUIRED", "reason": ...}` for every
+  route outside a small allowlist: `/auth/me`, `/auth/change-password`,
+  `/auth/password-policy`, `/auth/logout`, `/auth/logout-all`, `/auth/refresh`
+  and the 2FA self-management endpoints.
+- The frontend shows a full-screen gate (`ForcePasswordChange.jsx`) and also
+  listens for `PASSWORD_CHANGE_REQUIRED` mid-session, so a password that expires
+  while a tab is open forces the same gate without a page reload.
+- Administrators cannot set "never expires" on an Admin-role account (HTTP 400),
+  cannot reset their own password through the admin reset endpoint, and any
+  admin-initiated reset always forces a change at the next sign-in.
+- `INITIAL_ADMIN_PASSWORD` must satisfy the policy; the seeded bootstrap admin
+  is created with `force_password_change=Yes`.
 
-## Frontend
+## 3. Flows
 
-* `frontend/src/pages/ProfileSecurity.jsx` — account overview, change
-  password with live policy checklist, 2FA wizard (QR + manual key, backup
-  codes with copy/download), and for security admins: KPI strip, the password
-  reset request queue (approve → prefilled reset dialog / decline with notes)
-  and the user security table (unlock, reset password with strong-password
-  generator, reset 2FA, require change) with filters, pagination and export.
-* `frontend/src/pages/ForcePasswordChange.jsx` — the forced-change gate
-  (wired in `App.jsx` before the router).
-* Tests: `backend/tests/test_security_module.py` (12 end-to-end flows).
+| Flow | Endpoint | Behaviour |
+|---|---|---|
+| Sign in | `POST /auth/login` | Enumeration-safe failure text, account lockout, IP/identity throttles; returns `access_token` plus `must_change_password` and, when enabled, a 2FA challenge |
+| Second factor | `POST /auth/2fa/verify` | 5 attempts per challenge, 5-minute lifetime, per-IP and per-user throttles, TOTP single-use |
+| Change own password | `POST /auth/change-password` | Requires the current password, applies policy + history, revokes every other session, returns a fresh access token and rotates the refresh cookie |
+| Forgot password | `POST /auth/forgot-password` | 3 requests / 15 min / IP; identical response for known and unknown users; creates a `PasswordResetRequest` and an Operation Task for the security administrators |
+| Admin reset | `POST /auth/users/{id}/security/reset-password` | Requires `Reset User Password`; sets `force_password_change=Yes`, clears lockout, optionally resets 2FA, revokes sessions, closes the pending request/task |
+| Unlock account | `POST /auth/users/{id}/security/unlock` | Requires `Reset User Password`; clears `failed_login_count` and `locked_until` |
+| Reset 2FA | `POST /auth/users/{id}/security/reset-2fa` | Requires `Reset User 2FA`; removes the enrolment and backup codes |
+| Require change | `POST /auth/users/{id}/security/require-password-change` | Requires `Reset User Password`; sets the flag without knowing the password |
+| Revoke sessions | `POST /auth/users/{id}/security/revoke-sessions` | Requires `Reset User Password`; bumps `session_epoch`, killing every access and refresh token |
+| Sign out | `POST /auth/logout` | Blacklists the presented access/refresh token and clears the cookie |
+| Sign out everywhere | `POST /auth/logout-all` | Revokes every session of the caller |
+| Policy change | `PUT /auth/users/{id}/security/password-policy` | Admin-only; enforces the admin expiry cap and refuses never-expiry for admins |
+
+Reserved usernames (`admin`, `administrator`, `root`, `system`, `superuser`)
+cannot be created. Usernames are compared case-insensitively (`lower(trim(...))`)
+for duplicates and login lookup; a database `IntegrityError` becomes HTTP 409.
+Self-deactivation is refused (HTTP 403); deleting the reserved admin is refused.
+
+## 4. Sessions
+
+- **Access token** — HS256 JWT, 15 minutes, claims `sub`-equivalent `user_id`,
+  `username`, `token_type=access`, `jti`, `iat`, `nbf`, `exp`, `iss`, `aud`,
+  `session_epoch`. Kept only in JavaScript module memory.
+- **Refresh token** — 1 day, HttpOnly + SameSite=Strict cookie
+  (`hydrocarbon_refresh`), Secure in production, path `/`. Rotated on every
+  refresh; the previous token is stored (SHA-256 hash) in `token_blacklist`.
+- **Reuse detection** — presenting a blacklisted refresh token revokes every
+  session of the account and writes a `Refresh Token Reuse` audit row.
+- **Revocation** — `users.session_epoch` is embedded in every token. Bumping the
+  epoch (admin revoke, password change, reset, deactivation, reuse detection)
+  invalidates every token minted earlier, without relying on second-resolution
+  timestamps. `session_revoked_at` is retained for the security console display.
+- **Refresh cookie CSRF** — a browser `Origin`/`Referer` that is not in
+  `CORS_ORIGINS` is rejected with 403 for cookie-authenticated refresh.
+- **Legacy tokens** — tokens without `session_epoch` fall back to the
+  `iat`-versus-`session_revoked_at` comparison with the revocation instant
+  rounded up, so a pre-upgrade token cannot survive a revocation.
+
+## 5. Lockout and throttling
+
+| Scope | Limit |
+|---|---|
+| Failed sign-ins per account | 5 → locked 15 min (HTTP 423 with remaining minutes) |
+| Sign-ins per IP | 20 / 5 min |
+| Sign-ins per identity | 10 / 15 min |
+| 2FA per challenge | 5 attempts, then burned |
+| 2FA per user / per IP | 10 / 15 min · 20 / 5 min |
+| Forgot password per IP | 3 / 15 min |
+| Sensitive actions per user | 10 / 5 min |
+| Refresh per IP | 120 / 5 min |
+| Admin security console per actor | 30 / 5 min |
+
+Throttles return HTTP 429 with `Retry-After`; the frontend appends
+"Try again in N seconds." to the message. Limiters are in-process (see the
+residual-risk table in `SECURITY_REMEDIATION.md`); the account lockout itself is
+database-backed and shared across workers.
+
+## 6. 2FA
+
+- TOTP, 30-second step, `valid_window=1`; the highest accepted step is stored in
+  `users.totp_last_used_step` and later steps are refused, so a code cannot be
+  replayed inside its window.
+- `POST /auth/2fa/setup/start` refuses to start a new enrolment while 2FA is
+  already enabled (prevents a silent downgrade by an attacker holding a session).
+- `POST /auth/2fa/setup/start` returns the secret, issuer and account for manual
+  entry plus a QR data URL; verification returns 10 single-use backup codes
+  (bcrypt-hashed at rest).
+- Admin reset removes the enrolment; the user re-enrols at next sign-in.
+
+## 7. Frontend
+
+- `frontend/src/api/authToken.js` — memory-only access token, one-time purge of
+  legacy localStorage keys, no refresh-token helpers.
+- `frontend/src/api/apiClient.js` — sends the bearer token, retries once after a
+  silent cookie refresh, surfaces `Retry-After`, and broadcasts
+  `hydrocarbon:password-change-required` when the API returns that code.
+- `frontend/src/App.jsx` — re-pulls the logged-in user on that event so the gate
+  appears mid-session.
+- `frontend/src/pages/ProfileSecurity.jsx` — live policy checklist (including
+  name/e-mail containment), server-published policy summary, password
+  generator, 2FA wizard, security KPI strip, reset-request queue and per-user
+  actions including **Revoke Sessions** and **Sign out of all devices**.
+- `frontend/src/pages/ForcePasswordChange.jsx` — the blocking gate with the same
+  checklist and reason text (`expired` vs `administrator requirement`).
+
+## 8. Tests
+
+| File | Coverage |
+|---|---|
+| `backend/tests/test_security_module.py` | Password policy, lockout/unlock, 2FA lifecycle and attempt caps, admin reset, reset-request queue |
+| `backend/tests/test_security_hardening_v2.py` | Forced/expired password enforcement, history reuse, admin expiry cap, self-reset refusal, revocation, refresh reuse, TOTP replay, 2FA downgrade, throttling, enumeration, LIKE escaping |
+| `backend/tests/test_hardening_infrastructure.py` | Request body ceiling, request id, production docs gating, error-message contract, DB-browser audit/redaction, reserved/duplicate usernames, self-deactivation |
+| `backend/tests/test_vulnerability_remediation.py` | Token claims, cookie refresh, CORS, headers, backup containment, KDF |
+
+Run:
+
+```bash
+cd backend
+python -m pytest tests/test_security_module.py tests/test_security_hardening_v2.py \
+  tests/test_hardening_infrastructure.py tests/test_vulnerability_remediation.py -q
+```

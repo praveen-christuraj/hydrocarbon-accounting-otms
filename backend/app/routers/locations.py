@@ -27,7 +27,7 @@ from app.dependencies.permissions import (
     require_user_permission,
 )
 from app.services.audit_service import create_audit_log
-from app.utils.helpers import clean_optional_text
+from app.utils.helpers import clean_optional_text, escape_like
 
 router = APIRouter(prefix="/locations", tags=["Locations"])
 
@@ -54,8 +54,8 @@ def get_locations(
     if search:
         query = query.filter(
             or_(
-                Location.location_name.ilike(f"%{search}%"),
-                Location.location_code.ilike(f"%{search}%"),
+                Location.location_name.ilike(f"%{escape_like(search)}%", escape="\\"),
+                Location.location_code.ilike(f"%{escape_like(search)}%", escape="\\"),
             )
         )
     # ``all_locations`` is the reference-data mode used to populate the

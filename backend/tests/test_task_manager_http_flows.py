@@ -167,7 +167,7 @@ def test_password_reset_task_created_and_closed_through_admin_reset(client, db):
         f"/auth/users/{target.id}/security/reset-password",
         headers=headers,
         json={
-            "new_password": "ResetPass12345!",
+            "new_password": "Reset#Vault9!2026",
             "force_password_change": True,
             "reset_2fa": False,
             "remarks": "Reset per password-reset task",
@@ -182,6 +182,6 @@ def test_password_reset_task_created_and_closed_through_admin_reset(client, db):
     # The target can log in with the new password.
     r = client.post(
         "/auth/login",
-        json={"username": "locked-out", "password": "ResetPass12345!"},
+        json={"username": "locked-out", "password": "Reset#Vault9!2026"},
     )
     assert r.status_code == 200, r.text

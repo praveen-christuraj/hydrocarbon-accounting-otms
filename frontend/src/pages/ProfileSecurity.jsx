@@ -16,9 +16,11 @@ import {
   adminResetUser2FA,
   adminResetUserPassword,
   adminUnlockUserAccount,
+  adminRevokeUserSessions,
   changeOwnPassword,
   declinePasswordResetRequest,
   disableOwn2FA,
+  getPasswordPolicy,
   getPasswordResetRequests,
   getUsersSecurityOverview,
   regenerate2FABackupCodes,
@@ -31,6 +33,7 @@ import {
   calcPasswordStrength,
   generateStrongPassword,
 } from '../utils/passwordPolicy'
+import { logoutAllDevices } from '../api/authApi'
 
 const formatDateTime = (value) => {
   if (!value) return '—'
@@ -135,14 +138,34 @@ function ProfileSecurity({ loggedInUser, onLoggedInUserRefresh }) {
   })
   const [passwordErrors, setPasswordErrors] = useState({})
   const [passwordBusy, setPasswordBusy] = useState(false)
+  // Server-published policy (lengths, history, expiry) so the checklist a user
+  // sees cannot drift from what the API enforces.
+  const [passwordPolicy, setPasswordPolicy] = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+    getPasswordPolicy()
+      .then((policy) => {
+        if (!cancelled) setPasswordPolicy(policy)
+      })
+      .catch(() => {
+        // Non-fatal: the checklist below still blocks obvious mistakes and the
+        // API remains the authority.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const policyChecks = useMemo(
     () =>
       buildPolicyChecks(passwordForm.newPassword, {
         currentPassword: passwordForm.currentPassword,
         username: loggedInUser?.username || '',
+        fullName: loggedInUser?.full_name || '',
+        email: loggedInUser?.email || '',
       }),
-    [passwordForm.newPassword, passwordForm.currentPassword, loggedInUser?.username]
+    [passwordForm.newPassword, passwordForm.currentPassword, loggedInUser]
   )
   const pwStrength = useMemo(
     () => calcPasswordStrength(passwordForm.newPassword),
@@ -466,8 +489,10 @@ function ProfileSecurity({ loggedInUser, onLoggedInUserRefresh }) {
     () =>
       buildPolicyChecks(resetForm.newPassword, {
         username: resetDialog?.target?.username || '',
+        fullName: resetDialog?.target?.full_name || '',
+        email: resetDialog?.target?.email || '',
       }),
-    [resetForm.newPassword, resetDialog?.target?.username]
+    [resetForm.newPassword, resetDialog?.target]
   )
 
   const submitAdminReset = async (event) => {
@@ -554,6 +579,42 @@ function ProfileSecurity({ loggedInUser, onLoggedInUserRefresh }) {
       await loadOverview()
     } catch (error) {
       adminFeedback.notifyError(error.message)
+    }
+  }
+
+  const handleRevokeSessions = async (row) => {
+    const confirmed = await confirm({
+      title: 'Revoke all sessions',
+      message: `Immediately sign ${row.full_name} (${row.username}) out of every device? Their access and refresh tokens stop working at once.`,
+      confirmLabel: 'Revoke sessions',
+      tone: 'danger',
+    })
+    if (!confirmed) return
+    try {
+      const data = await adminRevokeUserSessions(row.id)
+      adminFeedback.notifySuccess(data.message || `Sessions revoked for ${row.username}`)
+      logUiAction('Profile & Security', 'Revoke User Sessions', { target: row.username })
+      await loadOverview()
+    } catch (error) {
+      adminFeedback.notifyError(error.message)
+    }
+  }
+
+  const handleSignOutEverywhere = async () => {
+    const confirmed = await confirm({
+      title: 'Sign out of all devices',
+      message:
+        'This revokes every session for your account, including this browser. You will be asked to sign in again.',
+      confirmLabel: 'Sign out everywhere',
+      tone: 'warning',
+    })
+    if (!confirmed) return
+    try {
+      await logoutAllDevices()
+      logUiAction('Profile & Security', 'Sign Out All Devices', { username: loggedInUser?.username })
+      window.location.reload()
+    } catch (error) {
+      ownFeedback.notifyError(error.message)
     }
   }
 
@@ -693,6 +754,16 @@ function ProfileSecurity({ loggedInUser, onLoggedInUserRefresh }) {
                   <div className={`password-strength-text ${pwStrength.level}`}>{pwStrength.label}</div>
                 </div>
               )}
+              {passwordPolicy && (
+                <p className="security-hint">
+                  Policy: at least {passwordPolicy.min_length ?? 12} characters, no reuse of your
+                  last {passwordPolicy.history_count ?? 5} passwords
+                  {security.password_expiry_days
+                    ? `, expires every ${security.password_expiry_days} days`
+                    : ''}
+                  {security.password_never_expires ? ' (never expires by exception)' : ''}.
+                </p>
+              )}
               <PolicyChecklist checks={policyChecks} />
               <PasswordField
                 label="Confirm New Password"
@@ -702,9 +773,12 @@ function ProfileSecurity({ loggedInUser, onLoggedInUserRefresh }) {
                 }
                 error={passwordErrors.confirmPassword}
               />
-              <div className="form-actions">
+              <div className="form-actions security-actions-wrap">
                 <button type="submit" className="btn-primary" disabled={passwordBusy}>
                   {passwordBusy ? 'Changing…' : 'Change Password'}
+                </button>
+                <button type="button" className="btn-secondary" onClick={handleSignOutEverywhere}>
+                  <Icon name="logout" size={14} /> Sign out of all devices
                 </button>
               </div>
             </form>
@@ -1056,6 +1130,15 @@ function ProfileSecurity({ loggedInUser, onLoggedInUserRefresh }) {
                                   Require Change
                                 </button>
                               )}
+                            {canResetPassword && row.id !== loggedInUser?.id && (
+                              <button
+                                type="button"
+                                className="btn-danger btn-compact"
+                                onClick={() => handleRevokeSessions(row)}
+                              >
+                                Revoke Sessions
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>

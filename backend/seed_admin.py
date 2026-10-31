@@ -3,7 +3,6 @@ import sys
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
-from passlib.context import CryptContext
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
@@ -14,6 +13,7 @@ load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from app.utils.default_permissions import STANDARD_PERMISSIONS  # noqa: E402
 from app.utils.password_policy import validate_password_policy  # noqa: E402
+from app.utils.security import hash_password  # noqa: E402
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
@@ -21,11 +21,6 @@ if not DATABASE_URL:
     sys.exit(1)
 
 engine = create_engine(DATABASE_URL)
-password_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-
-def hash_password(password: str):
-    return password_context.hash(password)
 
 
 
@@ -138,7 +133,7 @@ def seed():
                         "INSERT INTO users (full_name, username, email, phone, department, designation, "
                         "password_hash, password_changed_at, force_password_change, password_never_expires, "
                         "password_expiry_days, failed_login_count, totp_enabled, force_2fa, status, created_at, updated_at) "
-                        "VALUES (:fn, :un, :em, :ph, :dept, :desig, :pw, :now, 'Yes', 'No', 90, 0, 'No', 'No', 'Active', :now, :now) "
+                        "VALUES (:fn, :un, :em, :ph, :dept, :desig, :pw, :now, 'Yes', 'No', 60, 0, 'No', 'No', 'Active', :now, :now) "
                         "RETURNING id"
                     ),
                     {

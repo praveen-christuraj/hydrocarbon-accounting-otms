@@ -1,0 +1,81 @@
+# Production topology: only the reverse proxy publishes a port. PostgreSQL and
+# the API stay on the internal compose network.
+#
+#   cp .env.example .env      # fill in every value, then:
+#   docker compose -f docker-compose.prod.yaml up -d --build
+#
+# See DEPLOYMENT_SECURITY.md for TLS, backups, upgrades, and verification.
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: hydrocarbon-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [appnet]
+
+  backend:
+    build: ./backend
+    container_name: hydrocarbon-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      ENVIRONMENT: production
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      SECURITY_KDF_SALT: ${SECURITY_KDF_SALT}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      TRUSTED_HOSTS: ${TRUSTED_HOSTS:-}
+      TRUST_PROXY_HEADERS: "true"
+      # The API port is not published; only the proxy can reach it.
+      TRUSTED_PROXY_IPS: "*"
+      ENFORCE_HTTPS: ${ENFORCE_HTTPS:-true}
+      AUTH_COOKIE_SECURE: "true"
+      MAX_REQUEST_BODY_BYTES: ${MAX_REQUEST_BODY_BYTES:-26214400}
+      BACKUP_ROOT: /app/backups
+      BACKUP_VALIDATION_DATABASE_URL: ${BACKUP_VALIDATION_DATABASE_URL:-}
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+    command:
+      - sh
+      - -c
+      - exec uvicorn app.main:app --host 0.0.0.0 --port 8000
+        --proxy-headers --forwarded-allow-ips="*"
+        --workers "$${WEB_CONCURRENCY}" --no-server-header
+    volumes:
+      - backup_data:/app/backups
+    networks: [appnet]
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+    container_name: hydrocarbon-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_started
+    ports:
+      - "${PUBLIC_PORT:-8080}:8080"
+    networks: [appnet]
+
+volumes:
+  postgres_data:
+  backup_data:
+
+networks:
+  appnet:
+    driver: bridge

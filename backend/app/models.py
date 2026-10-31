@@ -17,6 +17,9 @@ class User(Base):
     designation = Column(String(100), nullable=True)
     password_hash = Column(Text, nullable=False)
     password_changed_at = Column(DateTime, nullable=True)
+    # Bcrypt hashes of the most recent passwords (oldest first) so reuse can be
+    # rejected without ever storing a clear-text or reversible value.
+    password_history_json = Column(JSONB, nullable=True)
     force_password_change = Column(String(20), nullable=False, default="No")
     password_never_expires = Column(String(20), nullable=False, default="No")
     password_expiry_days = Column(Integer, nullable=False, default=30)
@@ -27,8 +30,18 @@ class User(Base):
     totp_enabled = Column(String(20), nullable=False, default="No")
     totp_secret_encrypted = Column(Text, nullable=True)
     totp_confirmed_at = Column(DateTime, nullable=True)
+    # Highest TOTP time-step already accepted, so a code cannot be replayed
+    # inside its 30-second validity window.
+    totp_last_used_step = Column(Integer, nullable=True)
     force_2fa = Column(String(20), nullable=False, default="No")
     backup_codes_hash_json = Column(JSONB, nullable=True)
+    # Any token issued before this instant is invalid. Bumped when an
+    # administrator revokes sessions or refresh-token reuse is detected.
+    # ``session_epoch`` is the machine-readable equivalent embedded as a JWT
+    # claim: tokens carrying a lower epoch are rejected outright, which avoids
+    # the second-resolution race of comparing ``iat`` with a timestamp.
+    session_revoked_at = Column(DateTime, nullable=True)
+    session_epoch = Column(Integer, nullable=False, default=0, server_default="0")
     status = Column(String(20), nullable=False, default="Active")
     all_locations_access = Column(String(20), nullable=False, default="No")
     created_at = Column(DateTime, nullable=False, server_default=func.now())
