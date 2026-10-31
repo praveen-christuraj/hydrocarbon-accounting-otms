@@ -1,8 +1,12 @@
 import { clearAccessToken, getStoredAccessToken } from './authToken'
 import { refreshAccessToken } from './authApi'
 
-export const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000'
+const configuredApiBaseUrl = String(import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/$/, '')
+export const API_BASE_URL = configuredApiBaseUrl || (import.meta.env.PROD ? '/api' : 'http://127.0.0.1:8000')
+
+if (import.meta.env.PROD && /^http:\/\//i.test(API_BASE_URL)) {
+  throw new Error('VITE_API_BASE_URL must use HTTPS or a same-origin relative path in production')
+}
 
 const buildHeaders = (customHeaders = {}) => {
   const token = getStoredAccessToken()
@@ -28,11 +32,22 @@ const readResponseData = async (response) => {
   return null
 }
 
-const formatApiError = (data) => {
+const sanitizeErrorText = (value) =>
+  Array.from(String(value ?? ''))
+    .map((character) => {
+      const code = character.charCodeAt(0)
+      return code < 32 || code === 127 ? ' ' : character
+    })
+    .join('')
+    .replace(/</g, '‹')
+    .replace(/>/g, '›')
+    .slice(0, 2000)
+
+export const formatApiError = (data) => {
   if (!data) return 'API request failed'
-  if (typeof data.detail === 'string') return data.detail
-  if (Array.isArray(data.detail)) return data.detail.map(d => d.msg).join('; ')
-  if (typeof data.detail === 'object') return JSON.stringify(data.detail)
+  if (typeof data.detail === 'string') return sanitizeErrorText(data.detail)
+  if (Array.isArray(data.detail)) return sanitizeErrorText(data.detail.map(d => d?.msg || '').join('; '))
+  if (typeof data.detail === 'object') return sanitizeErrorText(JSON.stringify(data.detail))
   return 'API request failed'
 }
 
@@ -46,14 +61,14 @@ const REQUEST_TIMEOUT_MS = 60000
 
 const fetchWithTimeout = async (url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) => {
   if (typeof AbortController === 'undefined') {
-    return fetch(url, options)
+    return fetch(url, { credentials: 'include', ...options })
   }
 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
-    return await fetch(url, { ...options, signal: controller.signal })
+    return await fetch(url, { credentials: 'include', ...options, signal: controller.signal })
   } catch (error) {
     if (error?.name === 'AbortError') {
       throw new Error(
@@ -168,6 +183,7 @@ export const apiDelete = async (endpoint) => {
 export const apiDownload = async (endpoint, filename) => {
   const token = getStoredAccessToken()
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+    credentials: 'include',
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   })
 
@@ -178,6 +194,7 @@ export const apiDownload = async (endpoint, filename) => {
       if (refreshed) {
         const newToken = getStoredAccessToken()
         const retryResponse = await fetch(`${API_BASE_URL}${endpoint}`, {
+          credentials: 'include',
           headers: newToken ? { Authorization: `Bearer ${newToken}` } : {},
         })
         if (retryResponse.ok) {
@@ -191,7 +208,7 @@ export const apiDownload = async (endpoint, filename) => {
     let message = 'Download failed'
     try {
       const errorData = await response.json()
-      message = errorData?.detail || message
+      message = formatApiError(errorData)
     } catch {
       // Keep generic message for non-JSON errors.
     }

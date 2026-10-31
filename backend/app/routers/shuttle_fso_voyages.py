@@ -824,19 +824,19 @@ def export_shuttle_voyage_xlsx(
     ws = wb.active
     ws.title = "Shuttle MTR"
 
-    ws.append(["SHUTTLE VOYAGE MTR"])
-    ws.append([f"Location: {loc_code} - {(loc.location_name if loc else '')}"])
-    ws.append([f"Shuttle: {asset_code} - {(asset.asset_name if asset else '')}"])
-    ws.append([f"Shuttle Number: {shuttle_no}"])
-    ws.append([""])
+    append_sanitized_row(ws, ["SHUTTLE VOYAGE MTR"])
+    append_sanitized_row(ws, [f"Location: {loc_code} - {(loc.location_name if loc else '')}"])
+    append_sanitized_row(ws, [f"Shuttle: {asset_code} - {(asset.asset_name if asset else '')}"])
+    append_sanitized_row(ws, [f"Shuttle Number: {shuttle_no}"])
+    append_sanitized_row(ws, [""])
 
-    ws.append(["Status", "Tickets", "Net Receipt (BBL)", "Net Discharge (BBL)", "Last Closing Stock", "Last Closing Water", "STS In (BBL, included in receipts)", "STS Out (BBL)"])
-    ws.append(["Approved", len(rows), round(receipt_total, 3), round(discharge_total, 3), round(last_closing_stock, 3), round(last_closing_water, 3), round(transfer_in_total, 3), round(transfer_out_total, 3)])
-    ws.append([""])
+    append_sanitized_row(ws, ["Status", "Tickets", "Net Receipt (BBL)", "Net Discharge (BBL)", "Last Closing Stock", "Last Closing Water", "STS In (BBL, included in receipts)", "STS Out (BBL)"])
+    append_sanitized_row(ws, ["Approved", len(rows), round(receipt_total, 3), round(discharge_total, 3), round(last_closing_stock, 3), round(last_closing_water, 3), round(transfer_in_total, 3), round(transfer_out_total, 3)])
+    append_sanitized_row(ws, [""])
 
-    ws.append(["Date", "Time", "Operation", "Sign", "Net Stock", "Net Water", "Qty (Abs S+W)", "Ticket"])
+    append_sanitized_row(ws, ["Date", "Time", "Operation", "Sign", "Net Stock", "Net Water", "Qty (Abs S+W)", "Ticket"])
     for r in rows:
-        ws.append([r["date"], r["time"], r["operation"], r["sign"], round(r["net_stock"], 3), round(r["net_water"], 3), round(r["qty"], 3), r["ticket"]])
+        append_sanitized_row(ws, [r["date"], r["time"], r["operation"], r["sign"], round(r["net_stock"], 3), round(r["net_water"], 3), round(r["qty"], 3), r["ticket"]])
 
     _xlsx_autofit(ws)
 
@@ -1538,3 +1538,4 @@ def build_shuttle_summary_rows(
         "page_size": page_size,
         "has_more": total_groups > offset_val + page_size,
     }
+from app.utils.spreadsheet import append_sanitized_row

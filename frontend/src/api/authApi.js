@@ -1,10 +1,10 @@
 import { apiPost, apiGet } from './apiClient'
 import {
   clearAccessToken,
+  clearStoredRefreshToken,
   getStoredAccessToken,
   getStoredRefreshToken,
   saveAccessToken,
-  saveRefreshToken,
 } from './authToken'
 
 const convertLoggedInUserFromApi = (data) => {
@@ -62,9 +62,6 @@ const saveLoginTokens = (data) => {
   if (data.access_token) {
     saveAccessToken(data.access_token)
   }
-  if (data.refresh_token) {
-    saveRefreshToken(data.refresh_token)
-  }
 }
 
 export const loginUser = async (username, password) => {
@@ -106,7 +103,11 @@ export const requestPasswordReset = async (username, reason = '', reset2FA = fal
 }
 
 export const getCurrentUser = async () => {
-  const token = getStoredAccessToken()
+  let token = getStoredAccessToken()
+  if (!token) {
+    const refreshed = await refreshAccessToken()
+    if (refreshed) token = getStoredAccessToken()
+  }
   if (!token) {
     return null
   }
@@ -121,20 +122,15 @@ export const getCurrentUser = async () => {
 }
 
 export const refreshAccessToken = async () => {
-  const refreshToken = getStoredRefreshToken()
-  if (!refreshToken) {
-    return false
-  }
+  const legacyToken = getStoredRefreshToken()
 
   try {
-    const data = await apiPost('/auth/refresh', { refresh_token: refreshToken })
+    const data = await apiPost('/auth/refresh', legacyToken ? { refresh_token: legacyToken } : {})
+    clearStoredRefreshToken()
     if (data.access_token) {
       saveAccessToken(data.access_token)
     }
-    if (data.refresh_token) {
-      saveRefreshToken(data.refresh_token)
-    }
-    return true
+    return Boolean(data.access_token)
   } catch {
     clearAccessToken()
     return false

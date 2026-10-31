@@ -1,5 +1,8 @@
 # Password Management & 2FA — Security Module
 
+For the full 24-finding assessment disposition and deployment requirements,
+see [`SECURITY_REMEDIATION.md`](SECURITY_REMEDIATION.md).
+
 How authentication security works after the 2026-10 overhaul of the Profile &
 Security module. Single source of truth for the flows an administrator or a
 user can trigger.
@@ -32,7 +35,8 @@ user can trigger.
 * **Session revocation**: access/refresh tokens carry `iat`; any token issued
   more than 60 s before the user's `password_changed_at` is rejected. An admin
   reset therefore ends every open session of the target user. Self-service
-  password change returns a fresh token pair so the active session continues.
+  password change returns a fresh access token and rotates the HttpOnly refresh
+  cookie so the active session continues.
 * **Forced password change**: `force_password_change=Yes` or an expired
   password (per-user `password_expiry_days`, default 30, unless
   `password_never_expires=Yes`) routes the user to a full-screen change form
@@ -44,7 +48,7 @@ user can trigger.
 
 | Endpoint | Permission | Purpose |
 |----------|-----------|---------|
-| `POST /change-password` | authenticated | Rotate own password, returns fresh tokens |
+| `POST /change-password` | authenticated | Rotate own password, return a fresh access token, and rotate the refresh cookie |
 | `POST /2fa/setup/start` / `setup/verify` | Edit Own Security Settings | Enrol TOTP, returns QR + manual secret, then 10 backup codes |
 | `POST /2fa/backup-codes/regenerate` / `2fa/disable` | Edit Own Security Settings | Backup code / disable management |
 | `GET /users/security-overview` | Reset User Password or Reset User 2FA | Lock state, failed counts, 2FA, password age for every user in scope |

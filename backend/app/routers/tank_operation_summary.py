@@ -27,6 +27,7 @@ from app.utils.helpers import (
     get_asset_by_code,
     get_location_by_code,
 )
+from app.utils.spreadsheet import sanitize_spreadsheet_row
 from app.services.operation_datetime import (
     coerce_payload_dict,
     format_time_hhmm,
@@ -513,23 +514,24 @@ def export_tank_operation_summary_csv(
 
     output = io.StringIO()
     writer = csv.writer(output)
+    write_row = lambda values: writer.writerow(sanitize_spreadsheet_row(values))
 
-    writer.writerow(["Tank Operation Summary"])
-    writer.writerow(["Generated At", datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
-    writer.writerow(["Record Count", len(rows)])
-    writer.writerow([])
-    writer.writerow(["Applied Filters"])
-    writer.writerow(["Date From", date_from or "All"])
-    writer.writerow(["Date To", date_to or "All"])
-    writer.writerow(["Location Code", location_code or "All"])
-    writer.writerow(["Tank Asset Code", tank_asset_code or "All"])
-    writer.writerow(["Product Name", product_name or "All"])
-    writer.writerow([])
+    write_row(["Tank Operation Summary"])
+    write_row(["Generated At", datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
+    write_row(["Record Count", len(rows)])
+    write_row([])
+    write_row(["Applied Filters"])
+    write_row(["Date From", date_from or "All"])
+    write_row(["Date To", date_to or "All"])
+    write_row(["Location Code", location_code or "All"])
+    write_row(["Tank Asset Code", tank_asset_code or "All"])
+    write_row(["Product Name", product_name or "All"])
+    write_row([])
 
-    writer.writerow(columns)
+    write_row(columns)
 
     for row in rows:
-        writer.writerow([row.get(col, "") for col in columns])
+        write_row([row.get(col, "") for col in columns])
 
     output.seek(0)
 

@@ -258,6 +258,36 @@ if (xlsxBlob) {
   check('exportRows xlsx: numeric strings converted', typeof sheet.getRow(3).getCell(2).value !== 'undefined')
 }
 
+downloads.length = 0
+await exportRows({
+  format: 'xlsx',
+  rows: [{ value: '=HYPERLINK("https://attacker.example")' }],
+  columns: [{ key: 'value', label: 'Value' }],
+  fileName: 'formula-guard',
+})
+const guardedXlsxBlob = downloads.find((item) => typeof item.arrayBuffer === 'function')
+if (guardedXlsxBlob) {
+  const guarded = new ExcelJS.Workbook()
+  await guarded.xlsx.load(await guardedXlsxBlob.arrayBuffer())
+  check(
+    'xlsx export: formula injection guarded',
+    guarded.worksheets[0].getRow(2).getCell(1).value.startsWith("'=")
+  )
+}
+
+/* ------------------------------------------------------ 7. token storage */
+
+const authTokens = await viteServer.ssrLoadModule('/src/api/authToken.js')
+localStorage.clear()
+authTokens.saveAccessToken('memory-only-access-token')
+check('auth: access token available in memory', authTokens.getStoredAccessToken() === 'memory-only-access-token')
+check(
+  'auth: access token absent from localStorage',
+  ['hydrocarbonAccessToken', 'hydrocarbon_access_token', 'access_token', 'accessToken']
+    .every((key) => localStorage.getItem(key) === null)
+)
+authTokens.clearAccessToken()
+
 // jspdf's node build writes the file straight to disk – capture and delete it.
 const written = []
 const nativeWrite = fs.writeFileSync
@@ -273,7 +303,7 @@ await exportRows({ format: 'pdf', rows: exportData, columns: exportColumns, file
 fs.writeFileSync = nativeWrite
 check('exportRows pdf: produced', written.length === 1, written.join(','))
 
-/* ------------------------------------------------- 7. template generation */
+/* ------------------------------------------------- 8. template generation */
 
 downloads.length = 0
 await exportRows({

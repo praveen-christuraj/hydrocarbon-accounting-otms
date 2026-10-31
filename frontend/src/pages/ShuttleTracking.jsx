@@ -18,6 +18,7 @@ import PaginationControls, { paginateRows, usePageSize } from '../components/com
 import AlertMessage from '../components/common/AlertMessage'
 import Modal from '../components/common/Modal'
 import useActionFeedback from '../hooks/useActionFeedback'
+import { escapeCsvCell } from '../utils/exportUtils'
 
 const defaultFilters = {
   date_from: '',
@@ -25,14 +26,6 @@ const defaultFilters = {
   location_code: '',
   shuttle_number: '',
   shuttle_asset_code: '',
-}
-
-const escapeCsvValue = (value) => {
-  const text = String(value ?? '')
-  if (text.includes(',') || text.includes('"') || text.includes('\n')) {
-    return `"${text.replace(/"/g, '""')}"`
-  }
-  return text
 }
 
 const normalizeCode = (value) => String(value || '').trim().toUpperCase()
@@ -655,22 +648,22 @@ function ShuttleTracking({
     rows.forEach((t) => {
       lines.push(
         [
-          escapeCsvValue(t.ticketNumber),
-          escapeCsvValue(t.operationNumber),
-          escapeCsvValue(t.locationCode),
-          escapeCsvValue(t.shuttleNumber),
-          escapeCsvValue(t.shuttleAssetCode),
-          escapeCsvValue(t.operationDate),
-          escapeCsvValue(t.eventTime),
-          escapeCsvValue(t.vesselOperationLabel),
-          escapeCsvValue(t.openingStockBbl),
-          escapeCsvValue(t.openingWaterBbl),
-          escapeCsvValue(t.closingStockBbl),
-          escapeCsvValue(t.closingWaterBbl),
-          escapeCsvValue(t.netStockBbl),
-          escapeCsvValue(t.netWaterBbl),
-          escapeCsvValue(t.remarks),
-          escapeCsvValue(t.status),
+          escapeCsvCell(t.ticketNumber),
+          escapeCsvCell(t.operationNumber),
+          escapeCsvCell(t.locationCode),
+          escapeCsvCell(t.shuttleNumber),
+          escapeCsvCell(t.shuttleAssetCode),
+          escapeCsvCell(t.operationDate),
+          escapeCsvCell(t.eventTime),
+          escapeCsvCell(t.vesselOperationLabel),
+          escapeCsvCell(t.openingStockBbl),
+          escapeCsvCell(t.openingWaterBbl),
+          escapeCsvCell(t.closingStockBbl),
+          escapeCsvCell(t.closingWaterBbl),
+          escapeCsvCell(t.netStockBbl),
+          escapeCsvCell(t.netWaterBbl),
+          escapeCsvCell(t.remarks),
+          escapeCsvCell(t.status),
         ].join(',')
       )
     })

@@ -16,6 +16,7 @@ import { logUiAction } from '../utils/actionLogger'
 import TankerPayloadPreview from '../components/operationLayouts/TankerPayloadPreview'
 import AlertMessage from '../components/common/AlertMessage'
 import useActionFeedback from '../hooks/useActionFeedback'
+import { escapeCsvCell } from '../utils/exportUtils'
 
 const defaultReportSettings = {
   id: null,
@@ -1894,7 +1895,6 @@ function OperationTransactionDetail({ loggedInUser }) {
   const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
   const isAdminBootstrap =
     loggedInUser?.isAdmin === true ||
-    String(loggedInUser?.username || '').trim().toLowerCase() === 'admin' ||
     (Array.isArray(loggedInUser?.roles) && loggedInUser.roles.some((role) =>
       String(role?.role_name || role?.roleName || '').trim().toLowerCase() === 'admin'
     ))
@@ -2132,12 +2132,7 @@ function OperationTransactionDetail({ loggedInUser }) {
   }
 
   const formatCsvValue = (value) => {
-    if (value === null || value === undefined) {
-      return ''
-    }
-
-    const text = String(value).replace(/"/g, '""')
-    return `"${text}"`
+    return escapeCsvCell(value)
   }
 
   const handleExportTankGaugingCsv = () => {

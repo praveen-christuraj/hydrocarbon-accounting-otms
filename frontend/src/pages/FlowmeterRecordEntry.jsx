@@ -9,6 +9,7 @@ import CompanyPrintHeader from '../components/reports/CompanyPrintHeader'
 import CompanyPrintFooter from '../components/reports/CompanyPrintFooter'
 import AlertMessage from '../components/common/AlertMessage'
 import useActionFeedback from '../hooks/useActionFeedback'
+import { escapeCsvCell } from '../utils/exportUtils'
 
 function FlowmeterRecordEntry({ locations = [], assets = [] }) {
   const profile = useCompanyPrintProfile()
@@ -82,11 +83,6 @@ function FlowmeterRecordEntry({ locations = [], assets = [] }) {
       'Net Std (bbl)',
     ]
 
-    const escapeCell = (value) => {
-      const raw = String(value ?? '')
-      return /[",\n]/.test(raw) ? `"${raw.replace(/"/g, '""')}"` : raw
-    }
-
     const lines = [
       headers.join(','),
       ...rows.map((r) =>
@@ -104,7 +100,7 @@ function FlowmeterRecordEntry({ locations = [], assets = [] }) {
           r.netStandard,
           r.netStandardBbl,
         ]
-          .map(escapeCell)
+          .map(escapeCsvCell)
           .join(',')
       ),
     ]

@@ -33,6 +33,7 @@ from datetime import date, datetime, time as datetime_time, timedelta
 from decimal import Decimal, DecimalException
 
 from sqlalchemy import false, func, or_, select
+from app.utils.spreadsheet import sanitize_spreadsheet_cell, sanitize_spreadsheet_row
 from sqlalchemy.orm import Session
 
 from app.database import Base
@@ -1552,13 +1553,11 @@ def export_csv_bytes(result: dict) -> bytes:
     header, body = _export_matrix_of(result)
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    writer.writerow(header)
+    writer.writerow(sanitize_spreadsheet_row(header))
     for cells in body:
         safe = []
         for cell in cells:
-            text = "" if cell is None else str(cell)
-            if text[:1] in ("=", "+", "-", "@", "\t", "\r"):
-                text = "'" + text  # spreadsheet formula-injection guard
+            text = str(sanitize_spreadsheet_cell(cell))
             safe.append(text)
         writer.writerow(safe)
     return ("﻿" + buffer.getvalue()).encode("utf-8")
@@ -1576,13 +1575,13 @@ def export_xlsx_bytes(result: dict, title: str) -> bytes:
     header_fill = PatternFill("solid", fgColor="0F3556")
     header_font = Font(bold=True, color="FFFFFF")
     for col_index, label in enumerate(header, start=1):
-        cell = sheet.cell(row=1, column=col_index, value=label)
+        cell = sheet.cell(row=1, column=col_index, value=sanitize_spreadsheet_cell(label))
         cell.fill = header_fill
         cell.font = header_font
         sheet.column_dimensions[get_column_letter(col_index)].width = min(42, max(12, len(str(label)) + 4))
     for row_index, cells in enumerate(body, start=2):
         for col_index, value in enumerate(cells, start=1):
-            sheet.cell(row=row_index, column=col_index, value=value)
+            sheet.cell(row=row_index, column=col_index, value=sanitize_spreadsheet_cell(value))
     sheet.freeze_panes = "A2"
     if header:
         sheet.auto_filter.ref = f"A1:{get_column_letter(len(header))}{max(1, len(body) + 1)}"

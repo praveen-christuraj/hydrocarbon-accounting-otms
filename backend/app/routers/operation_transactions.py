@@ -53,6 +53,7 @@ from app.utils.helpers import (
     get_asset_by_code,
     normalize_entry_layout_type,
 )
+from app.utils.spreadsheet import sanitize_spreadsheet_row
 from app.routers.operation_tasks import (
     create_operation_approval_task_for_transaction,
     close_operation_approval_tasks_for_transaction,
@@ -1336,26 +1337,27 @@ def export_operation_transactions_csv(
 
     output = io.StringIO()
     writer = csv.writer(output)
+    write_row = lambda values: writer.writerow(sanitize_spreadsheet_row(values))
 
-    writer.writerow(["Operation Transaction Register"])
-    writer.writerow(["Generated At", datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
-    writer.writerow(["Record Count", len(rows)])
-    writer.writerow([])
+    write_row(["Operation Transaction Register"])
+    write_row(["Generated At", datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
+    write_row(["Record Count", len(rows)])
+    write_row([])
 
-    writer.writerow(["Applied Filters"])
-    writer.writerow(["Date From", date_from or "All"])
-    writer.writerow(["Date To", date_to or "All"])
-    writer.writerow(["Operation Type ID", operation_type_id or "All"])
-    writer.writerow(["Operation Type Code", operation_type_code or "All"])
-    writer.writerow(["Location ID", location_id or "All"])
-    writer.writerow(["Location Code", location_code or "All"])
-    writer.writerow(["Asset ID", asset_id or "All"])
-    writer.writerow(["Asset Code", asset_code or "All"])
-    writer.writerow(["Status", status or "All"])
-    writer.writerow(["Search", search or ""])
-    writer.writerow([])
+    write_row(["Applied Filters"])
+    write_row(["Date From", date_from or "All"])
+    write_row(["Date To", date_to or "All"])
+    write_row(["Operation Type ID", operation_type_id or "All"])
+    write_row(["Operation Type Code", operation_type_code or "All"])
+    write_row(["Location ID", location_id or "All"])
+    write_row(["Location Code", location_code or "All"])
+    write_row(["Asset ID", asset_id or "All"])
+    write_row(["Asset Code", asset_code or "All"])
+    write_row(["Status", status or "All"])
+    write_row(["Search", search or ""])
+    write_row([])
 
-    writer.writerow(
+    write_row(
         [
             "Ticket Number",
             "Operation Number",
@@ -1373,7 +1375,7 @@ def export_operation_transactions_csv(
     )
 
     for row in rows:
-        writer.writerow(
+        write_row(
             [
                 row.get("ticket_number", ""),
                 row.get("operation_number", ""),

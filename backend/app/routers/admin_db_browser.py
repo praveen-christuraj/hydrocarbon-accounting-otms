@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import inspect, text
+from sqlalchemy import MetaData, Table, func, inspect, select
 from sqlalchemy.orm import Session
 import re
 
@@ -61,6 +61,15 @@ def _get_table_columns(table_name: str) -> list[str]:
     return [col["name"] for col in columns]
 
 
+def _reflected_table(table_name: str) -> Table:
+    if table_name not in KNOWN_TABLES:
+        raise HTTPException(status_code=404, detail=f"Unknown table: {table_name}")
+    inspector = inspect(engine)
+    if table_name not in set(inspector.get_table_names()):
+        raise HTTPException(status_code=404, detail=f"Table does not exist: {table_name}")
+    return Table(table_name, MetaData(), autoload_with=engine)
+
+
 def _is_sensitive_column(col_name: str) -> bool:
     return bool(SENSITIVE_COLUMN_PATTERNS.match(col_name))
 
@@ -93,7 +102,8 @@ def list_tables(
     for table_name in available:
         columns = _get_table_columns(table_name)
         try:
-            count = db.execute(text(f"SELECT COUNT(*) FROM \"{table_name}\"")).scalar()
+            table = _reflected_table(table_name)
+            count = db.execute(select(func.count()).select_from(table)).scalar()
         except Exception:
             count = -1
         result.append({
@@ -120,23 +130,19 @@ def get_table_data(
     if table_name not in KNOWN_TABLES:
         raise HTTPException(status_code=404, detail=f"Unknown table: {table_name}")
 
-    inspector = inspect(engine)
-    actual_tables = set(inspector.get_table_names())
-    if table_name not in actual_tables:
-        raise HTTPException(status_code=404, detail=f"Table does not exist: {table_name}")
-
-    columns = _get_table_columns(table_name)
+    table = _reflected_table(table_name)
+    columns = [column.name for column in table.columns]
     offset = (page - 1) * per_page
 
     try:
-        rows = db.execute(
-            text(f"SELECT * FROM \"{table_name}\" ORDER BY 1 ASC LIMIT :limit OFFSET :offset"),
-            {"limit": per_page, "offset": offset},
-        ).mappings().all()
-
-        total = db.execute(text(f"SELECT COUNT(*) FROM \"{table_name}\"")).scalar()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        query = select(table).limit(per_page).offset(offset)
+        first_column = next(iter(table.columns), None)
+        if first_column is not None:
+            query = query.order_by(first_column.asc())
+        rows = db.execute(query).mappings().all()
+        total = db.execute(select(func.count()).select_from(table)).scalar()
+    except Exception:
+        raise HTTPException(status_code=500, detail="Unable to read the requested table")
 
     data = [_redact_row(dict(row), columns) for row in rows]
 

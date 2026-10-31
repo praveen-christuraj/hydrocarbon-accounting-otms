@@ -908,7 +908,8 @@ def seed_admin_role():
     the default 'admin' user exists and is assigned the Admin role.
     Runs on every startup so the admin role/user is always fully authorized."""
     from app.utils.security import hash_password
-    import secrets
+    from app.utils.password_policy import validate_password_policy
+    import os
 
     db = SessionLocal()
     try:
@@ -956,7 +957,10 @@ def seed_admin_role():
         admin_user = db.query(User).filter(func.lower(func.trim(User.username)) == "admin").first()
         if not admin_user:
             now = datetime.now(timezone.utc)
-            admin_password = secrets.token_urlsafe(16)
+            admin_password = str(os.getenv("INITIAL_ADMIN_PASSWORD") or "")
+            if not admin_password:
+                raise RuntimeError("INITIAL_ADMIN_PASSWORD must be provided for first startup")
+            validate_password_policy(admin_password, username="admin")
             hashed = hash_password(admin_password)
             admin_user = User(
                 full_name="System Administrator",
@@ -967,9 +971,9 @@ def seed_admin_role():
                 designation="System Administrator",
                 password_hash=hashed,
                 password_changed_at=now,
-                force_password_change="No",
-                password_never_expires="Yes",
-                password_expiry_days=30,
+                force_password_change="Yes",
+                password_never_expires="No",
+                password_expiry_days=90,
                 failed_login_count=0,
                 totp_enabled="No",
                 force_2fa="No",
@@ -980,11 +984,16 @@ def seed_admin_role():
             db.add(admin_user)
             db.flush()
             print(f"[SEED] Created 'admin' user (id={admin_user.id})")
-            print(f"[SEED] Default admin password: {admin_password}")
+            print("[SEED] Initial admin credential accepted; password value is never logged")
         else:
             print(f"[SEED] 'admin' user already exists (id={admin_user.id})")
             # Do not reactivate an administrator account that an operator has
             # intentionally disabled. Authentication checks this status live.
+            if str(admin_user.password_never_expires or "").strip().casefold() == "yes":
+                admin_user.password_never_expires = "No"
+                admin_user.password_expiry_days = 90
+                admin_user.updated_at = datetime.now(timezone.utc)
+                print("[SEED] Enabled password expiry for the existing admin user")
 
         # 4. Add the reserved Admin role without replacing any legacy role
         # assignments. The association table supports multiple roles after the

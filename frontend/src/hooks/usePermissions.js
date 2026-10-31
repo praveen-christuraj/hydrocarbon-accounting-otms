@@ -20,7 +20,6 @@ const normalise = (value) => String(value || '').trim().toLowerCase()
 export const isAdminUser = (user) => {
   if (!user) return false
   if (user.isAdmin === true || user.is_admin === true) return true
-  if (normalise(user.username) === 'admin') return true
 
   const roles = user.roles || user.user_roles || []
   if (

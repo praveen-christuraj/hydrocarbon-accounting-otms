@@ -9,6 +9,7 @@ import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
 import AlertMessage from '../components/common/AlertMessage'
 import useActionFeedback from '../hooks/useActionFeedback'
+import { escapeCsvCell, exportXlsx } from '../utils/exportUtils'
 
 const formatNumber = (value, decimals = 3) => {
   const numericValue = Number(value || 0)
@@ -29,16 +30,6 @@ const formatOptionalNumber = (value, decimals = 3) => {
   }
 
   return formatNumber(value, decimals)
-}
-
-const escapeCsvValue = (value) => {
-  const text = String(value ?? '')
-
-  if (text.includes(',') || text.includes('"') || text.includes('\n')) {
-    return `"${text.replaceAll('"', '""')}"`
-  }
-
-  return text
 }
 
 const reportColumns = [
@@ -178,9 +169,9 @@ function TankerTransactionReport({ locations = [], assets = [] }) {
     const headers = reportColumns.map((column) => column.label)
 
     const csvLines = [
-      headers.map(escapeCsvValue).join(','),
+      headers.map(escapeCsvCell).join(','),
       ...exportRows.map((row) =>
-        headers.map((header) => escapeCsvValue(row[header])).join(',')
+        headers.map((header) => escapeCsvCell(row[header])).join(',')
       ),
     ]
 
@@ -198,44 +189,15 @@ function TankerTransactionReport({ locations = [], assets = [] }) {
     URL.revokeObjectURL(url)
   }
 
-  const handleExportExcel = () => {
+  const handleExportExcel = async () => {
     const headers = reportColumns.map((column) => column.label)
-
-    const tableRows = [
-      `<tr>${headers.map((header) => `<th>${header}</th>`).join('')}</tr>`,
-      ...exportRows.map((row) => {
-        return `<tr>${headers
-          .map((header) => `<td>${String(row[header] ?? '')}</td>`)
-          .join('')}</tr>`
-      }),
-    ]
-
-    const html = `
-      <html>
-        <head>
-          <meta charset="UTF-8" />
-        </head>
-        <body>
-          <h2>Tanker Transaction Report</h2>
-          <table border="1">
-            ${tableRows.join('')}
-          </table>
-        </body>
-      </html>
-    `
-
-    const blob = new Blob([html], {
-      type: 'application/vnd.ms-excel;charset=utf-8;',
+    await exportXlsx({
+      rows: exportRows,
+      columns: headers.map((header) => ({ key: header, label: header })),
+      fileName: 'tanker-transaction-report',
+      sheetName: 'Transactions',
+      title: 'Tanker Transaction Report',
     })
-
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-
-    link.href = url
-    link.download = 'tanker_transaction_report.xls'
-    link.click()
-
-    URL.revokeObjectURL(url)
   }
 
   const handlePrint = () => {

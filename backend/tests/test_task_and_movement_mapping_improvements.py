@@ -42,6 +42,9 @@ from app.schemas import (
 
 
 def _admin(db):
+    role = Role(role_name="Admin", status="Active")
+    db.add(role)
+    db.flush()
     user = User(
         full_name="Test Administrator",
         username="admin",
@@ -51,6 +54,8 @@ def _admin(db):
         all_locations_access="Yes",
     )
     db.add(user)
+    db.flush()
+    db.add(UserRole(user_id=user.id, role_id=role.id))
     db.flush()
     return user
 

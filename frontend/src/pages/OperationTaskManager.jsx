@@ -41,7 +41,6 @@ function OperationTaskManager({ reloadOperationTransactions, loggedInUser }) {
   )
   const isAdminBootstrap =
     loggedInUser?.isAdmin === true ||
-    String(loggedInUser?.username || '').trim().toLowerCase() === 'admin' ||
     (Array.isArray(loggedInUser?.roles) && loggedInUser.roles.some((role) =>
       String(role?.role_name || role?.roleName || '').trim().toLowerCase() === 'admin'
     ))

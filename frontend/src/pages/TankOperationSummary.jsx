@@ -12,6 +12,7 @@ import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
 import AlertMessage from '../components/common/AlertMessage'
 import useActionFeedback from '../hooks/useActionFeedback'
+import { escapeCsvCell } from '../utils/exportUtils'
 import {
   formatCalendarDate,
   formatDateTime as formatSafeDateTime,
@@ -44,7 +45,6 @@ function TankOperationSummary({ locations, assets, loggedInUser }) {
 
   const isAdminBootstrap =
     loggedInUser?.isAdmin === true ||
-    String(loggedInUser?.username || '').trim().toLowerCase() === 'admin' ||
     (Array.isArray(loggedInUser?.roles) && loggedInUser.roles.some((role) =>
       String(role?.role_name || role?.roleName || '').trim().toLowerCase() === 'admin'
     ))
@@ -226,29 +226,10 @@ function TankOperationSummary({ locations, assets, loggedInUser }) {
   const rowsFilters = useDataFilters(rows, useAutoColumns(rows), { module: 'Tank Operation Summary' })
   const visibleRows = paginateRows(rowsFilters.filteredRows, currentPage, pageSize)
 
-  const escapeCsvValue = (value) => {
-    if (value === null || value === undefined) {
-      return ''
-    }
-
-    const text = String(value)
-
-    if (
-      text.includes(',') ||
-      text.includes('"') ||
-      text.includes('\n') ||
-      text.includes('\r')
-    ) {
-      return `"${text.replace(/"/g, '""')}"`
-    }
-
-    return text
-  }
-
   const downloadCsv = (filename, headers, dataRows) => {
     const csvLines = [
-      headers.map(escapeCsvValue).join(','),
-      ...dataRows.map((row) => row.map(escapeCsvValue).join(',')),
+      headers.map(escapeCsvCell).join(','),
+      ...dataRows.map((row) => row.map(escapeCsvCell).join(',')),
     ]
 
     const csvContent = csvLines.join('\n')

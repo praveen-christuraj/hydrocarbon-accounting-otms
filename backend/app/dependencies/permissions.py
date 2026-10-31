@@ -43,12 +43,7 @@ def user_has_permission(
 
 
 def is_admin_user(user: User, db: Session) -> bool:
-    """Return whether the authenticated user has the reserved Admin role.
-
-    The legacy bootstrap account name remains a fallback so existing installs
-    whose Admin role assignment predates the role seed retain access. New or
-    changed role assignments are protected by the RBAC administration routes.
-    """
+    """Return whether the authenticated user has the active Admin role."""
     user_role_names = {
         str(role.role_name or "").strip().casefold()
         for role in (
@@ -58,9 +53,7 @@ def is_admin_user(user: User, db: Session) -> bool:
             .all()
         )
     }
-    if "admin" in user_role_names:
-        return True
-    return str(user.username or "").strip().casefold() == "admin"
+    return "admin" in user_role_names
 
 
 def is_super_admin(user: User, db: Session) -> bool:

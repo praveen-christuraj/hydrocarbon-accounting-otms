@@ -11,7 +11,9 @@ from datetime import date
 from app.models import (
     OperationTask,
     OperationTransaction,
+    Role,
     User,
+    UserRole,
 )
 from app.utils.security import hash_password
 
@@ -28,6 +30,11 @@ def _login_headers(client, db, username="admin"):
             all_locations_access="Yes",
         )
         db.add(user)
+        db.flush()
+        admin_role = Role(role_name="Admin", status="Active")
+        db.add(admin_role)
+        db.flush()
+        db.add(UserRole(user_id=user.id, role_id=admin_role.id))
         db.commit()
     resp = client.post(
         "/auth/login",

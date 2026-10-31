@@ -9,6 +9,7 @@ import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
 import AlertMessage from '../components/common/AlertMessage'
 import useActionFeedback from '../hooks/useActionFeedback'
+import { escapeCsvCell } from '../utils/exportUtils'
 import {
   formatCalendarDate,
   formatDateTime as formatSafeDateTime,
@@ -190,29 +191,10 @@ function OutTurnReport({ locations, assets }) {
   const rowsFilters = useDataFilters(rows, useAutoColumns(rows), { module: 'Out-Turn Report' })
   const visibleRows = paginateRows(rowsFilters.filteredRows, currentPage, pageSize)
 
-  const escapeCsvValue = (value) => {
-    if (value === null || value === undefined) {
-      return ''
-    }
-
-    const text = String(value)
-
-    if (
-      text.includes(',') ||
-      text.includes('"') ||
-      text.includes('\n') ||
-      text.includes('\r')
-    ) {
-      return `"${text.replace(/"/g, '""')}"`
-    }
-
-    return text
-  }
-
   const downloadCsv = (filename, headers, dataRows) => {
     const csvLines = [
-      headers.map(escapeCsvValue).join(','),
-      ...dataRows.map((row) => row.map(escapeCsvValue).join(',')),
+      headers.map(escapeCsvCell).join(','),
+      ...dataRows.map((row) => row.map(escapeCsvCell).join(',')),
     ]
 
     const csvContent = csvLines.join('\n')

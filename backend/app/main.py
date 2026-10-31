@@ -1,14 +1,16 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, date, time as datetime_time
 from zoneinfo import ZoneInfo
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 import os
 from pathlib import Path
 
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import allowed_origins
+from app.config import ENVIRONMENT, allowed_origins
+from app.dependencies.auth import get_current_user_from_token
+from app.dependencies.permissions import require_user_permission
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -115,9 +117,25 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Requested-With"],
 )
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=(), payment=()"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    )
+    if ENVIRONMENT == "production":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
 
 from app.routers import (
     admin_db_browser, asset_assignments, asset_calibration_tables, asset_types, assets,
@@ -199,6 +217,10 @@ def health_check():
 
 
 @app.get("/db-test")
-def database_test(db: Session = Depends(get_db)):
+def database_test(
+    current_user: User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db),
+):
+    require_user_permission(current_user, "Edit System Settings", db)
     db.execute(text("SELECT 1"))
     return {"database": "connected"}

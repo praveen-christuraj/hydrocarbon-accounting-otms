@@ -57,9 +57,13 @@ def decode_access_token(token: str):
             token,
             JWT_SECRET_KEY,
             algorithms=[JWT_ALGORITHM],
+            options={"require": ["exp", "iat", "token_type", "user_id", "jti"]},
         )
-
+        if payload.get("token_type") != "access":
+            raise HTTPException(status_code=401, detail="Invalid token type")
         return payload
+    except HTTPException:
+        raise
     except jwt.InvalidTokenError:
         raise HTTPException(
             status_code=401,
@@ -73,6 +77,7 @@ def decode_refresh_token(token: str):
             token,
             JWT_SECRET_KEY,
             algorithms=[JWT_ALGORITHM],
+            options={"require": ["exp", "iat", "token_type", "user_id", "jti"]},
         )
 
         if payload.get("token_type") != "refresh":

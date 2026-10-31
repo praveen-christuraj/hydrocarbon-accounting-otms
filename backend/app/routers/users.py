@@ -22,6 +22,15 @@ from app.utils.pagination import paginate_query
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
+RESERVED_USERNAMES = {"admin", "administrator", "root", "system", "superuser"}
+
+
+def validate_reserved_username(username: str, *, existing_username: str | None = None) -> None:
+    normalized = str(username or "").strip().casefold()
+    existing = str(existing_username or "").strip().casefold()
+    if normalized in RESERVED_USERNAMES and normalized != existing:
+        raise HTTPException(status_code=400, detail="This username is reserved and cannot be used")
+
 
 @router.get("")
 def get_users(
@@ -91,8 +100,7 @@ def create_user(
         "Create User",
         db,
     )
-    if str(user.username or "").strip().casefold() == "admin" and not is_admin_user(current_user, db):
-        raise HTTPException(status_code=403, detail="The reserved administrator username cannot be created by this user")
+    validate_reserved_username(user.username)
 
     existing_user = (
         db.query(User)
@@ -185,8 +193,7 @@ def update_user(
     ensure_user_in_actor_location_scope(current_user, existing_user, db)
     if is_admin_user(existing_user, db) and not is_admin_user(current_user, db):
         raise HTTPException(status_code=403, detail="Only an administrator can edit an administrator account")
-    if str(user.username or "").strip().casefold() == "admin" and not is_admin_user(current_user, db):
-        raise HTTPException(status_code=403, detail="The reserved administrator username cannot be assigned")
+    validate_reserved_username(user.username, existing_username=existing_user.username)
     if existing_user.id == current_user.id and existing_user.status == "Active" and user.status != "Active":
         raise HTTPException(status_code=403, detail="You cannot deactivate your own account")
 

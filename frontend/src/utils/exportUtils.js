@@ -58,18 +58,20 @@ const resolveFileName = (fileName, extension) => {
 }
 
 /* ------------------------------------------------------------------ CSV */
-const csvEscape = (value) => {
+export const neutralizeSpreadsheetFormula = (value) =>
+  typeof value === 'string' && /^[=+\-@\t\r]/.test(value) ? `'${value}` : value
+
+export const escapeCsvCell = (value) => {
   const text = isBlank(value) ? '' : String(value)
-  // Guard against spreadsheet formula injection.
-  const safe = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text
+  const safe = String(neutralizeSpreadsheetFormula(text))
   if (/[",\r\n]/.test(safe)) return `"${safe.replace(/"/g, '""')}"`
   return safe
 }
 
 export const rowsToCsv = (rows, columns) => {
   const { header, body } = buildMatrix(rows, columns)
-  const lines = [header.map(csvEscape).join(',')]
-  body.forEach((cells) => lines.push(cells.map(csvEscape).join(',')))
+  const lines = [header.map(escapeCsvCell).join(',')]
+  body.forEach((cells) => lines.push(cells.map(escapeCsvCell).join(',')))
   return lines.join('\r\n')
 }
 
@@ -115,7 +117,7 @@ export const exportXlsx = async ({ rows, columns, fileName, sheetName = 'Data', 
           const number = Number(value)
           return Number.isFinite(number) && value.length < 16 ? number : value
         }
-        return value
+        return neutralizeSpreadsheetFormula(value)
       })
     )
   })

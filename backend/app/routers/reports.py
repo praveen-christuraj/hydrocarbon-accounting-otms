@@ -1995,10 +1995,10 @@ def fso_report_otr_xlsx(
         "Net Stock", "Net Water", "Move Qty",
         "Variance", "Shuttle Discharge", "Compare Var", "Remarks",
     ]
-    ws.append(headers)
+    append_sanitized_row(ws, headers)
 
     for r in rows:
-        ws.append([
+        append_sanitized_row(ws, [
             r["ticket_number"],
             str(r["accounting_date"]),
             str(r["operation_date"]),
@@ -2022,11 +2022,11 @@ def fso_report_otr_xlsx(
         ])
 
     ws2 = wb.create_sheet("Totals")
-    ws2.append(["Total Receipt", totals["receipt"]])
-    ws2.append(["Total Export", totals["export"]])
-    ws2.append(["Total Movement", totals["movement"]])
-    ws2.append(["Total Variance", totals["variance"]])
-    ws2.append(["Total Compare Variance", totals["compare_variance"]])
+    append_sanitized_row(ws2, ["Total Receipt", totals["receipt"]])
+    append_sanitized_row(ws2, ["Total Export", totals["export"]])
+    append_sanitized_row(ws2, ["Total Movement", totals["movement"]])
+    append_sanitized_row(ws2, ["Total Variance", totals["variance"]])
+    append_sanitized_row(ws2, ["Total Compare Variance", totals["compare_variance"]])
 
     _xlsx_autofit(ws)
     _xlsx_autofit(ws2)
@@ -2064,10 +2064,10 @@ def fso_report_outturn_xlsx(
     ws.title = "FSO Outturn"
 
     headers = ["Acc Date", "Shuttle Number", "Shuttle Discharge", "FSO Receipt", "Variance", "Variance %"]
-    ws.append(headers)
+    append_sanitized_row(ws, headers)
 
     for r in rows:
-        ws.append([
+        append_sanitized_row(ws, [
             str(r["accounting_date"]),
             r["shuttle_number"],
             round(float(r["shuttle_discharge_bbl"]), 3),
@@ -2077,10 +2077,10 @@ def fso_report_outturn_xlsx(
         ])
 
     ws2 = wb.create_sheet("Totals")
-    ws2.append(["Total Shuttle Discharge", totals["discharge"]])
-    ws2.append(["Total FSO Receipt", totals["receipt"]])
-    ws2.append(["Total Variance", totals["variance"]])
-    ws2.append(["Total Variance %", totals_pct])
+    append_sanitized_row(ws2, ["Total Shuttle Discharge", totals["discharge"]])
+    append_sanitized_row(ws2, ["Total FSO Receipt", totals["receipt"]])
+    append_sanitized_row(ws2, ["Total Variance", totals["variance"]])
+    append_sanitized_row(ws2, ["Total Variance %", totals_pct])
 
     _xlsx_autofit(ws)
     _xlsx_autofit(ws2)
@@ -2120,10 +2120,10 @@ def fso_report_mb_xlsx(
         "Acc Date", "Opening", "Receipt", "Export",
         "Book Closing", "Physical Closing", "Closing Water", "Loss/Gain",
     ]
-    ws.append(headers)
+    append_sanitized_row(ws, headers)
 
     for r in rows:
-        ws.append([
+        append_sanitized_row(ws, [
             str(r["accounting_date"]),
             round(float(r["opening_stock_bbl"]), 3),
             round(float(r["receipt_bbl"]), 3),
@@ -2974,3 +2974,4 @@ def create_tank_stock_ledger_from_approved_transaction(
     )
 
     return new_ledger
+from app.utils.spreadsheet import append_sanitized_row

@@ -118,6 +118,11 @@ def _login(client, db, username="admin", password="AdminPass123!", permissions=N
             db.add(perm)
             db.flush()
             db.add(RolePermission(role_id=role.id, permission_id=perm.id))
+    elif str(username).strip().casefold() == "admin":
+        from app.models import Role
+        role = Role(role_name="Admin", status="Active")
+        db.add(role)
+        db.flush()
     user = create_user(db, username, password, roles=[role] if role else None)
     if locations is None:
         user.all_locations_access = "Yes"

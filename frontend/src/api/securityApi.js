@@ -1,5 +1,5 @@
 import { apiGet, apiPost } from './apiClient'
-import { saveAccessToken, saveRefreshToken } from './authToken'
+import { saveAccessToken } from './authToken'
 
 export const changeOwnPassword = async (payload) => {
   const data = await apiPost('/auth/change-password', {
@@ -11,7 +11,6 @@ export const changeOwnPassword = async (payload) => {
   // tokens issued before the change are revoked server-side). Persist the
   // fresh pair so the current session continues seamlessly.
   if (data.access_token) saveAccessToken(data.access_token)
-  if (data.refresh_token) saveRefreshToken(data.refresh_token)
   return data
 }
 

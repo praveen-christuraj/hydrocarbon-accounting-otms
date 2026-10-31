@@ -2,7 +2,7 @@ import hashlib
 from datetime import datetime, timedelta, timezone
 
 import pyotp
-from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Header, Query, Request, Response
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -47,6 +47,12 @@ from app.utils.totp import (
 from app.utils.jwt import create_access_token, create_refresh_token, decode_refresh_token
 from app.utils.helpers import clean_optional_text, normalize_yes_no
 from app.utils.password_policy import validate_password_policy
+from app.config import (
+    AUTH_COOKIE_NAME,
+    AUTH_COOKIE_PATH,
+    AUTH_COOKIE_SECURE,
+    REFRESH_TOKEN_EXPIRE_DAYS,
+)
 
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -58,6 +64,28 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 MAX_FAILED_LOGIN_ATTEMPTS = 5
 ACCOUNT_LOCK_MINUTES = 15
 MAX_2FA_ATTEMPTS_PER_CHALLENGE = 5
+
+
+def set_refresh_cookie(response: Response, refresh_token: str) -> None:
+    response.set_cookie(
+        key=AUTH_COOKIE_NAME,
+        value=refresh_token,
+        max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+        httponly=True,
+        secure=AUTH_COOKIE_SECURE,
+        samesite="strict",
+        path=AUTH_COOKIE_PATH,
+    )
+
+
+def clear_refresh_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=AUTH_COOKIE_NAME,
+        httponly=True,
+        secure=AUTH_COOKIE_SECURE,
+        samesite="strict",
+        path=AUTH_COOKIE_PATH,
+    )
 
 
 def utc_now_naive() -> datetime:
@@ -111,6 +139,7 @@ def generate_password_reset_request_number(db: Session):
 def login_user(
     login_request: LoginRequest,
     request: Request,
+    response: Response,
     db: Session = Depends(get_db),
 ):
     client_ip = request.client.host if request.client else None
@@ -260,6 +289,7 @@ def login_user(
             "username": user.username,
         }
     )
+    set_refresh_cookie(response, refresh_token)
 
     user.last_login_at = utc_now_naive()
     user.last_login_ip = client_ip
@@ -286,7 +316,6 @@ def login_user(
         "message": "Login successful",
         "requires_2fa": False,
         "access_token": access_token,
-        "refresh_token": refresh_token,
         "token_type": "bearer",
         "user": logged_in_user,
         "role": logged_in_user["role"],
@@ -302,6 +331,7 @@ def login_user(
 def verify_login_2fa(
     verify_request: TwoFAVerifyRequest,
     request: Request,
+    response: Response,
     db: Session = Depends(get_db),
 ):
     client_ip = request.client.host if request.client else None
@@ -374,6 +404,7 @@ def verify_login_2fa(
             "username": user.username,
         }
     )
+    set_refresh_cookie(response, refresh_token)
 
     create_audit_log(
         db=db,
@@ -394,7 +425,6 @@ def verify_login_2fa(
         "message": "Login successful",
         "requires_2fa": False,
         "access_token": access_token,
-        "refresh_token": refresh_token,
         "token_type": "bearer",
         "user": logged_in_user,
         "role": logged_in_user["role"],
@@ -427,7 +457,8 @@ def get_rbac_diagnostics(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    """Return the current user's effective RBAC state for self-service support."""
+    """Return elevated RBAC diagnostics for authorized support users."""
+    require_user_permission(current_user, "Edit System Settings", db)
     from sqlalchemy import func
     from app.dependencies.permissions import (
         get_user_permissions,
@@ -483,6 +514,7 @@ def get_rbac_diagnostics(
 @router.post("/change-password")
 def change_own_password(
     payload: ChangePasswordRequest,
+    response: Response,
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
@@ -523,10 +555,10 @@ def change_own_password(
     # the current session continues without interruption.
     access_token = create_access_token(data={"user_id": current_user.id, "username": current_user.username})
     refresh_token = create_refresh_token(data={"user_id": current_user.id, "username": current_user.username})
+    set_refresh_cookie(response, refresh_token)
     return {
         "message": "Password changed successfully",
         "access_token": access_token,
-        "refresh_token": refresh_token,
         "token_type": "bearer",
     }
 
@@ -643,8 +675,10 @@ def request_password_reset_with_rate_limit(
 
 @router.post("/logout")
 def logout_user(
+    response: Response,
     payload: LogoutRequest | None = None,
     authorization: str | None = Header(default=None),
+    refresh_cookie: str | None = Cookie(default=None, alias=AUTH_COOKIE_NAME),
     db: Session = Depends(get_db),
 ):
     from app.dependencies.auth import is_token_blacklisted
@@ -663,7 +697,9 @@ def logout_user(
             # Logout is best-effort for an expired or malformed access token.
             pass
 
-    refresh_token = str(payload.refresh_token or "").strip() if payload else ""
+    refresh_token = (
+        str(payload.refresh_token or "").strip() if payload and payload.refresh_token else str(refresh_cookie or "").strip()
+    )
     if refresh_token:
         try:
             decoded_refresh = decode_refresh_token(refresh_token)
@@ -683,6 +719,7 @@ def logout_user(
         # Best-effort: don't fail logout if blacklist write fails.
         db.rollback()
 
+    clear_refresh_cookie(response)
     return {"message": "Logged out successfully"}
 
 
@@ -704,10 +741,14 @@ def cleanup_token_blacklist(
 
 @router.post("/refresh")
 def refresh_access_token(
-    payload: RefreshTokenRequest,
+    response: Response,
+    payload: RefreshTokenRequest | None = None,
+    refresh_cookie: str | None = Cookie(default=None, alias=AUTH_COOKIE_NAME),
     db: Session = Depends(get_db),
 ):
-    refresh_token_str = payload.refresh_token
+    refresh_token_str = (
+        str(payload.refresh_token or "").strip() if payload and payload.refresh_token else str(refresh_cookie or "").strip()
+    )
     if not refresh_token_str:
         raise HTTPException(status_code=400, detail="Refresh token is required")
 
@@ -746,6 +787,7 @@ def refresh_access_token(
     new_refresh_token = create_refresh_token(
         data={"user_id": user.id, "username": user.username},
     )
+    set_refresh_cookie(response, new_refresh_token)
 
     refresh_expiry = decoded.get("exp")
     if refresh_expiry:
@@ -759,7 +801,6 @@ def refresh_access_token(
 
     return {
         "access_token": new_access_token,
-        "refresh_token": new_refresh_token,
         "token_type": "bearer",
     }
 

@@ -9,35 +9,46 @@ const TOKEN_STORAGE_KEYS = [
   'access_token',
   'accessToken',
 ]
+let accessToken = ''
+let legacyRefreshToken = ''
+let legacyStorageMigrated = false
 
-export const getStoredAccessToken = () => {
+const migrateLegacyStorage = () => {
+  if (legacyStorageMigrated || typeof localStorage === 'undefined') return
+  legacyStorageMigrated = true
   for (const key of TOKEN_STORAGE_KEYS) {
     const token = localStorage.getItem(key)
-    if (token && token.trim() !== '') {
-      return token.trim()
-    }
-  }
-  return ''
-}
-
-export const saveAccessToken = (token) => {
-  clearAccessToken()
-  localStorage.setItem(AUTH_TOKEN_KEY, token)
-}
-
-export const clearAccessToken = () => {
-  TOKEN_STORAGE_KEYS.forEach((key) => {
+    if (!accessToken && token && token.trim()) accessToken = token.trim()
     localStorage.removeItem(key)
-  })
+  }
+  legacyRefreshToken = String(localStorage.getItem(REFRESH_TOKEN_KEY) || '').trim()
   localStorage.removeItem(REFRESH_TOKEN_KEY)
 }
 
-export const getStoredRefreshToken = () => {
-  return localStorage.getItem(REFRESH_TOKEN_KEY) || ''
+export const getStoredAccessToken = () => {
+  migrateLegacyStorage()
+  return accessToken
 }
 
-export const saveRefreshToken = (token) => {
-  if (token) {
-    localStorage.setItem(REFRESH_TOKEN_KEY, token)
+export const saveAccessToken = (token) => {
+  migrateLegacyStorage()
+  accessToken = String(token || '').trim()
+}
+
+export const clearAccessToken = () => {
+  accessToken = ''
+  legacyRefreshToken = ''
+  if (typeof localStorage !== 'undefined') {
+    TOKEN_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key))
+    localStorage.removeItem(REFRESH_TOKEN_KEY)
   }
+}
+
+export const getStoredRefreshToken = () => {
+  migrateLegacyStorage()
+  return legacyRefreshToken
+}
+
+export const clearStoredRefreshToken = () => {
+  legacyRefreshToken = ''
 }

@@ -1,3 +1,6 @@
+import math
+import os
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import false, func, or_
 from sqlalchemy.orm import Session
@@ -21,6 +24,8 @@ from app.services.audit_service import create_audit_log
 from app.utils.helpers import clean_optional_text
 
 router = APIRouter(prefix="/asset-calibration-tables", tags=["Asset Calibration Tables"])
+MAX_CALIBRATION_ROWS = int(os.getenv("MAX_CALIBRATION_ROWS", "1000"))
+MAX_CALIBRATION_VALUE = float(os.getenv("MAX_CALIBRATION_VALUE", "1000000000000"))
 
 
 def _batch_load_asset_and_template_lookups(db: Session, tables: list):
@@ -203,6 +208,11 @@ def validate_asset_calibration_table(calibration_table: AssetCalibrationTableCre
             status_code=400,
             detail="Please add at least one calibration data row",
         )
+    if len(calibration_table.rows) > MAX_CALIBRATION_ROWS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"A calibration table cannot exceed {MAX_CALIBRATION_ROWS} rows",
+        )
 
     template_columns = (
         db.query(CalibrationTemplateColumn)
@@ -223,6 +233,11 @@ def validate_asset_calibration_table(calibration_table: AssetCalibrationTableCre
     template_col_map = {
         _norm_col(col.column_name): col.column_name
         for col in template_columns
+    }
+    numeric_columns = {
+        _norm_col(col.column_name): col.column_name
+        for col in template_columns
+        if str(col.data_type or "").strip().casefold() in {"number", "numeric", "decimal", "float", "integer"}
     }
 
     for row in calibration_table.rows:
@@ -258,7 +273,6 @@ def validate_asset_calibration_table(calibration_table: AssetCalibrationTableCre
 
             template_key = template_col_map.get(rn, required_column)
             value = row.row_data.get(template_key)
-
             if value is None or str(value).strip() == "":
                 raise HTTPException(
                     status_code=400,
@@ -267,6 +281,35 @@ def validate_asset_calibration_table(calibration_table: AssetCalibrationTableCre
                         f"RowNumber={getattr(row, 'row_number', None)}."
                     ),
                 )
+
+        for normalized_name, column_name in numeric_columns.items():
+            template_key = template_col_map.get(normalized_name, column_name)
+            value = row.row_data.get(template_key)
+            if value is None or str(value).strip() == "":
+                continue
+            try:
+                numeric_value = float(value)
+            except (TypeError, ValueError):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Column '{column_name}' must be numeric. RowNumber={getattr(row, 'row_number', None)}.",
+                )
+            if not math.isfinite(numeric_value):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Column '{column_name}' must be a finite number. RowNumber={getattr(row, 'row_number', None)}.",
+                )
+            if numeric_value < 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Column '{column_name}' cannot be negative. RowNumber={getattr(row, 'row_number', None)}.",
+                )
+            if numeric_value > MAX_CALIBRATION_VALUE:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Column '{column_name}' exceeds the maximum supported value. RowNumber={getattr(row, 'row_number', None)}.",
+                )
+            row.row_data[template_key] = numeric_value
 
     return asset
 

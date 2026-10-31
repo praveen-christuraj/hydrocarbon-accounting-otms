@@ -333,7 +333,9 @@ def test_change_password_rotates_tokens_and_revokes_old_sessions(client, db):
     )
     assert changed.status_code == 200, changed.text
     body = changed.json()
-    assert body["access_token"] and body["refresh_token"]
+    assert body["access_token"]
+    assert "refresh_token" not in body
+    assert "httponly" in changed.headers["set-cookie"].lower()
 
     # The fresh token works.
     new_headers = {"Authorization": f"Bearer {body['access_token']}"}

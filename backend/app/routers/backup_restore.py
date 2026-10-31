@@ -46,10 +46,26 @@ restore_maintenance_state = {
 
 
 def get_default_backup_directory():
-    configured = clean_optional_text(os.getenv("BACKUP_DIRECTORY"))
-    if configured:
-        return Path(configured)
-    return Path.cwd() / "backups"
+    return get_backup_root()
+
+
+def get_backup_root() -> Path:
+    configured_root = clean_optional_text(os.getenv("BACKUP_ROOT"))
+    legacy_root = clean_optional_text(os.getenv("BACKUP_DIRECTORY"))
+    return Path(configured_root or legacy_root or (Path.cwd() / "backups")).expanduser().resolve()
+
+
+def _approved_backup_path(path_value: str | Path, *, label: str) -> Path:
+    root = get_backup_root()
+    candidate = Path(path_value).expanduser()
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    resolved = candidate.resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"{label} must be inside the approved backup root")
+    return resolved
 
 
 def backup_bool_to_yes_no(value):
@@ -284,8 +300,8 @@ def ensure_no_backup_running(db: Session):
 
 def resolve_backup_directory(settings: BackupSettings | None = None):
     configured = clean_optional_text(settings.backup_directory if settings else None)
-    backup_dir = Path(configured) if configured else get_default_backup_directory()
-    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup_dir = _approved_backup_path(configured or get_default_backup_directory(), label="Backup directory")
+    backup_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     return backup_dir
 
 
@@ -301,10 +317,36 @@ def get_backup_file_path_or_404(job: BackupJob):
     file_path = clean_optional_text(job.file_path)
     if not file_path:
         raise HTTPException(status_code=404, detail="Backup file path is not recorded")
-    path = Path(file_path)
+    path = _approved_backup_path(file_path, label="Backup file path")
     if not path.exists() or not path.is_file():
         raise HTTPException(status_code=404, detail="Backup file not found on server")
     return path
+
+
+def postgres_cli_connection(database_url: str) -> tuple[list[str], dict[str, str]]:
+    """Build PostgreSQL CLI connection flags without putting secrets in argv."""
+    try:
+        parsed = make_url(database_url)
+    except Exception:
+        raise HTTPException(status_code=500, detail="Invalid database URL")
+    if not str(parsed.drivername or "").startswith("postgresql") or not parsed.database:
+        raise HTTPException(status_code=500, detail="Backup requires a PostgreSQL database URL")
+
+    args = ["--dbname", str(parsed.database)]
+    if parsed.host:
+        args.extend(["--host", str(parsed.host)])
+    if parsed.port:
+        args.extend(["--port", str(parsed.port)])
+    if parsed.username:
+        args.extend(["--username", str(parsed.username)])
+
+    process_env = os.environ.copy()
+    if parsed.password:
+        process_env["PGPASSWORD"] = str(parsed.password)
+    sslmode = parsed.query.get("sslmode") if parsed.query else None
+    if sslmode:
+        process_env["PGSSLMODE"] = str(sslmode)
+    return args, process_env
 
 
 def verify_backup_job_checksum(
@@ -505,6 +547,7 @@ def run_restore_validation(
     )
     db.commit()
 
+    connection_args, process_env = postgres_cli_connection(validation_url)
     command = [
         "pg_restore",
         "--clean",
@@ -513,8 +556,7 @@ def run_restore_validation(
         "--exit-on-error",
         "--no-owner",
         "--no-privileges",
-        "--dbname",
-        validation_url,
+        *connection_args,
         str(path),
     ]
 
@@ -525,6 +567,7 @@ def run_restore_validation(
             text=True,
             timeout=3600,
             check=False,
+            env=process_env,
         )
         if result.returncode != 0:
             raise RuntimeError((result.stderr or result.stdout or "pg_restore validation failed").strip())
@@ -647,6 +690,7 @@ def run_production_restore(
         )
 
     database_url = get_production_database_url()
+    connection_args, process_env = postgres_cli_connection(database_url)
     restore_maintenance_state["active"] = True
     restore_maintenance_state["started_at"] = datetime.now().isoformat()
     restore_maintenance_state["request_number"] = request_number
@@ -662,8 +706,7 @@ def run_production_restore(
         "--exit-on-error",
         "--no-owner",
         "--no-privileges",
-        "--dbname",
-        database_url,
+        *connection_args,
         str(backup_path),
     ]
     result = subprocess.run(
@@ -672,6 +715,7 @@ def run_production_restore(
         text=True,
         timeout=3600,
         check=False,
+        env=process_env,
     )
     if result.returncode != 0:
         raise RuntimeError((result.stderr or result.stdout or "pg_restore failed").strip())
@@ -784,6 +828,9 @@ def execute_backup_job(
     )
     db.commit()
 
+    if not database_url:
+        raise RuntimeError("DATABASE_URL is missing")
+    connection_args, process_env = postgres_cli_connection(database_url)
     command = [
         "pg_dump",
         "--format=custom",
@@ -791,13 +838,10 @@ def execute_backup_job(
         "--no-privileges",
         "--file",
         str(file_path),
-        database_url,
+        *connection_args,
     ]
 
     try:
-        if not database_url:
-            raise RuntimeError("DATABASE_URL is missing")
-
         if shutil.which("pg_dump") is None:
             raise RuntimeError(
                 "pg_dump is not available on this server. Install PostgreSQL client tools."
@@ -809,6 +853,7 @@ def execute_backup_job(
             text=True,
             timeout=3600,
             check=False,
+            env=process_env,
         )
 
         if result.returncode != 0:
@@ -1017,7 +1062,8 @@ def update_backup_settings(
     settings = get_or_create_backup_settings(db)
     old_details = build_backup_settings_response(settings)
 
-    backup_directory = clean_optional_text(payload.backup_directory) or str(get_default_backup_directory())
+    requested_backup_directory = clean_optional_text(payload.backup_directory) or str(get_default_backup_directory())
+    backup_directory = str(_approved_backup_path(requested_backup_directory, label="Backup directory"))
     settings.enabled = backup_bool_to_yes_no(payload.enabled)
     settings.schedule_mode = mode
     settings.interval_value = int(payload.interval_value)

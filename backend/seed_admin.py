@@ -1,6 +1,5 @@
 import os
 import sys
-import secrets
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
@@ -14,6 +13,7 @@ load_dotenv()
 # (module-wise CRUD permissions). Import it instead of keeping a copy here.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from app.utils.default_permissions import STANDARD_PERMISSIONS  # noqa: E402
+from app.utils.password_policy import validate_password_policy  # noqa: E402
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
@@ -120,7 +120,10 @@ def seed():
 
             # Create admin user
             admin_username = "admin"
-            admin_password = secrets.token_urlsafe(16)
+            admin_password = str(os.getenv("INITIAL_ADMIN_PASSWORD") or "")
+            if not admin_password:
+                raise RuntimeError("INITIAL_ADMIN_PASSWORD must be provided securely")
+            validate_password_policy(admin_password, username=admin_username)
             existing_user = db.execute(
                 text("SELECT id FROM users WHERE username = :un"),
                 {"un": admin_username},
@@ -135,7 +138,7 @@ def seed():
                         "INSERT INTO users (full_name, username, email, phone, department, designation, "
                         "password_hash, password_changed_at, force_password_change, password_never_expires, "
                         "password_expiry_days, failed_login_count, totp_enabled, force_2fa, status, created_at, updated_at) "
-                        "VALUES (:fn, :un, :em, :ph, :dept, :desig, :pw, :now, 'No', 'Yes', 30, 0, 'No', 'No', 'Active', :now, :now) "
+                        "VALUES (:fn, :un, :em, :ph, :dept, :desig, :pw, :now, 'Yes', 'No', 90, 0, 'No', 'No', 'Active', :now, :now) "
                         "RETURNING id"
                     ),
                     {
@@ -182,7 +185,7 @@ def seed():
 
             print("\n=== SEED COMPLETE ===")
             print("Username: admin")
-            print(f"Password: {admin_password}")
+            print("Password: supplied through INITIAL_ADMIN_PASSWORD (not displayed)")
             print("Login at: http://localhost:5173")
 
     except Exception as e:

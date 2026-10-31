@@ -19,15 +19,11 @@ import AlertMessage from '../components/common/AlertMessage'
 import useActionFeedback from '../hooks/useActionFeedback'
 import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
 import DataTableToolbar from '../components/common/DataTableToolbar'
+import { escapeCsvCell } from '../utils/exportUtils'
 
 const downloadCsv = (filename, headers, rows) => {
-  const escape = (v) => {
-    const s = String(v ?? '')
-    if (s.includes(',') || s.includes('"') || s.includes('\n')) return `"${s.replace(/"/g, '""')}"`
-    return s
-  }
-  const lines = [headers.map(escape).join(',')]
-  rows.forEach((r) => lines.push(headers.map((h) => escape(r[h])).join(',')))
+  const lines = [headers.map(escapeCsvCell).join(',')]
+  rows.forEach((r) => lines.push(headers.map((h) => escapeCsvCell(r[h])).join(',')))
   const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')

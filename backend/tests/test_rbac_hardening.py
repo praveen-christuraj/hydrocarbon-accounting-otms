@@ -1,7 +1,7 @@
 from datetime import date
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
@@ -114,11 +114,11 @@ def test_admin_role_is_detected_and_has_unrestricted_location_scope(db):
     assert get_user_location_codes(admin, db) is None
 
 
-def test_admin_alias_and_legacy_username_are_backward_compatible(db):
+def test_admin_username_without_admin_role_has_no_privilege(db):
     legacy_admin = create_user(db, " ADMIN ")
     db.commit()
-    assert is_admin_user(legacy_admin, db)
-    assert is_super_admin(legacy_admin, db)
+    assert not is_admin_user(legacy_admin, db)
+    assert not is_super_admin(legacy_admin, db)
 
 
 def test_notification_recipient_matching_uses_all_roles_and_assigned_locations(db):
@@ -814,16 +814,22 @@ def test_refresh_tokens_rotate_and_old_refresh_token_is_revoked(db):
     db.commit()
     refresh = create_refresh_token({"user_id": user.id, "username": user.username})
 
+    response = Response()
     refreshed = refresh_access_token(
-        RefreshTokenRequest(refresh_token=refresh),
+        response=response,
+        payload=RefreshTokenRequest(refresh_token=refresh),
+        refresh_cookie=None,
         db=db,
     )
     assert refreshed["access_token"]
-    assert refreshed["refresh_token"] != refresh
+    assert "refresh_token" not in refreshed
+    assert "httponly" in response.headers["set-cookie"].lower()
 
     with pytest.raises(HTTPException) as exc:
         refresh_access_token(
-            RefreshTokenRequest(refresh_token=refresh),
+            response=Response(),
+            payload=RefreshTokenRequest(refresh_token=refresh),
+            refresh_cookie=None,
             db=db,
         )
     assert exc.value.status_code == 401
