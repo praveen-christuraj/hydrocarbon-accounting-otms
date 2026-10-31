@@ -73,6 +73,13 @@ def test_dashboard_module_routes():
     _assert_route("POST", "/dashboard/data")
 
 
+def test_export_transaction_deletion_routes():
+    """frontend export deletion flows are backed by matching API routes."""
+    _assert_route("GET", "/export-operations/transactions/deleted")
+    _assert_route("DELETE", "/export-operations/transactions/{transaction_id}")
+    _assert_route("POST", "/export-operations/transactions/bulk-delete")
+
+
 def test_backup_module_routes():
     """frontend/src/api/backupApi.js paths."""
     _assert_route("GET", "/backup/settings")

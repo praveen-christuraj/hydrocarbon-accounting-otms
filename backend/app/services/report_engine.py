@@ -776,6 +776,12 @@ def _load_table_rows(db, user, definition, params, plan, warnings, table_name):
             subquery = subquery.where(or_(*[func.upper(parent.c[name]).in_([code.upper() for code in scope]) for name in parent_locations]))
         related_selects.append(subquery.correlate(table).scalar_subquery().label(f"__related_{index}"))
     stmt = select(*[table.c[name] for name in select_names], *related_selects)
+    # Export transactions may still contain historical soft-deleted rows. They
+    # are available only in the dedicated Deleted Entries screen and must not
+    # contribute to custom reports, even when a designer explicitly selects
+    # the Status column or adds a runtime status question.
+    if table_name == "export_transactions" and "status" in columns_meta:
+        stmt = stmt.where(func.lower(func.trim(table.c["status"])) == "active")
     if location_columns and (effective_locations or scope is not None):
         upper_codes = [code.upper() for code in effective_locations]
         stmt = stmt.where(or_(*[func.upper(table.c[name]).in_(upper_codes) for name in location_columns]))

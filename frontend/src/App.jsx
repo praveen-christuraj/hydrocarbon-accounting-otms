@@ -70,6 +70,7 @@ import DatabaseBrowser from './pages/DatabaseBrowser'
 import {
   ExportDashboard,
   ExportTransactions,
+  ExportDeletedEntries,
   ExportReports,
   ExportPermits,
   ExportLocations,
@@ -116,6 +117,7 @@ import { getOperationTransactions } from './api/operationTransactionApi'
 const EXPORT_OPERATION_ROUTES = [
   { path: '/export-operations', permission: 'View Export Dashboard', label: 'the Export Dashboard', Component: ExportDashboard },
   { path: '/export-operations/transactions', permission: 'View Export Transaction', label: 'Export Transactions', Component: ExportTransactions },
+  { path: '/export-operations/deleted-entries', permission: 'View Export Transaction', label: 'Deleted Export Entries', Component: ExportDeletedEntries },
   { path: '/export-operations/reports', permission: 'View Export Report', label: 'Export Reports', Component: ExportReports },
   { path: '/export-operations/permits', permission: 'View Export Permit', label: 'Export Permits', Component: ExportPermits },
   { path: '/export-operations/locations', permission: 'View Export Location', label: 'Export Locations', Component: ExportLocations },

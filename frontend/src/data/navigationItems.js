@@ -176,6 +176,11 @@ export const navigationItems = [
         permission: 'View Export Transaction',
       },
       {
+        label: 'Deleted Export Entries',
+        path: '/export-operations/deleted-entries',
+        permission: 'View Export Transaction',
+      },
+      {
         label: 'Export Reports',
         path: '/export-operations/reports',
         permission: 'View Export Report',

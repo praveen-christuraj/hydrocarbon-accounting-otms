@@ -46,9 +46,12 @@ export const deleteExportPermit = async (id) => apiDelete(`/export-operations/pe
 
 // Transactions
 export const getExportTransactions = async (filters = {}) => apiGet(`/export-operations/transactions${buildQuery(filters)}`)
+export const getDeletedExportTransactions = async (filters = {}) => apiGet(`/export-operations/transactions/deleted${buildQuery(filters)}`)
 export const createExportTransaction = async (payload) => apiPost('/export-operations/transactions', payload)
 export const updateExportTransaction = async (id, payload) => apiPut(`/export-operations/transactions/${id}`, payload)
 export const deleteExportTransaction = async (id) => apiDelete(`/export-operations/transactions/${id}`)
+export const bulkDeleteExportTransactions = async (transactionIds) =>
+  apiPost('/export-operations/transactions/bulk-delete', { transaction_ids: transactionIds })
 
 // Bulk Upload
 export const bulkUploadExport = async (items) => apiPost('/export-operations/bulk-upload', { items })
