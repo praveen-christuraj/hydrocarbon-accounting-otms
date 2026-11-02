@@ -37,7 +37,7 @@ from app.utils.spreadsheet import sanitize_spreadsheet_cell, sanitize_spreadshee
 from sqlalchemy.orm import Session
 
 from app.database import Base
-from app.dependencies.permissions import get_user_location_codes, normalize_location_code
+from app.dependencies.permissions import get_user_report_location_codes, normalize_location_code
 from app.models import (
     Asset,
     ExportLocationEntity,
@@ -543,7 +543,7 @@ def _needed_from_plan(plan: list[dict]):
 
 def _requested_locations(db: Session, user: User, params: dict, definition: dict) -> tuple[set[str] | None, list[str]]:
     """(runner scope casefolded or None, effective requested codes upper)."""
-    scope = get_user_location_codes(user, db)
+    scope = get_user_report_location_codes(user, db)
     requested: list[str] = []
     for value in (params.get("location_codes") or []):
         if str(value or "").strip():

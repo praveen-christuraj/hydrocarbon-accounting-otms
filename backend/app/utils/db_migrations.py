@@ -1193,6 +1193,43 @@ def ensure_role_location_table():
             connection.execute(text(statement))
 
 
+REPORT_LOCATION_SCOPES_DDL = (
+    """
+    CREATE TABLE IF NOT EXISTS user_report_locations (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        location_code VARCHAR(50) NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        CONSTRAINT unique_user_report_location UNIQUE (user_id, location_code)
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_user_report_locations_user_id ON user_report_locations(user_id);",
+    """
+    CREATE TABLE IF NOT EXISTS role_report_locations (
+        id SERIAL PRIMARY KEY,
+        role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+        location_code VARCHAR(50) NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        CONSTRAINT unique_role_report_location UNIQUE (role_id, location_code)
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_role_report_locations_role_id ON role_report_locations(role_id);",
+)
+
+
+def ensure_report_location_scope_tables():
+    """Create additive report-only user and role location grants."""
+    inspector = inspect(engine)
+    table_names = set(inspector.get_table_names())
+    if not {"users", "roles"}.issubset(table_names):
+        return
+    if {"user_report_locations", "role_report_locations"}.issubset(table_names):
+        return
+    with engine.begin() as connection:
+        for statement in REPORT_LOCATION_SCOPES_DDL:
+            connection.execute(text(statement))
+
+
 def ensure_export_operations_tables():
     with engine.begin() as connection:
         connection.execute(text("""

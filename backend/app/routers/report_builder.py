@@ -3,8 +3,8 @@
 Design-time endpoints require the Report Builder RBAC permissions; run-time
 endpoints require the Reporting permissions *and* the per-report access
 grants chosen when the report was created (specific users, roles or
-locations).  Data is always additionally restricted to the runner's own
-location scope inside the engine.
+locations). Data is additionally restricted to the runner's reporting scope:
+their operational locations plus explicit user/role report-only locations.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from app.database import Base, get_db
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
     get_user_location_codes,
+    get_user_report_location_codes,
     get_user_role_ids,
     is_admin_user,
     normalize_location_code,
@@ -97,7 +98,11 @@ def _my_access(db: Session, user: User, report: ReportDefinition, grants: list[R
     if report.owner_user_id == user.id:
         return "OWNER"
     role_ids = get_user_role_ids(db, user)
-    scope = get_user_location_codes(user, db)
+    scope = (
+        get_user_report_location_codes(user, db)
+        if for_run
+        else get_user_location_codes(user, db)
+    )
     best = None
     for grant in grants:
         matched = False
@@ -344,7 +349,7 @@ def post_json_paths(
     """Sample saved JSON values and list every pickable path inside them."""
     require_any_user_permission(current_user, BUILDER_ANY, db)
     sample_size = max(1, min(200, int(payload.sample_size or 100)))
-    scope = get_user_location_codes(current_user, db)
+    scope = get_user_report_location_codes(current_user, db)
     values: list = []
 
     if payload.source_kind == "operation_tickets":
@@ -419,10 +424,15 @@ def get_lookups(
 ):
     """Pickers for the designer (grants, filters) and the report viewer."""
     require_any_user_permission(current_user, [*BUILDER_ANY, "View Custom Report"], db)
-    scope = get_user_location_codes(current_user, db)
-    locations = db.query(Location).filter(Location.status == "Active").order_by(Location.location_code).all()
-    if scope is not None:
-        locations = [loc for loc in locations if normalize_location_code(loc.location_code) in scope]
+    report_scope = get_user_report_location_codes(current_user, db)
+    operational_scope = get_user_location_codes(current_user, db)
+    all_locations = db.query(Location).filter(Location.status == "Active").order_by(Location.location_code).all()
+    locations = all_locations
+    grant_locations = all_locations
+    if report_scope is not None:
+        locations = [loc for loc in all_locations if normalize_location_code(loc.location_code) in report_scope]
+    if operational_scope is not None:
+        grant_locations = [loc for loc in all_locations if normalize_location_code(loc.location_code) in operational_scope]
     can_design = user_has_permission(current_user, "Create Report Definition", db) or user_has_permission(current_user, "Edit Report Definition", db) or user_has_permission(current_user, "View Report Definition", db) or is_admin_user(current_user, db)
 
     statuses = [
@@ -436,6 +446,10 @@ def get_lookups(
         "locations": [
             {"location_code": loc.location_code, "location_name": loc.location_name, "location_type": loc.location_type}
             for loc in locations
+        ],
+        "grant_locations": [
+            {"location_code": loc.location_code, "location_name": loc.location_name, "location_type": loc.location_type}
+            for loc in grant_locations
         ],
         "operation_types": [
             {

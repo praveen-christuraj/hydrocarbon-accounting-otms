@@ -33,9 +33,12 @@ standard permission catalog in `backend/app/utils/default_permissions.py`).
 **roles**, or **everyone at a location**, each with *View* (run / export /
 print) or *Edit* (also redesign). Locations can only be given View. A report
 can alternatively be marked *Internal* (any holder of “View Custom Report”).
-In all cases the **data itself is still limited to each runner’s own
-locations**, reusing the system’s `user_locations` + `role_locations`
-location scope. Only **published + Active** reports appear in Reporting.
+In all cases the **data itself is limited to the runner's reporting scope**:
+their operational `user_locations` + `role_locations`, plus any additional
+read-only `user_report_locations` + `role_report_locations`. These additional
+locations apply only to Custom Reports; they do not grant operation entry,
+approval, tracking actions, or master-data access. Only **published + Active**
+reports appear in Reporting.
 
 ## 2. Designing a report (6 steps, plain English)
 
@@ -242,7 +245,9 @@ quantity columns.
   quantity (for example operation category across the top). Use comparison
   columns when each side needs a different *combination* of criteria, such as
   one location + Dispatch versus another location + Receipt.
-- A runner must have location access to **both** locations. If the report has a
+- A runner must have operational or report-only access to **both** locations.
+  Report-only access can be assigned directly to the user or through an active
+  role on the User/Role Location Assignment pages. If the report has a
   runtime Location question, leave it empty (all locations in the runner’s
   scope) or select both sides; selecting only location A deliberately excludes
   location B’s Receipt rows.
@@ -269,8 +274,9 @@ export menu, and **Print** through the global Company Report Profile dialog
   comparison-rule fields are rejected, so hand-crafted definitions cannot
   reach secrets or inject SQL (all data access is parameterised SQLAlchemy on
   catalogued columns).
-- Location scope = grant ∩ runner scope ∩ runtime choice; ticket party
-  locations (origin/destination/sender/receiver) follow the same
+- Per-report grants decide whether a runner can open the report. Data rows are
+  then limited to the runner's reporting scope ∩ runtime location choice;
+  ticket party locations (origin/destination/sender/receiver) follow the same
   party-visibility rule as the built-in reports.
 - Caps with explicit warnings (never silent): 50,000 base rows scanned,
   100,000 exploded rows, 60 matrix columns (remainder combined into *Other*
@@ -287,9 +293,10 @@ export menu, and **Print** through the global Company Report Profile dialog
 discovery), `report_formula.py` (safe Decimal formula engine),
 `report_engine.py` (validation + execution + starters + exports). Tables:
 `report_definitions` (`definition_json` holds the versioned design),
-`report_access_grants`, `report_definition_versions`. No migration step is
-needed: tables are created by `create_all` and permissions are seeded by the
-standard catalog (`Report Builder` module under *Configurations*, `Custom
+`report_access_grants`, `report_definition_versions`, `user_report_locations`,
+and `role_report_locations`. Startup creates the new scope tables
+idempotently for both fresh and existing databases. Permissions are seeded by
+the standard catalog (`Report Builder` module under *Configurations*, `Custom
 Reports` under *Reporting*).
 
 | Method | Endpoint | Purpose |

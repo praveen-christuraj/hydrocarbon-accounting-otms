@@ -438,7 +438,8 @@ function CustomReportViewer({ loggedInUser }) {
             <div className="info-box no-print">
               <strong>About “{report.report_name}”</strong> (design v{report.version}, by {report.owner_name || report.created_by || '—'}).
               Dates use <em>{result?.meta?.date_basis_label || 'the report’s chosen date'}</em>.
-              Data is always limited to your own locations.
+              Data is limited to your operational locations plus any additional
+              report-only locations assigned directly to you or through your roles.
               {comparisonColumns.length > 0 && (
                 <>
                   <br />Comparison columns:

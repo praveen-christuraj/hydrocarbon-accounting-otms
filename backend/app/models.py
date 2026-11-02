@@ -259,6 +259,29 @@ class UserLocation(Base):
     )
 
 
+class UserReportLocation(Base):
+    """Additional locations whose data a user may read through reports only."""
+
+    __tablename__ = "user_report_locations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    location_code = Column(String(50), nullable=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "location_code",
+            name="unique_user_report_location",
+        ),
+    )
+
+
 class RoleLocation(Base):
     """Per-role location scope (PERMISSION_CRITERIA_MODEL.md section 7.2).
 
@@ -284,6 +307,29 @@ class RoleLocation(Base):
             "role_id",
             "location_code",
             name="unique_role_location",
+        ),
+    )
+
+
+class RoleReportLocation(Base):
+    """Additional report-only locations granted by an active role."""
+
+    __tablename__ = "role_report_locations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    role_id = Column(
+        Integer,
+        ForeignKey("roles.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    location_code = Column(String(50), nullable=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "role_id",
+            "location_code",
+            name="unique_role_report_location",
         ),
     )
 

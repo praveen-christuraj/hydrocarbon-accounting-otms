@@ -225,6 +225,7 @@ class UserRoleResponse(BaseModel):
 
 class UserLocationSaveRequest(BaseModel):
     location_codes: list[str]
+    report_location_codes: Optional[list[str]] = None
 
 
 class UserLocationItem(BaseModel):
@@ -244,7 +245,8 @@ class UserLocationResponse(BaseModel):
     full_name: str
     username: str
     all_locations_access: str
-    location_codes: list[str] = []
+    location_codes: list[str] = Field(default_factory=list)
+    report_location_codes: list[str] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -255,6 +257,7 @@ class UserAllLocationsUpdateRequest(BaseModel):
 
 class RoleLocationSaveRequest(BaseModel):
     location_codes: list[str]
+    report_location_codes: Optional[list[str]] = None
 
 
 class RoleLocationResponse(BaseModel):
@@ -263,7 +266,8 @@ class RoleLocationResponse(BaseModel):
     role_id: int
     role_name: str
     status: str = "Active"
-    location_codes: list[str] = []
+    location_codes: list[str] = Field(default_factory=list)
+    report_location_codes: list[str] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 

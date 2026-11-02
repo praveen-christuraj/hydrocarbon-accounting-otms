@@ -33,6 +33,7 @@ function RoleLocationAssignment({ loggedInUser }) {
   const [summaries, setSummaries] = useState([])
   const [selectedRoleId, setSelectedRoleId] = useState('')
   const [selectedLocationCodes, setSelectedLocationCodes] = useState([])
+  const [selectedReportLocationCodes, setSelectedReportLocationCodes] = useState([])
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [listLoading, setListLoading] = useState(true)
@@ -43,6 +44,7 @@ function RoleLocationAssignment({ loggedInUser }) {
   const pageSize = usePageSize()
   const currentScopeLabelId = useId()
   const locationsLabelId = useId()
+  const reportLocationsLabelId = useId()
   const panelTitleId = useId()
 
   const { hasPermission } = usePermissions(loggedInUser)
@@ -63,6 +65,8 @@ function RoleLocationAssignment({ loggedInUser }) {
       ...summary,
       locationList: (summary.locationCodes || []).join(', '),
       locationCount: (summary.locationCodes || []).length,
+      reportLocationList: (summary.reportLocationCodes || []).join(', '),
+      reportLocationCount: (summary.reportLocationCodes || []).length,
     }))
   }, [summaries])
 
@@ -138,6 +142,7 @@ function RoleLocationAssignment({ loggedInUser }) {
 
     const existing = summaries.find((summary) => String(summary.roleId) === String(roleId))
     setSelectedLocationCodes(existing?.locationCodes || [])
+    setSelectedReportLocationCodes(existing?.reportLocationCodes || [])
   }
 
   const handleLocationToggle = (locationCode) => {
@@ -162,6 +167,22 @@ function RoleLocationAssignment({ loggedInUser }) {
     })
   }
 
+  const handleReportLocationToggle = (locationCode) => {
+    setSelectedReportLocationCodes((previous) =>
+      previous.includes(locationCode)
+        ? previous.filter((code) => code !== locationCode)
+        : [...previous, locationCode]
+    )
+  }
+
+  const handleSelectReportLocations = (codes, checked) => {
+    setSelectedReportLocationCodes((previous) => {
+      if (checked) return [...new Set([...previous, ...codes])]
+      const removing = new Set(codes)
+      return previous.filter((code) => !removing.has(code))
+    })
+  }
+
   const handleSubmit = async (event) => {
     event.preventDefault()
     clearError()
@@ -181,14 +202,20 @@ function RoleLocationAssignment({ loggedInUser }) {
 
     try {
       setLoading(true)
-      await saveRoleLocations(Number(selectedRoleId), selectedLocationCodes)
+      await saveRoleLocations(
+        Number(selectedRoleId),
+        selectedLocationCodes,
+        selectedReportLocationCodes
+      )
       await loadSummaries()
       setSelectedRoleId('')
       setSelectedLocationCodes([])
+      setSelectedReportLocationCodes([])
       logUiAction(MODULE, 'Save Role Locations', {
         roleId: Number(selectedRoleId),
         roleName: role?.roleName || '',
         locationCount: selectedLocationCodes.length,
+        reportLocationCount: selectedReportLocationCodes.length,
       })
       notifySuccess('Role location scope saved successfully.')
     } catch (error) {
@@ -203,12 +230,14 @@ function RoleLocationAssignment({ loggedInUser }) {
     clearSuccess()
     setSelectedRoleId(String(summary.roleId))
     setSelectedLocationCodes(summary.locationCodes || [])
+    setSelectedReportLocationCodes(summary.reportLocationCodes || [])
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   const handleClear = () => {
     setSelectedRoleId('')
     setSelectedLocationCodes([])
+    setSelectedReportLocationCodes([])
     clearError()
     clearSuccess()
   }
@@ -238,7 +267,7 @@ function RoleLocationAssignment({ loggedInUser }) {
     <div>
       <PageHeader
         title="Role Location Assignment"
-        description="Give every user of a role the same locations in one place. The scope is additive: a role adds locations to a user, and the user's own User Location Assignment rows still apply."
+        description="Assign operational locations and additional report-only locations to every user holding a role. Report-only locations do not widen operational access."
         count={`${assignmentRows.length} Roles`}
       />
 
@@ -246,10 +275,9 @@ function RoleLocationAssignment({ loggedInUser }) {
       <AlertMessage tone="error" message={errorMsg} onDismiss={clearError} />
 
       <AlertMessage tone="info">
-        Location scope is the <strong>union</strong> of a user&apos;s own assigned
-        locations (<strong>User Location Assignment</strong>) and the locations of
-        every active role they hold. Removing a role&apos;s locations never removes
-        a location that was assigned directly to the user.
+        Operational scope remains the <strong>union</strong> of user and role
+        operational locations. Report scope adds the separate report-only lists,
+        which are used by Custom Reports without granting operational actions.
       </AlertMessage>
 
       {!canEdit && (
@@ -265,8 +293,8 @@ function RoleLocationAssignment({ loggedInUser }) {
             <div>
               <h3 id={panelTitleId}>Assign Locations to a Role</h3>
               <p>
-                Pick the role, then tick every location its users may work in.
-                Saving replaces the locations the role currently grants.
+                Pick the role, then assign both working locations and any extra
+                locations its users may compare through reports.
               </p>
             </div>
             {selectedRoleId !== '' && (
@@ -354,12 +382,28 @@ function RoleLocationAssignment({ loggedInUser }) {
                 />
               </div>
 
+              <div className="full-width-field" role="group" aria-labelledby={reportLocationsLabelId}>
+                <span className="field-label" id={reportLocationsLabelId}>
+                  Additional Report-only Locations
+                </span>
+                <LocationScopeSelector
+                  locations={activeLocations}
+                  selectedCodes={selectedReportLocationCodes}
+                  onToggle={handleReportLocationToggle}
+                  onSelectCodes={handleSelectReportLocations}
+                  onClear={() => setSelectedReportLocationCodes([])}
+                  disabled={loading}
+                  emptyMessage="Please create at least one active location before assigning report access."
+                  footnote="These locations are added only to report visibility; operation entry and workflow scope stay unchanged."
+                />
+              </div>
+
               <div className="form-actions">
                 <button type="submit" className="btn-primary" disabled={loading || selectedRoleId === ''}>
                   {loading ? 'Saving…' : 'Save Role Locations'}
                 </button>
 
-                {(selectedRoleId !== '' || selectedLocationCodes.length > 0) && (
+                {(selectedRoleId !== '' || selectedLocationCodes.length > 0 || selectedReportLocationCodes.length > 0) && (
                   <button
                     type="button"
                     className="btn-secondary"
@@ -398,6 +442,8 @@ function RoleLocationAssignment({ loggedInUser }) {
             <th>Status</th>
             <th>Locations</th>
             <th className="num">Count</th>
+            <th>Report-only Locations</th>
+            <th className="num">Report Count</th>
             {canEdit && <th className="row-actions">Actions</th>}
           </tr>
         </thead>
@@ -405,13 +451,13 @@ function RoleLocationAssignment({ loggedInUser }) {
         <tbody>
           {listLoading ? (
             <tr>
-              <td colSpan={canEdit ? 5 : 4} className="empty-table">
+              <td colSpan={canEdit ? 7 : 6} className="empty-table">
                 Loading role location scopes…
               </td>
             </tr>
           ) : assignmentFilters.filteredRows.length === 0 ? (
             <tr>
-              <td colSpan={canEdit ? 5 : 4} className="empty-table">
+              <td colSpan={canEdit ? 7 : 6} className="empty-table">
                 No role location scope has been configured yet.
               </td>
             </tr>
@@ -453,6 +499,18 @@ function RoleLocationAssignment({ loggedInUser }) {
                     )}
                   </td>
                   <td className="num">{row.locationCount}</td>
+                  <td>
+                    {(row.reportLocationCodes || []).length === 0 ? (
+                      <span className="cell-muted">None</span>
+                    ) : (
+                      <span className="code-chip-list">
+                        {row.reportLocationCodes.map((code) => (
+                          <span className="code-chip" key={code}>{code}</span>
+                        ))}
+                      </span>
+                    )}
+                  </td>
+                  <td className="num">{row.reportLocationCount}</td>
                   {canEdit && (
                     <td className="row-actions">
                       <button

@@ -15,10 +15,15 @@ never be scoped.
 from sqlalchemy import inspect
 
 from app.utils import db_migrations
-from app.utils.db_migrations import ROLE_LOCATIONS_DDL, ensure_role_location_table
+from app.utils.db_migrations import (
+    REPORT_LOCATION_SCOPES_DDL,
+    ROLE_LOCATIONS_DDL,
+    ensure_role_location_table,
+)
 
 from app.dependencies.permissions import (
     get_user_location_codes,
+    get_user_report_location_codes,
     user_is_within_actor_location_scope,
 )
 from app.models import (
@@ -27,8 +32,10 @@ from app.models import (
     Permission,
     Role,
     RoleLocation,
+    RoleReportLocation,
     RolePermission,
     UserLocation,
+    UserReportLocation,
 )
 from tests.conftest import create_user
 
@@ -105,6 +112,35 @@ def _seed_locations(db):
 # ---------------------------------------------------------------------------
 
 class TestAdditiveScope:
+    def test_report_scope_adds_direct_and_role_grants_without_widening_operations(self, db):
+        _seed_locations(db)
+        role = _role(db, "Report Comparison Role")
+        db.add(RoleReportLocation(role_id=role.id, location_code="UTP"))
+        user = create_user(db, "report_comparison_user", PASSWORD, roles=[role])
+        user.all_locations_access = "No"
+        db.add_all(
+            [
+                UserLocation(user_id=user.id, location_code="AGGE"),
+                UserReportLocation(user_id=user.id, location_code="OTHER"),
+            ]
+        )
+        db.commit()
+
+        assert get_user_location_codes(user, db) == {"agge"}
+        assert get_user_report_location_codes(user, db) == {"agge", "utp", "other"}
+
+    def test_inactive_role_does_not_grant_report_locations(self, db):
+        _seed_locations(db)
+        role = _role(db, "Inactive Report Role")
+        role.status = "Inactive"
+        db.add(RoleReportLocation(role_id=role.id, location_code="UTP"))
+        user = create_user(db, "inactive_report_role_user", PASSWORD, roles=[role])
+        user.all_locations_access = "No"
+        db.add(UserLocation(user_id=user.id, location_code="AGGE"))
+        db.commit()
+
+        assert get_user_report_location_codes(user, db) == {"agge"}
+
     def test_role_locations_widen_the_user_scope(self, db):
         _seed_locations(db)
         role = _role(db, "Operator")
@@ -277,6 +313,35 @@ class TestRoleLocationEndpoints:
         assert audit.details["after_location_codes"] == ["AGGE", "UTP"]
         assert audit.details["before_location_codes"] == ["OTHER"]
 
+    def test_save_replaces_role_report_locations_separately(self, db, client):
+        _seed_locations(db)
+        operator = _role(db, "Report Scoped Operator")
+        db.add(RoleReportLocation(role_id=operator.id, location_code="OTHER"))
+        db.commit()
+        headers, _ = self._actor(
+            db,
+            client,
+            permissions=["View Role Location Assignment", "Edit Role Location Assignment"],
+            all_access="Yes",
+        )
+
+        response = client.put(
+            f"/role-locations/{operator.id}",
+            headers=headers,
+            json={"location_codes": ["AGGE"], "report_location_codes": ["UTP"]},
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["location_codes"] == ["AGGE"]
+        assert response.json()["report_location_codes"] == ["UTP"]
+        stored = {
+            row.location_code
+            for row in db.query(RoleReportLocation)
+            .filter(RoleReportLocation.role_id == operator.id)
+            .all()
+        }
+        assert stored == {"UTP"}
+
     def test_save_requires_edit_permission(self, db, client):
         _seed_locations(db)
         operator = _role(db, "Operator")
@@ -427,6 +492,45 @@ class TestRoleLocationEndpoints:
         assert missing.status_code == 404
 
 
+class TestUserReportLocationEndpoints:
+    def test_save_replaces_direct_report_locations_separately(self, db, client):
+        _seed_locations(db)
+        admin_role = _role(
+            db,
+            "Location Assignment Manager",
+            ["View User Location Assignment", "Edit User Location Assignment"],
+        )
+        actor = create_user(db, "location_assignment_manager", PASSWORD, roles=[admin_role])
+        actor.all_locations_access = "Yes"
+
+        target_role = _role(db, "Report Viewer")
+        target = create_user(db, "direct_report_viewer", PASSWORD, roles=[target_role])
+        target.all_locations_access = "No"
+        db.add(UserReportLocation(user_id=target.id, location_code="OTHER"))
+        db.commit()
+
+        response = client.put(
+            f"/user-locations/{target.id}",
+            headers=_login(client, actor.username),
+            json={"location_codes": ["AGGE"], "report_location_codes": ["UTP"]},
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["location_codes"] == ["AGGE"]
+        assert response.json()["report_location_codes"] == ["UTP"]
+        assert get_user_location_codes(target, db) == {"agge"}
+        assert get_user_report_location_codes(target, db) == {"agge", "utp"}
+
+        audit = (
+            db.query(AuditLog)
+            .filter(AuditLog.module_name == "User Location Assignment")
+            .order_by(AuditLog.id.desc())
+            .first()
+        )
+        assert audit.details["before_report_location_codes"] == ["OTHER"]
+        assert audit.details["after_report_location_codes"] == ["UTP"]
+
+
 class TestRoleLocationMigration:
     """``ensure_role_location_table`` creates the table on databases that were
     initialised before this feature existed, and is safe to run on every start.
@@ -445,6 +549,16 @@ class TestRoleLocationMigration:
 
         # role-level scope only: no per-user override / deny list
         assert "user_id" not in ddl
+
+    def test_report_scope_ddl_has_separate_user_and_role_grants(self):
+        ddl = "\n".join(REPORT_LOCATION_SCOPES_DDL)
+
+        assert "CREATE TABLE IF NOT EXISTS user_report_locations" in ddl
+        assert "CONSTRAINT unique_user_report_location UNIQUE (user_id, location_code)" in ddl
+        assert "REFERENCES users(id) ON DELETE CASCADE" in ddl
+        assert "CREATE TABLE IF NOT EXISTS role_report_locations" in ddl
+        assert "CONSTRAINT unique_role_report_location UNIQUE (role_id, location_code)" in ddl
+        assert "REFERENCES roles(id) ON DELETE CASCADE" in ddl
 
     def test_creates_the_table_when_missing(self, monkeypatch):
         class _RecordingConnection:

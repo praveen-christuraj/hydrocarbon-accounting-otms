@@ -20,7 +20,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Location, Role, RoleLocation, User
+from app.models import Location, Role, RoleLocation, RoleReportLocation, User
 from app.schemas import RoleLocationResponse, RoleLocationSaveRequest
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
@@ -55,6 +55,18 @@ def _role_location_codes(db: Session, role_id: int) -> list[str]:
     ]
 
 
+def _role_report_location_codes(db: Session, role_id: int) -> list[str]:
+    return [
+        row.location_code
+        for row in (
+            db.query(RoleReportLocation)
+            .filter(RoleReportLocation.role_id == role_id)
+            .order_by(RoleReportLocation.location_code)
+            .all()
+        )
+    ]
+
+
 def _role_status(role: Role) -> str:
     return role.status or "Active"
 
@@ -80,7 +92,7 @@ def _ensure_role_in_actor_scope(role: Role, current_user: User, db: Session) -> 
         code
         for code in (
             normalize_location_code(raw)
-            for raw in _role_location_codes(db, role.id)
+            for raw in [*_role_location_codes(db, role.id), *_role_report_location_codes(db, role.id)]
         )
         if code is not None
     }
@@ -110,6 +122,7 @@ def get_role_locations(
                     "role_name": role.role_name,
                     "status": _role_status(role),
                     "location_codes": _role_location_codes(db, role.id),
+                    "report_location_codes": _role_report_location_codes(db, role.id),
                 }
             )
             continue
@@ -122,7 +135,7 @@ def get_role_locations(
             code
             for code in (
                 normalize_location_code(raw)
-                for raw in _role_location_codes(db, role.id)
+                for raw in [*_role_location_codes(db, role.id), *_role_report_location_codes(db, role.id)]
             )
             if code is not None
         ]
@@ -135,6 +148,7 @@ def get_role_locations(
                 "role_name": role.role_name,
                 "status": _role_status(role),
                 "location_codes": _role_location_codes(db, role.id),
+                "report_location_codes": _role_report_location_codes(db, role.id),
             }
         )
 
@@ -154,11 +168,16 @@ def get_role_location_detail(
 
     allowed_codes = get_user_location_codes(current_user, db)
     location_codes = _role_location_codes(db, role_id)
+    report_location_codes = _role_report_location_codes(db, role_id)
 
     if allowed_codes is not None:
         location_codes = [
             code
             for code in location_codes
+            if normalize_location_code(code) in allowed_codes
+        ]
+        report_location_codes = [
+            code for code in report_location_codes
             if normalize_location_code(code) in allowed_codes
         ]
 
@@ -167,6 +186,7 @@ def get_role_location_detail(
         "role_name": role.role_name,
         "status": _role_status(role),
         "location_codes": location_codes,
+        "report_location_codes": report_location_codes,
     }
 
 
@@ -222,6 +242,28 @@ def save_role_locations(
             )
         locations_by_code[normalized_code] = location
 
+    report_locations_by_code = None
+    if request.report_location_codes is not None:
+        normalized_report_requested = [
+            normalize_location_code(code) for code in request.report_location_codes
+        ]
+        if any(code is None for code in normalized_report_requested):
+            raise HTTPException(status_code=422, detail="Report location codes cannot be empty")
+        if len(normalized_report_requested) != len(set(normalized_report_requested)):
+            raise HTTPException(status_code=422, detail="Duplicate report location codes are not allowed")
+        report_locations_by_code = {}
+        for normalized_code in normalized_report_requested:
+            location = (
+                db.query(Location)
+                .filter(func.lower(func.trim(Location.location_code)) == normalized_code)
+                .first()
+            )
+            if not location:
+                raise HTTPException(status_code=400, detail=f"Location code '{normalized_code}' not found")
+            if location.status != "Active":
+                raise HTTPException(status_code=400, detail=f"Location code '{location.location_code}' is not Active")
+            report_locations_by_code[normalized_code] = location
+
     # Location scope: a restricted administrator may only hand out locations
     # they hold themselves, and may not touch a role that already reaches
     # outside their scope (mirrors the user-location endpoint).
@@ -231,6 +273,13 @@ def save_role_locations(
             raise HTTPException(
                 status_code=403,
                 detail="You cannot assign a location outside your own scope",
+            )
+        if report_locations_by_code is not None and any(
+            code not in allowed_codes for code in report_locations_by_code
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="You cannot assign a report location outside your own operational scope",
             )
         existing_codes = {
             code
@@ -245,8 +294,24 @@ def save_role_locations(
                 status_code=403,
                 detail="You cannot modify a role with locations outside your own scope",
             )
+        existing_report_codes = {
+            code
+            for code in (
+                normalize_location_code(raw)
+                for raw in _role_report_location_codes(db, role.id)
+            )
+            if code is not None
+        }
+        if report_locations_by_code is not None and any(
+            code not in allowed_codes for code in existing_report_codes
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="You cannot modify report locations outside your own operational scope",
+            )
 
     before_codes = sorted(_role_location_codes(db, role_id))
+    before_report_codes = sorted(_role_report_location_codes(db, role_id))
     db.query(RoleLocation).filter(RoleLocation.role_id == role_id).delete()
     after_codes = sorted(
         location.location_code for location in locations_by_code.values()
@@ -254,7 +319,16 @@ def save_role_locations(
     for code in after_codes:
         db.add(RoleLocation(role_id=role_id, location_code=code))
 
-    changed = set(before_codes) != set(after_codes)
+    after_report_codes = before_report_codes
+    if report_locations_by_code is not None:
+        db.query(RoleReportLocation).filter(RoleReportLocation.role_id == role_id).delete()
+        after_report_codes = sorted(
+            location.location_code for location in report_locations_by_code.values()
+        )
+        for code in after_report_codes:
+            db.add(RoleReportLocation(role_id=role_id, location_code=code))
+
+    changed = set(before_codes) != set(after_codes) or set(before_report_codes) != set(after_report_codes)
 
     create_audit_log(
         db=db,
@@ -273,6 +347,8 @@ def save_role_locations(
             "role": {"role_id": role.id, "role_name": role.role_name},
             "before_location_codes": before_codes,
             "after_location_codes": after_codes,
+            "before_report_location_codes": before_report_codes,
+            "after_report_location_codes": after_report_codes,
         },
     )
 
@@ -283,4 +359,5 @@ def save_role_locations(
         "role_name": role.role_name,
         "status": _role_status(role),
         "location_codes": after_codes,
+        "report_location_codes": after_report_codes,
     }

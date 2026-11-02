@@ -3,7 +3,7 @@ from sqlalchemy import false, func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Location, User, UserLocation
+from app.models import Location, User, UserLocation, UserReportLocation
 from app.schemas import (
     UserAllLocationsUpdateRequest,
     UserLocationItem,
@@ -31,6 +31,40 @@ def get_location_name(db: Session, location_code: str) -> str:
         .first()
     )
     return loc.location_name if loc else location_code
+
+
+def _direct_user_report_location_codes(db: Session, user_id: int) -> list[str]:
+    return [
+        row.location_code
+        for row in (
+            db.query(UserReportLocation)
+            .filter(UserReportLocation.user_id == user_id)
+            .order_by(UserReportLocation.location_code)
+            .all()
+        )
+    ]
+
+
+def resolve_active_locations(db: Session, raw_codes: list[str]) -> dict[str, Location]:
+    normalized_codes = [normalize_location_code(code) for code in raw_codes]
+    if any(code is None for code in normalized_codes):
+        raise HTTPException(status_code=422, detail="Location codes cannot be empty")
+    if len(normalized_codes) != len(set(normalized_codes)):
+        raise HTTPException(status_code=422, detail="Duplicate location codes are not allowed")
+
+    locations_by_code: dict[str, Location] = {}
+    for normalized_code in normalized_codes:
+        location = (
+            db.query(Location)
+            .filter(func.lower(func.trim(Location.location_code)) == normalized_code)
+            .first()
+        )
+        if not location:
+            raise HTTPException(status_code=400, detail=f"Location code '{normalized_code}' not found")
+        if location.status != "Active":
+            raise HTTPException(status_code=400, detail=f"Location code '{location.location_code}' is not Active")
+        locations_by_code[normalized_code] = location
+    return locations_by_code
 
 
 @router.get("", response_model=list[UserLocationItem])
@@ -116,6 +150,7 @@ def get_all_user_location_summaries(
             "username": u.username,
             "all_locations_access": u.all_locations_access or "No",
             "location_codes": user_location_map.get(u.id, []),
+            "report_location_codes": _direct_user_report_location_codes(db, u.id),
         }
         for u in users
     ]
@@ -151,6 +186,7 @@ def get_user_location_detail(
         "username": user.username,
         "all_locations_access": user.all_locations_access or "No",
         "location_codes": location_codes,
+        "report_location_codes": _direct_user_report_location_codes(db, user.id),
     }
 
 
@@ -179,26 +215,13 @@ def save_user_locations(
     if allowed_codes is not None and str(user.all_locations_access or "").strip().casefold() in {"yes", "true", "1", "y"}:
         raise HTTPException(status_code=403, detail="You cannot modify a user with unrestricted location access")
 
-    normalized_requested = [normalize_location_code(code) for code in request.location_codes]
-    if any(code is None for code in normalized_requested):
-        raise HTTPException(status_code=422, detail="Location codes cannot be empty")
-    if len(normalized_requested) != len(set(normalized_requested)):
-        raise HTTPException(status_code=422, detail="Duplicate location codes are not allowed")
-
-    # Resolve and store canonical DB values; avoid creating case variants of
-    # the same assignment while preserving the database's existing code style.
-    locations_by_code = {}
-    for normalized_code in normalized_requested:
-        location = (
-            db.query(Location)
-            .filter(func.lower(func.trim(Location.location_code)) == normalized_code)
-            .first()
-        )
-        if not location:
-            raise HTTPException(status_code=400, detail=f"Location code '{normalized_code}' not found")
-        if location.status != "Active":
-            raise HTTPException(status_code=400, detail=f"Location code '{location.location_code}' is not Active")
-        locations_by_code[normalized_code] = location
+    locations_by_code = resolve_active_locations(db, request.location_codes)
+    normalized_requested = list(locations_by_code)
+    report_locations_by_code = (
+        resolve_active_locations(db, request.report_location_codes)
+        if request.report_location_codes is not None
+        else None
+    )
 
     if allowed_codes is not None:
         if any(code not in allowed_codes for code in normalized_requested):
@@ -210,6 +233,19 @@ def save_user_locations(
         }
         if any(code not in allowed_codes for code in existing_codes):
             raise HTTPException(status_code=403, detail="You cannot modify a user with locations outside your own scope")
+        if report_locations_by_code is not None and any(
+            code not in allowed_codes for code in report_locations_by_code
+        ):
+            raise HTTPException(status_code=403, detail="You cannot assign a report location outside your own operational scope")
+        existing_report_codes = {
+            code
+            for row in db.query(UserReportLocation.location_code).filter(UserReportLocation.user_id == user_id).all()
+            if (code := normalize_location_code(row[0])) is not None
+        }
+        if report_locations_by_code is not None and any(
+            code not in allowed_codes for code in existing_report_codes
+        ):
+            raise HTTPException(status_code=403, detail="You cannot modify report locations outside your own operational scope")
 
     # Get before state for audit
     before_codes = sorted(
@@ -218,6 +254,7 @@ def save_user_locations(
         .filter(UserLocation.user_id == user_id)
         .all()
     )
+    before_report_codes = _direct_user_report_location_codes(db, user_id)
 
     # Replace all assignments using canonical location codes.
     db.query(UserLocation).filter(UserLocation.user_id == user_id).delete()
@@ -225,7 +262,16 @@ def save_user_locations(
     for code in after_codes:
         db.add(UserLocation(user_id=user_id, location_code=code))
 
-    changed = set(before_codes) != set(after_codes)
+    after_report_codes = before_report_codes
+    if report_locations_by_code is not None:
+        db.query(UserReportLocation).filter(UserReportLocation.user_id == user_id).delete()
+        after_report_codes = sorted(
+            location.location_code for location in report_locations_by_code.values()
+        )
+        for code in after_report_codes:
+            db.add(UserReportLocation(user_id=user_id, location_code=code))
+
+    changed = set(before_codes) != set(after_codes) or set(before_report_codes) != set(after_report_codes)
 
     create_audit_log(
         db=db,
@@ -246,6 +292,8 @@ def save_user_locations(
             },
             "before_location_codes": before_codes,
             "after_location_codes": after_codes,
+            "before_report_location_codes": before_report_codes,
+            "after_report_location_codes": after_report_codes,
         },
     )
 
@@ -257,6 +305,7 @@ def save_user_locations(
         "username": user.username,
         "all_locations_access": user.all_locations_access or "No",
         "location_codes": after_codes,
+        "report_location_codes": after_report_codes,
     }
 
 
@@ -330,6 +379,7 @@ def update_user_all_locations_access(
         "username": user.username,
         "all_locations_access": user.all_locations_access,
         "location_codes": location_codes,
+        "report_location_codes": _direct_user_report_location_codes(db, user.id),
     }
 
 

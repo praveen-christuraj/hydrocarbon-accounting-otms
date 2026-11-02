@@ -9,7 +9,9 @@ from app.models import (
     RolePermission,
     UserRole,
     UserLocation,
+    UserReportLocation,
     RoleLocation,
+    RoleReportLocation,
     LocationOperationAvailability,
     OperationWorkflowPolicy,
     OperationWorkflowPolicyRole,
@@ -574,6 +576,23 @@ def get_role_location_codes(role_ids, db: Session) -> set[str]:
     }
 
 
+def get_role_report_location_codes(role_ids, db: Session) -> set[str]:
+    """Report-only location codes granted by the given active roles."""
+    ids = [int(role_id) for role_id in (role_ids or [])]
+    if not ids:
+        return set()
+    rows = (
+        db.query(RoleReportLocation.location_code)
+        .filter(RoleReportLocation.role_id.in_(ids))
+        .all()
+    )
+    return {
+        normalized_code
+        for row in rows
+        if (normalized_code := normalize_location_code(row[0])) is not None
+    }
+
+
 def get_user_location_codes(user: User, db: Session) -> set[str] | None:
     """
     Return the effective assigned location codes, or None for unrestricted access.
@@ -603,6 +622,55 @@ def get_user_location_codes(user: User, db: Session) -> set[str] | None:
 
     codes.update(get_role_location_codes(get_user_role_ids(db, user), db))
     return codes
+
+
+def get_user_report_location_codes(user: User, db: Session) -> set[str] | None:
+    """Return the locations readable by reporting features.
+
+    Report scope is deliberately additive: every operational location remains
+    reportable, then direct and role-based report-only grants are added. This
+    helper must never be used by operation-entry or mutation endpoints.
+    """
+    operational_codes = get_user_location_codes(user, db)
+    if operational_codes is None:
+        return None
+
+    report_codes = set(operational_codes)
+    report_codes.update(
+        normalized_code
+        for row in (
+            db.query(UserReportLocation.location_code)
+            .filter(UserReportLocation.user_id == user.id)
+            .all()
+        )
+        if (normalized_code := normalize_location_code(row[0])) is not None
+    )
+    report_codes.update(get_role_report_location_codes(get_user_role_ids(db, user), db))
+    return report_codes
+
+
+def user_has_report_location_access(user: User, db: Session, location_code: str | None) -> bool:
+    allowed_codes = get_user_report_location_codes(user, db)
+    if allowed_codes is None:
+        return True
+    normalized = normalize_location_code(location_code)
+    return normalized is not None and normalized in allowed_codes
+
+
+def ensure_report_location_in_user_scope(
+    user: User,
+    db: Session,
+    location_code: str | None,
+    field_label: str = "Location",
+):
+    if location_code is None or str(location_code).strip() == "":
+        return
+    if user_has_report_location_access(user, db, location_code):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail=f"{field_label} is not in your reporting scope",
+    )
 
 
 def user_is_within_actor_location_scope(actor: User, target: User, db: Session) -> bool:

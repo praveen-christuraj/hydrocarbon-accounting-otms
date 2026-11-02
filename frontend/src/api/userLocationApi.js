@@ -19,6 +19,7 @@ const convertUserLocationSummaryFromApi = (item) => {
     username: item.username,
     allLocationsAccess: item.all_locations_access,
     locationCodes: item.location_codes || [],
+    reportLocationCodes: item.report_location_codes || [],
   }
 }
 
@@ -37,9 +38,10 @@ export const getUserLocationDetail = async (userId) => {
   return convertUserLocationSummaryFromApi(data)
 }
 
-export const saveUserLocations = async (userId, locationCodes) => {
+export const saveUserLocations = async (userId, locationCodes, reportLocationCodes) => {
   const data = await apiPut(`/user-locations/${userId}`, {
     location_codes: locationCodes,
+    ...(reportLocationCodes === undefined ? {} : { report_location_codes: reportLocationCodes }),
   })
   return convertUserLocationSummaryFromApi(data)
 }

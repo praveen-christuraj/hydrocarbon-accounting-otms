@@ -29,6 +29,7 @@ function UserLocationAssignment({
 }) {
   const [selectedUserId, setSelectedUserId] = useState('')
   const [selectedLocationCodes, setSelectedLocationCodes] = useState([])
+  const [selectedReportLocationCodes, setSelectedReportLocationCodes] = useState([])
   const [allLocationsAccess, setAllLocationsAccess] = useState('No')
   const [loading, setLoading] = useState(false)
   // Action feedback: little pop-up (toast) + inline message near the action
@@ -49,6 +50,7 @@ function UserLocationAssignment({
   const confirm = useConfirm()
   const allAccessLabelId = useId()
   const locationsLabelId = useId()
+  const reportLocationsLabelId = useId()
   const panelTitleId = useId()
 
   const activeUsers = users.filter((user) => user.status === 'Active')
@@ -95,9 +97,11 @@ function UserLocationAssignment({
     )
     if (existing) {
       setSelectedLocationCodes(existing.locationCodes || [])
+      setSelectedReportLocationCodes(existing.reportLocationCodes || [])
       setAllLocationsAccess(existing.allLocationsAccess || 'No')
     } else {
       setSelectedLocationCodes([])
+      setSelectedReportLocationCodes([])
       setAllLocationsAccess('No')
     }
   }
@@ -124,6 +128,22 @@ function UserLocationAssignment({
     })
   }
 
+  const handleReportLocationToggle = (locationCode) => {
+    setSelectedReportLocationCodes((previous) =>
+      previous.includes(locationCode)
+        ? previous.filter((code) => code !== locationCode)
+        : [...previous, locationCode]
+    )
+  }
+
+  const handleSelectReportLocations = (codes, checked) => {
+    setSelectedReportLocationCodes((previous) => {
+      if (checked) return [...new Set([...previous, ...codes])]
+      const removing = new Set(codes)
+      return previous.filter((code) => !removing.has(code))
+    })
+  }
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     clearError()
@@ -141,7 +161,11 @@ function UserLocationAssignment({
     try {
       setLoading(true)
 
-      await saveUserLocations(Number(selectedUserId), selectedLocationCodes)
+      await saveUserLocations(
+        Number(selectedUserId),
+        selectedLocationCodes,
+        selectedReportLocationCodes
+      )
       await updateUserAllLocationsAccess(Number(selectedUserId), allLocationsAccess)
 
       await Promise.all([
@@ -153,11 +177,13 @@ function UserLocationAssignment({
         userId: Number(selectedUserId),
         username: selectedUser?.username || '',
         locationCount: selectedLocationCodes.length,
+        reportLocationCount: selectedReportLocationCodes.length,
         allLocationsAccess,
       })
 
       setSelectedUserId('')
       setSelectedLocationCodes([])
+      setSelectedReportLocationCodes([])
       setAllLocationsAccess('No')
       setFieldErrors({})
       setSuccess('User location assignment saved successfully')
@@ -180,6 +206,7 @@ function UserLocationAssignment({
 
     setSelectedUserId(String(summary.userId))
     setSelectedLocationCodes(summary.locationCodes || [])
+    setSelectedReportLocationCodes(summary.reportLocationCodes || [])
     setAllLocationsAccess(summary.allLocationsAccess || 'No')
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -252,6 +279,14 @@ function UserLocationAssignment({
         defaultValue: 'No',
         aliases: ['All Locations'],
       },
+      {
+        key: 'reportLocations',
+        label: 'Report-only Locations',
+        required: false,
+        example: 'LOC-003, LOC-004',
+        aliases: ['Report Locations', 'Reporting Locations', 'Read Only Locations'],
+        hint: 'Comma-separated locations visible only in reports',
+      },
     ],
     validateRow: (row) => {
       const username = String(row.username ?? '').trim()
@@ -272,6 +307,13 @@ function UserLocationAssignment({
         const unknown = codes.filter((code) => !known.includes(code.toLowerCase()))
         if (unknown.length > 0) return `Unknown or inactive location(s): ${unknown.join(', ')}`
       }
+      const reportCodes = String(row.reportLocations ?? '')
+        .split(/[,;]/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+      const known = activeLocations.map((loc) => String(loc.locationCode ?? '').trim().toLowerCase())
+      const unknownReports = reportCodes.filter((code) => !known.includes(code.toLowerCase()))
+      if (unknownReports.length > 0) return `Unknown or inactive report location(s): ${unknownReports.join(', ')}`
       return null
     },
     onImportRow: async (row) => {
@@ -294,7 +336,15 @@ function UserLocationAssignment({
             .filter((loc) => codes.includes(String(loc.locationCode ?? '').trim().toLowerCase()))
             .map((loc) => loc.locationCode)
 
-      await saveUserLocations(Number(user.id), locationCodes)
+      const reportCodes = String(row.reportLocations ?? '')
+        .split(/[,;]/)
+        .map((item) => item.trim().toLowerCase())
+        .filter(Boolean)
+      const reportLocationCodes = activeLocations
+        .filter((loc) => reportCodes.includes(String(loc.locationCode ?? '').trim().toLowerCase()))
+        .map((loc) => loc.locationCode)
+
+      await saveUserLocations(Number(user.id), locationCodes, reportLocationCodes)
       await updateUserAllLocationsAccess(Number(user.id), allAccess ? 'Yes' : 'No')
     },
     onComplete: async () => {
@@ -311,6 +361,7 @@ function UserLocationAssignment({
   const handleCancelEdit = () => {
     setSelectedUserId('')
     setSelectedLocationCodes([])
+    setSelectedReportLocationCodes([])
     setAllLocationsAccess('No')
     setFieldErrors({})
     clearError()
@@ -337,7 +388,7 @@ function UserLocationAssignment({
     <div>
       <PageHeader
         title="User Location Assignment"
-        description="Assign locations to users for location-based access control. Users with All Locations Access can access every location regardless of individual assignments."
+        description="Assign operational locations and additional report-only locations. Report-only access never permits operation entry, approval, tracking actions, or master-data changes at that location."
         count={`${userLocationAssignments.length} Assignments`}
       />
 
@@ -357,8 +408,8 @@ function UserLocationAssignment({
             <div>
               <h3 id={panelTitleId}>Assign Locations to a User</h3>
               <p>
-                Pick the user, then tick every location they may work in. Saving
-                replaces the locations that user currently has.
+                Pick the user, then assign where they may work and any extra
+                locations they may compare in reports. Saving replaces both lists.
               </p>
             </div>
             {selectedUserId !== '' && (
@@ -446,12 +497,32 @@ function UserLocationAssignment({
                 />
               </div>
 
+              <div className="full-width-field" role="group" aria-labelledby={reportLocationsLabelId}>
+                <span className="field-label" id={reportLocationsLabelId}>
+                  Additional Report-only Locations
+                </span>
+                <LocationScopeSelector
+                  locations={activeLocations}
+                  selectedCodes={selectedReportLocationCodes}
+                  onToggle={handleReportLocationToggle}
+                  onSelectCodes={handleSelectReportLocations}
+                  onClear={() => setSelectedReportLocationCodes([])}
+                  disabled={loading || allLocationsAccess === 'Yes'}
+                  emptyMessage="Please create at least one active location before assigning report access."
+                  footnote={
+                    allLocationsAccess === 'Yes'
+                      ? 'All Locations Access already includes every report location.'
+                      : 'These locations are added only when reading reports; operational permissions remain unchanged.'
+                  }
+                />
+              </div>
+
               <div className="form-actions">
                 <button type="submit" className="btn-primary" disabled={loading}>
                   {loading ? 'Saving…' : 'Save Assignment'}
                 </button>
 
-                {(selectedUserId !== '' || selectedLocationCodes.length > 0) && (
+                {(selectedUserId !== '' || selectedLocationCodes.length > 0 || selectedReportLocationCodes.length > 0) && (
                   <button
                     type="button"
                     className="btn-secondary"
@@ -492,6 +563,7 @@ function UserLocationAssignment({
             <th>User</th>
             <th>All Locations</th>
             <th>Assigned Location</th>
+            <th>Additional Report-only Locations</th>
             {actionsVisible && <th className="row-actions">Actions</th>}
           </tr>
         </thead>
@@ -499,7 +571,7 @@ function UserLocationAssignment({
         <tbody>
           {userLocationAssignments.length === 0 ? (
             <tr>
-              <td colSpan={actionsVisible ? 4 : 3} className="empty-table">
+              <td colSpan={actionsVisible ? 5 : 4} className="empty-table">
                 No location assignments yet.
               </td>
             </tr>
@@ -543,6 +615,20 @@ function UserLocationAssignment({
                     <span className="cell-code">{assignment.locationCode}</span>
                   </td>
 
+                  {span > 0 && (
+                    <td rowSpan={span} className="assignment-group-cell">
+                      {(summary?.reportLocationCodes || []).length > 0 ? (
+                        <span className="code-chip-list">
+                          {summary.reportLocationCodes.map((code) => (
+                            <span className="code-chip" key={code}>{code}</span>
+                          ))}
+                        </span>
+                      ) : (
+                        <span className="cell-muted">None</span>
+                      )}
+                    </td>
+                  )}
+
                   {actionsVisible && (
                     <td className="row-actions">
                       {canEdit && span > 0 && (
@@ -556,6 +642,7 @@ function UserLocationAssignment({
                                 fullName: assignment.fullName,
                                 username: assignment.username,
                                 locationCodes: [],
+                                reportLocationCodes: [],
                                 allLocationsAccess: 'No',
                               }
                             )

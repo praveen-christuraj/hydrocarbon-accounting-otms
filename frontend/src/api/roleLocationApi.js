@@ -13,6 +13,7 @@ const convertRoleLocationFromApi = (item) => {
     roleName: item.role_name,
     status: item.status || 'Active',
     locationCodes: item.location_codes || [],
+    reportLocationCodes: item.report_location_codes || [],
   }
 }
 
@@ -26,9 +27,10 @@ export const getRoleLocationDetail = async (roleId) => {
   return convertRoleLocationFromApi(data)
 }
 
-export const saveRoleLocations = async (roleId, locationCodes) => {
+export const saveRoleLocations = async (roleId, locationCodes, reportLocationCodes) => {
   const data = await apiPut(`/role-locations/${roleId}`, {
     location_codes: locationCodes,
+    ...(reportLocationCodes === undefined ? {} : { report_location_codes: reportLocationCodes }),
   })
   return convertRoleLocationFromApi(data)
 }

@@ -21,6 +21,7 @@ from app.models import (
     RolePermission,
     TankStockLedger,
     UserLocation,
+    UserReportLocation,
 )
 from app.services.report_engine import ReportDefinitionError, starter_templates, validate_definition
 from app.services.report_formula import FormulaError, evaluate, parse_formula, validate_formula
@@ -547,6 +548,52 @@ def test_location_grant_and_runner_location_scope(client, db):
     assert run.status_code == 200, run.text
     locations = {row["location"] for row in run.json()["rows"]}
     assert locations == {"ESC"}  # BONNY rows hidden by the runner's own scope
+
+
+def test_report_only_location_widens_custom_report_without_operational_scope(client, db):
+    _seed(db)
+    owner_headers, _, _ = _make_user(db, client, "owner_report_scope", BUILDER_PERMS, all_locations=True)
+    viewer_headers, viewer, _ = _make_user(
+        db,
+        client,
+        "report_scope_viewer",
+        ["View Custom Report"],
+        locations=["ESC"],
+    )
+    db.add(UserReportLocation(user_id=viewer.id, location_code="BONNY"))
+    db.commit()
+
+    report = _create_report(
+        client,
+        owner_headers,
+        name="Two Terminal Comparison",
+        is_published=True,
+        grants=[
+            {"grant_type": "LOCATION", "location_code": "BONNY", "access_level": "VIEW"},
+        ],
+    )
+
+    visible = client.get("/report-builder/my-reports", headers=viewer_headers)
+    assert visible.status_code == 200, visible.text
+    assert [row["id"] for row in visible.json()] == [report["id"]]
+
+    lookups = client.get("/report-builder/lookups", headers=viewer_headers)
+    assert lookups.status_code == 200, lookups.text
+    assert {row["location_code"] for row in lookups.json()["locations"]} == {"BONNY", "ESC"}
+    assert {row["location_code"] for row in lookups.json()["grant_locations"]} == {"ESC"}
+
+    run = client.post(
+        f"/report-builder/my-reports/{report['id']}/run",
+        json={"date_from": "2026-10-01", "date_to": "2026-10-31"},
+        headers=viewer_headers,
+    )
+    assert run.status_code == 200, run.text
+    assert {row["location"] for row in run.json()["rows"]} == {"BONNY", "ESC"}
+
+    # The same user remains operationally restricted to ESC.
+    from app.dependencies.permissions import get_user_location_codes
+
+    assert get_user_location_codes(viewer, db) == {"esc"}
 
 
 def test_publish_requires_publish_permission_and_bad_definition_rejected(client, db):

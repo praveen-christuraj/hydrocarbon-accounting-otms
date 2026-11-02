@@ -1205,7 +1205,7 @@ function ReportBuilder({ loggedInUser }) {
 
       {step === 3 && (
         <section className="rb-panel">
-          <p className="rb-muted">Every report already asks for a date range. Add any other questions the report user should answer when running it — their choices are always limited to their own locations.</p>
+          <p className="rb-muted">Every report already asks for a date range. Add any other questions the report user should answer when running it — location choices are limited to their operational and report-only locations.</p>
           <div className="rb-composer-actions">
             {[
               ['location', 'Location'], ['operation_type', 'Operation Type'], ['status', 'Status'], ['asset', 'Asset / Tank'],
@@ -1277,7 +1277,7 @@ function ReportBuilder({ loggedInUser }) {
               </label>
               <label className={`rb-choice ${visibility === 'INTERNAL' ? 'active' : ''}`}>
                 <input type="radio" name="rb-vis" checked={visibility === 'INTERNAL'} onChange={() => setVisibility('INTERNAL')} />
-                <strong>All report users</strong><span>Anyone holding the “View Custom Report” permission. They still only see their own locations’ data. Use the list below only to give editing rights.</span>
+                <strong>All report users</strong><span>Anyone holding the “View Custom Report” permission. They see only their operational and report-only locations. Use the list below only to give editing rights.</span>
               </label>
             </div>
           </div>
@@ -1376,7 +1376,7 @@ function GrantEditor({ grants, setGrants, lookups }) {
   const options = useMemo(() => {
     if (draft.grant_type === 'USER') return (lookups?.users || []).map((u) => ({ value: String(u.id), label: `${u.full_name} (${u.username})` }))
     if (draft.grant_type === 'ROLE') return (lookups?.roles || []).map((r) => ({ value: String(r.id), label: r.role_name }))
-    return (lookups?.locations || []).map((l) => ({ value: l.location_code, label: `${l.location_code} — ${l.location_name}` }))
+    return (lookups?.grant_locations || lookups?.locations || []).map((l) => ({ value: l.location_code, label: `${l.location_code} — ${l.location_name}` }))
   }, [draft.grant_type, lookups])
 
   const addGrant = () => {

@@ -61,6 +61,7 @@ from app.models import (
     RolePermission, SystemNotification, SystemNotificationReceipt,
     BackupSettings, BackupJob, BackupRestoreRequest, BackupRestoreValidation,
     User, PasswordResetRequest, UserRole, UserLocation, OperationWorkflowPolicy,
+    UserReportLocation, RoleReportLocation,
     OperationWorkflowPolicyRole, OperationWorkflowPolicyUser, OperationTask,
     OperationTaskEvent, ApprovedTransactionCorrectionRequest, Table11Factor,
     BargeSealMaster,     FlowmeterConfig, FlowmeterRecord, FlowmeterConfigHistory,
@@ -87,6 +88,7 @@ from app.utils.db_migrations import (
     ensure_operation_task_tables,
     ensure_user_location_columns,
     ensure_role_location_table,
+    ensure_report_location_scope_tables,
     ensure_export_operations_tables,
     ensure_book_stock_tables,
     ensure_user_role_multi_role_constraint,
@@ -122,6 +124,7 @@ async def lifespan(app: FastAPI):
     migrate_boolean_columns()
     ensure_user_location_columns()
     ensure_role_location_table()
+    ensure_report_location_scope_tables()
     ensure_export_operations_tables()
     ensure_book_stock_tables()
     ensure_operation_transaction_indexes()
