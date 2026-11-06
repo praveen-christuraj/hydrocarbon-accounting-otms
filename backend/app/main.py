@@ -94,6 +94,7 @@ from app.utils.db_migrations import (
     ensure_user_role_multi_role_constraint,
     ensure_operation_transaction_indexes,
     ensure_asset_calibration_table_indexes,
+    ensure_asset_calibration_unique_asset_index,
     ensure_movement_mapping_management_columns,
     ensure_sender_receiver_pairing_backfill,
     ensure_fso_shuttle_payload_operation_date,
@@ -129,6 +130,7 @@ async def lifespan(app: FastAPI):
     ensure_book_stock_tables()
     ensure_operation_transaction_indexes()
     ensure_asset_calibration_table_indexes()
+    ensure_asset_calibration_unique_asset_index()
     ensure_movement_mapping_management_columns()
     ensure_sender_receiver_pairing_backfill()
     ensure_fso_shuttle_payload_operation_date()

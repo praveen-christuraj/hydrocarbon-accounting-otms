@@ -95,6 +95,30 @@ function AssetCalibrationTable({
     })
   }, [activeTemplates, selectedAsset])
 
+  // One calibration chart is allowed per asset, so look up the chart that
+  // already exists for the asset currently selected in the form.
+  const chartByAssetCode = useMemo(() => {
+    const map = new Map()
+    for (const table of calibrationTables || []) {
+      const key = String(table.assetCode || '').trim().toLowerCase()
+      if (key && !map.has(key)) {
+        map.set(key, table)
+      }
+    }
+    return map
+  }, [calibrationTables])
+
+  // In edit mode the chart being edited is the one allowed for its asset;
+  // any other chart for the same asset is still off-limits.
+  const existingChartForSelectedAsset = useMemo(() => {
+    const key = String(formData.assetCode || '').trim().toLowerCase()
+    if (!key) return null
+    const existing = chartByAssetCode.get(key)
+    if (!existing) return null
+    if (editId !== null && existing.id === editId) return null
+    return existing
+  }, [chartByAssetCode, editId, formData.assetCode])
+
   const selectedTemplate = activeTemplates.find((template) => {
     return template.id === Number(formData.templateId)
   })
@@ -497,6 +521,11 @@ function AssetCalibrationTable({
 
     if (formData.assetCode.trim() === '') {
       errors.assetCode = 'Asset is required'
+    } else if (existingChartForSelectedAsset) {
+      errors.assetCode =
+        editId === null
+          ? `This asset already has calibration chart "${existingChartForSelectedAsset.calibrationName}". Edit that chart and replace its rows, or delete it fully, before uploading a new one.`
+          : `Asset ${existingChartForSelectedAsset.assetCode} already has calibration chart "${existingChartForSelectedAsset.calibrationName}". Only one chart per asset is allowed – choose another asset, or cancel this edit and work on the existing chart instead.`
     }
 
     if (String(formData.templateId).trim() === '') {
@@ -629,7 +658,7 @@ function AssetCalibrationTable({
         required: true,
         example: 'Tank 1 Strapping 2026',
         aliases: ['Name', 'Table Name'],
-        hint: 'Rows with the same name, asset and template go into one table',
+        hint: 'Rows with the same name and asset go into one chart. Only one chart per asset',
       },
       {
         key: 'assetCode',
@@ -814,12 +843,50 @@ function AssetCalibrationTable({
       if (!group.remarks) group.remarks = String(record.remarks || '').trim()
     })
 
+    // One calibration chart per asset: an asset that already has a chart may
+    // only be updated by editing that chart (or after deleting it). A second
+    // chart - even under a different name - is never created.
+    const chartByAsset = new Map()
+    for (const table of calibrationTables || []) {
+      const key = String(table.assetCode || '').trim().toLowerCase()
+      if (key && !chartByAsset.has(key)) {
+        chartByAsset.set(key, table)
+      }
+    }
+    const touchedAssets = new Set()
+
     for (const group of groups.values()) {
-      const existing = (calibrationTables || []).find(
-        (table) =>
-          String(table.calibrationName).toLowerCase() === group.calibrationName.toLowerCase() &&
-          String(table.assetCode).toLowerCase() === group.assetCode.toLowerCase()
-      )
+      const assetKey = group.assetCode.trim().toLowerCase()
+      const assetChart = assetKey ? chartByAsset.get(assetKey) : null
+      const sameName =
+        assetChart &&
+        String(assetChart.calibrationName || '').toLowerCase() ===
+          group.calibrationName.toLowerCase()
+      const existing = assetChart && sameName ? assetChart : null
+
+      const skipGroup = (message) => {
+        overrides.push(
+          ...group.rowNumbers.map((rowNumber) => ({
+            rowNumber,
+            status: 'skipped',
+            message,
+          }))
+        )
+      }
+
+      if (touchedAssets.has(assetKey)) {
+        skipGroup(
+          `Asset ${group.assetCode} appears in more than one chart group in this file. Only one calibration chart is allowed per asset.`
+        )
+        continue
+      }
+
+      if (assetChart && !sameName) {
+        skipGroup(
+          `Asset ${group.assetCode} already has calibration chart "${assetChart.calibrationName}". Edit that chart (replace its rows) from the Asset Calibration Table screen, or delete it before uploading a different one.`
+        )
+        continue
+      }
 
       const payload = {
         calibrationName: group.calibrationName,
@@ -844,6 +911,7 @@ function AssetCalibrationTable({
             continue
           }
           await updateAssetCalibrationTable(existing.id, payload)
+          touchedAssets.add(assetKey)
         } else {
           if (!canCreate) {
             overrides.push(
@@ -856,6 +924,7 @@ function AssetCalibrationTable({
             continue
           }
           await createAssetCalibrationTable(payload)
+          touchedAssets.add(assetKey)
         }
       } catch (error) {
         const message = error?.message || 'Save failed'
@@ -872,7 +941,7 @@ function AssetCalibrationTable({
   const calibrationImportConfig = {
     title: 'Bulk upload calibration data',
     description:
-      'Upload an Excel (.xlsx) or CSV file. The column names must match the Calibration Template Master you configured. Rows are grouped by Calibration Name + Asset Code into one calibration table.',
+      'Upload an Excel (.xlsx) or CSV file. The column names must match the Calibration Template Master you configured. Rows are grouped by Calibration Name + Asset Code into one calibration table. Only one calibration chart is allowed per asset – rows for an asset that already has a chart are skipped unless the name matches the existing chart, in which case it is updated in place.',
     templateFileName: 'asset-calibration-table',
     maxRows: 50000,
     fields: bulkTemplates.fields,
@@ -1012,6 +1081,12 @@ function AssetCalibrationTable({
                     you click Replace Rows or Append Rows and then save the
                     calibration table.
                   </li>
+                  <li>
+                    Only one calibration chart is allowed per asset. An asset
+                    that already has a chart cannot receive a second one – edit
+                    the existing chart and replace its rows, or delete it fully,
+                    before uploading a new one.
+                  </li>
                 </ul>
               </div>
 
@@ -1137,6 +1212,59 @@ function AssetCalibrationTable({
             <span className="field-error">{validationErrors.assetCode}</span>
           )}
         </div>
+
+        {existingChartForSelectedAsset && (
+          <div className="full-width-field">
+            <AlertMessage tone="warning" title="This asset already has a calibration chart">
+              <p>
+                {existingChartForSelectedAsset.assetName
+                  ? `${existingChartForSelectedAsset.assetName} (${existingChartForSelectedAsset.assetCode})`
+                  : existingChartForSelectedAsset.assetCode}{' '}
+                already has the calibration chart &quot;{existingChartForSelectedAsset.calibrationName}&quot;
+                {` (${existingChartForSelectedAsset.rowCount ?? existingChartForSelectedAsset.rows?.length ?? 0} rows · ${existingChartForSelectedAsset.status})`}.
+                Only one calibration chart is allowed per asset, so another chart cannot be uploaded for it.
+              </p>
+              {editId === null ? (
+                <>
+                  <p>
+                    To replace the calibration values, edit the existing chart, clear its calibration
+                    rows and upload the new table — or delete it fully and upload a new one.
+                  </p>
+                  <div className="form-actions">
+                    {canEdit && (
+                      <button
+                        type="button"
+                        onClick={() => handleEdit(existingChartForSelectedAsset)}
+                        disabled={loading}
+                      >
+                        Edit existing chart
+                      </button>
+                    )}
+                    {canDelete && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          clearSuccess()
+                          clearError()
+                          setConfirmDeleteId(existingChartForSelectedAsset.id)
+                        }}
+                        disabled={loading}
+                      >
+                        Delete existing chart
+                      </button>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <p>
+                  This edit points at an asset that already has its own chart. Choose a different
+                  asset, or cancel this edit and work on the existing chart instead — saving here
+                  would be rejected to avoid a duplicate.
+                </p>
+              )}
+            </AlertMessage>
+          </div>
+        )}
 
         <div>
           <label>Calibration Template</label>

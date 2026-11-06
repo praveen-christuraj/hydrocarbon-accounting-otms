@@ -2,6 +2,14 @@ import os
 import secrets
 from urllib.parse import urlparse
 
+from dotenv import load_dotenv
+
+# Mirror app.database: a local .env file is honoured when the process was
+# started without real environment variables. Real environment variables
+# (docker compose `environment:`, systemd, CI) always win because load_dotenv
+# never overrides variables that are already set.
+load_dotenv()
+
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development").strip().lower()
 IS_PRODUCTION = ENVIRONMENT == "production"
 
@@ -89,8 +97,19 @@ if not SECURITY_KDF_SALT:
 if len(SECURITY_KDF_SALT.encode("utf-8")) < 16:
     raise ValueError("SECURITY_KDF_SALT must contain at least 16 bytes")
 
+# Explicit opt-in for temporary internal HTTP deployments. Mirrors the CORS
+# escape hatch above: it relaxes the transport-security posture, so it must
+# be set deliberately and never by default. Defined before the cookie policy
+# below because the cookie default depends on it.
+ALLOW_INSECURE_HTTP = _env_bool("ALLOW_INSECURE_HTTP", False)
+
 AUTH_COOKIE_NAME = os.getenv("AUTH_COOKIE_NAME", "hydrocarbon_refresh")
-AUTH_COOKIE_SECURE = _env_bool("AUTH_COOKIE_SECURE", IS_PRODUCTION)
+# Secure cookies are silently dropped by browsers on plain HTTP origins, which
+# breaks the refresh-token flow. When an internal HTTP deployment opts into
+# ALLOW_INSECURE_HTTP, default the refresh cookie to non-Secure as well; an
+# explicit AUTH_COOKIE_SECURE value always wins. HTTPS deployments are
+# unaffected.
+AUTH_COOKIE_SECURE = _env_bool("AUTH_COOKIE_SECURE", IS_PRODUCTION and not ALLOW_INSECURE_HTTP)
 AUTH_COOKIE_PATH = os.getenv("AUTH_COOKIE_PATH", "/") or "/"
 AUTH_COOKIE_SAMESITE = "strict"
 AUTH_COOKIE_DOMAIN = os.getenv("AUTH_COOKIE_DOMAIN", "").strip() or None

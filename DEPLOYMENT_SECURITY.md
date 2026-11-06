@@ -119,6 +119,30 @@ Also confirm the nginx layer:
 curl -sS -D- "$BASE/" -o /dev/null | grep -Ei 'content-security-policy|cache-control'
 ```
 
+### 5a. Temporary internal HTTP deployments (not recommended for production)
+
+If, and only if, the application must be served over plain HTTP on an internal
+network (no TLS), the browser will not store `Secure` cookies and will ignore
+the `Cross-Origin-Opener-Policy` header — surfacing as
+`api/auth/refresh: 400 (Bad Request)` on every visit and a console warning that
+COOP "has been ignored ... origin was untrustworthy". For that documented
+exception set in `.env`:
+
+```bash
+ALLOW_INSECURE_HTTP=true     # relaxes CORS origin rules, defaults
+                             # AUTH_COOKIE_SECURE=false and suppresses COOP
+ENFORCE_HTTPS=false          # do not 308-redirect every request to HTTPS
+AUTH_COOKIE_SECURE=false     # optional; implied by ALLOW_INSECURE_HTTP
+CORS_ORIGINS=http://<internal-host>:8080
+```
+
+and serve the frontend from `frontend/nginx.prod.conf` (or `deploy/nginx.conf`)
+as shipped: the COOP header is emitted only for HTTPS responses there, so the
+console stays clean on plain HTTP. Move to HTTPS and set
+`ALLOW_INSECURE_HTTP=false` as soon as it is available — passwords and session
+cookies otherwise cross the network in clear text. Symptoms of a correct HTTPS
+setup: `Set-Cookie: ...; HttpOnly; Secure; SameSite=Strict` and no COOP warnings.
+
 ## 6. Operational tasks
 
 | Task | Cadence | Command |
