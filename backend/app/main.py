@@ -188,6 +188,38 @@ async def add_security_headers(request: Request, call_next):
     return response
 
 
+# Mirrors the expose_headers configured on CORSMiddleware below so that error
+# responses stay consistent with normal responses.
+CORS_EXPOSE_HEADERS = ["X-Request-ID", "Retry-After"]
+
+
+def _apply_cors_headers_to_error(response: JSONResponse, request: Request) -> None:
+    """Mirror ``CORSMiddleware`` for error responses it never sees.
+
+    ``CORSMiddleware`` is added as the outermost *application* middleware, but
+    ``ServerErrorMiddleware`` (which invokes registered exception handlers such
+    as :func:`unhandled_exception_handler`) sits outside it. As a result a
+    response produced here for an unhandled server error is returned to the
+    browser **without** any ``Access-Control-Allow-Origin`` header, even though
+    the equivalent 4xx/validation error from a route would include one.
+
+    A browser therefore treats the response as a CORS violation and the
+    fetch() promise rejects with a network ``TypeError`` ("Unable to reach the
+    server"), hiding the real 500 from the client. Re-applying the CORS headers
+    for an allowed origin here keeps error responses consistent with the rest of
+    the API so clients receive the actual error instead of a misleading
+    connection failure.
+    """
+    origin = request.headers.get("origin")
+    if not origin or origin not in allowed_origins:
+        return
+    response.headers["Access-Control-Allow-Origin"] = origin
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Vary"] = "Origin"
+    if CORS_EXPOSE_HEADERS:
+        response.headers["Access-Control-Expose-Headers"] = ", ".join(CORS_EXPOSE_HEADERS)
+
+
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     """Log the full error server-side and return an opaque client response."""
@@ -198,13 +230,15 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
         request.url.path,
         extra={"request_id": request_id},
     )
-    return JSONResponse(
+    response = JSONResponse(
         status_code=500,
         content={
             "detail": "An internal error occurred. Quote the request id when contacting support.",
             "request_id": request_id,
         },
     )
+    _apply_cors_headers_to_error(response, request)
+    return response
 
 from app.routers import (
     admin_db_browser, asset_assignments, asset_calibration_tables, asset_types, assets,

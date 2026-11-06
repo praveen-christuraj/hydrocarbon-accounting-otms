@@ -2903,6 +2903,67 @@ def create_tank_stock_ledger_from_approved_transaction(
         remarks="Auto-created when Tank Gauging ticket was approved",
     )
 
+    # If a previous approval of this transaction was later revoked, its ledger
+    # row is retained in "Reversed" status rather than deleted. Re-approving must
+    # re-activate that same row instead of inserting a new one, otherwise the
+    # unique_tank_stock_ledger_transaction_tank constraint
+    # (transaction_id, tank_asset_code) is violated and the request fails with a
+    # 500 that the browser hides behind a "Unable to reach the server" CORS error.
+    reversed_ledger = (
+        db.query(TankStockLedger)
+        .filter(
+            TankStockLedger.transaction_id == transaction.id,
+            TankStockLedger.tank_asset_code == transaction.primary_asset_code,
+            TankStockLedger.status == "Reversed",
+        )
+        .first()
+    )
+    if reversed_ledger is not None:
+        _skip_columns = {"id", "created_at", "updated_at", "status"}
+        for _column in TankStockLedger.__table__.columns:
+            if _column.name in _skip_columns:
+                continue
+            setattr(reversed_ledger, _column.name, getattr(new_ledger, _column.name))
+        reversed_ledger.status = "Active"
+        reversed_ledger.updated_at = datetime.now()
+        db.flush()
+        if rebuild_after_insert:
+            rebuild_tank_stock_running_balances(
+                db=db,
+                location_code=reversed_ledger.location_code,
+                tank_asset_code=reversed_ledger.tank_asset_code,
+                product_name=reversed_ledger.product_name,
+            )
+            db.flush()
+        create_audit_log(
+            db=db,
+            module_name="Tank Stock Ledger",
+            action="Reactivate Tank Stock Ledger Entry",
+            current_user=current_user,
+            entity_type="TankStockLedger",
+            entity_id=reversed_ledger.id,
+            entity_label=(
+                f"{reversed_ledger.ticket_number} | "
+                f"{reversed_ledger.tank_asset_code} | "
+                f"{reversed_ledger.tank_operation_label}"
+            ),
+            ticket_number=reversed_ledger.ticket_number,
+            operation_number=reversed_ledger.operation_number,
+            remarks="Re-activated on Tank Gauging re-approval after an approval was revoked",
+            request_path="/operation-transactions/{id}/status",
+            details={
+                "transaction_id": transaction.id,
+                "location_code": reversed_ledger.location_code,
+                "tank_asset_code": reversed_ledger.tank_asset_code,
+                "tank_operation_code": reversed_ledger.tank_operation_code,
+                "stock_gsv_bbl": reversed_ledger.stock_gsv_bbl,
+                "stock_nsv_bbl": reversed_ledger.stock_nsv_bbl,
+                "stock_lt": reversed_ledger.stock_lt,
+                "stock_mt": reversed_ledger.stock_mt,
+            },
+        )
+        return reversed_ledger
+
     db.add(new_ledger)
     db.flush()
 
