@@ -874,6 +874,7 @@ function AssetCalibrationTable({
     description:
       'Upload an Excel (.xlsx) or CSV file. The column names must match the Calibration Template Master you configured. Rows are grouped by Calibration Name + Asset Code into one calibration table.',
     templateFileName: 'asset-calibration-table',
+    maxRows: 50000,
     fields: bulkTemplates.fields,
     templates: bulkTemplates.templates,
     activeTemplateId: bulkTemplates.activeTemplateId,

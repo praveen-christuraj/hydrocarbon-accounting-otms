@@ -1553,7 +1553,11 @@ useEffect(() => {
 }, [])
 
 useEffect(() => {
-  if (!loggedInUser) {
+  if (
+    !loggedInUser ||
+    loggedInUser.security?.force_password_change ||
+    loggedInUser.security?.password_expired
+  ) {
     return
   }
 

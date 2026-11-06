@@ -1,5 +1,7 @@
 import { apiDelete, apiGet, apiPost, apiPut } from './apiClient'
 
+const CALIBRATION_UPLOAD_TIMEOUT_MS = 10 * 60 * 1000
+
 const convertCalibrationRowFromApi = (row) => ({
   id: row.id,
   rowNumber: row.row_number,
@@ -79,8 +81,9 @@ export const getAssetCalibrationTableRows = async (tableId) => {
 
 export const createAssetCalibrationTable = async (table) => {
   const data = await apiPost(
-    '/asset-calibration-tables',
-    convertAssetCalibrationTableToApi(table)
+    '/asset-calibration-tables?compact=true',
+    convertAssetCalibrationTableToApi(table),
+    CALIBRATION_UPLOAD_TIMEOUT_MS
   )
 
   return convertAssetCalibrationTableFromApi(data)
@@ -88,8 +91,9 @@ export const createAssetCalibrationTable = async (table) => {
 
 export const updateAssetCalibrationTable = async (tableId, table) => {
   const data = await apiPut(
-    `/asset-calibration-tables/${tableId}`,
-    convertAssetCalibrationTableToApi(table)
+    `/asset-calibration-tables/${tableId}?compact=true`,
+    convertAssetCalibrationTableToApi(table),
+    CALIBRATION_UPLOAD_TIMEOUT_MS
   )
 
   return convertAssetCalibrationTableFromApi(data)

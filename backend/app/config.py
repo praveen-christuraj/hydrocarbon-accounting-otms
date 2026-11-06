@@ -42,7 +42,11 @@ def _load_cors_origins() -> list[str]:
             raise ValueError(f"Invalid CORS origin: {origin}")
         if parsed.username or parsed.password:
             raise ValueError(f"CORS origin must not embed credentials: {origin}")
-        if IS_PRODUCTION and parsed.scheme != "https":
+        if (
+            IS_PRODUCTION
+            and parsed.scheme != "https"
+            and not _env_bool("ALLOW_INSECURE_HTTP", False)
+        ):
             raise ValueError("Production CORS origins must use HTTPS")
     return origins
 
@@ -146,6 +150,20 @@ TRUSTED_HOSTS = [
     if host.strip()
 ]
 MAX_REQUEST_BODY_BYTES = _env_int("MAX_REQUEST_BODY_BYTES", 25 * 1024 * 1024, minimum=1024)
+# Calibration charts can legitimately contain tens of thousands of points.
+# The wider request allowance is applied only to that endpoint by the ASGI
+# middleware; every unrelated request keeps the general 25 MB ceiling.
+MAX_CALIBRATION_UPLOAD_BODY_BYTES = _env_int(
+    "MAX_CALIBRATION_UPLOAD_BODY_BYTES",
+    max(100 * 1024 * 1024, MAX_REQUEST_BODY_BYTES),
+    minimum=MAX_REQUEST_BODY_BYTES,
+)
+MAX_CALIBRATION_ROWS = _env_int(
+    "MAX_CALIBRATION_ROWS",
+    50_000,
+    minimum=1,
+    maximum=250_000,
+)
 ENFORCE_HTTPS = _env_bool("ENFORCE_HTTPS", False)
 
 APPROVED_TRANSACTION_STATUS = "Approved"

@@ -179,14 +179,14 @@ export const apiPost = async (endpoint, body, timeoutMs) => {
   }, timeoutMs)
 }
 
-export const apiPut = async (endpoint, body) => {
+export const apiPut = async (endpoint, body, timeoutMs) => {
   return apiRequest(endpoint, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
-  })
+  }, timeoutMs)
 }
 
 export const apiPatch = async (endpoint, body) => {

@@ -2,9 +2,10 @@ import math
 import os
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import false, func, or_
+from sqlalchemy import false, func, insert, or_
 from sqlalchemy.orm import Session
 
+from app.config import MAX_CALIBRATION_ROWS
 from app.database import get_db
 from app.models import AssetCalibrationTable, AssetCalibrationData, Asset, CalibrationTemplate, CalibrationTemplateColumn, User
 from app.schemas import (
@@ -24,8 +25,8 @@ from app.services.audit_service import create_audit_log
 from app.utils.helpers import clean_optional_text
 
 router = APIRouter(prefix="/asset-calibration-tables", tags=["Asset Calibration Tables"])
-MAX_CALIBRATION_ROWS = int(os.getenv("MAX_CALIBRATION_ROWS", "1000"))
 MAX_CALIBRATION_VALUE = float(os.getenv("MAX_CALIBRATION_VALUE", "1000000000000"))
+CALIBRATION_INSERT_BATCH_SIZE = 2_000
 
 
 def _batch_load_asset_and_template_lookups(db: Session, tables: list):
@@ -156,7 +157,8 @@ def build_asset_calibration_table_audit_snapshot(calibration_table: AssetCalibra
         "remarks": calibration_table.remarks,
         "status": calibration_table.status,
         "row_count": row_count,
-        "row_numbers": [r.row_number for r in rows],
+        "row_numbers": [r.row_number for r in preview_rows],
+        "row_numbers_truncated": row_count > len(preview_rows),
         "rows_preview_limit": max_rows,
         "rows_preview": [
             {
@@ -166,6 +168,87 @@ def build_asset_calibration_table_audit_snapshot(calibration_table: AssetCalibra
             for r in preview_rows
         ],
     }
+
+
+def _audit_snapshot_from_input(
+    calibration_table: AssetCalibrationTable,
+    asset: Asset,
+    template: CalibrationTemplate,
+    rows,
+    max_rows: int = 50,
+):
+    """Build a bounded audit record without loading a large chart again."""
+    preview = list(rows[:max_rows])
+    return {
+        "id": calibration_table.id,
+        "calibration_name": calibration_table.calibration_name,
+        "asset_code": calibration_table.asset_code,
+        "asset_name": asset.asset_name if asset else "",
+        "template_id": calibration_table.template_id,
+        "template_name": template.template_name if template else "",
+        "effective_date": str(calibration_table.effective_date)
+        if calibration_table.effective_date
+        else None,
+        "remarks": calibration_table.remarks,
+        "status": calibration_table.status,
+        "row_count": len(rows),
+        "row_numbers": [row.row_number for row in preview],
+        "row_numbers_truncated": len(rows) > len(preview),
+        "rows_preview_limit": max_rows,
+        "rows_preview": [
+            {"row_number": row.row_number, "row_data": row.row_data}
+            for row in preview
+        ],
+    }
+
+
+def _load_bounded_audit_snapshot(
+    db: Session,
+    calibration_table: AssetCalibrationTable,
+    max_rows: int = 50,
+):
+    """Read only a row count and preview for update/delete auditing."""
+    assets, templates = _batch_load_asset_and_template_lookups(db, [calibration_table])
+    preview_rows = (
+        db.query(AssetCalibrationData)
+        .filter(AssetCalibrationData.calibration_table_id == calibration_table.id)
+        .order_by(AssetCalibrationData.row_number)
+        .limit(max_rows)
+        .all()
+    )
+    snapshot = build_asset_calibration_table_audit_snapshot(
+        calibration_table,
+        assets,
+        templates,
+        {calibration_table.id: preview_rows},
+        max_rows=max_rows,
+    )
+    row_count = (
+        db.query(func.count(AssetCalibrationData.id))
+        .filter(AssetCalibrationData.calibration_table_id == calibration_table.id)
+        .scalar()
+        or 0
+    )
+    snapshot["row_count"] = row_count
+    snapshot["row_numbers_truncated"] = row_count > len(preview_rows)
+    return snapshot
+
+
+def _bulk_insert_calibration_rows(db: Session, table_id: int, rows) -> None:
+    """Insert large calibration charts with bounded executemany batches."""
+    for start in range(0, len(rows), CALIBRATION_INSERT_BATCH_SIZE):
+        batch = rows[start : start + CALIBRATION_INSERT_BATCH_SIZE]
+        db.execute(
+            insert(AssetCalibrationData),
+            [
+                {
+                    "calibration_table_id": table_id,
+                    "row_number": row.row_number or start + index + 1,
+                    "row_data": row.row_data,
+                }
+                for index, row in enumerate(batch)
+            ],
+        )
 
 
 def ensure_asset_calibration_scope(asset: Asset, current_user: User, db: Session, *, write: bool = False):
@@ -432,9 +515,10 @@ def get_asset_calibration_table_rows(
     }
 
 
-@router.post("", response_model=AssetCalibrationTableResponse)
+@router.post("", response_model=AssetCalibrationTableResponse | AssetCalibrationTableSummaryResponse)
 def create_asset_calibration_table(
     calibration_table: AssetCalibrationTableCreate,
+    compact: bool = False,
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
@@ -459,19 +543,13 @@ def create_asset_calibration_table(
     db.add(new_calibration_table)
     db.flush()
 
-    for index, row in enumerate(calibration_table.rows):
-        new_row = AssetCalibrationData(
-            calibration_table_id=new_calibration_table.id,
-            row_number=row.row_number or index + 1,
-            row_data=row.row_data,
-        )
-        db.add(new_row)
+    _bulk_insert_calibration_rows(db, new_calibration_table.id, calibration_table.rows)
 
-    db.flush()
-
-    assets, templates, rows_by_table = _batch_load_references(db, [new_calibration_table])
-    after_data = build_asset_calibration_table_audit_snapshot(
-        new_calibration_table, assets, templates, rows_by_table
+    template = db.query(CalibrationTemplate).filter(
+        CalibrationTemplate.id == calibration_table.template_id
+    ).first()
+    after_data = _audit_snapshot_from_input(
+        new_calibration_table, asset, template, calibration_table.rows
     )
 
     create_audit_log(
@@ -490,14 +568,22 @@ def create_asset_calibration_table(
     db.commit()
     db.refresh(new_calibration_table)
 
+    if compact:
+        return build_asset_calibration_table_summary(
+            new_calibration_table,
+            {new_calibration_table.asset_code: asset},
+            {new_calibration_table.template_id: template},
+            {new_calibration_table.id: len(calibration_table.rows)},
+        )
     assets, templates, rows_by_table = _batch_load_references(db, [new_calibration_table])
     return build_asset_calibration_table_response(new_calibration_table, assets, templates, rows_by_table)
 
 
-@router.put("/{calibration_table_id}", response_model=AssetCalibrationTableResponse)
+@router.put("/{calibration_table_id}", response_model=AssetCalibrationTableResponse | AssetCalibrationTableSummaryResponse)
 def update_asset_calibration_table(
     calibration_table_id: int,
     calibration_table: AssetCalibrationTableCreate,
+    compact: bool = False,
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
@@ -524,10 +610,7 @@ def update_asset_calibration_table(
         raise HTTPException(status_code=404, detail="Calibration asset not found")
     ensure_asset_calibration_scope(existing_asset, current_user, db, write=True)
 
-    assets, templates, rows_by_table = _batch_load_references(db, [existing_calibration_table])
-    before_data = build_asset_calibration_table_audit_snapshot(
-        existing_calibration_table, assets, templates, rows_by_table
-    )
+    before_data = _load_bounded_audit_snapshot(db, existing_calibration_table)
 
     asset = validate_asset_calibration_table(calibration_table, db)
     ensure_asset_calibration_scope(asset, current_user, db, write=True)
@@ -547,19 +630,13 @@ def update_asset_calibration_table(
         AssetCalibrationData.calibration_table_id == calibration_table_id
     ).delete()
 
-    for index, row in enumerate(calibration_table.rows):
-        new_row = AssetCalibrationData(
-            calibration_table_id=calibration_table_id,
-            row_number=row.row_number or index + 1,
-            row_data=row.row_data,
-        )
-        db.add(new_row)
+    _bulk_insert_calibration_rows(db, calibration_table_id, calibration_table.rows)
 
-    db.flush()
-
-    assets, templates, rows_by_table = _batch_load_references(db, [existing_calibration_table])
-    after_data = build_asset_calibration_table_audit_snapshot(
-        existing_calibration_table, assets, templates, rows_by_table
+    template = db.query(CalibrationTemplate).filter(
+        CalibrationTemplate.id == calibration_table.template_id
+    ).first()
+    after_data = _audit_snapshot_from_input(
+        existing_calibration_table, asset, template, calibration_table.rows
     )
 
     create_audit_log(
@@ -578,6 +655,13 @@ def update_asset_calibration_table(
     db.commit()
     db.refresh(existing_calibration_table)
 
+    if compact:
+        return build_asset_calibration_table_summary(
+            existing_calibration_table,
+            {existing_calibration_table.asset_code: asset},
+            {existing_calibration_table.template_id: template},
+            {existing_calibration_table.id: len(calibration_table.rows)},
+        )
     assets, templates, rows_by_table = _batch_load_references(db, [existing_calibration_table])
     return build_asset_calibration_table_response(existing_calibration_table, assets, templates, rows_by_table)
 
@@ -611,10 +695,7 @@ def delete_asset_calibration_table(
         raise HTTPException(status_code=404, detail="Calibration asset not found")
     ensure_asset_calibration_scope(asset, current_user, db, write=True)
 
-    assets, templates, rows_by_table = _batch_load_references(db, [existing_calibration_table])
-    deleted_data = build_asset_calibration_table_audit_snapshot(
-        existing_calibration_table, assets, templates, rows_by_table
-    )
+    deleted_data = _load_bounded_audit_snapshot(db, existing_calibration_table)
 
     create_audit_log(
         db=db,

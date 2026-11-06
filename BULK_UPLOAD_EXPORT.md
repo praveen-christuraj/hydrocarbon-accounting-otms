@@ -80,6 +80,10 @@ user-configured **Calibration Template Master** (`/calibration-templates`) — o
 **Asset Calibration Table** the upload dialog's template picker *is* that master, and switching
 the template swaps the dynamic columns in the file layout.
 
+Asset calibration uploads accept up to **50,000 rows per file/table**. Large charts use a
+dedicated request-size allowance, batched database inserts and a compact save response so the
+browser does not wait for the API to echo every uploaded row back.
+
 ---
 
 ## 3. Error surfacing (dynamic DB structures)

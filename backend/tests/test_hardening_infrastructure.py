@@ -88,6 +88,29 @@ def test_streamed_oversized_body_raises_413_without_content_length():
     assert getattr(excinfo.value, "status_code", None) == 413
 
 
+def test_larger_body_allowance_is_scoped_to_calibration_writes():
+    app = FastAPI()
+
+    @app.post("/{path:path}")
+    async def echo(path: str, request: Request):  # pragma: no cover - exercised via client
+        return {"size": len(await request.body())}
+
+    app.add_middleware(
+        RequestBodyLimitMiddleware,
+        max_bytes=1024,
+        calibration_max_bytes=4096,
+    )
+    client = TestClient(app, raise_server_exceptions=False)
+    payload = b"x" * 2048
+
+    calibration = client.post("/asset-calibration-tables", content=payload)
+    unrelated = client.post("/auth/login", content=payload)
+
+    assert calibration.status_code == 200
+    assert calibration.json() == {"size": 2048}
+    assert unrelated.status_code == 413
+
+
 # ---------------------------------------------------------------------------
 # Request-id correlation
 # ---------------------------------------------------------------------------

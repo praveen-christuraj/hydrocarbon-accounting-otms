@@ -37,6 +37,8 @@ Fill `.env`:
 | `TRUSTED_HOSTS` | recommended | Public hostname(s); enables Host-header allowlisting |
 | `TRUST_PROXY_HEADERS` / `TRUSTED_PROXY_IPS` | behind a proxy | `true` / `*` only when the API port is unpublished |
 | `ENFORCE_HTTPS` | recommended | Redirects plain HTTP when nginx terminates TLS |
+| `MAX_CALIBRATION_ROWS` | optional | Defaults to 50,000 rows per asset calibration table |
+| `MAX_CALIBRATION_UPLOAD_BODY_BYTES` | optional | Defaults to 100 MB and applies only to calibration-table writes in the API |
 
 `.env` must be readable only by the deployment account (`chmod 600 .env`) and
 never committed to Git.

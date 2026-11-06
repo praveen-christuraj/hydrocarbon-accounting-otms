@@ -12,6 +12,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from app.config import (
     ENFORCE_HTTPS,
     IS_PRODUCTION,
+    MAX_CALIBRATION_UPLOAD_BODY_BYTES,
     MAX_REQUEST_BODY_BYTES,
     TRUST_PROXY_HEADERS,
 )
@@ -29,14 +30,28 @@ class RequestBodyLimitMiddleware:
     chunked uploads by counting received bytes.
     """
 
-    def __init__(self, app: ASGIApp, max_bytes: int = MAX_REQUEST_BODY_BYTES):
+    def __init__(
+        self,
+        app: ASGIApp,
+        max_bytes: int = MAX_REQUEST_BODY_BYTES,
+        calibration_max_bytes: int = MAX_CALIBRATION_UPLOAD_BODY_BYTES,
+    ):
         self.app = app
         self.max_bytes = max_bytes
+        self.calibration_max_bytes = calibration_max_bytes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+
+        path = str(scope.get("path") or "")
+        method = str(scope.get("method") or "GET").upper()
+        request_max_bytes = (
+            self.calibration_max_bytes
+            if method in {"POST", "PUT"} and path.startswith("/asset-calibration-tables")
+            else self.max_bytes
+        )
 
         headers = {key.lower(): value for key, value in scope.get("headers", [])}
         content_length = headers.get(b"content-length")
@@ -46,7 +61,7 @@ class RequestBodyLimitMiddleware:
             except ValueError:
                 await self._send_error(send, 400, "Invalid Content-Length header")
                 return
-            if declared > self.max_bytes:
+            if declared > request_max_bytes:
                 await self._send_error(send, 413, "Request body is too large")
                 return
 
@@ -57,7 +72,7 @@ class RequestBodyLimitMiddleware:
             message = await receive()
             if message["type"] == "http.request":
                 received += len(message.get("body", b"") or b"")
-                if received > self.max_bytes:
+                if received > request_max_bytes:
                     # Raised while the route reads the body, so FastAPI's own
                     # HTTPException handler turns it into a clean 413 JSON
                     # response. Nothing past the ceiling is ever buffered.
