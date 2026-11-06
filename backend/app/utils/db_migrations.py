@@ -1907,6 +1907,52 @@ def ensure_payload_operation_dates():
         session.close()
 
 
+def ensure_asset_calibration_unique_asset_index():
+    """Enforce one calibration chart per asset (case-insensitive asset code).
+
+    Idempotent and additive only. Installations that already contain
+    duplicate charts for the same asset are reported and left untouched --
+    no user data is ever modified or deleted here. The application-level
+    guard in the calibration endpoints prevents new duplicates regardless;
+    this unique index closes the remaining race window. If duplicates are
+    found the index is skipped (an administrator must decide which chart to
+    keep) instead of failing start-up.
+    """
+    inspector = inspect(engine)
+    if "asset_calibration_tables" not in inspector.get_table_names():
+        return
+
+    try:
+        with engine.begin() as connection:
+            duplicates = connection.execute(
+                text(
+                    "SELECT lower(asset_code) AS asset_code, count(*) AS chart_count "
+                    "FROM asset_calibration_tables "
+                    "GROUP BY lower(asset_code) "
+                    "HAVING count(*) > 1"
+                )
+            ).fetchall()
+            if duplicates:
+                summary = ", ".join(
+                    f"{row.asset_code} ({row.chart_count} charts)"
+                    for row in duplicates[:20]
+                )
+                print(
+                    "[migrations] Asset calibration one-chart-per-asset unique index "
+                    f"skipped: duplicate calibration charts already exist for: {summary}. "
+                    "Merge or delete the duplicates, then restart to enforce the index."
+                )
+                return
+            connection.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ux_asset_calibration_tables_lower_asset_code "
+                    "ON asset_calibration_tables (lower(asset_code));"
+                )
+            )
+    except Exception as error:  # pragma: no cover - start-up must not fail
+        print(f"[migrations] asset calibration unique asset index skipped: {error}")
+
+
 def ensure_asset_calibration_table_indexes():
     """Indexes for asset calibration table lookups.
 

@@ -2012,26 +2012,28 @@ class SystemNotificationReceiptResponse(BaseModel):
 
 
 class BackupSettingsUpdate(BaseModel):
-    enabled: str = "No"
+    # The SPA sends booleans; Pydantic also accepts "yes"/"no" strings, so
+    # older callers keep working.
+    enabled: bool = False
     schedule_mode: str = "Daily"
     interval_value: int = 24
     run_time: str = "02:00"
     retention_days: int = 30
     keep_minimum: int = 5
     backup_directory: Optional[str] = None
-    compression_enabled: str = "Yes"
+    compression_enabled: bool = True
 
 
 class BackupSettingsResponse(BaseModel):
     id: int
-    enabled: str
+    enabled: bool
     schedule_mode: str
     interval_value: int
     run_time: str
     retention_days: int
     keep_minimum: int
     backup_directory: Optional[str] = None
-    compression_enabled: str
+    compression_enabled: bool
     status: str
     next_run_at: Optional[datetime] = None
     last_run_at: Optional[datetime] = None

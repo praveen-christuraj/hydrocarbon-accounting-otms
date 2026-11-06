@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.config import (
+    ALLOW_INSECURE_HTTP,
     ENFORCE_HTTPS,
     IS_PRODUCTION,
     MAX_CALIBRATION_UPLOAD_BODY_BYTES,
@@ -156,7 +157,11 @@ SECURITY_HEADERS = {
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "Permissions-Policy": "geolocation=(), microphone=(), camera=(), payment=(), usb=()",
-    "Cross-Origin-Opener-Policy": "same-origin",
+    # COOP only takes effect on potentially trustworthy origins (HTTPS or
+    # localhost). Browsers ignore it elsewhere and print a console warning, so
+    # deployments that explicitly opt into plain HTTP (ALLOW_INSECURE_HTTP)
+    # must not send it. HTTPS and localhost deployments are unaffected.
+    **({} if ALLOW_INSECURE_HTTP else {"Cross-Origin-Opener-Policy": "same-origin"}),
     "Cross-Origin-Resource-Policy": "same-origin",
     "X-Permitted-Cross-Domain-Policies": "none",
     "Content-Security-Policy": (
@@ -167,5 +172,7 @@ SECURITY_HEADERS = {
     ),
 }
 
-if IS_PRODUCTION:
+if IS_PRODUCTION and not ALLOW_INSECURE_HTTP:
+    # HSTS is ignored over plain HTTP; an explicitly insecure deployment must
+    # not advertise upgrade-to-HTTPS either.
     SECURITY_HEADERS["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"

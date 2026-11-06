@@ -44,7 +44,12 @@ services:
       # The API port is not published; only the proxy can reach it.
       TRUSTED_PROXY_IPS: "*"
       ENFORCE_HTTPS: ${ENFORCE_HTTPS:-true}
-      AUTH_COOKIE_SECURE: "true"
+      # Temporary internal HTTP deployments only: set ALLOW_INSECURE_HTTP=true
+      # (and ENFORCE_HTTPS=false) in .env. Behind HTTPS leave it false.
+      ALLOW_INSECURE_HTTP: ${ALLOW_INSECURE_HTTP:-false}
+      # Empty = backend default (Secure in production, non-Secure when
+      # ALLOW_INSECURE_HTTP=true). Set true/false explicitly to override.
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-}
       MAX_REQUEST_BODY_BYTES: ${MAX_REQUEST_BODY_BYTES:-26214400}
       MAX_CALIBRATION_UPLOAD_BODY_BYTES: ${MAX_CALIBRATION_UPLOAD_BODY_BYTES:-104857600}
       MAX_CALIBRATION_ROWS: ${MAX_CALIBRATION_ROWS:-50000}

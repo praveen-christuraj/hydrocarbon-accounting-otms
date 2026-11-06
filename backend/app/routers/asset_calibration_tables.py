@@ -24,6 +24,8 @@ from app.dependencies.permissions import (
 from app.services.audit_service import create_audit_log
 from app.utils.helpers import clean_optional_text
 
+from sqlalchemy.exc import IntegrityError
+
 router = APIRouter(prefix="/asset-calibration-tables", tags=["Asset Calibration Tables"])
 MAX_CALIBRATION_VALUE = float(os.getenv("MAX_CALIBRATION_VALUE", "1000000000000"))
 CALIBRATION_INSERT_BATCH_SIZE = 2_000
@@ -397,6 +399,53 @@ def validate_asset_calibration_table(calibration_table: AssetCalibrationTableCre
     return asset
 
 
+def find_calibration_table_for_asset(
+    db: Session,
+    asset_code: str,
+    exclude_table_id: int | None = None,
+) -> AssetCalibrationTable | None:
+    """The calibration chart already stored for an asset, if any.
+
+    Asset codes are unique in the Asset Master; the comparison is done
+    case-insensitively so differently-cased uploads cannot slip past.
+    """
+    code = str(asset_code or "").strip()
+    if not code:
+        return None
+    query = db.query(AssetCalibrationTable).filter(
+        func.lower(AssetCalibrationTable.asset_code) == code.lower()
+    )
+    if exclude_table_id is not None:
+        query = query.filter(AssetCalibrationTable.id != exclude_table_id)
+    return query.order_by(AssetCalibrationTable.id.asc()).first()
+
+
+def raise_calibration_chart_exists(asset_code: str, existing: AssetCalibrationTable | None):
+    if existing is not None:
+        detail = (
+            f"Asset \"{asset_code}\" already has a calibration chart "
+            f"('{existing.calibration_name}'). Only one calibration chart is allowed per asset. "
+            "Edit the existing chart and replace its calibration values, or delete it fully, "
+            "before uploading a new one."
+        )
+    else:
+        detail = (
+            f"Asset \"{asset_code}\" already has a calibration chart. "
+            "Only one calibration chart is allowed per asset. "
+            "Edit the existing chart and replace its calibration values, or delete it fully, "
+            "before uploading a new one."
+        )
+    raise HTTPException(status_code=409, detail=detail)
+
+
+def _is_asset_unique_violation(exc: IntegrityError) -> bool:
+    message = str(getattr(exc, "orig", exc) or exc).lower()
+    return (
+        "ux_asset_calibration_tables_lower_asset_code" in message
+        or ("asset_code" in message and "unique" in message)
+    )
+
+
 def _scoped_calibration_table_query(db: Session, current_user: User):
     """Base query for calibration tables visible to ``current_user``.
 
@@ -531,6 +580,10 @@ def create_asset_calibration_table(
     asset = validate_asset_calibration_table(calibration_table, db)
     ensure_asset_calibration_scope(asset, current_user, db, write=True)
 
+    existing_chart = find_calibration_table_for_asset(db, calibration_table.asset_code)
+    if existing_chart is not None:
+        raise_calibration_chart_exists(calibration_table.asset_code.strip(), existing_chart)
+
     new_calibration_table = AssetCalibrationTable(
         calibration_name=calibration_table.calibration_name.strip(),
         asset_code=calibration_table.asset_code.strip(),
@@ -541,7 +594,15 @@ def create_asset_calibration_table(
     )
 
     db.add(new_calibration_table)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        if not _is_asset_unique_violation(exc):
+            raise
+        # Lost a race: another request created this asset's chart first.
+        existing_chart = find_calibration_table_for_asset(db, calibration_table.asset_code)
+        raise_calibration_chart_exists(calibration_table.asset_code.strip(), existing_chart)
 
     _bulk_insert_calibration_rows(db, new_calibration_table.id, calibration_table.rows)
 
@@ -615,6 +676,16 @@ def update_asset_calibration_table(
     asset = validate_asset_calibration_table(calibration_table, db)
     ensure_asset_calibration_scope(asset, current_user, db, write=True)
 
+    # Renaming/repointing this chart at an asset that already has one would
+    # create the duplicate the one-chart-per-asset rule forbids.
+    other_chart = find_calibration_table_for_asset(
+        db,
+        calibration_table.asset_code,
+        exclude_table_id=calibration_table_id,
+    )
+    if other_chart is not None:
+        raise_calibration_chart_exists(calibration_table.asset_code.strip(), other_chart)
+
     existing_calibration_table.calibration_name = (
         calibration_table.calibration_name.strip()
     )
@@ -626,9 +697,19 @@ def update_asset_calibration_table(
     )
     existing_calibration_table.status = calibration_table.status
 
-    db.query(AssetCalibrationData).filter(
-        AssetCalibrationData.calibration_table_id == calibration_table_id
-    ).delete()
+    try:
+        db.query(AssetCalibrationData).filter(
+            AssetCalibrationData.calibration_table_id == calibration_table_id
+        ).delete()
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        if not _is_asset_unique_violation(exc):
+            raise
+        existing_chart = find_calibration_table_for_asset(
+            db, calibration_table.asset_code, exclude_table_id=calibration_table_id
+        )
+        raise_calibration_chart_exists(calibration_table.asset_code.strip(), existing_chart)
 
     _bulk_insert_calibration_rows(db, calibration_table_id, calibration_table.rows)
 
