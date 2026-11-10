@@ -156,6 +156,8 @@ const convertGroupFromApi = (group) => ({
   senderTicket: convertTicketFromApi(group.sender_ticket),
   receiverTickets: (group.receiver_tickets || []).map(convertTicketFromApi),
   latestReceiverTicket: convertTicketFromApi(group.latest_receiver_ticket),
+  linkedReceiverTicketNumber: group.linked_receiver_ticket_number || '',
+  linkedReceiverStatus: group.linked_receiver_status || '',
 
   sealChecks: (group.seal_checks || []).map(convertSealCheckFromApi),
   quantityComparison: convertQuantityComparisonFromApi(

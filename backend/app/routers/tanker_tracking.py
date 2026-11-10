@@ -4,6 +4,7 @@ from sqlalchemy import func, literal, or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.services.tracking_links import get_receiver_links_for_convoy
 from app.models import (
     Asset,
     OperationTransaction,
@@ -1120,6 +1121,12 @@ def build_tanker_tracking_groups(tickets: list[dict], db: Session):
             acknowledgement,
         )
 
+        linked_receiver = None
+        if sender_ticket:
+            linked_receiver = get_receiver_links_for_convoy(
+                current_tracking_db, group["convoy_number"]
+            ).get(sender_ticket.get("transaction_id"))
+
         tracking_rows.append(
             {
                 "group_key": group["group_key"],
@@ -1134,6 +1141,8 @@ def build_tanker_tracking_groups(tickets: list[dict], db: Session):
 
                 "product_name": group["product_name"],
 
+                "linked_receiver_ticket_number": get_transaction_ticket_number(linked_receiver) if linked_receiver else None,
+                "linked_receiver_status": linked_receiver.status if linked_receiver else None,
                 "sender_ticket": sender_ticket,
                 "receiver_tickets": receiver_tickets,
                 "latest_receiver_ticket": latest_receiver_ticket,

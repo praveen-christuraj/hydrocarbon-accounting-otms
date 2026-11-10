@@ -1517,6 +1517,12 @@ return (
                     )}
                   </p>
 
+                  {(g.tickets || []).filter((t) => t.movement_role === 'SENDER' && t.receiver_transaction_id).map((t) => (
+                    <p key={t.transaction_id} role="status">
+                      Receiving ticket {t.receiver_ticket_number} already exists for {t.ticket_number} (status: {t.receiver_status}).
+                    </p>
+                  ))}
+
                   <div className="form-actions" style={{ marginTop: 8 }}>
                     <button
                       type="button"

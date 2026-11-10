@@ -329,7 +329,8 @@ def validate_linked_sender_ticket(
             status_code=400,
             detail=(
                 f"Ticket {get_transaction_ticket_number(sender)} already has a receiving ticket "
-                f"({get_transaction_ticket_number(active_receiver)}). Cancel it before creating another one."
+                f"({get_transaction_ticket_number(active_receiver)}, status: {active_receiver.status}). "
+                "Cancel it before creating another one."
             ),
         )
 

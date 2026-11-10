@@ -997,6 +997,7 @@ function ReviewConfirmationModal({
               <h3>Tank Gauging Summary</h3>
             </div>
 
+            <div className="approval-review-grid"><div><span>Tank Operation</span><strong>{inputs.tankOperationLabel || inputs.tankOperationCode || '-'}</strong></div></div>
             <TankCalculatedSummary calculated={calculated} />
           </>
         ) : multiTankPayload ? (
