@@ -10,7 +10,7 @@ const buildQuery = (filters = {}) => {
   return query ? `?${query}` : ''
 }
 
-// Government Data — Book Stock Management
+// Book Data — Book Stock Management
 
 // Products
 export const getBookStockProducts = async (filters = {}) =>
@@ -69,3 +69,9 @@ export const getBookStockEntitySummary = async (filters = {}) =>
   apiGet(`/book-stock/entity-summary${buildQuery(filters)}`)
 export const getBookStockDashboard = async (filters = {}) =>
   apiGet(`/book-stock/dashboard${buildQuery(filters)}`)
+
+// Sub-fields inherit the main field's products and location scope.
+export const getBookStockSubFields = async (filters = {}) => apiGet(`/book-stock/sub-fields${buildQuery(filters)}`)
+export const createBookStockSubField = async (payload) => apiPost('/book-stock/sub-fields', payload)
+export const updateBookStockSubField = async (id, payload) => apiPut(`/book-stock/sub-fields/${id}`, payload)
+export const deleteBookStockSubField = async (id) => apiDelete(`/book-stock/sub-fields/${id}`)

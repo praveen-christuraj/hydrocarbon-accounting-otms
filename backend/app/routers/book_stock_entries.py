@@ -1,4 +1,4 @@
-"""Government Data — Book Stock Management: daily stock entries, bulk upload,
+"""Book Data — Book Stock Management: daily stock entries, bulk upload,
 block / entity summaries and dashboard data."""
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import require_user_permission
-from app.models import BookStockDailyEntry, BookStockField, BookStockFieldProduction, BookStockProduct, User
+from app.models import BookStockDailyEntry, BookStockField, BookStockFieldProduction, BookStockFieldStock, BookStockSubFieldProduction, BookStockProduct, User
 from app.routers.book_stock_common import (
     MAX_BULK_ROWS,
     MAX_SUMMARY_ROWS,
@@ -19,39 +19,28 @@ from app.routers.book_stock_common import (
     actor_name,
     ci,
     code,
-    create_entry,
     decorate,
     decorate_totals,
-    duplicate_entry,
-    entry_lines,
     entry_query,
     entry_response,
     entity_allowed,
-    entry_totals,
     field_can_produce,
     name_maps,
     previous_entry,
     product_response,
-    recalculate_carried_chain,
-    require_any_view,
     resolve_block,
     resolve_entity,
-    resolve_field,
     resolve_product,
     same,
     settings_map,
     setting_value,
     snapshot,
     summary_rows,
-    validate_field_lines,
     visible_entity_codes,
-    write_field_rows,
 )
 from app.schemas import (
     BookStockDailyEntryCreate,
     BookStockDailyEntryUpdate,
-    BookStockFieldProductionBulkRow,
-    BookStockFieldProductionInput,
 )
 from app.services.audit_service import create_audit_log
 from app.services.book_stock_calculations import (
@@ -61,9 +50,11 @@ from app.services.book_stock_calculations import (
     is_yes,
     latest_entity_totals,
     round_qty,
-    to_float,
     totals_by_product,
 )
+
+from app.routers.book_stock_hierarchy import (save_hierarchy_entry, previous_field_stock,
+    recalculate_field_chain, lock_stock_keys, last_legacy_entry)
 
 router = APIRouter(prefix="/book-stock", tags=["Book Stock Management"])
 
@@ -78,6 +69,7 @@ def get_opening_suggestion(
     block_code: str = Query(...),
     product_code: str = Query(...),
     entry_date: date = Query(...),
+    field_id: int = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_from_token),
 ):
@@ -87,10 +79,24 @@ def get_opening_suggestion(
     block = resolve_block(db, entity, block_code)
     product = resolve_product(db, product_code, require_active=False)
     previous = previous_entry(db, entity.entity_code, block.block_code, product.product_code, entry_date)
+    if field_id is not None:
+        field = db.query(BookStockField).filter_by(id=field_id).first()
+        if not field or not same(field.entity_code, entity.entity_code) or not same(field.block_code, block.block_code):
+            raise HTTPException(400, 'Main field does not belong to this entity and block.')
+        if not field_can_produce(db, field, product.product_code):
+            raise HTTPException(400, 'Main field is not configured for this product.')
+        previous_field = previous_field_stock(db, field.id, entity.entity_code, block.block_code, product.product_code, entry_date)
+        legacy_block_previous = last_legacy_entry(db, entity.entity_code, block.block_code, product.product_code, before=entry_date) is not None
+        previous = previous_field[0] if previous_field else None
+        previous_date = previous_field[1] if previous_field else None
+    else:
+        legacy_block_previous = False
+        previous_date = previous.entry_date if previous else None
     settings = settings_map(db)
     return {
+        "legacy_block_previous": legacy_block_previous and previous is None,
         "opening_stock": round_qty(previous.closing_stock) if previous else 0.0,
-        "previous_entry_date": previous.entry_date.isoformat() if previous else None,
+        "previous_entry_date": previous_date.isoformat() if previous_date else None,
         "previous_closing_stock": round_qty(previous.closing_stock) if previous else None,
         "auto_carry_enabled": is_yes(setting_value(settings, "auto_carry_opening", "Yes")),
         "allow_negative_closing": is_yes(setting_value(settings, "allow_negative_closing", "Yes")),
@@ -165,8 +171,12 @@ def create_daily_entry(
     current_user: User = Depends(get_current_user_from_token),
 ):
     require_user_permission(current_user, "Create Book Stock Entry", db)
-    entry = create_entry(db, data, current_user)
-    db.commit()
+    try:
+        entry = save_hierarchy_entry(db, data, current_user)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(entry)
     return entry_response(entry, db)
 
@@ -186,97 +196,25 @@ def update_daily_entry(
     if not entity_allowed(codes, entry.entity_code):
         raise HTTPException(status_code=403, detail="This stock entry is outside your assigned location scope.")
 
-    before = snapshot(entry, db)
-    old_key = (entry.entity_code, entry.block_code, entry.product_code)
-    target_date = data.entry_date or entry.entry_date
-    target_entity_code = data.entity_code or entry.entity_code
-    target_block_code = data.block_code or entry.block_code
-    target_product_code = data.product_code or entry.product_code
-
-    entity = resolve_entity(db, target_entity_code, current_user, codes)
-    block = resolve_block(db, entity, target_block_code)
-    product = resolve_product(db, target_product_code, require_active=False)
-
-    key_changed = (
-        target_date != entry.entry_date
-        or not same(entity.entity_code, entry.entity_code)
-        or not same(block.block_code, entry.block_code)
-        or not same(product.product_code, entry.product_code)
+    if (data.opening_stock is not None or data.dispatch is not None or data.adjustment is not None
+            or data.field_productions is not None or data.carry_opening is not None):
+        raise HTTPException(400, 'Block-level inputs are no longer accepted; enter values per main field.')
+    if not data.field_stocks:
+        raise HTTPException(400, 'Field stock rows are required to update this entry.')
+    payload = BookStockDailyEntryCreate(
+        entry_date=data.entry_date or entry.entry_date,
+        entity_code=data.entity_code or entry.entity_code,
+        block_code=data.block_code or entry.block_code,
+        product_code=data.product_code or entry.product_code,
+        remarks=data.remarks if data.remarks is not None else entry.remarks,
+        field_stocks=data.field_stocks,
     )
-    duplicate = duplicate_entry(
-        db, entity.entity_code, block.block_code, product.product_code, target_date, exclude_id=entry.id
-    )
-    if duplicate:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"A {product.product_code} stock entry already exists for block {block.block_code} "
-                f"on {target_date.isoformat()}."
-            ),
-        )
-
-    if data.field_productions is None:
-        if key_changed:
-            field_rows: list[dict] = []
-        else:
-            field_rows = [
-                {"field": resolve_field(db, line.field_code, entity.entity_code, block.block_code),
-                 "production_qty": round_qty(line.production_qty)}
-                for line in entry_lines(db, entry.id)
-            ]
-    else:
-        field_rows = validate_field_lines(
-            db, data.field_productions, entity.entity_code, block.block_code, product.product_code
-        )
-
-    opening_input = data.opening_stock if data.opening_stock is not None else (None if key_changed else entry.opening_stock)
-    totals = entry_totals(
-        db,
-        entity_code=entity.entity_code,
-        block_code=block.block_code,
-        product_code=product.product_code,
-        entry_date=target_date,
-        opening_stock=opening_input,
-        dispatch=data.dispatch if data.dispatch is not None else entry.dispatch,
-        adjustment=data.adjustment if data.adjustment is not None else entry.adjustment,
-        carry_opening=bool(data.carry_opening) if data.carry_opening is not None else True,
-        field_rows=field_rows,
-        existing=entry,
-        key_changed=key_changed,
-        exclude_id=entry.id,
-    )
-
-    entry.entry_date = target_date
-    entry.entity_code = entity.entity_code
-    entry.block_code = block.block_code
-    entry.product_code = product.product_code
-    entry.opening_stock = totals["opening_stock"]
-    entry.production = totals["production"]
-    entry.dispatch = totals["dispatch"]
-    entry.adjustment = totals["adjustment"]
-    entry.closing_stock = totals["closing_stock"]
-    entry.opening_carried = totals["opening_carried"]
-    entry.remarks = (data.remarks if data.remarks is not None else entry.remarks) or None
-    entry.updated_by = actor_name(current_user)
-    db.flush()
-
-    db.query(BookStockFieldProduction).filter(BookStockFieldProduction.entry_id == entry.id).delete(synchronize_session=False)
-    db.flush()
-    write_field_rows(db, entry, field_rows)
-    db.flush()
-
-    recalculate_carried_chain(db, *old_key, current_user)
-    if (entry.entity_code, entry.block_code, entry.product_code) != old_key:
-        recalculate_carried_chain(db, entry.entity_code, entry.block_code, entry.product_code, current_user)
-
-    create_audit_log(
-        db, MODULE, "Edit Book Stock Entry", current_user,
-        entity_type="BookStockDailyEntry", entity_id=entry.id,
-        entity_label=f"{entry.entry_date.isoformat()} · {entry.entity_code} / {entry.block_code} / {entry.product_code}",
-        remarks=entry.remarks,
-        details={"before": before, "after": snapshot(entry, db), "key_changed": key_changed},
-    )
-    db.commit()
+    try:
+        entry = save_hierarchy_entry(db, payload, current_user, entry)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(entry)
     return entry_response(entry, db)
 
@@ -293,12 +231,25 @@ def delete_daily_entry(
         raise HTTPException(status_code=404, detail="Book stock entry not found.")
     if not entity_allowed(visible_entity_codes(current_user, db), entry.entity_code):
         raise HTTPException(status_code=403, detail="This stock entry is outside your assigned location scope.")
+    lock_key = (entry.entity_code, entry.block_code, entry.product_code)
+    lock_stock_keys(db, lock_key)
+    db.refresh(entry)
+    if tuple(code(v).casefold() for v in (entry.entity_code, entry.block_code, entry.product_code)) != tuple(code(v).casefold() for v in lock_key):
+        raise HTTPException(409, 'The entry changed concurrently; reload and try again.')
     before = snapshot(entry, db)
     label = f"{entry.entry_date.isoformat()} · {entry.entity_code} / {entry.block_code} / {entry.product_code}"
+    field_stocks = db.query(BookStockFieldStock).filter_by(entry_id=entry.id).all()
+    for stock in field_stocks:
+        db.query(BookStockSubFieldProduction).filter_by(field_stock_id=stock.id).delete(synchronize_session=False)
+        db.delete(stock)
     db.query(BookStockFieldProduction).filter(BookStockFieldProduction.entry_id == entry.id).delete(synchronize_session=False)
     db.delete(entry)
     db.flush()
-    recalculate_carried_chain(db, entry.entity_code, entry.block_code, entry.product_code, current_user)
+    try:
+        recalculate_field_chain(db, entry.entity_code, entry.block_code, entry.product_code, current_user)
+    except Exception:
+        db.rollback()
+        raise
     create_audit_log(
         db, MODULE, "Delete Book Stock Entry", current_user,
         entity_type="BookStockDailyEntry", entity_id=entry_id, entity_label=label,
@@ -327,37 +278,27 @@ def bulk_upload_daily_entries(
     if len(items) > MAX_BULK_ROWS:
         raise HTTPException(status_code=400, detail=f"A maximum of {MAX_BULK_ROWS} rows can be uploaded at once.")
 
+    # Lock all keys in sorted order before processing rows, so concurrent bulk
+    # imports cannot deadlock by presenting blocks in opposite orders.
+    lock_stock_keys(db, *((item.get('entity_code'), item.get('block_code'), item.get('product_code'))
+                           for item in items if isinstance(item, dict)))
     results = []
     created_ids: list[int] = []
     for index, raw in enumerate(items, start=1):
         try:
             if not isinstance(raw, dict):
                 raise HTTPException(status_code=400, detail="Row is not an object.")
-            payload = BookStockFieldProductionBulkRow(**raw)
-            lines = payload.field_productions
-            if isinstance(lines, str):
-                parsed = []
-                for part in [piece.strip() for piece in lines.replace("\n", ";").split(";") if piece.strip()]:
-                    if "=" not in part:
-                        raise HTTPException(status_code=400, detail=f"Production '{part}' must use FIELD_CODE=QTY.")
-                    field_code, qty = part.split("=", 1)
-                    parsed.append(BookStockFieldProductionInput(field_code=field_code.strip(), production_qty=to_float(qty)))
-                lines = parsed
-            create_payload = BookStockDailyEntryCreate(
-                entry_date=payload.entry_date,
-                entity_code=payload.entity_code,
-                block_code=payload.block_code,
-                product_code=payload.product_code,
-                opening_stock=payload.opening_stock,
-                dispatch=payload.dispatch,
-                adjustment=payload.adjustment,
-                carry_opening=True,
-                remarks=payload.remarks,
-                field_productions=lines or [],
-            )
+            import json
+            normalized = dict(raw)
+            if isinstance(normalized.get('field_stocks'), str):
+                try:
+                    normalized['field_stocks'] = json.loads(normalized['field_stocks'])
+                except (ValueError, TypeError):
+                    raise HTTPException(400, 'Field stocks must be a JSON array.')
+            create_payload = BookStockDailyEntryCreate(**normalized)
             savepoint = db.begin_nested()
             try:
-                entry = create_entry(db, create_payload, current_user)
+                entry = save_hierarchy_entry(db, create_payload, current_user)
                 savepoint.commit()
             except Exception:
                 savepoint.rollback()

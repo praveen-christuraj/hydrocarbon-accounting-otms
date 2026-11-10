@@ -2251,17 +2251,17 @@ class ReportDefinitionVersion(Base):
 
 
 # ---------------------------------------------------------------------------
-# Government Data — Book Stock Management
+# Book Data — Book Stock Management
 # ---------------------------------------------------------------------------
 # The module is self-contained: its products, fields and daily stock records
 # live here. Entity / block references come from the Export Operations
 # configuration (export_entities / export_blocks / export_entity_blocks) and are
 # stored as codes so a configuration rename never rewrites historical entries.
 #
-# Stock rule (Government Data, product-wise):
+# Stock rule (Book Data, product-wise):
 #     closing stock = opening stock + production - dispatch + adjustment
-# Production is captured per field (a block has several fields) and summed into
-# the block. A block's closing stock rolls up into the entity's closing stock.
+# Production is captured per sub-field and summed into its main field. Each
+# main field has its own balance, and its values roll up into the block and entity.
 # Products are never mixed: every stock row, calculation and report is keyed by
 # product_code.
 
@@ -2330,11 +2330,10 @@ class BookStockFieldProduct(Base):
 
 
 class BookStockDailyEntry(Base):
-    """One Block + Product + Date stock sheet.
+    """Block + product + date roll-up; field-level balances live in field stocks.
 
-    ``production`` is the server-computed sum of the entry's field production
-    lines. ``closing_stock`` is always recomputed server-side from
-    opening + production - dispatch + adjustment.
+    Legacy sheets have block-level inputs and no field stocks. They are retained
+    without allocating their opening, dispatch or adjustments to fields.
     """
 
     __tablename__ = "book_stock_daily_entries"
@@ -2409,3 +2408,60 @@ class BookStockConfig(Base):
     status = Column(String(20), nullable=False, default="Active")
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class BookStockSubField(Base):
+    """A production source belonging to exactly one main field."""
+    __tablename__ = "book_stock_sub_fields"
+    id = Column(Integer, primary_key=True, index=True)
+    field_id = Column(Integer, ForeignKey("book_stock_fields.id", ondelete="RESTRICT"), nullable=False, index=True)
+    entity_code = Column(String(50), nullable=False, index=True)
+    block_code = Column(String(50), nullable=False, index=True)
+    sub_field_code = Column(String(50), nullable=False)
+    sub_field_name = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
+    status = Column(String(20), nullable=False, default="Active")
+    created_by = Column(String(150), nullable=True)
+    updated_by = Column(String(150), nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+    __table_args__ = (UniqueConstraint("field_id", "sub_field_code", name="unique_book_stock_sub_field_code"),)
+
+
+class BookStockFieldStock(Base):
+    """Field balance on a block sheet. The block row stores the roll-up."""
+    __tablename__ = "book_stock_field_stocks"
+    id = Column(Integer, primary_key=True, index=True)
+    entry_id = Column(Integer, ForeignKey("book_stock_daily_entries.id", ondelete="CASCADE"), nullable=False, index=True)
+    field_id = Column(Integer, ForeignKey("book_stock_fields.id", ondelete="RESTRICT"), nullable=False, index=True)
+    field_code = Column(String(50), nullable=False)
+    field_name = Column(String(200), nullable=False)
+    entry_date = Column(Date, nullable=False, index=True)
+    entity_code = Column(String(50), nullable=False, index=True)
+    block_code = Column(String(50), nullable=False, index=True)
+    product_code = Column(String(50), nullable=False, index=True)
+    opening_stock = Column(Float, nullable=False, default=0)
+    production = Column(Float, nullable=False, default=0)
+    dispatch = Column(Float, nullable=False, default=0)
+    adjustment = Column(Float, nullable=False, default=0)
+    closing_stock = Column(Float, nullable=False, default=0)
+    opening_carried = Column(String(10), nullable=False, default="No")
+    __table_args__ = (UniqueConstraint("entry_id", "field_id", name="unique_book_stock_entry_field_stock"),)
+
+
+class BookStockSubFieldProduction(Base):
+    __tablename__ = "book_stock_sub_field_productions"
+    id = Column(Integer, primary_key=True, index=True)
+    field_stock_id = Column(Integer, ForeignKey("book_stock_field_stocks.id", ondelete="CASCADE"), nullable=False, index=True)
+    sub_field_id = Column(Integer, ForeignKey("book_stock_sub_fields.id", ondelete="RESTRICT"), nullable=False, index=True)
+    field_id = Column(Integer, ForeignKey("book_stock_fields.id", ondelete="RESTRICT"), nullable=False, index=True)
+    field_code = Column(String(50), nullable=False)
+    field_name = Column(String(200), nullable=False)
+    sub_field_code = Column(String(50), nullable=False)
+    sub_field_name = Column(String(200), nullable=False)
+    entry_date = Column(Date, nullable=False, index=True)
+    entity_code = Column(String(50), nullable=False, index=True)
+    block_code = Column(String(50), nullable=False, index=True)
+    product_code = Column(String(50), nullable=False, index=True)
+    production_qty = Column(Float, nullable=False, default=0)
+    __table_args__ = (UniqueConstraint("field_stock_id", "sub_field_id", name="unique_book_stock_field_sub_production"),)

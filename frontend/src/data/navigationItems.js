@@ -218,7 +218,7 @@ export const navigationItems = [
     ],
   },
   {
-    label: 'Government Data',
+    label: 'Book Data',
     type: 'dropdown',
     items: [
       { label: 'Book Stock Dashboard', path: '/book-stock/dashboard', permission: 'View Book Stock Dashboard' },
@@ -226,7 +226,7 @@ export const navigationItems = [
       { label: 'Block Stock Summary', path: '/book-stock/block-summary', permission: 'View Book Stock Report' },
       { label: 'Entity Stock Summary', path: '/book-stock/entity-summary', permission: 'View Book Stock Report' },
       { label: 'Book Stock Products', path: '/book-stock/products', permission: 'View Book Stock Product' },
-      { label: 'Book Stock Fields', path: '/book-stock/fields', permission: 'View Book Stock Field' },
+      { label: 'Book Stock Main Fields', path: '/book-stock/fields', permission: 'View Book Stock Field' },
       { label: 'Export Operations', path: '/book-stock/export-operations', permission: 'View Book Stock Export Operations' },
       { label: 'Book Stock Settings', path: '/book-stock/settings', permission: 'View Book Stock Settings' },
     ],

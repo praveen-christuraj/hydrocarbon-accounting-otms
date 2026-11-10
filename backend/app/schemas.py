@@ -3319,7 +3319,7 @@ class ReportFromStarterRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Government Data — Book Stock Management
+# Book Data — Book Stock Management
 # ---------------------------------------------------------------------------
 
 class BookStockProductBase(BaseModel):
@@ -3378,6 +3378,28 @@ class BookStockFieldResponse(BookStockFieldBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class BookStockSubFieldInput(BaseModel):
+    field_id: int
+    sub_field_code: str = Field(min_length=1, max_length=50)
+    sub_field_name: str = Field(min_length=1, max_length=200)
+    description: Optional[str] = None
+    status: str = "Active"
+
+
+class BookStockSubFieldProductionInput(BaseModel):
+    sub_field_id: int
+    production_qty: float = Field(default=0, ge=0, allow_inf_nan=False)
+
+
+class BookStockFieldStockInput(BaseModel):
+    field_id: int
+    opening_stock: Optional[float] = Field(default=None, ge=0, allow_inf_nan=False)
+    dispatch: float = Field(default=0, ge=0, allow_inf_nan=False)
+    adjustment: float = Field(default=0, allow_inf_nan=False)
+    carry_opening: bool = True
+    sub_field_productions: list[BookStockSubFieldProductionInput] = Field(default_factory=list)
+
+
 class BookStockFieldProductionInput(BaseModel):
     field_code: str = Field(min_length=1, max_length=50)
     production_qty: float = 0
@@ -3403,6 +3425,7 @@ class BookStockDailyEntryCreate(BaseModel):
     carry_opening: bool = True
     remarks: Optional[str] = None
     field_productions: list[BookStockFieldProductionInput] = Field(default_factory=list)
+    field_stocks: Optional[list[BookStockFieldStockInput]] = None
 
 
 class BookStockDailyEntryUpdate(BaseModel):
@@ -3416,6 +3439,29 @@ class BookStockDailyEntryUpdate(BaseModel):
     carry_opening: Optional[bool] = None
     remarks: Optional[str] = None
     field_productions: Optional[list[BookStockFieldProductionInput]] = None
+    field_stocks: Optional[list[BookStockFieldStockInput]] = None
+
+
+class BookStockSubFieldProductionResponse(BaseModel):
+    id: int
+    sub_field_id: int
+    sub_field_code: str
+    sub_field_name: str
+    production_qty: float
+
+
+class BookStockFieldStockResponse(BaseModel):
+    id: int
+    field_id: int
+    field_code: str
+    field_name: str
+    opening_stock: float
+    production: float
+    dispatch: float
+    adjustment: float
+    closing_stock: float
+    opening_carried: str
+    sub_field_productions: list[BookStockSubFieldProductionResponse] = Field(default_factory=list)
 
 
 class BookStockDailyEntryResponse(BaseModel):
@@ -3436,6 +3482,8 @@ class BookStockDailyEntryResponse(BaseModel):
     opening_carried: str = "No"
     remarks: Optional[str] = None
     field_productions: list[BookStockFieldProductionResponse] = Field(default_factory=list)
+    field_stocks: list[BookStockFieldStockResponse] = Field(default_factory=list)
+    legacy_block_entry: bool = False
     created_by: Optional[str] = None
     updated_by: Optional[str] = None
     created_at: datetime

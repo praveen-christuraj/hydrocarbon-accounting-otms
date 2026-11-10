@@ -5,6 +5,7 @@ import {
   getBookStockFields,
   updateBookStockField,
 } from '../../api/bookStockApi'
+import SubFieldsPanel from './SubFieldsPanel'
 import PageHeader from '../../components/common/PageHeader'
 import AlertMessage from '../../components/common/AlertMessage'
 import FormDialog from '../../components/common/FormDialog'
@@ -25,8 +26,8 @@ import {
 
 const MODULE = BOOK_STOCK_MODULE
 const COLUMNS = [
-  { key: 'field_code', label: 'Field Code' },
-  { key: 'field_name', label: 'Field Name' },
+  { key: 'field_code', label: 'Main Field Code' },
+  { key: 'field_name', label: 'Main Field Name' },
   { key: 'entity_name', label: 'Entity', type: 'select' },
   { key: 'block_name', label: 'Block', type: 'select' },
   { key: 'products_label', label: 'Products Produced', type: 'select' },
@@ -269,14 +270,14 @@ function BookStockFields({ loggedInUser }) {
   return (
     <div className="book-stock-page">
       <PageHeader
-        title="Book Stock Fields"
-        description="Producing fields inside each Export Operations block. Field production is entered daily; each field can produce one or both Book Stock products."
-        count={`${fields.length} Fields`}
+        title="Book Stock Main Fields"
+        description="Main fields inside each Export Operations block. Stock is maintained for each main field; production is entered for its sub-fields. Each main field can produce one or both products."
+        count={`${fields.length} Main Fields`}
         actions={
           canCreate && (
             <button type="button" className="btn-primary" onClick={openCreate}>
               <Icon name="plus" size={15} />
-              New Field
+              New Main Field
             </button>
           )
         }
@@ -314,20 +315,20 @@ function BookStockFields({ loggedInUser }) {
         filters={filters}
         columns={COLUMNS}
         exportFileName="book-stock-fields"
-        exportTitle="Book Stock Fields"
+        exportTitle="Book Stock Main Fields"
         module={MODULE}
         importConfig={importConfig}
         canImport={canCreate}
         canExport
-        searchPlaceholder="Search field code, name, product…"
+        searchPlaceholder="Search main field code, name, product…"
       />
 
       <div className="table-scroll">
         <table>
           <thead>
             <tr>
-              <th>Field Code</th>
-              <th>Field Name</th>
+              <th>Main Field Code</th>
+              <th>Main Field Name</th>
               <th>Entity</th>
               <th>Block</th>
               <th>Products Produced</th>
@@ -340,7 +341,7 @@ function BookStockFields({ loggedInUser }) {
             {visibleRows.length === 0 ? (
               <tr>
                 <td colSpan={columnCount} className="empty-table">
-                  {loading ? 'Loading…' : 'No producing fields configured yet.'}
+                  {loading ? 'Loading…' : 'No main fields configured yet.'}
                 </td>
               </tr>
             ) : (
@@ -380,13 +381,15 @@ function BookStockFields({ loggedInUser }) {
 
       <PaginationControls currentPage={page} totalRows={filters.filteredRows.length} onPageChange={setPage} />
 
+      <SubFieldsPanel fields={fields} canCreate={canCreate} canEdit={canEdit} canDelete={canDelete} />
+
       <FormDialog
         open={formOpen}
-        title={editing ? 'Edit Book Stock Field' : 'New Book Stock Field'}
-        description="A field belongs to one Export Operations entity and block. Its production is captured per product, date-wise."
+        title={editing ? 'Edit Book Stock Main Field' : 'New Book Stock Main Field'}
+        description="A main field belongs to one Export Operations entity and block. Its sub-field production and stock are captured per product, date-wise."
         size="lg"
         columns={2}
-        submitLabel={editing ? 'Update Field' : 'Save Field'}
+        submitLabel={editing ? 'Update Main Field' : 'Save Main Field'}
         busy={saving}
         error={formError}
         onDismissError={() => setFormError('')}
@@ -408,11 +411,11 @@ function BookStockFields({ loggedInUser }) {
           </select>
         </div>
         <div>
-          <label htmlFor="bs-field-code">Field Code *</label>
+          <label htmlFor="bs-field-code">Main Field Code *</label>
           <input id="bs-field-code" value={form.field_code} onChange={(event) => setField('field_code', event.target.value.toUpperCase())} maxLength={50} />
         </div>
         <div>
-          <label htmlFor="bs-field-name">Field Name *</label>
+          <label htmlFor="bs-field-name">Main Field Name *</label>
           <input id="bs-field-name" value={form.field_name} onChange={(event) => setField('field_name', event.target.value)} maxLength={200} />
         </div>
         <div className="bs-form-wide">
@@ -430,7 +433,7 @@ function BookStockFields({ loggedInUser }) {
             ))}
           </div>
           {activeProducts.length === 0 && <div className="info-box">Configure Book Stock products first.</div>}
-          <span className="field-hint">One field can produce both products; stock is always kept separate per product.</span>
+          <span className="field-hint">One main field can produce both products; stock is always kept separate per product.</span>
         </div>
         <div>
           <label htmlFor="bs-field-status">Status</label>

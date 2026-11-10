@@ -51,7 +51,7 @@ const TILE_META = {
   '/export-operations/blocks': { icon: 'grid', description: 'Blocks & mappings' },
   '/export-operations/consignees': { icon: 'package', description: 'Consignees' },
   '/export-operations/settings': { icon: 'sliders', description: 'Export settings' },
-  '/book-stock/dashboard': { icon: 'book', description: 'Government stock position' },
+  '/book-stock/dashboard': { icon: 'book', description: 'Book stock position' },
   '/book-stock/daily-entries': { icon: 'filePlus', description: 'Daily field production' },
   '/book-stock/block-summary': { icon: 'grid', description: 'Block closing stock' },
   '/book-stock/entity-summary': { icon: 'building', description: 'Entity closing stock' },

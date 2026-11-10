@@ -1,4 +1,4 @@
-"""Government Data — Book Stock Management: products, fields, settings and the
+"""Book Data — Book Stock Management: products, fields, settings and the
 Export Operations configuration the module reads.
 
 Daily stock entries and summaries live in ``book_stock_entries``. Both routers
@@ -22,6 +22,10 @@ from app.models import (
     BookStockDailyEntry,
     BookStockField,
     BookStockFieldProduct,
+    BookStockFieldStock,
+    BookStockFieldProduction,
+    BookStockSubField,
+    BookStockSubFieldProduction,
     BookStockProduct,
     ExportBlock,
     ExportEntity,
@@ -53,12 +57,15 @@ from app.routers.book_stock_common import (
 )
 from app.schemas import (
     BookStockFieldCreate,
+    BookStockSubFieldInput,
     BookStockFieldUpdate,
     BookStockProductCreate,
     BookStockSettingsUpdate,
 )
 from app.services.audit_service import create_audit_log
 from app.services.book_stock_calculations import DEFAULT_SETTINGS, PRODUCT_LIMIT, SETTING_DESCRIPTIONS, yes_no
+
+from app.routers.book_stock_hierarchy import LEGACY_CODE, sub_field_response, lock_stock_keys
 
 router = APIRouter(prefix="/book-stock", tags=["Book Stock Management"])
 
@@ -152,6 +159,8 @@ def update_product(
         active_count = db.query(BookStockProduct).filter(func.lower(func.trim(BookStockProduct.status)) == "active").count()
         if active_count >= active_product_limit(db):
             raise HTTPException(status_code=400, detail="Only two active products are allowed. Deactivate a product first.")
+    if not same(product.product_code, data.product_code) and db.query(BookStockDailyEntry.id).filter(ci(BookStockDailyEntry.product_code) == code(product.product_code).casefold()).first():
+        raise HTTPException(400, 'A product with stock history cannot be recoded.')
     before = product_response(product)
     product.product_code = data.product_code.strip().upper()
     product.product_name = data.product_name.strip()
@@ -266,6 +275,7 @@ def create_field(
     entity = resolve_entity(db, data.entity_code, current_user, codes)
     block = resolve_block(db, entity, data.block_code)
     products = _validate_field_products(db, data.product_codes)
+    lock_stock_keys(db, *((entity.entity_code, block.block_code, p.product_code) for p in products))
     duplicate_code = db.query(BookStockField).filter(ci(BookStockField.field_code) == code(data.field_code).casefold()).first()
     if duplicate_code:
         raise HTTPException(status_code=400, detail=f"Field code '{data.field_code}' already exists.")
@@ -320,6 +330,14 @@ def update_field(
     entity = resolve_entity(db, data.entity_code, current_user, codes)
     block = resolve_block(db, entity, data.block_code)
     products = _validate_field_products(db, data.product_codes)
+    original_scope = (field.entity_code, field.block_code)
+    lock_stock_keys(db, *((field.entity_code, field.block_code, p) for p in product_codes_for_field(db, field.id)),
+                    *((entity.entity_code, block.block_code, p.product_code) for p in products))
+    db.refresh(field)
+    if (field.entity_code, field.block_code) != original_scope:
+        raise HTTPException(409, 'The main field changed concurrently; reload and try again.')
+    if not entity_allowed(codes, field.entity_code):
+        raise HTTPException(403, 'This field is outside your assigned location scope.')
     duplicate_code = (
         db.query(BookStockField)
         .filter(ci(BookStockField.field_code) == code(data.field_code).casefold(), BookStockField.id != field.id)
@@ -339,11 +357,24 @@ def update_field(
     )
     if duplicate_name:
         raise HTTPException(status_code=400, detail=f"Field '{data.field_name}' already exists in this block.")
+    used = (db.query(BookStockSubField.id).filter_by(field_id=field.id).first()
+            or db.query(BookStockFieldProduction.id).filter(
+                (BookStockFieldProduction.field_id == field.id) | (ci(BookStockFieldProduction.field_code) == code(field.field_code).casefold())).first()
+            or db.query(BookStockFieldStock.id).filter(BookStockFieldStock.field_id == field.id).first())
+    if used and (not same(field.field_code, data.field_code) or not same(field.entity_code, entity.entity_code)
+                 or not same(field.block_code, block.block_code)):
+        raise HTTPException(400, 'A main field with sub-fields or historical stock cannot be moved or recoded.')
+    if db.query(BookStockFieldStock.id).filter_by(field_id=field.id).first():
+        old_products = {code(p).casefold() for p in product_codes_for_field(db, field.id)}
+        if old_products - {code(p.product_code).casefold() for p in products} or str(data.status).strip().casefold() != 'active':
+            raise HTTPException(400, 'A main field with stock history cannot be deactivated or have products removed; its balance must remain in the block.')
     before = field_response(field, db)
     field.field_code = data.field_code.strip().upper()
     field.field_name = data.field_name.strip()
     field.entity_code = entity.entity_code
     field.block_code = block.block_code
+    for sub in db.query(BookStockSubField).filter_by(field_id=field.id).all():
+        sub.entity_code, sub.block_code = entity.entity_code, block.block_code
     field.description = (data.description or "").strip() or None
     field.status = "Active" if str(data.status).strip().casefold() == "active" else "Inactive"
     field.updated_by = actor_name(current_user)
@@ -372,6 +403,15 @@ def delete_field(
     codes = visible_entity_codes(current_user, db)
     if not entity_allowed(codes, field.entity_code):
         raise HTTPException(status_code=403, detail="This field is outside your assigned location scope.")
+    original_scope = (field.entity_code, field.block_code)
+    lock_stock_keys(db, *((field.entity_code, field.block_code, p) for p in product_codes_for_field(db, field.id)))
+    db.refresh(field)
+    if (field.entity_code, field.block_code) != original_scope:
+        raise HTTPException(409, 'The main field changed concurrently; reload and try again.')
+    if not entity_allowed(codes, field.entity_code):
+        raise HTTPException(403, 'This field is outside your assigned location scope.')
+    if db.query(BookStockFieldStock.id).filter_by(field_id=field.id).first():
+        raise HTTPException(400, 'A main field with stock history cannot be deactivated; its balance must remain in the block.')
     before = field_response(field, db)
     field.status = "Inactive"
     field.updated_by = actor_name(current_user)
@@ -509,6 +549,10 @@ def get_reference_data(
         "products": [product_response(row) for row in products],
         "active_products": [product_response(row) for row in products if str(row.status).strip().casefold() == "active"],
         "fields": [field_response(row, db, names) for row in fields],
+        "sub_fields": [sub_field_response(sub, field) for sub, field in
+            db.query(BookStockSubField, BookStockField).join(BookStockField, BookStockSubField.field_id == BookStockField.id)
+            .filter(func.lower(func.trim(BookStockSubField.status)) == "active").all()
+            if field.id in {f.id for f in fields}],
         "entities": [
             {
                 "entity_code": row.entity_code,
@@ -598,3 +642,112 @@ def get_export_configurations(
             "blocks": block_rows,
         })
     return {"entities": rows, "total": len(rows)}
+
+
+# Sub-fields inherit their main field's entity, block and product mappings.
+@router.get('/sub-fields')
+def list_sub_fields(include_inactive: bool = False, db: Session = Depends(get_db),
+                    current_user: User = Depends(get_current_user_from_token)):
+    require_any_view(current_user, db)
+    codes = visible_entity_codes(current_user, db)
+    query = db.query(BookStockSubField, BookStockField).join(BookStockField, BookStockSubField.field_id == BookStockField.id)
+    if not include_inactive:
+        query = query.filter(func.lower(func.trim(BookStockSubField.status)) == 'active')
+    return [sub_field_response(sub, field) for sub, field in query.order_by(BookStockField.field_name, BookStockSubField.sub_field_name).all()
+            if entity_allowed(codes, field.entity_code)]
+
+
+def _sub_field_parent(db, field_id, user):
+    field = db.query(BookStockField).filter_by(id=field_id).first()
+    if not field:
+        raise HTTPException(404, 'Main field not found.')
+    if not entity_allowed(visible_entity_codes(user, db), field.entity_code):
+        raise HTTPException(403, 'This main field is outside your assigned location scope.')
+    lock_key = (field.entity_code, field.block_code)
+    lock_stock_keys(db, *((field.entity_code, field.block_code, p) for p in product_codes_for_field(db, field.id)))
+    db.refresh(field)
+    if (field.entity_code, field.block_code) != lock_key:
+        raise HTTPException(409, 'The main field changed concurrently; reload and try again.')
+    if not entity_allowed(visible_entity_codes(user, db), field.entity_code):
+        raise HTTPException(403, 'This main field is outside your assigned location scope.')
+    if code(field.status).casefold() != 'active':
+        raise HTTPException(400, 'Main field is inactive.')
+    return field
+
+
+def _validate_sub_field(db, data, field, exclude_id=None):
+    sub_code, name = code(data.sub_field_code), code(data.sub_field_name)
+    if not sub_code or not name or sub_code.casefold() == LEGACY_CODE.casefold():
+        raise HTTPException(400, 'Valid sub-field code and name are required; the legacy code is reserved.')
+    query = db.query(BookStockSubField).filter(BookStockSubField.field_id == field.id,
+        ci(BookStockSubField.sub_field_code) == sub_code.casefold())
+    if exclude_id:
+        query = query.filter(BookStockSubField.id != exclude_id)
+    if query.first():
+        raise HTTPException(400, 'Sub-field code already exists within this main field.')
+    if code(data.status).casefold() not in ('active', 'inactive'):
+        raise HTTPException(400, 'Status must be Active or Inactive.')
+
+
+@router.post('/sub-fields')
+def create_sub_field(data: BookStockSubFieldInput, db: Session = Depends(get_db),
+                     current_user: User = Depends(get_current_user_from_token)):
+    require_user_permission(current_user, 'Create Book Stock Field', db)
+    field = _sub_field_parent(db, data.field_id, current_user)
+    _validate_sub_field(db, data, field)
+    sub = BookStockSubField(field_id=field.id, sub_field_code=code(data.sub_field_code).upper(),
+        sub_field_name=code(data.sub_field_name), entity_code=field.entity_code, block_code=field.block_code, description=code(data.description) or None,
+        status='Active' if code(data.status).casefold() == 'active' else 'Inactive',
+        created_by=actor_name(current_user), updated_by=actor_name(current_user))
+    db.add(sub); db.flush()
+    create_audit_log(db, MODULE, 'Create Book Stock Sub-Field', current_user,
+        entity_type='BookStockSubField', entity_id=sub.id, entity_label=sub.sub_field_name,
+        details={'after': {k: v for k, v in sub_field_response(sub, field).items() if k not in ('created_at', 'updated_at')}})
+    db.commit(); db.refresh(sub)
+    return sub_field_response(sub, field)
+
+
+@router.put('/sub-fields/{sub_id}')
+def update_sub_field(sub_id: int, data: BookStockSubFieldInput, db: Session = Depends(get_db),
+                     current_user: User = Depends(get_current_user_from_token)):
+    require_user_permission(current_user, 'Edit Book Stock Field', db)
+    sub = db.query(BookStockSubField).filter_by(id=sub_id).first()
+    if not sub:
+        raise HTTPException(404, 'Sub-field not found.')
+    field = _sub_field_parent(db, sub.field_id, current_user)
+    if sub.sub_field_code == LEGACY_CODE:
+        raise HTTPException(400, 'The historical production source cannot be changed.')
+    if sub.field_id != data.field_id:
+        raise HTTPException(400, 'A sub-field cannot be moved to another main field.')
+    _validate_sub_field(db, data, field, sub.id)
+    before = {k: v for k, v in sub_field_response(sub, field).items() if k not in ('created_at', 'updated_at')}
+    sub.sub_field_code, sub.sub_field_name = code(data.sub_field_code).upper(), code(data.sub_field_name)
+    sub.description = code(data.description) or None
+    sub.status = 'Active' if code(data.status).casefold() == 'active' else 'Inactive'
+    sub.updated_by = actor_name(current_user)
+    db.flush()
+    create_audit_log(db, MODULE, 'Edit Book Stock Sub-Field', current_user,
+        entity_type='BookStockSubField', entity_id=sub.id, entity_label=sub.sub_field_name,
+        details={'before': before, 'after': {k: v for k, v in sub_field_response(sub, field).items() if k not in ('created_at', 'updated_at')}})
+    db.commit(); db.refresh(sub)
+    return sub_field_response(sub, field)
+
+
+@router.delete('/sub-fields/{sub_id}')
+def delete_sub_field(sub_id: int, db: Session = Depends(get_db),
+                     current_user: User = Depends(get_current_user_from_token)):
+    require_user_permission(current_user, 'Delete Book Stock Field', db)
+    sub = db.query(BookStockSubField).filter_by(id=sub_id).first()
+    if not sub:
+        raise HTTPException(404, 'Sub-field not found.')
+    field = _sub_field_parent(db, sub.field_id, current_user)
+    if sub.sub_field_code == LEGACY_CODE:
+        raise HTTPException(400, 'The historical production source cannot be changed.')
+    before = {k: v for k, v in sub_field_response(sub, field).items() if k not in ('created_at', 'updated_at')}
+    sub.status, sub.updated_by = 'Inactive', actor_name(current_user)
+    db.flush()
+    create_audit_log(db, MODULE, 'Delete Book Stock Sub-Field', current_user,
+        entity_type='BookStockSubField', entity_id=sub.id, entity_label=sub.sub_field_name,
+        details={'before': before, 'after': {k: v for k, v in sub_field_response(sub, field).items() if k not in ('created_at', 'updated_at')}})
+    db.commit()
+    return {'id': sub_id, 'detail': 'Sub-field deactivated; historical production is retained.'}

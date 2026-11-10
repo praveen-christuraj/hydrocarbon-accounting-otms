@@ -1,4 +1,4 @@
-"""Pure Book Stock Management calculations (Government Data).
+"""Pure Book Stock Management calculations (Book Data).
 
 No database or FastAPI imports live here so the arithmetic can be unit-tested
 and reused by the API, the bulk uploader and the frontend preview tests.
@@ -8,7 +8,8 @@ Rules
 * Stock is kept **per product**. Nothing in this module ever adds two products
   together in a stock calculation; a product_code is part of every key.
 * ``closing stock = opening stock + production - dispatch + adjustment``.
-* ``production`` of a block is the sum of its fields' production for that day.
+* Main-field production is the sum of its sub-field production.
+* A block's stock and movements are sums of its main-field values for that day.
 * A block's closing stock rolls up into its entity's closing stock.
 * Adjustments are signed: a negative adjustment is deducted, a positive one is
   added. Opening / production / dispatch are non-negative quantities.
@@ -32,7 +33,7 @@ DEFAULT_SETTINGS = {
 SETTING_DESCRIPTIONS = {
     "auto_carry_opening": (
         "Yes: a new day's opening stock is suggested / carried from the previous "
-        "day's closing stock for the same entity, block and product. The value "
+        "day's closing stock for the same entity, block, main field and product. The value "
         "stays editable."
     ),
     "allow_negative_closing": (

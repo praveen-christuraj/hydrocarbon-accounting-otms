@@ -10,7 +10,7 @@ const TOGGLES = [
   {
     key: 'auto_carry_opening',
     label: 'Auto-carry opening stock',
-    description: 'When a new daily entry is created, opening stock defaults to the previous closing stock of the same entity, block and product. The value always remains editable.',
+    description: 'When a new daily entry is created, opening stock defaults to the previous closing stock of the same entity, block, main field and product. The value always remains editable.',
   },
   {
     key: 'allow_negative_closing',

@@ -404,12 +404,14 @@ const jsonResponse = (body, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 
 const apiCalls = []
+const requestBodies = []
 const createdEntries = []
 globalThis.fetch = async (input, init = {}) => {
   const url = typeof input === 'string' ? input : input.url
   const method = (init.method || 'GET').toUpperCase()
   const path = url.replace(/^https?:\/\/[^/]+/, '')
   apiCalls.push(`${method} ${path}`)
+  if (path.startsWith('/book-stock/') && (method === 'POST' || method === 'PUT') && init.body) requestBodies.push({ method, path, body: JSON.parse(init.body) })
   if (path.startsWith('/auth/me')) return jsonResponse(me)
   if (path.startsWith('/auth/logout')) return jsonResponse({ ok: true })
   if (path === '/report-builder/catalog' && method === 'GET') {
@@ -465,10 +467,19 @@ globalThis.fetch = async (input, init = {}) => {
       { id: 1, field_code: 'F1', field_name: 'Field One', entity_code: 'ENT001', block_code: 'BLK001', entity_name: 'Government Entity One', block_name: 'Block One', product_codes: ['OIL', 'GAS'], product_names: ['Crude Oil', 'Natural Gas'], description: '', status: 'Active', updated_by: 'admin', updated_at: now },
       { id: 2, field_code: 'F2', field_name: 'Field Two', entity_code: 'ENT001', block_code: 'BLK001', entity_name: 'Government Entity One', block_name: 'Block One', product_codes: ['OIL'], product_names: ['Crude Oil'], description: '', status: 'Active', updated_by: 'admin', updated_at: now },
     ]
+    const bsSubFields = [
+      { id: 11, field_id: 1, field_code: 'F1', field_name: 'Field One', sub_field_code: 'S1', sub_field_name: 'Sub-field One', entity_code: 'ENT001', block_code: 'BLK001', status: 'Active' },
+      { id: 12, field_id: 2, field_code: 'F2', field_name: 'Field Two', sub_field_code: 'S2', sub_field_name: 'Sub-field Two', entity_code: 'ENT001', block_code: 'BLK001', status: 'Active' },
+    ]
     const bsEntries = [
       { id: 1, entry_date: '2026-10-29', entity_code: 'ENT001', entity_name: 'Government Entity One', block_code: 'BLK001', block_name: 'Block One', product_code: 'OIL', product_name: 'Crude Oil', unit: 'BBL', opening_stock: 1000, production: 300, dispatch: 100, adjustment: -25, closing_stock: 1175, opening_carried: 'No', remarks: 'Opening day', field_productions: [{ id: 1, field_id: 1, field_code: 'F1', field_name: 'Field One', product_code: 'OIL', production_qty: 300 }], created_by: 'admin', updated_by: 'admin', created_at: now, updated_at: now },
       { id: 2, entry_date: '2026-10-29', entity_code: 'ENT001', entity_name: 'Government Entity One', block_code: 'BLK001', block_name: 'Block One', product_code: 'GAS', product_name: 'Natural Gas', unit: 'BBL', opening_stock: 500, production: 80, dispatch: 20, adjustment: 5, closing_stock: 565, opening_carried: 'Yes', remarks: '', field_productions: [{ id: 2, field_id: 1, field_code: 'F1', field_name: 'Field One', product_code: 'GAS', production_qty: 80 }], created_by: 'admin', updated_by: 'admin', created_at: now, updated_at: now },
     ]
+    bsEntries[0].field_stocks = [
+      { field_id: 1, field_code: 'F1', field_name: 'Field One', opening_stock: 1000, production: 300, dispatch: 100, adjustment: -25, closing_stock: 1175, opening_carried: 'No', sub_field_productions: [{ sub_field_id: 11, sub_field_code: 'S1', sub_field_name: 'Sub-field One', production_qty: 300 }] },
+      { field_id: 2, field_code: 'F2', field_name: 'Field Two', opening_stock: 0, production: 0, dispatch: 0, adjustment: 0, closing_stock: 0, opening_carried: 'No', sub_field_productions: [{ sub_field_id: 12, sub_field_code: 'S2', sub_field_name: 'Sub-field Two', production_qty: 0 }] },
+    ]
+    bsEntries[1].field_stocks = [{ field_id: 1, field_code: 'F1', field_name: 'Field One', opening_stock: 500, production: 80, dispatch: 20, adjustment: 5, closing_stock: 565, opening_carried: 'No', sub_field_productions: [{ sub_field_id: 11, sub_field_code: 'S1', sub_field_name: 'Sub-field One', production_qty: 80 }] }]
     const bsTotals = [
       { product_code: 'OIL', product_name: 'Crude Oil', unit: 'BBL', opening_stock: 1000, production: 300, dispatch: 100, adjustment: -25, closing_stock: 1175, block_count: 1, closing_date: '2026-10-29' },
       { product_code: 'GAS', product_name: 'Natural Gas', unit: 'BBL', opening_stock: 500, production: 80, dispatch: 20, adjustment: 5, closing_stock: 565, block_count: 1, closing_date: '2026-10-29' },
@@ -479,7 +490,7 @@ globalThis.fetch = async (input, init = {}) => {
     ]
     if (path === '/book-stock/reference-data') {
       return jsonResponse({
-        products: bsProducts, active_products: bsProducts, fields: bsFields, entities: bsEntities,
+        products: bsProducts, active_products: bsProducts, fields: bsFields, sub_fields: bsSubFields, entities: bsEntities,
         blocks: bsBlocks, entity_blocks: [{ entity_code: 'ENT001', block_code: 'BLK001' }],
         locations: [{ location_code: 'LOC001', location_name: 'Terminal 1' }],
         settings: { auto_carry_opening: 'Yes', allow_negative_closing: 'Yes', allow_negative_adjustment: 'Yes', default_unit: 'BBL', max_active_products: '2' },
@@ -497,6 +508,7 @@ globalThis.fetch = async (input, init = {}) => {
     }
     if (path.startsWith('/book-stock/products')) return jsonResponse(bsProducts)
     if (path.startsWith('/book-stock/fields')) return jsonResponse(bsFields)
+    if (path.startsWith('/book-stock/sub-fields')) return jsonResponse(bsSubFields)
     if (path === '/book-stock/export-operations') {
       return jsonResponse({ total: 1, entities: [{ entity_code: 'ENT001', entity_name: 'Government Entity One', location_names: ['Terminal 1'], block_count: 1, field_count: 2, stock_entry_count: 2, latest_entry_date: '2026-10-29', blocks: [{ block_code: 'BLK001', block_name: 'Block One', field_count: 2, stock_entry_count: 2, latest_entry_date: '2026-10-29' }] }] })
     }
@@ -938,7 +950,8 @@ const check = (name, ok, extra = '') => {
 }
 
 try {
-  window.localStorage.setItem('hydrocarbonAccessToken', 'smoke-token')
+  const { saveAccessToken } = await server.ssrLoadModule('/src/api/authToken.js')
+  saveAccessToken('smoke-token')
   const root = document.createElement('div')
   root.id = 'root'
   document.body.appendChild(root)
@@ -1029,21 +1042,45 @@ try {
     }
 
     if (path === '/book-stock/daily-entries') {
-      const newButton = qa('.main-content button').find((button) => text(button).includes('New Stock Entry'))
+      const newButton = qa('.main-content button').find((button) => text(button).includes('New Entry'))
       check('book stock new-entry button is permission-gated and rendered', Boolean(newButton))
       const editButton = qa('.main-content tbody button').find((button) => text(button) === 'Edit')
       check('book stock entry row is editable without an approval step', Boolean(editButton))
       if (editButton) {
         click(editButton)
         await flush(120)
-        check('book stock entry dialog opens prefilled from the saved row', q('#bs-entry-opening')?.value === '500')
+        check('book stock entry dialog opens prefilled from the saved row', q('#opening-1')?.value === '1000')
         check('field production lines are shown per field', qa('.bs-field-production input').length >= 1)
-        check('edit dialog previews the stored closing stock', text(q('.bs-calculation-preview')).includes('565'))
+        check('edit dialog previews the stored closing stock', text(q('.bs-calculation-preview')).includes('1,175'))
+        setValue(q('#production-1-11'), '320')
+        setValue(q('#dispatch-1'), '110')
+        await flush(80)
+        check('field edit recalculates closing preview', text(q('.bs-calculation-preview')).includes('1,185'))
+        const saveButton = qa('.form-dialog button').find((button) => text(button) === 'Save Entry')
+        click(saveButton)
+        await flush(150)
+        const saved = requestBodies.find((item) => item.method === 'PUT' && item.path.startsWith('/book-stock/daily-entries/'))?.body
+        check('entry submission contains field stock and sub-field production', saved?.field_stocks?.[0]?.dispatch === 110 && saved?.field_stocks?.[0]?.sub_field_productions?.[0]?.production_qty === 320)
         const cancelButton = qa('.form-dialog button').find((button) => text(button) === 'Cancel')
         if (cancelButton) click(cancelButton)
         await flush(80)
-        check('book stock entry dialog closes on Cancel', !q('#bs-entry-opening'))
+        check('book stock entry dialog closes after save', !q('#opening-1'))
       }
+    }
+
+    if (path === '/book-stock/fields') {
+      check('sub-field management is visible', text(q('.main-content')).includes('Sub-field One'))
+      const newSub = qa('.main-content button').find(button => text(button) === 'New Sub-Field')
+      click(newSub)
+      await flush(80)
+      setValue(q('#sub-field-parent'), '1')
+      setValue(q('#sub-field-code'), 'S3')
+      setValue(q('#sub-field-name'), 'Sub-field Three')
+      await flush(80)
+      click(qa('.form-dialog button').find(button => text(button) === 'Save Sub-Field'))
+      await flush(150)
+      const created = requestBodies.find(item => item.method === 'POST' && item.path === '/book-stock/sub-fields')?.body
+      check('sub-field creation submits selected main field', created?.field_id === 1 && created?.sub_field_code === 'S3')
     }
 
     if (path === '/book-stock/dashboard') {

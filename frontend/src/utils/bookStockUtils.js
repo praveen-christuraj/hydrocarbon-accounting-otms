@@ -1,5 +1,5 @@
 /**
- * Book Stock Management — shared UI arithmetic (Government Data).
+ * Book Stock Management — shared UI arithmetic (Book Data).
  *
  * Mirrors the server rules so the data-entry dialog can preview the closing
  * stock before saving:
@@ -7,7 +7,7 @@
  * Products are never added together; every helper keeps product_code in its key.
  */
 
-export const roundQty = (value, digits = 3) => {
+export const roundQty = (value, digits = 6) => {
   const number = Number(value)
   if (!Number.isFinite(number)) return 0
   const factor = 10 ** digits
