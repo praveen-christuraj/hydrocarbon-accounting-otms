@@ -78,7 +78,7 @@ from app.services.report_formula import (
     _compare as compare_values,
 )
 
-# Government Data / Book Stock tables carry entity_code instead of a single
+# Book Data / Book Stock tables carry entity_code instead of a single
 # location_code. The generic table source applies the Export Operations
 # location-to-entity mapping so a location-scoped report never leaks another
 # entity's stock.
@@ -86,6 +86,9 @@ BOOK_STOCK_SCOPED_TABLES = {
     "book_stock_daily_entries",
     "book_stock_field_productions",
     "book_stock_fields",
+    "book_stock_sub_fields",
+    "book_stock_field_stocks",
+    "book_stock_sub_field_productions",
 }
 
 SCAN_CAP = 50_000
@@ -775,6 +778,12 @@ def _load_table_rows(db, user, definition, params, plan, warnings, table_name):
         parent_locations = [name for name, meta in allowed_columns(spec["table"]).items() if meta.get("is_location")]
         if scope is not None and parent_locations:
             subquery = subquery.where(or_(*[func.upper(parent.c[name]).in_([code.upper() for code in scope]) for name in parent_locations]))
+        if scope is not None and spec["table"] in BOOK_STOCK_SCOPED_TABLES:
+            related_entities = allowed_entities if book_stock_scope else _book_stock_entity_codes(db, scope)
+            if "entity_code" not in parent.c or not related_entities:
+                subquery = subquery.where(false())
+            else:
+                subquery = subquery.where(func.upper(parent.c.entity_code).in_([item.upper() for item in related_entities]))
         related_selects.append(subquery.correlate(table).scalar_subquery().label(f"__related_{index}"))
     stmt = select(*[table.c[name] for name in select_names], *related_selects)
     # Export transactions may still contain historical soft-deleted rows. They
@@ -1740,7 +1749,7 @@ def starter_templates() -> list[dict]:
     }
 
     return [
-        {"id": "book-stock-daily", "name": "Book Stock — Daily Stock by Entity, Block & Product", "description": "Government Data Book Stock Management: opening, field production, dispatch, signed adjustment and closing stock per day, entity, block and product. Products stay separate.", "report_type": "TABULAR", "definition": book_stock_daily},
+        {"id": "book-stock-daily", "name": "Book Stock — Daily Stock by Entity, Block & Product", "description": "Book Data Book Stock Management: opening, field production, dispatch, signed adjustment and closing stock per day, entity, block and product. Products stay separate.", "report_type": "TABULAR", "definition": book_stock_daily},
         {"id": "ticket-register", "name": "Operation Ticket Register", "description": "All approved tickets with payload operation dates and accounting dates. Filter by location, operation type and status.", "report_type": "TABULAR", "definition": ticket_register},
         {"id": "gauging-quantities", "name": "Tank Gauging Quantities (payload split)", "description": "GSV / NSV / LT / MT pulled out of the saved Tank Gauging payload JSON, with calculated GSV−NSV and NSV % of GSV columns.", "report_type": "TABULAR", "definition": gauging_quantities},
         {"id": "daily-movements", "name": "Daily Stock Movements by Tank & Operation", "description": "Grouped Tank Stock Ledger movements per accounting day, tank and tank operation, with totals.", "report_type": "TABULAR", "definition": daily_movements},

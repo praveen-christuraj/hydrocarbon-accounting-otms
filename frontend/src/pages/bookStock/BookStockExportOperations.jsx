@@ -102,8 +102,8 @@ function BookStockExportOperations({ loggedInUser }) {
 
       <AlertMessage tone="error" message={error} onDismiss={() => setError('')} />
       <div className="info-box">
-        Entity → Block → Field is the Book Stock hierarchy. An entity and block become available for stock entry once Export
-        Operations has created and mapped them and a field has been registered against that block on the Book Stock Fields page.
+        Entity → Block → Main Field → Sub-Field is the Book Data hierarchy. An entity and block become available for stock entry once Export
+        Operations has created and mapped them and a field has been registered against that block on the Book Stock Main Fields page.
       </div>
 
       <DataTableToolbar

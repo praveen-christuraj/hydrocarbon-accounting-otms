@@ -208,7 +208,7 @@ function BookStockProducts({ loggedInUser }) {
     <div className="book-stock-page">
       <PageHeader
         title="Book Stock Products"
-        description="The two products produced and transported in the Government Data Book Stock stream. Every stock entry, calculation and report is product-specific."
+        description="The two products produced and transported in the Book Data Book Stock stream. Every stock entry, calculation and report is product-specific."
         count={`${activeCount} Active / ${items.length} Products`}
         actions={
           canCreate && (

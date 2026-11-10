@@ -435,7 +435,7 @@ PERMISSION_CATALOG = [
         ],
     },
     {
-        "category": "Government Data",
+        "category": "Book Data",
         "modules": [
             {
                 "module_name": "Book Stock Dashboard",
@@ -673,7 +673,7 @@ _BOOK_STOCK_MODULES = [
     "Book Stock Export Operations",
 ]
 
-# Every "View" permission of the Government Data / Book Stock Management
+# Every "View" permission of the Book Data / Book Stock Management
 # module. Shared reference endpoints (entities, blocks, products, fields)
 # accept any of them, so a data-entry operator does not need the configuration
 # screens' permissions just to fill a dropdown.

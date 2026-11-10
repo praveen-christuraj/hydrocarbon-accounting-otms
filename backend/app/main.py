@@ -128,6 +128,13 @@ async def lifespan(app: FastAPI):
     ensure_report_location_scope_tables()
     ensure_export_operations_tables()
     ensure_book_stock_tables()
+    # The new tables are additive. Historical block balances are left intact;
+    # only reserved source masters are added for identifiable old production.
+    from app.database import SessionLocal
+    from app.routers.book_stock_hierarchy import backfill_legacy_subfields
+    with SessionLocal() as db:
+        backfill_legacy_subfields(db)
+        db.commit()
     ensure_operation_transaction_indexes()
     ensure_asset_calibration_table_indexes()
     ensure_asset_calibration_unique_asset_index()

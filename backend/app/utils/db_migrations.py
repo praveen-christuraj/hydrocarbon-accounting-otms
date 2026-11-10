@@ -1990,7 +1990,7 @@ def ensure_asset_calibration_table_indexes():
 
 
 def ensure_book_stock_tables():
-    """Government Data — Book Stock Management tables + default settings.
+    """Book Data — Book Stock Management tables + default settings.
 
     Idempotent: safe on fresh databases (Base.metadata.create_all already
     created the tables) and on existing installations.

@@ -118,7 +118,7 @@ function BookStockDashboard() {
     <div className="book-stock-page book-stock-dashboard-page">
       <PageHeader
         title="Book Stock Dashboard"
-        description="Government Data stock position per product: field production, block dispatch, signed adjustments and closing stock rolled up to the entity."
+        description="Book Data stock position per product: sub-field production, main-field dispatch, signed adjustments and closing stock rolled up to the entity."
         count={dashboard?.entry_count ? `${dashboard.entry_count} Stock Rows` : undefined}
         actions={
           <>

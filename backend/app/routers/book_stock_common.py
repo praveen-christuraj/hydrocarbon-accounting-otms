@@ -1,4 +1,4 @@
-"""Shared helpers for the Government Data — Book Stock Management routers.
+"""Shared helpers for the Book Data — Book Stock Management routers.
 
 Kept separate from the two routers so the master/reference endpoints and the
 daily-entry/summary endpoints share exactly the same scope, validation and
@@ -39,14 +39,9 @@ from app.services.book_stock_calculations import (
     DEFAULT_SETTINGS,
     PRODUCT_LIMIT,
     SETTING_DESCRIPTIONS,
-    compute_closing_stock,
     is_yes,
     normalize_code,
     round_qty,
-    sum_field_productions,
-    to_float,
-    validate_closing,
-    validate_quantities,
     yes_no,
 )
 from app.utils.default_permissions import BOOK_STOCK_VIEW_PERMISSIONS
@@ -325,6 +320,20 @@ def entry_response(entry: BookStockDailyEntry, db: Session, names: dict | None =
     product = names.get("products", {}).get(code(entry.product_code).casefold())
     if lines is None:
         lines = entry_lines(db, entry.id)
+    from app.routers.book_stock_hierarchy import list_field_stocks, LEGACY_CODE
+    stocks = list_field_stocks(db, entry.id)
+    # Present old field production under a default source, without rewriting it.
+    from app.models import BookStockSubField
+    def legacy_source(line):
+        if stocks:
+            return []
+        field = db.query(BookStockField).filter(BookStockField.id == line.field_id).first() if line.field_id else None
+        if field is None:
+            field = db.query(BookStockField).filter(ci(BookStockField.field_code) == code(line.field_code).casefold()).first()
+        sub = (db.query(BookStockSubField).filter(BookStockSubField.field_id == field.id,
+               ci(BookStockSubField.sub_field_code) == LEGACY_CODE.casefold()).first()) if field else None
+        return [{'sub_field_id': sub.id if sub else None, 'sub_field_code': LEGACY_CODE,
+                 'sub_field_name': 'Historical production', 'production_qty': round_qty(line.production_qty)}]
     return {
         "id": entry.id,
         "entry_date": entry.entry_date,
@@ -342,8 +351,11 @@ def entry_response(entry: BookStockDailyEntry, db: Session, names: dict | None =
         "closing_stock": round_qty(entry.closing_stock),
         "opening_carried": entry.opening_carried or "No",
         "remarks": entry.remarks,
+        "field_stocks": stocks,
+        "legacy_block_entry": not bool(stocks),
         "field_productions": [
             {
+                "sub_field_productions": legacy_source(line),
                 "id": line.id,
                 "field_id": line.field_id,
                 "field_code": line.field_code,
@@ -361,7 +373,9 @@ def entry_response(entry: BookStockDailyEntry, db: Session, names: dict | None =
 
 
 def snapshot(entry: BookStockDailyEntry, db: Session) -> dict:
+    from app.routers.book_stock_hierarchy import list_field_stocks
     return {
+        "field_stocks": list_field_stocks(db, entry.id),
         "id": entry.id,
         "entry_date": entry.entry_date.isoformat() if entry.entry_date else None,
         "entity_code": entry.entity_code,
@@ -423,263 +437,6 @@ def duplicate_entry(
     if exclude_id is not None:
         query = query.filter(BookStockDailyEntry.id != exclude_id)
     return query.first()
-
-
-def validate_field_lines(
-    db: Session,
-    lines: Iterable | None,
-    entity_code: str,
-    block_code: str,
-    product_code: str,
-) -> list[dict]:
-    cleaned: list[dict] = []
-    seen: set[str] = set()
-    for line in lines or []:
-        if isinstance(line, dict):
-            raw_code = line.get("field_code")
-            raw_qty = line.get("production_qty")
-        else:
-            raw_code = getattr(line, "field_code", None)
-            raw_qty = getattr(line, "production_qty", None)
-        field_code = code(raw_code)
-        if not field_code:
-            raise HTTPException(status_code=400, detail="Every production line needs a field code.")
-        key = field_code.casefold()
-        if key in seen:
-            raise HTTPException(status_code=400, detail=f"Field '{field_code}' appears more than once in this entry.")
-        seen.add(key)
-        field = resolve_field(db, field_code, entity_code, block_code)
-        if not field_can_produce(db, field, product_code):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Field '{field.field_code}' does not produce product '{product_code}'. Products are never mixed.",
-            )
-        qty = to_float(raw_qty)
-        if qty < 0:
-            raise HTTPException(status_code=400, detail=f"Production for field '{field.field_code}' cannot be negative.")
-        cleaned.append({"field": field, "production_qty": round_qty(qty)})
-    return cleaned
-
-
-def entry_totals(
-    db: Session,
-    *,
-    entity_code: str,
-    block_code: str,
-    product_code: str,
-    entry_date: date,
-    opening_stock,
-    dispatch,
-    adjustment,
-    carry_opening: bool,
-    field_rows: list[dict],
-    existing: BookStockDailyEntry | None = None,
-    key_changed: bool = False,
-    exclude_id: int | None = None,
-) -> dict:
-    settings = settings_map(db)
-    auto_carry = is_yes(setting_value(settings, "auto_carry_opening", "Yes"))
-    allow_negative_closing = is_yes(setting_value(settings, "allow_negative_closing", "Yes"))
-    allow_negative_adjustment = is_yes(setting_value(settings, "allow_negative_adjustment", "Yes"))
-
-    production = sum_field_productions(field_rows)
-    problems = validate_quantities(
-        opening_stock=opening_stock,
-        production=production,
-        dispatch=dispatch,
-        adjustment=adjustment,
-        allow_negative_adjustment=allow_negative_adjustment,
-    )
-    if problems:
-        raise HTTPException(status_code=400, detail=" ".join(problems))
-
-    carried = "No"
-    previous = None
-    if opening_stock is None:
-        previous = previous_entry(db, entity_code, block_code, product_code, entry_date, exclude_id=exclude_id)
-        if auto_carry and previous is not None and carry_opening:
-            opening = round_qty(previous.closing_stock)
-            carried = "Yes"
-        elif existing is not None and not key_changed:
-            opening = round_qty(existing.opening_stock)
-        else:
-            opening = 0.0
-    else:
-        opening = round_qty(opening_stock)
-
-    closing = compute_closing_stock(opening, production, dispatch, adjustment)
-    closing_problems = validate_closing(closing, allow_negative_closing=allow_negative_closing)
-    if closing_problems:
-        raise HTTPException(status_code=400, detail=" ".join(closing_problems))
-
-    return {
-        "opening_stock": opening,
-        "production": production,
-        "dispatch": round_qty(dispatch),
-        "adjustment": round_qty(adjustment),
-        "closing_stock": closing,
-        "opening_carried": carried,
-        "previous": previous,
-    }
-
-
-def write_field_rows(db: Session, entry: BookStockDailyEntry, field_rows: list[dict]) -> None:
-    for row in field_rows:
-        field: BookStockField = row["field"]
-        db.add(
-            BookStockFieldProduction(
-                entry_id=entry.id,
-                field_id=field.id,
-                field_code=field.field_code,
-                field_name=field.field_name,
-                entity_code=entry.entity_code,
-                block_code=entry.block_code,
-                product_code=entry.product_code,
-                production_qty=row["production_qty"],
-            )
-        )
-
-
-def create_entry(db: Session, payload, current_user: User) -> BookStockDailyEntry:
-    codes = visible_entity_codes(current_user, db)
-    entity = resolve_entity(db, payload.entity_code, current_user, codes)
-    block = resolve_block(db, entity, payload.block_code)
-    product = resolve_product(db, payload.product_code)
-
-    if duplicate_entry(db, entity.entity_code, block.block_code, product.product_code, payload.entry_date):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"A {product.product_code} stock entry already exists for block {block.block_code} "
-                f"on {payload.entry_date.isoformat()}. Edit that row instead."
-            ),
-        )
-
-    field_rows = validate_field_lines(
-        db, payload.field_productions, entity.entity_code, block.block_code, product.product_code
-    )
-    totals = entry_totals(
-        db,
-        entity_code=entity.entity_code,
-        block_code=block.block_code,
-        product_code=product.product_code,
-        entry_date=payload.entry_date,
-        opening_stock=payload.opening_stock,
-        dispatch=payload.dispatch,
-        adjustment=payload.adjustment,
-        carry_opening=payload.carry_opening,
-        field_rows=field_rows,
-        key_changed=True,
-    )
-
-    entry = BookStockDailyEntry(
-        entry_date=payload.entry_date,
-        entity_code=entity.entity_code,
-        block_code=block.block_code,
-        product_code=product.product_code,
-        opening_stock=totals["opening_stock"],
-        production=totals["production"],
-        dispatch=totals["dispatch"],
-        adjustment=totals["adjustment"],
-        closing_stock=totals["closing_stock"],
-        opening_carried=totals["opening_carried"],
-        remarks=(payload.remarks or "").strip() or None,
-        created_by=actor_name(current_user),
-        updated_by=actor_name(current_user),
-    )
-    db.add(entry)
-    db.flush()
-    write_field_rows(db, entry, field_rows)
-    db.flush()
-    recalculate_carried_chain(db, entry.entity_code, entry.block_code, entry.product_code, current_user)
-
-    previous = totals.get("previous")
-    create_audit_log(
-        db,
-        MODULE,
-        "Create Book Stock Entry",
-        current_user,
-        entity_type="BookStockDailyEntry",
-        entity_id=entry.id,
-        entity_label=f"{entry.entry_date.isoformat()} · {entry.entity_code} / {entry.block_code} / {entry.product_code}",
-        remarks=entry.remarks,
-        details={
-            "after": snapshot(entry, db),
-            "opening_source": (
-                f"Previous day closing ({previous.entry_date.isoformat()})"
-                if totals["opening_carried"] == "Yes" and previous is not None
-                else "Entered / default"
-            ),
-        },
-    )
-    return entry
-
-
-def recalculate_carried_chain(
-    db: Session,
-    entity_code: str,
-    block_code: str,
-    product_code: str,
-    current_user: User,
-) -> list[dict]:
-    """Re-flow auto-carried opening stock after an entry is created, edited or deleted.
-
-    The module stores a daily closing stock per entity + block + product, so an
-    earlier correction must keep every later *auto-carried* opening in step.
-    Entries whose opening was entered manually (``opening_carried = 'No'``) are
-    never overwritten; they keep their own opening and simply become the new
-    starting point for the next carried day. Each changed row is audited on its
-    own so the roll-forward is traceable even though the user only edited one
-    date.
-    """
-    settings = settings_map(db)
-    allow_negative_closing = is_yes(setting_value(settings, "allow_negative_closing", "Yes"))
-    rows = (
-        db.query(BookStockDailyEntry)
-        .filter(
-            ci(BookStockDailyEntry.entity_code) == code(entity_code).casefold(),
-            ci(BookStockDailyEntry.block_code) == code(block_code).casefold(),
-            ci(BookStockDailyEntry.product_code) == code(product_code).casefold(),
-        )
-        .order_by(BookStockDailyEntry.entry_date.asc(), BookStockDailyEntry.id.asc())
-        .all()
-    )
-    changed: list[dict] = []
-    previous_closing = None
-    for row in rows:
-        if previous_closing is not None and str(row.opening_carried or "").strip().casefold() == "yes":
-            new_opening = round_qty(previous_closing)
-            new_closing = compute_closing_stock(new_opening, row.production, row.dispatch, row.adjustment)
-            if round_qty(row.opening_stock) != new_opening or round_qty(row.closing_stock) != new_closing:
-                problems = validate_closing(new_closing, allow_negative_closing=allow_negative_closing)
-                if problems:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=(
-                            f"Carrying the corrected closing stock forward would make "
-                            f"{row.entry_date.isoformat()} negative. " + " ".join(problems)
-                        ),
-                    )
-                before = snapshot(row, db)
-                row.opening_stock = new_opening
-                row.closing_stock = new_closing
-                row.updated_by = actor_name(current_user)
-                db.flush()
-                after = snapshot(row, db)
-                create_audit_log(
-                    db,
-                    MODULE,
-                    "Recalculate Book Stock Entry",
-                    current_user,
-                    entity_type="BookStockDailyEntry",
-                    entity_id=row.id,
-                    entity_label=f"{row.entry_date.isoformat()} · {row.entity_code} / {row.block_code} / {row.product_code}",
-                    remarks=row.remarks,
-                    details={"trigger": "Auto-carried opening roll-forward", "before": before, "after": after},
-                )
-                changed.append({"id": row.id, "entry_date": row.entry_date.isoformat(), "before": before, "after": after})
-        previous_closing = row.closing_stock
-    return changed
 
 
 def entry_query(

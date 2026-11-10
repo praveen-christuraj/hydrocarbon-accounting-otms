@@ -146,7 +146,7 @@ def _product(client, headers, code, name, unit="BBL", status="Active"):
     return response.json()
 
 
-def _field(client, headers, code, name, entity="ENT1", block="B1", products=("OIL",)):
+def _field(client, headers, code, name, entity="ENT1", block="B1", products=("OIL",), create_default=True):
     response = client.post(
         "/book-stock/fields",
         headers=headers,
@@ -160,7 +160,12 @@ def _field(client, headers, code, name, entity="ENT1", block="B1", products=("OI
         },
     )
     assert response.status_code == 200, response.text
-    return response.json()
+    field = response.json()
+    if create_default:
+        sub = client.post('/book-stock/sub-fields', headers=headers, json={
+            'field_id': field['id'], 'sub_field_code': 'S1', 'sub_field_name': 'Source One'})
+        assert sub.status_code == 200, sub.text
+    return field
 
 
 def _entry(client, headers, **overrides):
@@ -175,7 +180,23 @@ def _entry(client, headers, **overrides):
         "field_productions": [{"field_code": "F1", "production_qty": 300}],
     }
     payload.update(overrides)
-    return client.post("/book-stock/daily-entries", headers=headers, json=payload)
+    reference = client.get('/book-stock/reference-data', headers=headers).json()
+    field_lines = payload.pop('field_productions')
+    available = [f for f in reference['fields'] if f['entity_code'] == payload['entity_code']
+                 and f['block_code'] == payload['block_code'] and payload['product_code'] in f['product_codes']]
+    field_stocks = []
+    for field in available:
+        subs = [sub for sub in reference['sub_fields'] if sub['field_id'] == field['id']]
+        qty = next((line['production_qty'] for line in field_lines if line['field_code'] == field['field_code']), 0)
+        field_stocks.append({'field_id': field['id'], 'opening_stock': payload['opening_stock'],
+            'dispatch': payload['dispatch'], 'adjustment': payload['adjustment'],
+            'sub_field_productions': [{'sub_field_id': sub['id'], 'production_qty': qty} for sub in subs]})
+    if any(line['field_code'] not in [f['field_code'] for f in available] for line in field_lines):
+        field_stocks.append({'field_id': -1, 'sub_field_productions': []})
+    payload['field_stocks'] = field_stocks
+    for key in ('opening_stock', 'dispatch', 'adjustment'):
+        payload.pop(key, None)
+    return client.post('/book-stock/daily-entries', headers=headers, json=payload)
 
 
 # ---------------------------------------------------------------------------
@@ -256,8 +277,8 @@ def test_book_stock_end_to_end_flow(client, db):
     edited = client.put(
         f"/book-stock/daily-entries/{day1['id']}",
         headers=headers,
-        json={"opening_stock": 900, "dispatch": 100,
-              "field_productions": [{"field_code": "F1", "production_qty": 350}]},
+        json={"field_stocks": [{"field_id": day1['field_stocks'][0]['field_id'], "opening_stock": 900, "dispatch": 100,
+              "sub_field_productions": [{"sub_field_id": day1['field_stocks'][0]['sub_field_productions'][0]['sub_field_id'], "production_qty": 350}]}]},
     )
     assert edited.status_code == 200, edited.text
     assert edited.json()["closing_stock"] == 1150
@@ -395,8 +416,8 @@ def test_rbac_and_entity_scope(client, db):
         headers=operator_headers,
         json={
             "entry_date": "2026-01-02", "entity_code": "ENT1", "block_code": "B1",
-            "product_code": "OIL", "opening_stock": None,
-            "field_productions": [{"field_code": "F1", "production_qty": 5}],
+            "product_code": "OIL", "field_stocks": [{"field_id": 1, "opening_stock": None,
+            "sub_field_productions": [{"sub_field_id": 1, "production_qty": 5}]}],
         },
     )
     assert inside.status_code == 200, inside.text
@@ -408,7 +429,8 @@ def test_bulk_upload_is_partial_and_reports_each_row(client, db):
     headers, _ = _login(client, db)
     _product(client, headers, "OIL", "Crude Oil")
     _product(client, headers, "GAS", "Associated Gas")
-    _field(client, headers, "F1", "Field One", products=("OIL",))
+    field = _field(client, headers, "F1", "Field One", products=("OIL",))
+    sub_id = client.get('/book-stock/sub-fields', headers=headers).json()[0]['id']
 
     response = client.post(
         "/book-stock/daily-entries/bulk-upload",
@@ -416,12 +438,12 @@ def test_bulk_upload_is_partial_and_reports_each_row(client, db):
         json={
             "items": [
                 {"entry_date": "2026-03-01", "entity_code": "ENT1", "block_code": "B1",
-                 "product_code": "OIL", "opening_stock": 100, "dispatch": 10, "adjustment": 5,
-                 "field_productions": "F1=50"},
+                 "product_code": "OIL", "field_stocks": [{"field_id": field['id'], "opening_stock": 100, "dispatch": 10, "adjustment": 5,
+                 "sub_field_productions": [{"sub_field_id": sub_id, "production_qty": 50}]}]},
                 {"entry_date": "2026-03-01", "entity_code": "ENT1", "block_code": "B1",
-                 "product_code": "OIL", "opening_stock": 100, "field_productions": "F1=20"},
+                 "product_code": "OIL", "field_stocks": [{"field_id": field['id'], "opening_stock": 100, "sub_field_productions": [{"sub_field_id": sub_id, "production_qty": 20}]}]},
                 {"entry_date": "2026-03-02", "entity_code": "ENT1", "block_code": "B1",
-                 "product_code": "GAS", "opening_stock": 1, "field_productions": "F1=20"},
+                 "product_code": "GAS", "field_stocks": [{"field_id": field['id'], "opening_stock": 1, "sub_field_productions": [{"sub_field_id": sub_id, "production_qty": 20}]}]},
             ]
         },
     )
@@ -431,7 +453,7 @@ def test_bulk_upload_is_partial_and_reports_each_row(client, db):
     assert body["failed"] == 2
     messages = [row["message"] for row in body["results"]]
     assert any("already exists" in message for message in messages)
-    assert any("does not produce" in message for message in messages)
+    assert any("active main field" in message for message in messages)
 
     saved = db.query(BookStockDailyEntry).one()
     assert saved.production == 50
@@ -461,7 +483,7 @@ def test_reference_data_exposes_only_the_export_configuration_used(client, db):
 
 def test_report_builder_lists_book_stock_tables_and_starter():
     assert TABLE_LABELS["book_stock_daily_entries"] == "Book Stock — Daily Stock Entries"
-    group = dict(TABLE_GROUPS)["Government Data — Book Stock"]
+    group = dict(TABLE_GROUPS)["Book Data — Book Stock"]
     assert "book_stock_daily_entries" in group
     assert "book_stock_field_productions" in group
 
@@ -501,7 +523,8 @@ def test_earlier_edit_rolls_forward_only_auto_carried_days(client, db):
     edited = client.put(
         f"/book-stock/daily-entries/{first['id']}",
         headers=headers,
-        json={"opening_stock": 900},
+        json={"field_stocks": [{"field_id": first['field_stocks'][0]['field_id'], "opening_stock": 900,
+              "dispatch": 100, "sub_field_productions": [{"sub_field_id": first['field_stocks'][0]['sub_field_productions'][0]['sub_field_id'], "production_qty": 300}]}]},
     )
     assert edited.status_code == 200, edited.text
     assert edited.json()["closing_stock"] == 1100
@@ -517,5 +540,5 @@ def test_earlier_edit_rolls_forward_only_auto_carried_days(client, db):
 
     roll_forwards = db.query(AuditLog).filter(AuditLog.action == "Recalculate Book Stock Entry").all()
     assert len(roll_forwards) == 1
-    assert roll_forwards[0].details["before"]["opening_stock"] == 1200
-    assert roll_forwards[0].details["after"]["opening_stock"] == 1100
+    assert roll_forwards[0].details["before"][0]["opening_stock"] == 1200
+    assert roll_forwards[0].details["after"][0]["opening_stock"] == 1100
