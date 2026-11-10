@@ -64,6 +64,7 @@ const convertGroupFromApi = (g) => ({
   transferOutBbl: Number(g.transfer_out_bbl || 0),
   netReceiptBbl: Number(g.net_receipt_bbl || 0),
   netDischargeBbl: Number(g.net_discharge_bbl || 0),
+  pendingTickets: g.pending_tickets || [],
   tickets: (g.tickets || []).map(convertTicketFromApi).filter(Boolean),
 })
 

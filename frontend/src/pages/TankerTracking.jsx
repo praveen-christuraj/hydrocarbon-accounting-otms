@@ -1105,10 +1105,13 @@ function TankerTracking({
 
                     {acked && (
                       <>
+                        {g.linkedReceiverTicketNumber && (
+                          <p role="status">Receiving ticket {g.linkedReceiverTicketNumber} already exists (status: {g.linkedReceiverStatus}).</p>
+                        )}
                         <button
                           type="button"
                           onClick={() => handleCreateReceiverEntry(g)}
-                          disabled={loading || !canCreateReceivingTicket}
+                          disabled={loading || !canCreateReceivingTicket || Boolean(g.linkedReceiverTicketNumber)}
                           title={
                             !canCreateReceivingTicket
                               ? 'You do not have permission to create receiver entry'

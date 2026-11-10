@@ -707,6 +707,31 @@ def get_shuttle_tracking(
                 "net_discharge_bbl": 0.0,
             })
 
+    # Keep the approved timeline and totals unchanged, but expose in-progress
+    # tickets separately so operators can check them before starting a stage.
+    pending = (
+        db.query(OperationTransaction, OperationTransactionValue)
+        .join(OperationTransactionValue, OperationTransactionValue.transaction_id == OperationTransaction.id)
+        .filter(
+            OperationTransactionValue.field_code == "shuttle_payload",
+            OperationTransaction.status.in_(["Draft", "Submitted", "Under Review", "Rejected"]),
+            or_(*key_filters),
+        ).order_by(OperationTransaction.id.asc()).all()
+    )
+    rows_by_key = {row["group_key"]: row for row in rows}
+    for tx, value in pending:
+        key = f"{tx.origin_location_code}|{tx.convoy_number}|{tx.primary_asset_code}"
+        payload = value.field_value if isinstance(value.field_value, dict) else {}
+        meta = payload.get("meta") or {}
+        if key in rows_by_key:
+            rows_by_key[key].setdefault("pending_tickets", []).append({
+                "transaction_id": tx.id,
+                "ticket_number": get_transaction_ticket_number(tx),
+                "status": tx.status,
+                "operation_code": meta.get("vessel_operation_code") or "",
+                "operation_label": meta.get("vessel_operation_label") or "",
+            })
+
     if not include_tickets:
         for row in rows:
             row["tickets"] = []

@@ -1046,6 +1046,7 @@ class ShuttleTrackingGroupResponse(BaseModel):
     transfer_in_bbl: float = 0
     transfer_out_bbl: float = 0
 
+    pending_tickets: list[dict] = []
     tickets: list[ShuttleTrackingTicketResponse] = []
 
 
@@ -2394,6 +2395,8 @@ class TankerTrackingGroupResponse(BaseModel):
     sender_ticket: Optional[TankerTrackingTicketResponse] = None
     receiver_tickets: list[TankerTrackingTicketResponse] = []
     latest_receiver_ticket: Optional[TankerTrackingTicketResponse] = None
+    linked_receiver_ticket_number: Optional[str] = None
+    linked_receiver_status: Optional[str] = None
 
     acknowledgement_id: Optional[int] = None
     acknowledged_by: Optional[str] = None

@@ -1309,6 +1309,18 @@ function ShuttleTracking({
                 {/* Quick stages */}
                 <div className="info-box compact-card">
                   <strong>Quick Stages</strong>
+                  {(selectedGroup.pendingTickets || []).length > 0 && (
+                    <div className="info-box" role="status">
+                      <strong>Existing tickets in this voyage — check before creating another:</strong>
+                      <ul>
+                        {selectedGroup.pendingTickets.map((ticket) => (
+                          <li key={ticket.transaction_id}>
+                            {ticket.ticket_number}: {ticket.operation_label || ticket.operation_code || 'Operation'} — {ticket.status}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                   <div className="stage-wrap">
                     {stageOps.length === 0 ? (
                       <span>No Tracking operations configured in Vessel Operation Master.</span>
