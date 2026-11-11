@@ -662,8 +662,18 @@ const server = http.createServer(async (req, res) => {
   }
 
   /* ------------------------------------------------------------ auth */
-  if (pathname === '/auth/me' || pathname === '/auth/refresh') {
+  if (pathname === '/auth/me') {
     sendJson(res, 200, { user: mockUser })
+    return
+  }
+
+  if (pathname === '/auth/refresh' || pathname === '/auth/session') {
+    sendJson(res, 200, {
+      authenticated: true,
+      access_token: 'mock-token',
+      token_type: 'bearer',
+      user: mockUser,
+    })
     return
   }
 

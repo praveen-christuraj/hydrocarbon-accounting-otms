@@ -8,6 +8,7 @@ from app.schemas import AuditLogResponse
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import require_user_permission
 from app.services.audit_service import build_audit_log_response
+from app.utils.helpers import escape_like
 
 router = APIRouter(prefix="/audit-logs", tags=["Audit Logs"])
 

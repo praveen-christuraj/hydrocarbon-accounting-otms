@@ -1,5 +1,11 @@
 import { apiPost, apiGet } from './apiClient'
-import { clearAccessToken, getStoredAccessToken, saveAccessToken } from './authToken'
+import {
+  clearAccessToken,
+  getStoredAccessToken,
+  isAccessTokenExpiringSoon,
+  notifySessionExpired,
+  saveAccessToken,
+} from './authToken'
 
 const convertLoggedInUserFromApi = (data) => {
   const user = data.user || data
@@ -96,37 +102,112 @@ export const requestPasswordReset = async (username, reason = '', reset2FA = fal
   return data
 }
 
-export const getCurrentUser = async () => {
-  let token = getStoredAccessToken()
-  if (!token) {
-    const refreshed = await refreshAccessToken()
-    if (refreshed) token = getStoredAccessToken()
-  }
-  if (!token) {
-    return null
-  }
+// Single-flight state shared by startup session bootstrap (/auth/session) and
+// mid-session token renewal (/auth/refresh). The backend rotates the HttpOnly
+// refresh cookie on every call and treats a replay of a rotated cookie as
+// theft, so two concurrent rotations in the same tab (for example React
+// StrictMode double-invoking mount effects, or parallel 401 retries) must
+// never race on the wire.
+let cookieRotationInFlight = null
+let currentUserInFlight = null
 
-  try {
-    const data = await apiGet('/auth/me')
-    return convertLoggedInUserFromApi(data)
-  } catch {
-    clearAccessToken()
-    return null
+export const waitForPendingTokenRefresh = async () => {
+  if (cookieRotationInFlight) {
+    await cookieRotationInFlight
   }
 }
 
-export const refreshAccessToken = async () => {
-  try {
-    // The refresh token travels only in the HttpOnly cookie.
-    const data = await apiPost('/auth/refresh', {})
-    if (data.access_token) {
-      saveAccessToken(data.access_token)
-    }
-    return Boolean(data.access_token)
-  } catch {
-    clearAccessToken()
-    return false
+const runSessionCookieBootstrap = () => {
+  if (!cookieRotationInFlight) {
+    cookieRotationInFlight = (async () => {
+      try {
+        const data = await apiPost('/auth/session', {})
+        if (data?.authenticated && data.access_token) {
+          saveAccessToken(data.access_token)
+          return data
+        }
+        clearAccessToken()
+        return null
+      } catch {
+        clearAccessToken()
+        return null
+      } finally {
+        cookieRotationInFlight = null
+      }
+    })()
   }
+  return cookieRotationInFlight
+}
+
+export const getCurrentUser = () => {
+  if (currentUserInFlight) {
+    return currentUserInFlight
+  }
+
+  currentUserInFlight = (async () => {
+    try {
+      const existingToken = getStoredAccessToken()
+      if (existingToken && !isAccessTokenExpiringSoon()) {
+        try {
+          const data = await apiGet('/auth/me')
+          return convertLoggedInUserFromApi(data)
+        } catch {
+          clearAccessToken()
+          return null
+        }
+      }
+
+      const sessionResult = await runSessionCookieBootstrap()
+      if (!sessionResult || !getStoredAccessToken()) {
+        return null
+      }
+
+      if (sessionResult.user) {
+        return convertLoggedInUserFromApi(sessionResult)
+      }
+      const me = await apiGet('/auth/me')
+      return convertLoggedInUserFromApi(me)
+    } catch {
+      clearAccessToken()
+      return null
+    } finally {
+      currentUserInFlight = null
+    }
+  })()
+
+  return currentUserInFlight
+}
+
+export const refreshAccessToken = () => {
+  if (cookieRotationInFlight) {
+    return cookieRotationInFlight.then(() => {
+      const ok = Boolean(getStoredAccessToken())
+      if (!ok) {
+        notifySessionExpired()
+      }
+      return ok
+    })
+  }
+
+  cookieRotationInFlight = (async () => {
+    try {
+      // The refresh token travels only in the HttpOnly cookie.
+      const data = await apiPost('/auth/refresh', {})
+      if (data.access_token) {
+        saveAccessToken(data.access_token)
+      }
+      return Boolean(data.access_token)
+    } catch {
+      clearAccessToken()
+      // Let App return to the login screen instead of keeping a dead
+      // authenticated shell that keeps firing 401s.
+      notifySessionExpired()
+      return false
+    } finally {
+      cookieRotationInFlight = null
+    }
+  })()
+  return cookieRotationInFlight
 }
 
 export const logoutUser = async () => {

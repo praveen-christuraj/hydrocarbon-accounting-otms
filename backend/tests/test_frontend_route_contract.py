@@ -98,3 +98,17 @@ def test_backup_module_routes():
     _assert_route("POST", "/backup/restore-requests/{request_id}/validate")
     _assert_route("POST", "/backup/restore-requests/{request_id}/execute")
     _assert_route("GET", "/backup/restore-requests/{request_id}/validations")
+
+
+def test_auth_and_prime_mover_tanker_link_routes():
+    """frontend/src/api/authApi.js + primeMoverTankerLinkApi.js paths."""
+    _assert_route("POST", "/auth/login")
+    _assert_route("POST", "/auth/refresh")
+    _assert_route("POST", "/auth/session")
+    _assert_route("GET", "/auth/me")
+    _assert_route("GET", "/prime-mover-tanker-links")
+    _assert_route("GET", "/prime-mover-tanker-links/current-by-prime-mover/{prime_mover_asset_code}")
+    _assert_route("POST", "/prime-mover-tanker-links")
+    _assert_route("PUT", "/prime-mover-tanker-links/{link_id}")
+    _assert_route("POST", "/prime-mover-tanker-links/{link_id}/close")
+    _assert_route("DELETE", "/prime-mover-tanker-links/{link_id}")

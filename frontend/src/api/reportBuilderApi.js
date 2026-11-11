@@ -1,6 +1,11 @@
-import { apiDelete, apiGet, apiPost, apiPut, API_BASE_URL } from './apiClient'
-import { clearAccessToken, getStoredAccessToken } from './authToken'
-import { refreshAccessToken } from './authApi'
+import { apiDelete, apiGet, apiPost, apiPut, API_BASE_URL, formatApiError } from './apiClient'
+import {
+  SESSION_EXPIRED_MESSAGE,
+  clearAccessToken,
+  getStoredAccessToken,
+  isAccessTokenExpiringSoon,
+} from './authToken'
+import { refreshAccessToken, waitForPendingTokenRefresh } from './authApi'
 
 /** Report Builder (Configurations) + Custom Reports (Reporting) API. */
 
@@ -104,10 +109,19 @@ export const runMyReport = async (reportId, run = {}) => {
 /** POST download (server export of the full result set), with token refresh. */
 export const exportMyReport = async (reportId, run = {}, format = 'xlsx') => {
   const endpoint = `/report-builder/my-reports/${reportId}/export`
+  await waitForPendingTokenRefresh()
+  if (getStoredAccessToken() && isAccessTokenExpiringSoon()) {
+    const refreshed = await refreshAccessToken()
+    if (!refreshed) {
+      throw new Error(SESSION_EXPIRED_MESSAGE)
+    }
+  }
+
   const doFetch = () => {
     const token = getStoredAccessToken()
     return fetch(`${API_BASE_URL}${endpoint}`, {
       method: 'POST',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -121,7 +135,7 @@ export const exportMyReport = async (reportId, run = {}, format = 'xlsx') => {
     const refreshed = await refreshAccessToken()
     if (!refreshed) {
       clearAccessToken()
-      throw new Error('Session expired. Please login again.')
+      throw new Error(SESSION_EXPIRED_MESSAGE)
     }
     response = await doFetch()
   }
@@ -129,7 +143,7 @@ export const exportMyReport = async (reportId, run = {}, format = 'xlsx') => {
     let message = 'Export failed'
     try {
       const data = await response.json()
-      message = data?.detail || message
+      message = formatApiError(data) || message
     } catch {
       // keep generic message
     }
