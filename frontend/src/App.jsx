@@ -89,6 +89,7 @@ import BookStockExportOperations from './pages/bookStock/BookStockExportOperatio
 import BookStockSettings from './pages/bookStock/BookStockSettings'
 
 import { getCurrentUser, logoutUser } from './api/authApi'
+import { SESSION_EXPIRED_EVENT, isSessionExpiredError } from './api/authToken'
 import { PASSWORD_CHANGE_REQUIRED_EVENT } from './api/apiClient'
 import AppShell from './components/layout/AppShell'
 import Modal from './components/common/Modal'
@@ -1352,13 +1353,36 @@ function App() {
     return () => window.removeEventListener(PASSWORD_CHANGE_REQUIRED_EVENT, handler)
   }, [])
 
+  // When a session cannot be refreshed (refresh cookie expired or revoked),
+  // return to the login screen once instead of keeping the authenticated shell
+  // mounted and firing 401s on every loader and background poller.
+  useEffect(() => {
+    const handler = () => {
+      setLoggedInUser((prev) => {
+        if (prev) {
+          toast.warning('Your session has expired. Please sign in again.', {
+            title: 'Session expired',
+          })
+        }
+        return null
+      })
+    }
+    window.addEventListener(SESSION_EXPIRED_EVENT, handler)
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, handler)
+  }, [toast])
+
+  const reportLoadFailure = (error, message) => {
+    if (isSessionExpiredError(error)) return
+    console.error(error)
+    toast.error(message, { title: 'Loading failed' })
+  }
+
   const reloadUsers = async () => {
     try {
       const usersFromApi = await getUsers({ limit: 200 })
       setUsers(usersFromApi.items)
     } catch (error) {
-      console.error('reloadUsers failed:', error.message)
-      toast.error('Unable to load users from the server.', { title: 'Loading failed' })
+      reportLoadFailure(error, 'Unable to load users from the server.')
     }
   }
 
@@ -1367,8 +1391,7 @@ function App() {
       const rolesFromApi = await getRoles()
       setRoles(rolesFromApi.items)
     } catch (error) {
-      console.error(error)
-      toast.error('Unable to load roles from the server.', { title: 'Loading failed' })
+      reportLoadFailure(error, 'Unable to load roles from the server.')
     }
   }
 
@@ -1377,8 +1400,7 @@ function App() {
       const permissionsFromApi = await getAllPermissions()
       setPermissions(permissionsFromApi.items)
     } catch (error) {
-      console.error(error)
-      toast.error('Unable to load permissions from the server.', { title: 'Loading failed' })
+      reportLoadFailure(error, 'Unable to load permissions from the server.')
     }
   }
 
@@ -1387,8 +1409,7 @@ function App() {
       const rolePermissionsFromApi = await getAllRolePermissions()
       setRolePermissionAssignments(rolePermissionsFromApi)
     } catch (error) {
-      console.error(error)
-      toast.error('Unable to load role permissions from the server.', { title: 'Loading failed' })
+      reportLoadFailure(error, 'Unable to load role permissions from the server.')
     }
   }
 
@@ -1397,8 +1418,7 @@ function App() {
       const userRoleAssignmentsFromApi = await getUserRoleAssignments()
       setUserRoleAssignments(userRoleAssignmentsFromApi)
     } catch (error) {
-      console.error(error)
-      toast.error('Unable to load user role assignments from the server.', { title: 'Loading failed' })
+      reportLoadFailure(error, 'Unable to load user role assignments from the server.')
     }
   }
 
@@ -1407,7 +1427,9 @@ function App() {
       const assignmentsFromApi = await getUserLocationAssignments()
       setUserLocationAssignments(assignmentsFromApi)
     } catch (error) {
-      console.error('reloadUserLocationAssignments failed:', error.message)
+      if (!isSessionExpiredError(error)) {
+        console.error('reloadUserLocationAssignments failed:', error.message)
+      }
     }
   }
 
@@ -1416,7 +1438,9 @@ function App() {
       const summariesFromApi = await getUserLocationSummaries()
       setUserLocationSummaries(summariesFromApi)
     } catch (error) {
-      console.error('reloadUserLocationSummaries failed:', error.message)
+      if (!isSessionExpiredError(error)) {
+        console.error('reloadUserLocationSummaries failed:', error.message)
+      }
     }
   }
 
@@ -1425,8 +1449,7 @@ function App() {
       const locationsFromApi = await getLocations()
       setLocations(locationsFromApi.items)
     } catch (error) {
-      console.error(error)
-      toast.error('Unable to load locations from the server.', { title: 'Loading failed' })
+      reportLoadFailure(error, 'Unable to load locations from the server.')
     }
   }
 
@@ -1435,27 +1458,29 @@ function App() {
       const assetTypesFromApi = await getAssetTypes()
       setAssetTypes(assetTypesFromApi.items)
     } catch (error) {
-      console.error(error)
-      toast.error('Unable to load asset types from the server.', { title: 'Loading failed' })
+      reportLoadFailure(error, 'Unable to load asset types from the server.')
     }
   }
 
   const reloadAssets = async () => {
     const [assetResult, calibrationResult, assignmentResult] = await Promise.allSettled([
       getAssets(),
-      getAssetCalibrationTables(),
-      getAssetAssignments(),
+      hasPermission('View Asset Calibration') ? getAssetCalibrationTables() : Promise.resolve(null),
+      hasPermission('View Asset Assignment') ? getAssetAssignments() : Promise.resolve(null),
     ])
     if (assetResult.status === 'fulfilled') {
       setAssets(assetResult.value.items)
     } else {
-      console.error(assetResult.reason)
-      toast.error('Unable to load assets from the server.', { title: 'Loading failed' })
+      reportLoadFailure(assetResult.reason, 'Unable to load assets from the server.')
     }
     // These linked datasets may be hidden by the actor's own view permissions;
     // refresh whichever are loaded without blocking the asset master refresh.
-    if (calibrationResult.status === 'fulfilled') setCalibrationTables(calibrationResult.value)
-    if (assignmentResult.status === 'fulfilled') setAssetAssignments(assignmentResult.value)
+    if (calibrationResult.status === 'fulfilled' && calibrationResult.value !== null) {
+      setCalibrationTables(calibrationResult.value)
+    }
+    if (assignmentResult.status === 'fulfilled' && assignmentResult.value !== null) {
+      setAssetAssignments(assignmentResult.value)
+    }
   }
 
   const reloadAssetAssignments = async () => {
@@ -1463,8 +1488,7 @@ function App() {
       const assignmentsFromApi = await getAssetAssignments()
       setAssetAssignments(assignmentsFromApi)
     } catch (error) {
-      console.error(error)
-      toast.error('Unable to load asset assignments from the server.', { title: 'Loading failed' })
+      reportLoadFailure(error, 'Unable to load asset assignments from the server.')
     }
   }
 
@@ -1473,8 +1497,7 @@ function App() {
       const templatesFromApi = await getCalibrationTemplates()
       setCalibrationTemplates(templatesFromApi)
     } catch (error) {
-      console.error(error)
-      toast.error('Unable to load calibration templates from the server.', { title: 'Loading failed' })
+      reportLoadFailure(error, 'Unable to load calibration templates from the server.')
     }
   }
 
@@ -1483,8 +1506,7 @@ function App() {
       const tablesFromApi = await getAssetCalibrationTables()
       setCalibrationTables(tablesFromApi)
     } catch (error) {
-      console.error(error)
-      toast.error('Unable to load asset calibration tables from the server.', { title: 'Loading failed' })
+      reportLoadFailure(error, 'Unable to load asset calibration tables from the server.')
     }
   }
 
@@ -1493,8 +1515,7 @@ function App() {
       const operationTypesFromApi = await getOperationTypes()
       setOperationTypes(operationTypesFromApi)
     } catch (error) {
-      console.error(error)
-      toast.error('Unable to load operation types from the server.', { title: 'Loading failed' })
+      reportLoadFailure(error, 'Unable to load operation types from the server.')
     }
   }
 
@@ -1503,8 +1524,7 @@ function App() {
       const availabilityFromApi = await getLocationOperationAvailability()
       setLocationOperationAvailability(availabilityFromApi)
     } catch (error) {
-      console.error(error)
-      toast.error('Unable to load location operation availability from the server.', { title: 'Loading failed' })
+      reportLoadFailure(error, 'Unable to load location operation availability from the server.')
     }
   }
 
@@ -1513,8 +1533,7 @@ function App() {
       const templatesFromApi = await getOperationTemplates()
       setOperationTemplates(templatesFromApi)
     } catch (error) {
-      console.error(error)
-      toast.error('Unable to load operation templates from the server.', { title: 'Loading failed' })
+      reportLoadFailure(error, 'Unable to load operation templates from the server.')
     }
   }
 
@@ -1523,8 +1542,7 @@ function App() {
       const entriesFromApi = await getOperationEntries()
       setOperationEntries(entriesFromApi)
     } catch (error) {
-      console.error(error)
-      toast.error('Unable to load operation entries from the server.', { title: 'Loading failed' })
+      reportLoadFailure(error, 'Unable to load operation entries from the server.')
     }
   }
 
@@ -1537,8 +1555,7 @@ function App() {
       const transactionsFromApi = await getOperationTransactions({ limit: 200 })
       setOperationTransactions(transactionsFromApi)
     } catch (error) {
-      console.error(error)
-      toast.error('Unable to load operation transactions from the server.', { title: 'Loading failed' })
+      reportLoadFailure(error, 'Unable to load operation transactions from the server.')
     }
   }
 
@@ -1604,7 +1621,8 @@ useEffect(() => {
     reloadAssetTypes()
   }
 
-  if (hasPermission('View Asset')) {
+  const canViewAsset = hasPermission('View Asset')
+  if (canViewAsset) {
     reloadAssets()
   }
 
@@ -1612,11 +1630,13 @@ useEffect(() => {
     reloadCalibrationTemplates()
   }
 
-  if (hasPermission('View Asset Calibration')) {
+  // reloadAssets() already pulls calibration tables and assignments when
+  // permitted; avoid firing duplicate requests on initial login mount.
+  if (!canViewAsset && hasPermission('View Asset Calibration')) {
     reloadAssetCalibrationTables()
   }
 
-  if (hasPermission('View Asset Assignment')) {
+  if (!canViewAsset && hasPermission('View Asset Assignment')) {
     reloadAssetAssignments()
   }
 

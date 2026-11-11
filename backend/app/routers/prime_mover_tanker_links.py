@@ -37,7 +37,9 @@ def get_asset_by_code_case_insensitive(asset_code: str | None, db: Session):
     )
 
 
-def ensure_link_asset_scope(asset: Asset, current_user: User, db: Session, *, write: bool = False):
+def ensure_link_asset_scope(asset: Asset | None, current_user: User, db: Session, *, write: bool = False):
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Linked asset not found")
     if str(asset.asset_scope or "").strip().casefold() == "global":
         if write:
             require_user_permission(current_user, "Edit Global Prime Mover Tanker Link", db)
@@ -123,7 +125,7 @@ def is_prime_mover_asset(asset: Asset | None, db: Session | None = None):
         ).first()
         if linked:
             return True
-    return any(token in value for token in (asset_type_code, type_name, asset_name) for token in ("PRIME", "MOVER")) or asset_code.startswith("PM")
+    return any(needle in field for field in (asset_type_code, type_name, asset_name) for needle in ("PRIME", "MOVER")) or asset_code.startswith("PM")
 
 
 def is_tanker_trailer_asset(asset: Asset | None, db: Session | None = None):

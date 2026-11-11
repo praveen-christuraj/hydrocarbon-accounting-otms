@@ -1131,7 +1131,6 @@ def refresh_access_token(
     claims = session_token_data(user, session_id=session_id)
     new_access_token = create_access_token(data=claims)
     new_refresh_token = create_refresh_token(data=claims)
-    set_refresh_cookie(response, new_refresh_token)
 
     refresh_expiry = decoded.get("exp")
     try:
@@ -1145,12 +1144,140 @@ def refresh_access_token(
         db.commit()
     except IntegrityError:
         db.rollback()
-        clear_refresh_cookie(response)
+        # Lost a concurrent rotation race: another request already rotated
+        # this token. Refuse this duplicate without clearing the cookie --
+        # the browser already holds the winner's fresh token, and clearing it
+        # here would log the user out despite a healthy session.
         raise HTTPException(status_code=401, detail="Refresh token has already been rotated")
 
+    set_refresh_cookie(response, new_refresh_token)
     return {
         "access_token": new_access_token,
         "token_type": "bearer",
+    }
+
+
+@router.post("/session")
+def restore_browser_session(
+    response: Response,
+    refresh_cookie: str | None = Cookie(default=None, alias=AUTH_COOKIE_NAME),
+    db: Session = Depends(get_db),
+    request: Request = None,  # type: ignore[assignment]  # injected by FastAPI
+):
+    """Bootstrap the browser SPA session from the HttpOnly refresh cookie.
+
+    Unlike ``POST /auth/refresh`` (which is called when an active session expects
+    renewal and therefore returns 400/401 on missing or expired tokens), startup
+    bootstrap runs on every cold page load -- including unauthenticated visits to
+    the login page. Returning ``{"authenticated": False}`` with HTTP 200 when no
+    live cookie exists avoids spurious browser-console 400/401 network errors on
+    the login screen and lets the server actually deliver ``Set-Cookie: Max-Age=0``
+    to purge stale cookies, while enforcing identical rate limits, CSRF origin
+    checks, token rotation, and reuse-theft session revocation.
+    """
+    client_ip = get_client_ip(request) if request is not None else "unknown"
+    enforce_rate_limit(
+        scope="refresh_ip",
+        identifier=client_ip,
+        limit=REFRESH_MAX_PER_WINDOW,
+        window_seconds=REFRESH_WINDOW_SECONDS,
+        detail="Too many session refreshes. Please sign in again.",
+    )
+    if request is not None and has_refresh_cookie(request):
+        assert_trusted_cookie_origin(request, allowed_origins)
+
+    refresh_token_str = str(refresh_cookie or "").strip()
+    if not refresh_token_str:
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+        return {"authenticated": False}
+
+    if is_token_blacklisted(refresh_token_str, db):
+        try:
+            stolen_payload = decode_refresh_token(refresh_token_str)
+            compromised_user = (
+                db.query(User).filter(User.id == stolen_payload.get("user_id")).first()
+            )
+            if compromised_user:
+                revoke_all_sessions(
+                    compromised_user,
+                    reason="Refresh token reuse detected; all sessions revoked",
+                    current_user=compromised_user,
+                    db=db,
+                    request_path="/auth/session",
+                )
+                _security_audit(
+                    db,
+                    "Refresh Token Reuse",
+                    compromised_user,
+                    remarks="A revoked refresh token was presented; all sessions revoked",
+                    request_path="/auth/session",
+                    client_ip=client_ip,
+                    details={"username": compromised_user.username},
+                )
+                db.commit()
+        except HTTPException:
+            db.rollback()
+        except Exception:
+            db.rollback()
+        clear_refresh_cookie(response)
+        return {"authenticated": False}
+
+    try:
+        decoded = decode_refresh_token(refresh_token_str)
+    except HTTPException:
+        clear_refresh_cookie(response)
+        return {"authenticated": False}
+
+    user_id = decoded.get("user_id")
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or user.status != "Active":
+        clear_refresh_cookie(response)
+        return {"authenticated": False}
+
+    if as_naive_utc(user.locked_until) and as_naive_utc(user.locked_until) > utc_now_naive():
+        clear_refresh_cookie(response)
+        return {"authenticated": False}
+
+    if token_predates_password_change(decoded, user) or token_predates_revocation(decoded, user):
+        clear_refresh_cookie(response)
+        return {"authenticated": False}
+
+    session_id = str(decoded.get("sid") or "")
+    if session_id and not is_session_active(db, session_id, user_id=user.id):
+        clear_refresh_cookie(response)
+        return {"authenticated": False}
+    if session_id:
+        touch_user_session(db, session_id)
+    else:
+        session_id = create_user_session(db, user).session_id
+
+    claims = session_token_data(user, session_id=session_id)
+    new_access_token = create_access_token(data=claims)
+    new_refresh_token = create_refresh_token(data=claims)
+
+    refresh_expiry = decoded.get("exp")
+    try:
+        if refresh_expiry:
+            db.add(
+                TokenBlacklist(
+                    token_hash=hash_token(refresh_token_str),
+                    expires_at=as_naive_utc(datetime.fromtimestamp(refresh_expiry, tz=timezone.utc)),
+                )
+            )
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return {"authenticated": False}
+
+    from app.dependencies.permissions import build_logged_in_user_response
+    logged_in_user = build_logged_in_user_response(user, db)
+    set_refresh_cookie(response, new_refresh_token)
+    return {
+        "authenticated": True,
+        "access_token": new_access_token,
+        "token_type": "bearer",
+        "user": logged_in_user,
     }
 
 

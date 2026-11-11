@@ -1,5 +1,11 @@
-import { clearAccessToken, getStoredAccessToken } from './authToken'
-import { refreshAccessToken } from './authApi'
+import {
+  SESSION_EXPIRED_MESSAGE,
+  clearAccessToken,
+  getStoredAccessToken,
+  isAccessTokenExpiringSoon,
+  notifySessionExpired,
+} from './authToken'
+import { refreshAccessToken, waitForPendingTokenRefresh } from './authApi'
 
 const configuredApiBaseUrl = String(import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/$/, '')
 export const API_BASE_URL = configuredApiBaseUrl || (import.meta.env.PROD ? '/api' : 'http://127.0.0.1:8000')
@@ -45,15 +51,24 @@ const sanitizeErrorText = (value) =>
 
 export const formatApiError = (data) => {
   if (!data) return 'API request failed'
-  if (typeof data.detail === 'string') return sanitizeErrorText(data.detail)
-  if (Array.isArray(data.detail)) return sanitizeErrorText(data.detail.map(d => d?.msg || '').join('; '))
-  if (data.detail && typeof data.detail === 'object') {
+  let message
+  if (typeof data.detail === 'string') message = sanitizeErrorText(data.detail)
+  else if (Array.isArray(data.detail)) message = sanitizeErrorText(data.detail.map(d => d?.msg || '').join('; '))
+  else if (data.detail && typeof data.detail === 'object') {
     // Structured API errors (for example PASSWORD_CHANGE_REQUIRED) carry a
     // human-readable message plus a machine-readable code.
-    if (typeof data.detail.message === 'string') return sanitizeErrorText(data.detail.message)
-    return sanitizeErrorText(JSON.stringify(data.detail))
+    if (typeof data.detail.message === 'string') message = sanitizeErrorText(data.detail.message)
+    else message = sanitizeErrorText(JSON.stringify(data.detail))
+  } else {
+    message = 'API request failed'
   }
-  return 'API request failed'
+  // The backend's unhandled-error handler returns a request id so support can
+  // find the server log line. Surface it instead of dropping it.
+  const requestId = typeof data.request_id === 'string' ? data.request_id.trim() : ''
+  if (requestId && !message.includes(requestId)) {
+    return `${message} (Request ID: ${sanitizeErrorText(requestId)})`
+  }
+  return message
 }
 
 export const PASSWORD_CHANGE_REQUIRED_EVENT = 'hydrocarbon:password-change-required'
@@ -68,8 +83,10 @@ const notifyPasswordChangeRequired = (data) => {
   return false
 }
 
-// Track whether a refresh is in flight to avoid duplicate calls
-let refreshPromise = null
+// Refresh single-flighting lives in authApi.refreshAccessToken (shared by
+// every caller, including getCurrentUser and downloads). This module just
+// awaits that shared promise; keeping a second dedup layer here would still
+// allow getCurrentUser to race a retry with the same cookie.
 
 // Bound every request so a slow/overloaded backend surfaces as a clear,
 // actionable error instead of an indefinitely spinning page. Generous
@@ -103,17 +120,12 @@ const fetchWithTimeout = async (url, options = {}, timeoutMs = REQUEST_TIMEOUT_M
 }
 
 const tryRefreshAndRetry = async (endpoint, options, timeoutMs) => {
-  // Only one concurrent refresh attempt
-  if (!refreshPromise) {
-    refreshPromise = refreshAccessToken().finally(() => {
-      refreshPromise = null
-    })
-  }
-
-  const refreshed = await refreshPromise
+  // refreshAccessToken single-flights across all callers, so parallel 401s
+  // share one POST /auth/refresh instead of racing the same cookie.
+  const refreshed = await refreshAccessToken()
   if (!refreshed) {
-    clearAccessToken()
-    throw new Error('Session expired. Please login again.')
+    // refreshAccessToken already cleared the token and notified listeners.
+    throw new Error(SESSION_EXPIRED_MESSAGE)
   }
 
   // Retry original request with new token
@@ -124,12 +136,42 @@ const tryRefreshAndRetry = async (endpoint, options, timeoutMs) => {
 
   const retryData = await readResponseData(retryResponse)
   if (!retryResponse.ok) {
+    notifyPasswordChangeRequired(retryData)
+    if (retryResponse.status === 401) {
+      // The fresh token was still rejected (session revoked server-side).
+      // Treat it as an expired session so App returns to login once instead
+      // of every loader toasting the same failure.
+      clearAccessToken()
+      notifySessionExpired()
+      throw new Error(SESSION_EXPIRED_MESSAGE)
+    }
     throw new Error(formatApiError(retryData))
   }
   return retryData
 }
 
+const isPublicAuthEndpoint = (endpoint) =>
+  endpoint.startsWith('/auth/login') ||
+  endpoint.startsWith('/auth/2fa/verify') ||
+  endpoint.startsWith('/auth/forgot-password') ||
+  endpoint.startsWith('/auth/refresh') ||
+  endpoint.startsWith('/auth/session') ||
+  endpoint.startsWith('/health')
+
+const prepareProtectedRequestToken = async (endpoint) => {
+  if (isPublicAuthEndpoint(endpoint)) return
+  await waitForPendingTokenRefresh()
+  if (getStoredAccessToken() && isAccessTokenExpiringSoon()) {
+    const refreshed = await refreshAccessToken()
+    if (!refreshed) {
+      throw new Error(SESSION_EXPIRED_MESSAGE)
+    }
+  }
+}
+
 export const apiRequest = async (endpoint, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) => {
+  await prepareProtectedRequestToken(endpoint)
+
   const response = await fetchWithTimeout(`${API_BASE_URL}${endpoint}`, {
     ...options,
     headers: buildHeaders(options.headers || {}),
@@ -143,11 +185,7 @@ export const apiRequest = async (endpoint, options = {}, timeoutMs = REQUEST_TIM
     // On 401, try to silently refresh the token and retry once
     if (response.status === 401) {
       // Don't try refresh for auth endpoints themselves (prevent loops)
-      const isAuthEndpoint =
-        endpoint.startsWith('/auth/login') ||
-        endpoint.startsWith('/auth/2fa/verify') ||
-        endpoint.startsWith('/auth/refresh')
-      if (!isAuthEndpoint) {
+      if (!isPublicAuthEndpoint(endpoint)) {
         return tryRefreshAndRetry(endpoint, options, timeoutMs)
       }
       clearAccessToken()
@@ -206,6 +244,7 @@ export const apiDelete = async (endpoint) => {
 }
 
 export const apiDownload = async (endpoint, filename) => {
+  await prepareProtectedRequestToken(endpoint)
   const token = getStoredAccessToken()
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
     credentials: 'include',
@@ -227,7 +266,7 @@ export const apiDownload = async (endpoint, filename) => {
         }
       }
       clearAccessToken()
-      throw new Error('Session expired. Please login again.')
+      throw new Error(SESSION_EXPIRED_MESSAGE)
     }
 
     let message = 'Download failed'

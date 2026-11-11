@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
+import { API_BASE_URL } from '../api/apiClient'
 import { loginUser, requestPasswordReset, verifyLogin2FA } from '../api/authApi'
 import Icon from '../components/common/Icon'
 
@@ -40,7 +41,12 @@ function BrandMark({ size = 48 }) {
 function LoginPage({ onLogin }) {
   const [unseeded, setUnseeded] = useState(false)
   useEffect(() => {
-    fetch('/api/health').then(r => r.json()).then(d => setUnseeded(d.admin_seeded === false)).catch(() => undefined)
+    fetch(`${API_BASE_URL}/health`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d) setUnseeded(d.admin_seeded === false)
+      })
+      .catch(() => undefined)
   }, [])
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
