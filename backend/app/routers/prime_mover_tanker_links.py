@@ -1,9 +1,11 @@
 from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.utils.errors import commit_or_409, flush_or_409
 from app.database import get_db
-from app.models import PrimeMoverTankerLink, Asset, User
+from app.models import PrimeMoverTankerLink, Asset, AssetType, AuditLog, User
 from app.schemas import (
     PrimeMoverTankerLinkCreate,
     PrimeMoverTankerLinkResponse,
@@ -13,7 +15,6 @@ from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
     ensure_location_in_user_scope,
     get_user_location_codes,
-    is_admin_user,
     require_user_permission,
     user_has_location_access,
 )
@@ -38,16 +39,49 @@ def get_asset_by_code_case_insensitive(asset_code: str | None, db: Session):
 
 def ensure_link_asset_scope(asset: Asset, current_user: User, db: Session, *, write: bool = False):
     if str(asset.asset_scope or "").strip().casefold() == "global":
-        if write and not is_admin_user(current_user, db):
-            raise HTTPException(status_code=403, detail="Only an administrator may change links for Global assets")
+        if write:
+            require_user_permission(current_user, "Edit Global Prime Mover Tanker Link", db)
         return
     ensure_location_in_user_scope(current_user, db, asset.location_code, "Asset location")
 
 
+def _resolve_historical_link_asset(link: PrimeMoverTankerLink, side: str, db: Session) -> Asset | None:
+    asset_id = getattr(link, f"{side}_asset_id", None)
+    if asset_id:
+        asset = db.query(Asset).filter(Asset.id == asset_id).first()
+        if asset:
+            return asset
+    code_column = "prime_mover_asset_code" if side == "prime_mover" else "tanker_asset_code"
+    stored_code = str(getattr(link, code_column, "") or "").strip()
+    by_code = get_asset_by_code_case_insensitive(stored_code, db)
+    if by_code:
+        return by_code
+    if not stored_code:
+        return None
+    # Older rows have no FK and may retain the pre-rename code. Use the audited
+    # Asset update snapshots as a read-only alias map; never rewrite rows here.
+    for audit in db.query(AuditLog).filter(AuditLog.entity_type == "Asset").order_by(AuditLog.id.desc()).limit(1000).all():
+        details = audit.details if isinstance(audit.details, dict) else {}
+        before = details.get("before") if isinstance(details.get("before"), dict) else {}
+        after = details.get("after") if isinstance(details.get("after"), dict) else {}
+        if str(before.get("asset_code") or "").strip().casefold() != stored_code.casefold():
+            continue
+        if audit.entity_id is not None:
+            asset = db.query(Asset).filter(Asset.id == audit.entity_id).first()
+            if asset:
+                return asset
+        newer_code = str(after.get("asset_code") or "").strip()
+        if newer_code:
+            asset = get_asset_by_code_case_insensitive(newer_code, db)
+            if asset:
+                return asset
+    return None
+
+
 def get_link_assets(link: PrimeMoverTankerLink, db: Session):
     return (
-        get_asset_by_code_case_insensitive(link.prime_mover_asset_code, db),
-        get_asset_by_code_case_insensitive(link.tanker_asset_code, db),
+        _resolve_historical_link_asset(link, "prime_mover", db),
+        _resolve_historical_link_asset(link, "tanker", db),
     )
 
 
@@ -63,7 +97,52 @@ def ensure_prime_mover_tanker_link_scope(
         raise HTTPException(status_code=404, detail="Linked asset not found")
     ensure_link_asset_scope(prime_mover, current_user, db, write=write)
     ensure_link_asset_scope(tanker, current_user, db, write=write)
+    if write:
+        # Repair stale codes only as part of an explicit user edit/close/delete.
+        link.prime_mover_asset_id = prime_mover.id
+        link.prime_mover_asset_code = prime_mover.asset_code
+        link.tanker_asset_id = tanker.id
+        link.tanker_asset_code = tanker.asset_code
     return prime_mover, tanker
+
+
+def is_prime_mover_asset(asset: Asset | None, db: Session | None = None):
+    if not asset:
+        return False
+    asset_type_code = str(asset.asset_type_code or "").strip().upper()
+    asset_name = str(asset.asset_name or "").strip().upper()
+    asset_code = str(asset.asset_code or "").strip().upper()
+    type_name = ""
+    if db is not None:
+        asset_type = db.query(AssetType).filter(func.lower(func.trim(AssetType.asset_type_code)) == asset_type_code.casefold()).first()
+        type_name = str(asset_type.asset_type_name or "").strip().upper() if asset_type else ""
+        linked = db.query(PrimeMoverTankerLink.id).filter(
+            PrimeMoverTankerLink.status == "Active",
+            (PrimeMoverTankerLink.prime_mover_asset_id == asset.id) |
+            (func.lower(func.trim(PrimeMoverTankerLink.prime_mover_asset_code)) == asset_code.casefold()),
+        ).first()
+        if linked:
+            return True
+    return any(token in value for token in (asset_type_code, type_name, asset_name) for token in ("PRIME", "MOVER")) or asset_code.startswith("PM")
+
+
+def is_tanker_trailer_asset(asset: Asset | None, db: Session | None = None):
+    if not asset:
+        return False
+    asset_type_code = str(asset.asset_type_code or "").strip().upper()
+    asset_name = str(asset.asset_name or "").strip().upper()
+    type_name = ""
+    if db is not None:
+        asset_type = db.query(AssetType).filter(func.lower(func.trim(AssetType.asset_type_code)) == asset_type_code.casefold()).first()
+        type_name = str(asset_type.asset_type_name or "").strip().upper() if asset_type else ""
+        linked = db.query(PrimeMoverTankerLink.id).filter(
+            PrimeMoverTankerLink.status == "Active",
+            (PrimeMoverTankerLink.tanker_asset_id == asset.id) |
+            (func.lower(func.trim(PrimeMoverTankerLink.tanker_asset_code)) == str(asset.asset_code or "").strip().casefold()),
+        ).first()
+        if linked:
+            return True
+    return any(token in value for value in (asset_type_code, type_name, asset_name) for token in ("TANKER", "TRAILER", "TRUCK"))
 
 
 def prime_mover_tanker_link_is_visible(
@@ -83,60 +162,19 @@ def prime_mover_tanker_link_is_visible(
     return True
 
 
-def is_prime_mover_asset(asset: Asset | None):
-    if not asset:
-        return False
-
-    asset_type_code = str(asset.asset_type_code or "").strip().upper()
-    asset_name = str(asset.asset_name or "").strip().upper()
-    asset_code = str(asset.asset_code or "").strip().upper()
-
-    return (
-        "PRIME" in asset_type_code
-        or "MOVER" in asset_type_code
-        or "PRIME" in asset_name
-        or "MOVER" in asset_name
-        or asset_code.startswith("PM")
-    )
-
-
-def is_tanker_trailer_asset(asset: Asset | None):
-    if not asset:
-        return False
-
-    asset_type_code = str(asset.asset_type_code or "").strip().upper()
-    asset_name = str(asset.asset_name or "").strip().upper()
-
-    return (
-        "TANKER" in asset_type_code
-        or "TRAILER" in asset_type_code
-        or "TRUCK" in asset_type_code
-        or "TANKER" in asset_name
-        or "TRAILER" in asset_name
-    )
-
-
 def build_prime_mover_tanker_link_response(link: PrimeMoverTankerLink, db: Session):
-    prime_mover_asset = get_asset_by_code_case_insensitive(
-        link.prime_mover_asset_code,
-        db,
-    )
-
-    tanker_asset = get_asset_by_code_case_insensitive(
-        link.tanker_asset_code,
-        db,
-    )
+    prime_mover_asset, tanker_asset = get_link_assets(link, db)
 
     return {
         "id": link.id,
-        "prime_mover_asset_code": link.prime_mover_asset_code,
+        "prime_mover_asset_code": prime_mover_asset.asset_code if prime_mover_asset else link.prime_mover_asset_code,
         "prime_mover_asset_name": prime_mover_asset.asset_name
         if prime_mover_asset
         else "",
         "prime_mover_asset_type_code": prime_mover_asset.asset_type_code
         if prime_mover_asset
         else "",
-        "tanker_asset_code": link.tanker_asset_code,
+        "tanker_asset_code": tanker_asset.asset_code if tanker_asset else link.tanker_asset_code,
         "tanker_asset_name": tanker_asset.asset_name if tanker_asset else "",
         "tanker_asset_type_code": tanker_asset.asset_type_code
         if tanker_asset
@@ -206,7 +244,7 @@ def validate_prime_mover_tanker_link(
             detail="Only Active Prime Mover asset can be linked",
         )
 
-    if not is_prime_mover_asset(prime_mover_asset):
+    if not is_prime_mover_asset(prime_mover_asset, db):
         raise HTTPException(
             status_code=400,
             detail=(
@@ -232,7 +270,7 @@ def validate_prime_mover_tanker_link(
             detail="Only Active Tanker Trailer asset can be linked",
         )
 
-    if not is_tanker_trailer_asset(tanker_asset):
+    if not is_tanker_trailer_asset(tanker_asset, db):
         raise HTTPException(
             status_code=400,
             detail=(
@@ -340,6 +378,7 @@ def get_prime_mover_tanker_links(
         query = query.filter(PrimeMoverTankerLink.status == cleaned_status)
 
     cleaned_prime_mover_asset_code = clean_optional_text(prime_mover_asset_code)
+    prime_mover_filter = None
 
     if cleaned_prime_mover_asset_code:
         prime_mover = get_asset_by_code_case_insensitive(
@@ -348,13 +387,10 @@ def get_prime_mover_tanker_links(
         if not prime_mover:
             raise HTTPException(status_code=404, detail="Prime Mover asset not found")
         ensure_link_asset_scope(prime_mover, current_user, db)
-        query = query.filter(
-            PrimeMoverTankerLink.prime_mover_asset_code.ilike(
-                cleaned_prime_mover_asset_code
-            )
-        )
+        prime_mover_filter = prime_mover
 
     cleaned_tanker_asset_code = clean_optional_text(tanker_asset_code)
+    tanker_filter = None
 
     if cleaned_tanker_asset_code:
         tanker = get_asset_by_code_case_insensitive(
@@ -363,11 +399,7 @@ def get_prime_mover_tanker_links(
         if not tanker:
             raise HTTPException(status_code=404, detail="Tanker asset not found")
         ensure_link_asset_scope(tanker, current_user, db)
-        query = query.filter(
-            PrimeMoverTankerLink.tanker_asset_code.ilike(
-                cleaned_tanker_asset_code
-            )
-        )
+        tanker_filter = tanker
 
     links = (
         query.order_by(
@@ -377,6 +409,10 @@ def get_prime_mover_tanker_links(
         )
         .all()
     )
+    if prime_mover_filter is not None:
+        links = [link for link in links if _resolve_historical_link_asset(link, "prime_mover", db) is not None and _resolve_historical_link_asset(link, "prime_mover", db).id == prime_mover_filter.id]
+    if tanker_filter is not None:
+        links = [link for link in links if _resolve_historical_link_asset(link, "tanker", db) is not None and _resolve_historical_link_asset(link, "tanker", db).id == tanker_filter.id]
 
     return [
         build_prime_mover_tanker_link_response(link, db)
@@ -405,19 +441,17 @@ def get_current_prime_mover_tanker_link(
         return {"has_active_link": False, "link": None}
     ensure_link_asset_scope(asset, current_user, db)
 
-    link = (
+    candidates = (
         db.query(PrimeMoverTankerLink)
-        .filter(
-            PrimeMoverTankerLink.prime_mover_asset_code.ilike(
-                prime_mover_asset_code
-            ),
-            PrimeMoverTankerLink.status == "Active",
-        )
-        .order_by(
-            PrimeMoverTankerLink.linked_from.desc(),
-            PrimeMoverTankerLink.id.desc(),
-        )
-        .first()
+        .filter(PrimeMoverTankerLink.status == "Active")
+        .order_by(PrimeMoverTankerLink.linked_from.desc(), PrimeMoverTankerLink.id.desc())
+        .all()
+    )
+    link = next(
+        (candidate for candidate in candidates
+         if (resolved := _resolve_historical_link_asset(candidate, "prime_mover", db)) is not None
+         and resolved.id == asset.id),
+        None,
     )
 
     if not link:
@@ -456,7 +490,11 @@ def create_prime_mover_tanker_link(
         asset = get_asset_by_code_case_insensitive(asset_code, db)
         ensure_link_asset_scope(asset, current_user, db, write=True)
 
+    prime_asset = get_asset_by_code_case_insensitive(validated_data["prime_mover_asset_code"], db)
+    tanker_asset = get_asset_by_code_case_insensitive(validated_data["tanker_asset_code"], db)
     new_link = PrimeMoverTankerLink(
+        prime_mover_asset_id=prime_asset.id if prime_asset else None,
+        tanker_asset_id=tanker_asset.id if tanker_asset else None,
         prime_mover_asset_code=validated_data["prime_mover_asset_code"],
         tanker_asset_code=validated_data["tanker_asset_code"],
         linked_from=validated_data["linked_from"],
@@ -467,7 +505,7 @@ def create_prime_mover_tanker_link(
     )
 
     db.add(new_link)
-    db.flush()
+    flush_or_409(db)
 
     after_data = build_prime_mover_tanker_link_audit_snapshot(
         new_link,
@@ -492,7 +530,7 @@ def create_prime_mover_tanker_link(
         },
     )
 
-    db.commit()
+    commit_or_409(db)
     db.refresh(new_link)
 
     return build_prime_mover_tanker_link_response(new_link, db)
@@ -544,9 +582,11 @@ def update_prime_mover_tanker_link(
         asset = get_asset_by_code_case_insensitive(asset_code, db)
         ensure_link_asset_scope(asset, current_user, db, write=True)
 
-    existing_link.prime_mover_asset_code = validated_data[
-        "prime_mover_asset_code"
-    ]
+    prime_asset = get_asset_by_code_case_insensitive(validated_data["prime_mover_asset_code"], db)
+    tanker_asset = get_asset_by_code_case_insensitive(validated_data["tanker_asset_code"], db)
+    existing_link.prime_mover_asset_id = prime_asset.id if prime_asset else None
+    existing_link.tanker_asset_id = tanker_asset.id if tanker_asset else None
+    existing_link.prime_mover_asset_code = validated_data["prime_mover_asset_code"]
     existing_link.tanker_asset_code = validated_data["tanker_asset_code"]
     existing_link.linked_from = validated_data["linked_from"]
     existing_link.linked_to = validated_data["linked_to"]
@@ -554,7 +594,7 @@ def update_prime_mover_tanker_link(
     existing_link.status = validated_data["status"]
     existing_link.updated_at = datetime.now()
 
-    db.flush()
+    flush_or_409(db)
 
     after_data = build_prime_mover_tanker_link_audit_snapshot(
         existing_link,
@@ -580,7 +620,7 @@ def update_prime_mover_tanker_link(
         },
     )
 
-    db.commit()
+    commit_or_409(db)
     db.refresh(existing_link)
 
     return build_prime_mover_tanker_link_response(existing_link, db)
@@ -644,7 +684,7 @@ def close_prime_mover_tanker_link(
 
     existing_link.updated_at = datetime.now()
 
-    db.flush()
+    flush_or_409(db)
 
     after_data = build_prime_mover_tanker_link_audit_snapshot(
         existing_link,
@@ -670,7 +710,7 @@ def close_prime_mover_tanker_link(
         },
     )
 
-    db.commit()
+    commit_or_409(db)
     db.refresh(existing_link)
 
     return build_prime_mover_tanker_link_response(existing_link, db)
@@ -728,7 +768,7 @@ def delete_prime_mover_tanker_link(
     )
 
     db.delete(existing_link)
-    db.commit()
+    commit_or_409(db)
 
     return {
         "message": "Prime Mover Tanker link deleted successfully",

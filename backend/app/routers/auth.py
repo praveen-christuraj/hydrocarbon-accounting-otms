@@ -3,8 +3,10 @@ from datetime import datetime, timedelta, timezone
 import pyotp
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query, Request, Response
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+import app.config as app_config
 from app.config import (
     ACCOUNT_LOCK_MINUTES,
     ADMIN_PASSWORD_EXPIRY_DAYS,
@@ -69,8 +71,19 @@ from app.schemas import (
 )
 from app.services.audit_service import create_audit_log
 from app.utils.helpers import clean_optional_text, normalize_yes_no
-from app.utils.jwt import create_access_token, create_refresh_token, decode_refresh_token
-from app.utils.session import revoke_user_sessions
+from app.utils.jwt import (
+    create_access_token,
+    create_refresh_token,
+    decode_refresh_token,
+    decode_token_claims_ignoring_exp,
+)
+from app.utils.session import (
+    create_user_session,
+    is_session_active,
+    revoke_session_family,
+    revoke_user_sessions,
+    touch_user_session,
+)
 from app.utils.password_policy import (
     build_security_flags,
     is_password_expired,
@@ -146,7 +159,7 @@ def utc_now_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def session_token_data(user: User) -> dict:
+def session_token_data(user: User, *, session_id: str | None = None) -> dict:
     """Claims shared by every access/refresh token for ``user``.
 
     ``session_epoch`` is what makes "revoke all sessions" exact: any token
@@ -155,11 +168,14 @@ def session_token_data(user: User) -> dict:
     one-second race that exists between issuing and revoking inside the same
     second.
     """
-    return {
+    claims = {
         "user_id": user.id,
         "username": user.username,
         "session_epoch": int(getattr(user, "session_epoch", 0) or 0),
     }
+    if session_id:
+        claims["sid"] = str(session_id)
+    return claims
 
 
 def lock_remaining_minutes(locked_until: datetime | None) -> int:
@@ -204,7 +220,7 @@ def ensure_actor_may_administer_target(current_user: User, target: User, db: Ses
 
 def revoke_all_sessions(target: User, *, reason: str, current_user: User, db: Session, request_path: str):
     """Invalidate every access/refresh token issued before this call."""
-    revoke_user_sessions(target)
+    revoke_user_sessions(target, db=db, reason=reason)
     target.updated_at = datetime.now()
     create_audit_log(
         db=db,
@@ -449,8 +465,15 @@ def login_user(
     from app.dependencies.permissions import build_logged_in_user_response
     logged_in_user = build_logged_in_user_response(user, db)
 
-    access_token = create_access_token(data=session_token_data(user))
-    refresh_token = create_refresh_token(data=session_token_data(user))
+    user_session = create_user_session(
+        db,
+        user,
+        ip_address=client_ip,
+        user_agent=user_agent,
+    )
+    claims = session_token_data(user, session_id=user_session.session_id)
+    access_token = create_access_token(data=claims)
+    refresh_token = create_refresh_token(data=claims)
     set_refresh_cookie(response, refresh_token)
 
     user.last_login_at = utc_now_naive()
@@ -572,8 +595,15 @@ def verify_login_2fa(
 
     from app.dependencies.permissions import build_logged_in_user_response
     logged_in_user = build_logged_in_user_response(user, db)
-    access_token = create_access_token(data=session_token_data(user))
-    refresh_token = create_refresh_token(data=session_token_data(user))
+    user_session = create_user_session(
+        db,
+        user,
+        ip_address=client_ip,
+        user_agent=(request.headers.get("user-agent") or "")[:500] or None,
+    )
+    claims = session_token_data(user, session_id=user_session.session_id)
+    access_token = create_access_token(data=claims)
+    refresh_token = create_refresh_token(data=claims)
     set_refresh_cookie(response, refresh_token)
 
     create_audit_log(
@@ -736,9 +766,15 @@ def change_own_password(
     current_user.failed_login_count = 0
     current_user.locked_until = None
     current_user.updated_at = datetime.now()
-    # A password change ends every other session. The fresh token pair issued
-    # below is the only surviving credential (2 second timestamp tolerance).
-    revoke_user_sessions(current_user)
+    # A password change ends every other session. The fresh session family
+    # minted below is the only surviving credential.
+    revoke_user_sessions(current_user, db=db, reason="Password Changed")
+    user_session = create_user_session(
+        db,
+        current_user,
+        ip_address=get_client_ip(request),
+        user_agent=(request.headers.get("user-agent") or "")[:500] or None,
+    )
 
     create_audit_log(
         db=db,
@@ -758,8 +794,9 @@ def change_own_password(
     )
     db.commit()
 
-    access_token = create_access_token(data=session_token_data(current_user))
-    refresh_token = create_refresh_token(data=session_token_data(current_user))
+    claims = session_token_data(current_user, session_id=user_session.session_id)
+    access_token = create_access_token(data=claims)
+    refresh_token = create_refresh_token(data=claims)
     set_refresh_cookie(response, refresh_token)
     return {
         "message": "Password changed successfully",
@@ -880,45 +917,65 @@ def logout_user(
         assert_trusted_cookie_origin(request, allowed_origins)
 
     tokens_to_revoke: list[tuple[str, datetime]] = []
+    session_ids: set[str] = set()
+    legacy_user_ids: set[int] = set()
+
+    access_token = ""
     if authorization and authorization.startswith("Bearer "):
         access_token = authorization[7:].strip()
-        try:
-            from app.utils.jwt import decode_access_token
-
-            decoded_access = decode_access_token(access_token)
-            if decoded_access.get("token_type") == "access" and decoded_access.get("exp"):
-                tokens_to_revoke.append(
-                    (access_token, datetime.fromtimestamp(decoded_access["exp"], tz=timezone.utc))
-                )
-        except Exception:
-            # Logout is best-effort for an expired or malformed access token.
-            pass
-
     refresh_token = str(refresh_cookie or "").strip()
     if not refresh_token and payload and payload.refresh_token and ALLOW_REFRESH_TOKEN_IN_BODY:
         refresh_token = str(payload.refresh_token or "").strip()
-    if refresh_token:
-        try:
-            decoded_refresh = decode_refresh_token(refresh_token)
-            if decoded_refresh.get("exp"):
-                tokens_to_revoke.append(
-                    (refresh_token, datetime.fromtimestamp(decoded_refresh["exp"], tz=timezone.utc))
-                )
-        except Exception:
-            pass
+
+    for token in (access_token, refresh_token):
+        decoded = decode_token_claims_ignoring_exp(token)
+        if not decoded:
+            continue
+        if decoded.get("sid"):
+            session_ids.add(str(decoded["sid"]))
+        elif decoded.get("user_id") is not None:
+            try:
+                legacy_user_ids.add(int(decoded["user_id"]))
+            except (TypeError, ValueError):
+                pass
+        expiry = decoded.get("exp")
+        if expiry:
+            tokens_to_revoke.append(
+                (token, datetime.fromtimestamp(float(expiry), tz=timezone.utc))
+            )
+
+    for session_id in session_ids:
+        revoke_session_family(db, session_id, reason="Logout")
+    for user_id in legacy_user_ids:
+        legacy_user = db.query(User).filter(User.id == user_id).first()
+        if legacy_user:
+            revoke_user_sessions(legacy_user, db=db, reason="Legacy token logout")
 
     try:
         for token, expires_at in tokens_to_revoke:
             if not is_token_blacklisted(token, db):
-                db.add(
-                    TokenBlacklist(
-                        token_hash=hash_token(token),
-                        expires_at=as_naive_utc(expires_at),
-                    )
-                )
+                db.add(TokenBlacklist(
+                    token_hash=hash_token(token),
+                    expires_at=as_naive_utc(expires_at),
+                ))
         db.commit()
+    except IntegrityError:
+        # A concurrent request may have inserted the same blacklist row. Its
+        # rollback must not undo the family revocation, so retry only revocation.
+        db.rollback()
+        try:
+            for session_id in session_ids:
+                revoke_session_family(db, session_id, reason="Logout")
+            for user_id in legacy_user_ids:
+                legacy_user = db.query(User).filter(User.id == user_id).first()
+                if legacy_user:
+                    revoke_user_sessions(legacy_user, db=db, reason="Legacy token logout")
+            db.commit()
+        except Exception:
+            db.rollback()
     except Exception:
-        # Best-effort: don't fail logout if blacklist write fails.
+        # Logout remains best-effort for malformed credentials or transient
+        # blacklist storage failures; the client cookie is still cleared.
         db.rollback()
 
     clear_refresh_cookie(response)
@@ -1062,19 +1119,34 @@ def refresh_access_token(
             detail="Credentials changed since this session started. Please sign in again.",
         )
 
-    new_access_token = create_access_token(data=session_token_data(user))
-    new_refresh_token = create_refresh_token(data=session_token_data(user))
+    session_id = str(decoded.get("sid") or "")
+    if session_id and not is_session_active(db, session_id, user_id=user.id):
+        raise HTTPException(status_code=401, detail="Session has been closed. Please sign in again.")
+    if session_id:
+        touch_user_session(db, session_id)
+    else:
+        # Upgrade a legacy sid-less token to a tracked family on first refresh.
+        session_id = create_user_session(db, user).session_id
+
+    claims = session_token_data(user, session_id=session_id)
+    new_access_token = create_access_token(data=claims)
+    new_refresh_token = create_refresh_token(data=claims)
     set_refresh_cookie(response, new_refresh_token)
 
     refresh_expiry = decoded.get("exp")
-    if refresh_expiry:
-        db.add(
-            TokenBlacklist(
-                token_hash=hash_token(refresh_token_str),
-                expires_at=as_naive_utc(datetime.fromtimestamp(refresh_expiry, tz=timezone.utc)),
+    try:
+        if refresh_expiry:
+            db.add(
+                TokenBlacklist(
+                    token_hash=hash_token(refresh_token_str),
+                    expires_at=as_naive_utc(datetime.fromtimestamp(refresh_expiry, tz=timezone.utc)),
+                )
             )
-        )
         db.commit()
+    except IntegrityError:
+        db.rollback()
+        clear_refresh_cookie(response)
+        raise HTTPException(status_code=401, detail="Refresh token has already been rotated")
 
     return {
         "access_token": new_access_token,
@@ -1291,7 +1363,7 @@ def admin_reset_user_password(
     target.failed_login_count = 0
     target.locked_until = None
     # Administrative reset always ends every open session of the target.
-    revoke_user_sessions(target)
+    revoke_user_sessions(target, db=db, reason="Administrative password reset")
     if is_admin_user(target, db) or str(target.username or "").strip().casefold() == "admin":
         # The reserved administrator can never hold a non-expiring password.
         target.password_never_expires = "No"
@@ -1381,7 +1453,7 @@ def admin_reset_user_password(
 # Enterprise security administration
 # ---------------------------------------------------------------------------
 
-def _serialize_user_security(user: User, pending_reset_count: int = 0) -> dict:
+def _serialize_user_security(user: User, pending_reset_count: int = 0, db: Session | None = None) -> dict:
     """Security posture of one account, for the administrator console."""
     locked_until = as_naive_utc(user.locked_until)
     is_locked = bool(locked_until and locked_until > utc_now_naive())
@@ -1401,15 +1473,15 @@ def _serialize_user_security(user: User, pending_reset_count: int = 0) -> dict:
         "totp_enabled": normalize_yes_no(getattr(user, "totp_enabled", "No")) == "Yes",
         "force_2fa": normalize_yes_no(getattr(user, "force_2fa", "No")) == "Yes",
         "force_password_change": normalize_yes_no(getattr(user, "force_password_change", "No")) == "Yes",
-        "password_expired": is_password_expired(user),
+        "password_expired": is_password_expired(user, db=db),
         "password_changed_at": password_changed_at.isoformat() if password_changed_at else None,
-        "password_never_expires": normalize_yes_no(getattr(user, "password_never_expires", "No")) == "Yes",
-        "password_expiry_days": int(getattr(user, "password_expiry_days", 30) or 30),
+        "password_never_expires": build_security_flags(user, db=db)["password_never_expires"],
+        "password_expiry_days": build_security_flags(user, db=db)["password_expiry_days"],
         "session_revoked_at": revoked_at.isoformat() if revoked_at else None,
         "last_login_at": as_naive_utc(user.last_login_at).isoformat() if user.last_login_at else None,
         "last_login_ip": user.last_login_ip,
         "pending_reset_requests": int(pending_reset_count or 0),
-        "security_flags": build_security_flags(user),
+        "security_flags": build_security_flags(user, db=db),
     }
 
 
@@ -1452,7 +1524,7 @@ def get_users_security_overview(
     ):
         pending_counts[row[0]] = row[1]
 
-    items = [_serialize_user_security(user, pending_counts.get(user.id, 0)) for user in users]
+    items = [_serialize_user_security(user, pending_counts.get(user.id, 0), db=db) for user in users]
     return {
         "items": items,
         "total": len(items),
@@ -1508,7 +1580,7 @@ def admin_unlock_user_account(
     db.commit()
     return {
         "message": f"Account for {target.username} unlocked successfully",
-        "user": _serialize_user_security(target),
+        "user": _serialize_user_security(target, db=db),
     }
 
 
@@ -1556,7 +1628,7 @@ def admin_reset_user_2fa(
     db.commit()
     return {
         "message": f"2FA reset for {target.username}. The user can enrol again from Profile & Security.",
-        "user": _serialize_user_security(target),
+        "user": _serialize_user_security(target, db=db),
     }
 
 
@@ -1599,7 +1671,7 @@ def admin_require_password_change(
     db.commit()
     return {
         "message": f"{target.username} must change their password at next sign-in",
-        "user": _serialize_user_security(target),
+        "user": _serialize_user_security(target, db=db),
     }
 
 
@@ -1633,7 +1705,7 @@ def admin_revoke_user_sessions(
     db.commit()
     return {
         "message": f"All sessions for {target.username} have been revoked",
-        "user": _serialize_user_security(target),
+        "user": _serialize_user_security(target, db=db),
     }
 
 
@@ -1667,9 +1739,19 @@ def admin_update_password_policy(
     is_admin_target = is_admin_user(target, db) or str(target.username or "").strip().casefold() == "admin"
     requested_never_expires = normalize_yes_no(payload.password_never_expires)
     if requested_never_expires == "Yes" and is_admin_target:
+        # The deployment switch is intentionally not an escape hatch for an
+        # administrator account; retain the unconditional role-specific rule.
+        admin_override_enabled = bool(app_config.ADMIN_PASSWORD_NEVER_EXPIRES_ALLOWED)
+        detail = (
+            "Administrator passwords must always expire"
+            if not admin_override_enabled
+            else "Non-expiring passwords are reserved for non-administrator accounts"
+        )
+        raise HTTPException(status_code=400, detail=detail)
+    if requested_never_expires == "Yes" and not app_config.ALLOW_NON_ADMIN_PASSWORD_NEVER_EXPIRES:
         raise HTTPException(
             status_code=400,
-            detail="Administrator passwords must always expire",
+            detail="Non-expiring passwords are disabled by system policy",
         )
 
     expiry_days = validate_expiry_days_for_actor(
@@ -1707,7 +1789,7 @@ def admin_update_password_policy(
     db.commit()
     return {
         "message": f"Password policy updated for {target.username}",
-        "user": _serialize_user_security(target),
+        "user": _serialize_user_security(target, db=db),
     }
 
 

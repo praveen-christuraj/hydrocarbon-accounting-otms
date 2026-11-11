@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Date, DateTime, ForeignKey, Integer, BigInteger, String, Text, UniqueConstraint, Float, Time
+from sqlalchemy import Column, Date, DateTime, ForeignKey, Index, Integer, BigInteger, String, Text, UniqueConstraint, Float, Time
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
 from datetime import datetime, timezone
@@ -61,6 +61,31 @@ class AuthLoginChallenge(Base):
     user_agent = Column(Text, nullable=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
     verified_at = Column(DateTime, nullable=True)
+
+
+class UserSession(Base):
+    """Server-side session family (``sid``) backing issued JWT pairs.
+
+    Every interactive login, 2FA verification, or password change mints a new
+    ``session_id``; refresh rotation preserves the same ``session_id`` while
+    rotating token material. Revoking a ``UserSession`` on logout immediately
+    invalidates every access and refresh token ever minted within that session
+    family, including tokens rotated prior to logout.
+    """
+
+    __tablename__ = "auth_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(String(120), nullable=False, unique=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    status = Column(String(30), nullable=False, default="Active", index=True)
+    ip_address = Column(String(80), nullable=True)
+    user_agent = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    last_seen_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    revoked_at = Column(DateTime, nullable=True)
+    revoke_reason = Column(String(120), nullable=True)
 
 
 class PasswordResetRequest(Base):
@@ -784,6 +809,19 @@ class PrimeMoverTankerLink(Base):
     __tablename__ = "prime_mover_tanker_links"
 
     id = Column(Integer, primary_key=True, index=True)
+
+    prime_mover_asset_id = Column(
+        Integer,
+        ForeignKey("assets.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    tanker_asset_id = Column(
+        Integer,
+        ForeignKey("assets.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     # Prime mover / tractor head asset code.
     # This is the operationally selected asset in Operation Entry.
@@ -2465,3 +2503,103 @@ class BookStockSubFieldProduction(Base):
     product_code = Column(String(50), nullable=False, index=True)
     production_qty = Column(Float, nullable=False, default=0)
     __table_args__ = (UniqueConstraint("field_stock_id", "sub_field_id", name="unique_book_stock_field_sub_production"),)
+
+
+# Case-insensitive functional unique indexes backing router-level ilike/lower
+# duplicate checks so concurrent mixed-case inserts (e.g. 'ABC' vs 'abc') raise
+# IntegrityError at the database layer rather than slipping past pre-checks.
+Index("uq_users_username_ci", func.lower(func.trim(User.username)), unique=True)
+Index("uq_roles_role_name_ci", func.lower(func.trim(Role.role_name)), unique=True)
+Index(
+    "uq_permissions_module_permission_ci",
+    func.lower(func.trim(Permission.module_name)),
+    func.lower(func.trim(Permission.permission_name)),
+    unique=True,
+)
+Index("uq_locations_location_code_ci", func.lower(func.trim(Location.location_code)), unique=True)
+Index("uq_asset_types_asset_type_code_ci", func.lower(func.trim(AssetType.asset_type_code)), unique=True)
+Index("uq_assets_asset_code_ci", func.lower(func.trim(Asset.asset_code)), unique=True)
+Index(
+    "uq_calibration_templates_template_name_ci",
+    func.lower(func.trim(CalibrationTemplate.template_name)),
+    unique=True,
+)
+Index(
+    "uq_calibration_template_columns_name_ci",
+    CalibrationTemplateColumn.template_id,
+    func.lower(func.trim(CalibrationTemplateColumn.column_name)),
+    unique=True,
+)
+Index(
+    "ux_asset_calibration_tables_lower_asset_code",
+    func.lower(func.trim(AssetCalibrationTable.asset_code)),
+    unique=True,
+)
+Index(
+    "uq_operation_types_operation_type_code_ci",
+    func.lower(func.trim(OperationType.operation_type_code)),
+    unique=True,
+)
+Index(
+    "uq_tank_operations_location_code_ci",
+    func.lower(func.trim(TankOperation.location_code)),
+    func.lower(func.trim(TankOperation.operation_code)),
+    unique=True,
+)
+Index(
+    "uq_tank_operations_location_label_ci",
+    func.lower(func.trim(TankOperation.location_code)),
+    func.lower(func.trim(TankOperation.operation_label)),
+    unique=True,
+)
+Index(
+    "uq_vessel_operations_location_type_code_ci",
+    func.lower(func.trim(VesselOperation.location_code)),
+    func.lower(func.trim(VesselOperation.applicable_asset_type_code)),
+    func.lower(func.trim(VesselOperation.operation_code)),
+    unique=True,
+)
+Index(
+    "uq_vessel_operations_location_type_label_ci",
+    func.lower(func.trim(VesselOperation.location_code)),
+    func.lower(func.trim(VesselOperation.applicable_asset_type_code)),
+    func.lower(func.trim(VesselOperation.operation_label)),
+    unique=True,
+)
+Index(
+    "uq_operation_templates_template_name_ci",
+    func.lower(func.trim(OperationTemplate.template_name)),
+    unique=True,
+)
+Index(
+    "uq_material_balance_templates_loc_name_ci",
+    func.lower(func.trim(MaterialBalanceTemplate.location_code)),
+    func.lower(func.trim(MaterialBalanceTemplate.template_name)),
+    unique=True,
+)
+Index(
+    "uq_material_balance_columns_key_ci",
+    MaterialBalanceTemplateColumn.template_id,
+    func.lower(func.trim(MaterialBalanceTemplateColumn.column_key)),
+    unique=True,
+)
+Index(
+    "uq_material_balance_columns_label_ci",
+    MaterialBalanceTemplateColumn.template_id,
+    func.lower(func.trim(MaterialBalanceTemplateColumn.column_label)),
+    unique=True,
+)
+Index(
+    "uq_company_report_profiles_profile_name_ci",
+    func.lower(func.trim(CompanyReportProfile.profile_name)),
+    unique=True,
+)
+Index("uq_export_locations_location_code_ci", func.lower(func.trim(ExportLocation.location_code)), unique=True)
+Index("uq_export_entities_entity_code_ci", func.lower(func.trim(ExportEntity.entity_code)), unique=True)
+Index("uq_export_blocks_block_code_ci", func.lower(func.trim(ExportBlock.block_code)), unique=True)
+Index("uq_export_permits_permit_number_ci", func.lower(func.trim(ExportPermit.permit_number)), unique=True)
+Index("uq_export_consignees_consignee_name_ci", func.lower(func.trim(ExportConsignee.consignee_name)), unique=True)
+Index("uq_book_stock_products_product_code_ci", func.lower(func.trim(BookStockProduct.product_code)), unique=True)
+Index("uq_book_stock_fields_field_code_ci", func.lower(func.trim(BookStockField.field_code)), unique=True)
+Index("uq_report_definitions_report_code_ci", func.lower(func.trim(ReportDefinition.report_code)), unique=True)
+Index("uq_trips_convoy_number_ci", func.lower(func.trim(Trip.convoy_number)), unique=True)

@@ -18,7 +18,7 @@ import { buildPermissionGroups } from '../utils/permissionCatalog'
 
 const MODULE = 'Role Permission Assignment'
 const nameKey = (name) => String(name || '').trim().toLowerCase()
-const isAdminRoleName = (name) => nameKey(name) === 'admin'
+const isAdminRoleName = (name) => ['admin', 'super admin'].includes(nameKey(name))
 
 const COLUMNS = [
   { key: 'roleName', label: 'Role' },

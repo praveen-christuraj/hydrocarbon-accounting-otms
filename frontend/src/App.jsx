@@ -567,6 +567,7 @@ function AppContent({
               >
                 <PrimeMoverTankerLinkMaster
                   assets={assets}
+                  assetTypes={assetTypes}
                   loggedInUser={loggedInUser}
                 />
               </PermissionGuard>
@@ -921,6 +922,7 @@ function AppContent({
                   operationTemplates={operationTemplates}
                   locations={locations}
                   assets={assets}
+                  assetTypes={assetTypes}
                   operationEntries={operationEntries}
                   setOperationEntries={setOperationEntries}
                   reloadOperationEntries={reloadOperationEntries}
@@ -1439,13 +1441,21 @@ function App() {
   }
 
   const reloadAssets = async () => {
-    try {
-      const assetsFromApi = await getAssets()
-      setAssets(assetsFromApi.items)
-    } catch (error) {
-      console.error(error)
+    const [assetResult, calibrationResult, assignmentResult] = await Promise.allSettled([
+      getAssets(),
+      getAssetCalibrationTables(),
+      getAssetAssignments(),
+    ])
+    if (assetResult.status === 'fulfilled') {
+      setAssets(assetResult.value.items)
+    } else {
+      console.error(assetResult.reason)
       toast.error('Unable to load assets from the server.', { title: 'Loading failed' })
     }
+    // These linked datasets may be hidden by the actor's own view permissions;
+    // refresh whichever are loaded without blocking the asset master refresh.
+    if (calibrationResult.status === 'fulfilled') setCalibrationTables(calibrationResult.value)
+    if (assignmentResult.status === 'fulfilled') setAssetAssignments(assignmentResult.value)
   }
 
   const reloadAssetAssignments = async () => {

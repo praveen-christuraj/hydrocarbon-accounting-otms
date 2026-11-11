@@ -167,12 +167,15 @@ const stringifyPayload = (value) => {
 
 const isPrimeMoverAsset = (asset) => {
   const typeCode = String(asset?.assetTypeCode || '').toUpperCase()
+  const typeName = String(asset?.assetTypeName || '').toUpperCase()
   const name = String(asset?.assetName || '').toUpperCase()
   const code = String(asset?.assetCode || '').toUpperCase()
 
   return (
     typeCode.includes('PRIME') ||
     typeCode.includes('MOVER') ||
+    typeName.includes('PRIME') ||
+    typeName.includes('MOVER') ||
     name.includes('PRIME') ||
     name.includes('MOVER') ||
     code.startsWith('PM')
@@ -181,12 +184,16 @@ const isPrimeMoverAsset = (asset) => {
 
 const isTankerTrailerAsset = (asset) => {
   const typeCode = String(asset?.assetTypeCode || '').toUpperCase()
+  const typeName = String(asset?.assetTypeName || '').toUpperCase()
   const name = String(asset?.assetName || '').toUpperCase()
 
   return (
     typeCode.includes('TANKER') ||
     typeCode.includes('TRAILER') ||
     typeCode.includes('TRUCK') ||
+    typeName.includes('TANKER') ||
+    typeName.includes('TRAILER') ||
+    typeName.includes('TRUCK') ||
     name.includes('TANKER') ||
     name.includes('TRAILER')
   )
@@ -393,6 +400,28 @@ function TankerTruckLayout({
             setLinkedTanker(selectedTanker)
           }
 
+          return
+        }
+
+        // Some installations use generic asset-type codes and names. An active
+        // link itself is still authoritative classification for that asset.
+        const [asPrimeMover, asTanker] = await Promise.all([
+          getPrimeMoverTankerLinks({ status: 'Active', prime_mover_asset_code: selectedAsset.assetCode }),
+          getPrimeMoverTankerLinks({ status: 'Active', tanker_asset_code: selectedAsset.assetCode }),
+        ])
+        if (!isActive) return
+        if (asPrimeMover.length > 0) {
+          setLinkedTanker(asPrimeMover[0])
+          return
+        }
+        if (asTanker.length > 0) {
+          setLinkedTanker({
+            ...asTanker[0],
+            tankerAssetCode: selectedAsset.assetCode,
+            tankerAssetName: selectedAsset.assetName,
+            tankerAssetTypeCode: selectedAsset.assetTypeCode,
+            tankerChassisNumber: selectedAsset.serialNumber || '',
+          })
           return
         }
 

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.utils.errors import commit_or_409, flush_or_409
 from app.database import get_db
 from app.models import AssetAssignment, Asset, Location, User
 from app.schemas import AssetAssignmentCreate, AssetAssignmentResponse
@@ -307,7 +308,7 @@ def create_asset_assignment(
     )
 
     db.add(new_assignment)
-    db.flush()
+    flush_or_409(db)
 
     assets, locations, users = _batch_load_references(db, [new_assignment])
     after_data = build_asset_assignment_audit_snapshot(new_assignment, assets, locations, users)
@@ -325,7 +326,7 @@ def create_asset_assignment(
         details={"after": after_data},
     )
 
-    db.commit()
+    commit_or_409(db)
     db.refresh(new_assignment)
 
     assets, locations, users = _batch_load_references(db, [new_assignment])
@@ -390,7 +391,7 @@ def update_asset_assignment(
     existing_assignment.remarks = clean_optional_text(assignment.remarks)
     existing_assignment.status = assignment.status
 
-    db.flush()
+    flush_or_409(db)
 
     assets, locations, users = _batch_load_references(db, [existing_assignment])
     after_data = build_asset_assignment_audit_snapshot(existing_assignment, assets, locations, users)
@@ -408,7 +409,7 @@ def update_asset_assignment(
         details={"before": before_data, "after": after_data},
     )
 
-    db.commit()
+    commit_or_409(db)
     db.refresh(existing_assignment)
 
     assets, locations, users = _batch_load_references(db, [existing_assignment])
@@ -466,7 +467,7 @@ def delete_asset_assignment(
     )
 
     db.delete(existing_assignment)
-    db.commit()
+    commit_or_409(db)
 
     return {
         "message": "Asset assignment deleted successfully"

@@ -50,6 +50,7 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations, loggedInUser
   const canCreate = hasPermission('Create Asset')
   const canEdit = hasPermission('Edit Asset')
   const canDelete = hasPermission('Delete Asset')
+  const canEditGlobal = hasPermission('Edit Global Asset')
   const [formOpen, setFormOpen] = useState(false)
 
   const activeAssetTypes = assetTypes.filter((item) => item.status === 'Active')
@@ -57,6 +58,11 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations, loggedInUser
 
   const handleChange = (e) => {
     const { name, value } = e.target
+
+    if (name === 'assetScope' && value === 'Global' && !canEditGlobal) {
+      setErrorMsg('You do not have permission to create or edit Global assets.')
+      return
+    }
 
     if (name === 'assetScope' && value === 'Global') {
       setAsset({
@@ -156,6 +162,10 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations, loggedInUser
       setErrorMsg('You do not have permission to edit assets.')
       return
     }
+    if (String(assetToEdit.assetScope || '').toLowerCase() === 'global' && !canEditGlobal) {
+      setErrorMsg('You do not have permission to edit Global assets.')
+      return
+    }
 
     setAsset({
       assetName: assetToEdit.assetName,
@@ -182,6 +192,12 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations, loggedInUser
 
     if (!canDelete) {
       setErrorMsg('You do not have permission to delete assets.')
+      setConfirmDeleteId(null)
+      return
+    }
+    const assetToDelete = assets.find((item) => String(item.id) === String(confirmDeleteId))
+    if (String(assetToDelete?.assetScope || '').toLowerCase() === 'global' && !canEditGlobal) {
+      setErrorMsg('You do not have permission to delete Global assets.')
       setConfirmDeleteId(null)
       return
     }
@@ -383,7 +399,7 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations, loggedInUser
           >
             <option value="">Select Asset Scope</option>
             <option>Local</option>
-            <option>Global</option>
+            <option disabled={!canEditGlobal}>Global</option>
           </select>
           {validationErrors.assetScope && (
             <span className="field-error">{validationErrors.assetScope}</span>
@@ -580,12 +596,12 @@ function AssetMaster({ assets, reloadAssets, assetTypes, locations, loggedInUser
                 </td>
                 {(canEdit || canDelete) && (
                 <td className="row-actions">
-                  {canEdit && (
+                  {canEdit && (item.assetScope !== 'Global' || canEditGlobal) && (
                     <button type="button" onClick={() => handleEdit(item)}>
                       Edit
                     </button>
                   )}
-                  {canDelete && (
+                  {canDelete && (item.assetScope !== 'Global' || canEditGlobal) && (
                     <button type="button" onClick={() => { setSuccessMsg(''); setErrorMsg(''); setConfirmDeleteId(item.id) }}>
                       Delete
                     </button>

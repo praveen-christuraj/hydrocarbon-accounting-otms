@@ -2,6 +2,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.utils.errors import commit_or_409, flush_or_409
 from app.database import get_db
 from app.models import (
     OperationWorkflowPolicy,
@@ -30,7 +31,6 @@ from app.dependencies.permissions import (
     apply_location_filter,
     ensure_location_in_user_scope,
     evaluate_operation_workflow_policy,
-    is_admin_user,
     require_user_permission,
 )
 from app.services.audit_service import create_audit_log
@@ -45,8 +45,6 @@ def require_workflow_policy_admin(
     permission_name: str = "Edit Operation Workflow Policy",
 ) -> None:
     require_user_permission(current_user, permission_name, db)
-    if not is_admin_user(current_user, db):
-        raise HTTPException(status_code=403, detail="Only an administrator may change workflow policies")
 
 
 def build_operation_workflow_policy_response(policy: OperationWorkflowPolicy, db: Session):
@@ -125,7 +123,7 @@ def create_operation_workflow_policy(
     if policy.policy_name == "" or policy.action_code == "":
         raise HTTPException(status_code=400, detail="policy_name and action_code are required")
     db.add(policy)
-    db.flush()
+    flush_or_409(db)
 
     for role_id in sorted(set(payload.role_ids or [])):
         role = db.query(Role).filter(Role.id == role_id).first()
@@ -155,7 +153,7 @@ def create_operation_workflow_policy(
         request_path="/operation-workflow-policies",
         details={"action_code": policy.action_code, "priority": policy.priority, "status": policy.status},
     )
-    db.commit()
+    commit_or_409(db)
     db.refresh(policy)
     return build_operation_workflow_policy_response(policy, db)
 
@@ -204,7 +202,7 @@ def update_operation_workflow_policy(
         request_path=f"/operation-workflow-policies/{policy_id}",
         details={"before": before, "after": after},
     )
-    db.commit()
+    commit_or_409(db)
     db.refresh(policy)
     return build_operation_workflow_policy_response(policy, db)
 
@@ -225,7 +223,7 @@ def save_operation_workflow_policy_roles(
         role = db.query(Role).filter(Role.id == role_id).first()
         if role:
             db.add(OperationWorkflowPolicyRole(policy_id=policy_id, role_id=role.id))
-    db.commit()
+    commit_or_409(db)
     db.refresh(policy)
     return build_operation_workflow_policy_response(policy, db)
 
@@ -252,7 +250,7 @@ def save_operation_workflow_policy_users(
                     mode=str(item.mode or "ALLOW").upper(),
                 )
             )
-    db.commit()
+    commit_or_409(db)
     db.refresh(policy)
     return build_operation_workflow_policy_response(policy, db)
 
@@ -280,7 +278,7 @@ def delete_operation_workflow_policy(
         details={"policy_name": policy.policy_name, "action_code": policy.action_code},
     )
     db.delete(policy)
-    db.commit()
+    commit_or_409(db)
     return {"message": "Workflow policy deleted successfully"}
 
 

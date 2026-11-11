@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.utils.errors import commit_or_409, flush_or_409
 from app.database import get_db
 from app.models import Role, User, UserRole, RolePermission
 from app.schemas import RoleCreate, RoleResponse
@@ -74,7 +75,7 @@ def create_role(
     )
 
     db.add(new_role)
-    db.flush()
+    flush_or_409(db)
 
     role_data = {
         "role_name": new_role.role_name,
@@ -97,7 +98,7 @@ def create_role(
         },
     )
 
-    db.commit()
+    commit_or_409(db)
     db.refresh(new_role)
 
     return new_role
@@ -174,7 +175,7 @@ def update_role(
         },
     )
 
-    db.commit()
+    commit_or_409(db)
     db.refresh(existing_role)
 
     return existing_role
@@ -245,7 +246,7 @@ def delete_role(
     )
 
     db.delete(existing_role)
-    db.commit()
+    commit_or_409(db)
 
     return {
         "message": "Role deleted successfully"

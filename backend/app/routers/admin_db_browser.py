@@ -3,17 +3,18 @@ from sqlalchemy import MetaData, Table, func, inspect, select
 from sqlalchemy.orm import Session
 import re
 
+from app.utils.errors import commit_or_409
 from app.database import engine, get_db
 from app.models import User
 from app.dependencies.auth import get_current_user_from_token
-from app.dependencies.permissions import is_admin_user
+from app.dependencies.permissions import require_user_permission
 from app.services.audit_service import create_audit_log
 
 router = APIRouter(prefix="/admin/db", tags=["Admin DB Browser"])
 
 # Known table names from the models — acts as allowlist
 KNOWN_TABLES = {
-    "users", "auth_login_challenges", "password_reset_requests",
+    "users", "auth_login_challenges", "auth_sessions", "password_reset_requests",
     "operation_transaction_values", "operation_transaction_status_history",
     "audit_logs", "roles", "permissions", "role_permissions", "user_roles",
     "user_locations", "system_notifications", "system_notification_receipts",
@@ -49,7 +50,7 @@ KNOWN_TABLES = {
 # Column names whose values should be redacted
 SENSITIVE_COLUMN_PATTERNS = re.compile(
     r"^(password|password_hash|totp_secret|totp_secret_encrypted|backup_codes|backup_codes_hash_json"
-    r"|mfa_secret|otp_secret|refresh_token|access_token|auth_token|api_key|secret_key"
+    r"|mfa_secret|otp_secret|refresh_token|access_token|auth_token|session_id|api_key|secret_key"
     r"|private_key|encrypted_key|passphrase)$",
     re.IGNORECASE,
 )
@@ -92,8 +93,7 @@ def list_tables(
     db: Session = Depends(get_db),
 ):
     """Return all known tables with column info and row count."""
-    if not is_admin_user(current_user, db):
-        raise HTTPException(status_code=403, detail="Admin access required")
+    require_user_permission(current_user, "View Database Browser", db)
 
     inspector = inspect(engine)
     actual_tables = set(inspector.get_table_names())
@@ -125,8 +125,7 @@ def get_table_data(
     db: Session = Depends(get_db),
 ):
     """Return paginated data for a specific table."""
-    if not is_admin_user(current_user, db):
-        raise HTTPException(status_code=403, detail="Admin access required")
+    require_user_permission(current_user, "View Database Browser", db)
 
     if table_name not in KNOWN_TABLES:
         raise HTTPException(status_code=404, detail=f"Unknown table: {table_name}")
@@ -154,7 +153,7 @@ def get_table_data(
             request_path=f"/admin/db/tables/{table_name}",
             details={"table_name": table_name},
         )
-        db.commit()
+        commit_or_409(db)
         raise HTTPException(status_code=500, detail="Unable to read the requested table")
 
     data = [_redact_row(dict(row), columns) for row in rows]
@@ -179,7 +178,7 @@ def get_table_data(
             "sensitive_columns_redacted": [c for c in columns if _is_sensitive_column(c)],
         },
     )
-    db.commit()
+    commit_or_409(db)
 
     return {
         "table_name": table_name,

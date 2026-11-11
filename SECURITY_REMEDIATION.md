@@ -2,21 +2,23 @@
 
 This file is the repository memory for the findings in
 `hydrocarbon_report.docx` (Internal Security Assessment v1.0, 5 September
-2026) plus the second hardening pass of 31 October 2026. Future maintainers and
+2026) plus hardening passes through 11 November 2026. Future maintainers and
 coding agents should read this register before changing authentication,
 authorization, exports, calibration, backup, or diagnostic behavior.
 
-Last verified: 2026-10-31 (Pass 2). 353 backend tests, production frontend
-build, and targeted ESLint on the changed frontend files were run on this date.
+Last verified: 2026-11-11 (Pass 3). All 383 backend tests and the production
+frontend build passed. Repository-wide ESLint is not clean: it reports
+unused-variable and React effect-rule errors across the application, including
+some modified files; these are not addressed as part of this security pass.
 
 ## 1. Disposition of the 24 assessment findings
 
 | # | Severity | Finding | Disposition and control |
 |---|---|---|---|
 | 01 | High | CORS misconfiguration | Fixed. Production requires an explicit HTTPS `CORS_ORIGINS` allowlist; wildcard origins are rejected at startup and methods/headers are restricted to those the SPA uses. |
-| 02 | High | Username-based admin backdoor | Fixed. Administrative capability requires an active `Admin` role (`is_admin_user`). Reserved usernames (`admin`, `administrator`, `root`, `system`, `superuser`) cannot be created or assigned. No frontend username shortcut exists. |
+| 02 | High | Username-based admin backdoor | Fixed. Administrative capability requires an active `Admin` or `Super Admin` role (`is_admin_user`); only an explicit `Super Admin` holder may grant that top tier. The bootstrap `admin` account receives both reserved roles at seed time. Reserved usernames cannot be created or assigned. |
 | 03 | High | JWT type confusion and long sessions | Fixed. Both decoders require `exp`, `iat`, `nbf`, `jti`, `user_id`, `iss`, `aud`, and the correct `token_type`. Access 15 min; refresh 1 day; refresh tokens are refused as bearer tokens. |
-| 04 | High | Refresh token survives logout/reuse | Fixed. Refresh tokens rotate; the predecessor is blacklisted and reuse detection revokes **every** session of the account (epoch bump). Logout clears the cookie and blacklists both presented tokens. |
+| 04 | High | Refresh token survives logout/reuse | Fixed. Refresh tokens rotate within a server-side `auth_sessions` family (`sid`); logout revokes that family, including after access-token expiry, and refresh preserves the family ID. Legacy sid-less tokens retain account-wide revocation. Reuse detection revokes every account session (epoch bump). |
 | 05 | High | No 2FA verification attempt limit | Verified. A challenge is burned after 5 wrong codes; a per-IP limiter adds 20 attempts / 5 min and a per-user limiter 10 failures / 15 min. |
 | 06 | High | Password policy missing on user writes | Verified and extended. Create, update, admin reset and self-change all call `validate_password_policy`; Pass 2 added history reuse checks, common-password/sequence checks, and name/email containment. |
 | 07 | High | Missing location scope on operational endpoints | Verified for export, correction, tanker, vessel ledger, movement mapping, flowmeter, assignment, FSO/shuttle and barge routes. Pass 2 found one additional IDOR: the correction-request **read** endpoint lacked a location check and was fixed. |
@@ -31,9 +33,9 @@ build, and targeted ESLint on the changed frontend files were run on this date.
 | 16 | Medium | Mixed naive/aware lockout datetimes | Verified. `as_naive_utc()` normalises every database timestamp before comparison. |
 | 17 | Medium | Insecure production API fallback | Verified. Production uses HTTPS or same-origin `/api`; an `http://` base URL fails the production build. |
 | 18 | Low | Unsanitized API error display | Fixed in Pass 2. `safe_client_error()` returns a fixed sentence plus the request id; `stored_error_message()` persists only the exception type; full tracebacks go to the server log. Frontend still normalises control characters and angle brackets. |
-| 19 | Low | Asset uniqueness race | Verified. `IntegrityError` is caught, rolled back and returned as HTTP 409; referenced deletes return a controlled conflict. |
+| 19 | Low | Asset uniqueness race | Fixed. Functional unique indexes enforce trimmed/case-folded uniqueness where legacy rows are collision-free; colliding tables are logged and skipped without modifying data. A FastAPI `IntegrityError` handler and router helpers return HTTP 409; referenced deletes return a controlled conflict. |
 | 20 | Low | RBAC diagnostics disclosure | Verified. `/auth/me/rbac-diagnostics` requires `Edit System Settings`. |
-| 21 | Low | Admin password never expires | Verified and strengthened. Administrators default to 60 days, are capped at the configured `ADMIN_PASSWORD_EXPIRY_DAYS` (≤ 90), and `password_never_expires` is hard-refused for any Admin-role account (API returns 400). |
+| 21 | Low | Admin password never expires | Fixed. Admin and Super Admin accounts are capped at `ADMIN_PASSWORD_EXPIRY_DAYS` (≤ 90), non-expiring passwords are always refused for administrators, and ordinary accounts may use them only when `ALLOW_NON_ADMIN_PASSWORD_NEVER_EXPIRES=true`. Newly elevated users are reconciled immediately. |
 | 22 | Low | Fast unsalted encryption-key derivation | Verified. New ciphertext uses PBKDF2-HMAC-SHA256, 600k iterations, with the persistent `SECURITY_KDF_SALT`; legacy SHA-256 ciphertext remains readable for migration. |
 | 23 | Low | Missing browser security headers | Verified and extended. Every API response sets CSP, `X-Frame-Options: DENY`, `nosniff`, referrer, permissions, COOP/CORP, `Cache-Control: no-store`, and HSTS in production. The production SPA image sets the same headers at nginx. |
 | 24 | Low | Public database diagnostic | Verified. `/db-test` requires authentication plus `Edit System Settings`; `/health` is a non-database liveness probe. |
@@ -110,7 +112,48 @@ build, and targeted ESLint on the changed frontend files were run on this date.
   revoke sessions), 2FA lifecycle, login/logout and password changes are all
   audited.
 
-## 3. Production configuration required
+## 3. Pass-3 controls added on 2026-11-11
+
+### 3.1 Session-family revocation and database concurrency
+
+- Interactive login, successful 2FA, and password change create an `auth_sessions`
+  row and mint both JWTs with a shared `sid`; refresh rotates token IDs while
+  retaining that `sid` and extends the session expiry.
+- Protected requests and refresh reject revoked, expired, or mismatched session
+  families. Logout verifies JWT signature/issuer/audience while ignoring only
+  `exp`, so an expired access token can still revoke its family. Legacy tokens
+  without `sid` trigger account-wide revocation for compatibility.
+- Startup creates `auth_sessions` and nullable linked-asset FK columns without
+  rewriting legacy link data. Case-insensitive unique indexes are created only
+  where normalized data has no collisions; existing collisions are logged and
+  left untouched. Database integrity races return HTTP 409 with CORS headers.
+
+### 3.2 Administrator tiers and non-expiring password controls
+
+- `Admin` and `Super Admin` both receive administrative authorization; only an
+  explicit `Super Admin` role holder can grant the Super Admin tier. The
+  bootstrap `admin` account is seeded with both reserved roles. System roles
+  cannot be edited or unassigned through ordinary role administration.
+- Administrator password expiry is capped at the configured administrator
+  window, stale `password_never_expires` values are reconciled at startup and
+  as soon as an Admin/Super Admin role is granted, and administrator bypass is
+  unconditionally refused. Non-admin bypass is opt-in via
+  `ALLOW_NON_ADMIN_PASSWORD_NEVER_EXPIRES` (default `false`).
+
+### 3.3 Global assets and linked-asset continuity
+
+- Global assets, prime-mover/tanker links involving Global assets, and Global
+  asset calibration changes have distinct `Edit Global …` permissions in the
+  backend and frontend.
+- Asset recodes propagate to active and historical prime-mover/tanker link
+  references, calibration tables, assignments, and flowmeter configuration;
+  asset deletion is blocked while linked references exist.
+- Link resolution prefers asset FKs and uses audit-log rename snapshots as a
+  read-only fallback for older rows. Explicit edit/close/delete actions may
+  repair stale codes; startup never rewrites legacy links. Asset-type names and
+  active links preserve prime-mover/tanker classification across asset renames.
+
+## 4. Production configuration required
 
 ```dotenv
 ENVIRONMENT=production
@@ -134,7 +177,7 @@ See [`.env.example`](.env.example) for the full list and
 Changing `SECURITY_KDF_SALT` after v2 ciphertext is written makes those values
 unreadable, so back it up with the encryption key.
 
-## 4. Residual risks accepted for this release
+## 5. Residual risks accepted for this release
 
 | Risk | Why it remains | Mitigation |
 |---|---|---|
@@ -144,7 +187,7 @@ unreadable, so back it up with the encryption key.
 | `/company-report-profiles/print-options` and `/permissions/catalog` require only authentication | Needed by the shared print dialog and role editor for non-admin users | Both return static/master data only; both are audited by access logs |
 | TOTP secret is stored with reversible encryption | Required to verify codes | `ENCRYPTION_KEY` + PBKDF2 salt must be protected as top-tier secrets |
 
-## 5. Regression evidence
+## 6. Regression evidence
 
 - `backend/tests/test_vulnerability_remediation.py` — token type claims,
   cookie refresh/logout, CORS, headers, diagnostics, reserved usernames, backup
@@ -154,8 +197,10 @@ unreadable, so back it up with the encryption key.
   limits, reset flows, session invalidation.
 - `backend/tests/test_security_hardening_v2.py` — forced/expired password
   server-side enforcement, password history, username normalisation, LIKE
-  escaping, admin expiry cap, self-reset refusal, session revocation and
-  refresh-reuse detection, TOTP replay, cross-site cookie refresh, throttling,
+  escaping, admin expiry cap, default refusal/opt-in for non-admin non-expiring
+  passwords, unconditional Admin/Super Admin refusal, expired-access logout
+  family revocation, self-reset refusal, session revocation and refresh-reuse
+  detection, TOTP replay, cross-site cookie refresh, throttling,
   enumeration-safe login, request-id and header checks.
 - `backend/tests/test_hardening_infrastructure.py` — body ceiling (declared and
   chunked), request-id echo/sanitisation, production docs gating, error-message
@@ -163,8 +208,10 @@ unreadable, so back it up with the encryption key.
   password rotation revocation, database-browser audit row and redaction.
 - `backend/tests/test_rbac_hardening.py`, location/party-scope suites — RBAC
   and operation scope.
-- `frontend` — `npm run build` succeeds; `frontend/scripts/test-bulk-io.mjs`
-  verifies CSV/XLSX neutralisation and memory-only token storage.
+- `backend/tests` — full suite: **383 passed** on 2026-11-11.
+- `frontend` — `npm run build` succeeds. `npm run lint:src` remains failing with
+  127 errors / 62 warnings across the SPA, mostly unused variables and React
+  effect-rule findings; this pass does not claim a clean lint run.
 
 When a security control changes, update this register in the same commit and
 add or adjust a regression test that demonstrates the intended boundary.

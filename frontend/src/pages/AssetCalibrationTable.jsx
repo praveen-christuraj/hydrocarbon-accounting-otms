@@ -74,6 +74,7 @@ function AssetCalibrationTable({
   const canCreate = hasPermission('Create Asset Calibration')
   const canEdit = hasPermission('Edit Asset Calibration')
   const canDelete = hasPermission('Delete Asset Calibration')
+  const canEditGlobal = hasPermission('Edit Global Asset Calibration')
   const canWrite = canCreate || canEdit
 
   const activeAssets = assets.filter((asset) => asset.status === 'Active')
@@ -503,9 +504,12 @@ function AssetCalibrationTable({
     e.preventDefault()
 
     if (!(editId === null ? canCreate : canEdit)) {
-      notifyError(
-        `You do not have permission to ${editId === null ? 'create' : 'edit'} asset calibration tables.`
-      )
+      notifyError(`You do not have permission to ${editId === null ? 'create' : 'edit'} asset calibration tables.`)
+      return
+    }
+    const assetBeingChanged = assets.find((asset) => String(asset.assetCode || '').toLowerCase() === String(formData.assetCode || '').toLowerCase())
+    if (String(assetBeingChanged?.assetScope || '').toLowerCase() === 'global' && !canEditGlobal) {
+      notifyError('You do not have permission to manage calibration tables for Global assets.')
       return
     }
 
@@ -573,6 +577,11 @@ function AssetCalibrationTable({
       notifyError('You do not have permission to edit asset calibration tables.')
       return
     }
+    const tableAsset = assets.find((asset) => String(asset.assetCode || '').toLowerCase() === String(table.assetCode || '').toLowerCase())
+    if (String(tableAsset?.assetScope || '').toLowerCase() === 'global' && !canEditGlobal) {
+      notifyError('You do not have permission to manage calibration tables for Global assets.')
+      return
+    }
 
     clearSuccess()
     clearError()
@@ -611,6 +620,12 @@ function AssetCalibrationTable({
   const handleDelete = async () => {
     if (!canDelete) {
       notifyError('You do not have permission to delete asset calibration tables.')
+      return
+    }
+    const tableToDelete = calibrationTables.find((table) => String(table.id) === String(confirmDeleteId))
+    const deleteAsset = assets.find((asset) => String(asset.assetCode || '').toLowerCase() === String(tableToDelete?.assetCode || '').toLowerCase())
+    if (String(deleteAsset?.assetScope || '').toLowerCase() === 'global' && !canEditGlobal) {
+      notifyError('You do not have permission to manage calibration tables for Global assets.')
       return
     }
 

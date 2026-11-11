@@ -124,8 +124,14 @@ ADMIN_PASSWORD_EXPIRY_DAYS = _env_int("ADMIN_PASSWORD_EXPIRY_DAYS", 60, minimum=
 MAX_PASSWORD_EXPIRY_DAYS = _env_int("MAX_PASSWORD_EXPIRY_DAYS", 365, minimum=30, maximum=730)
 PASSWORD_HISTORY_COUNT = _env_int("PASSWORD_HISTORY_COUNT", 5, minimum=1, maximum=24)
 # Never allow "password never expires" to be set for the reserved Admin account
-# or any account holding the Admin role.
+# or any account holding the Admin / Super Admin role.
 ADMIN_PASSWORD_NEVER_EXPIRES_ALLOWED = False
+# Non-administrator accounts may hold a non-expiring password only when the
+# deployment explicitly opts in via environment configuration.
+ALLOW_NON_ADMIN_PASSWORD_NEVER_EXPIRES = _env_bool(
+    "ALLOW_NON_ADMIN_PASSWORD_NEVER_EXPIRES",
+    False,
+)
 
 # ---------------------------------------------------------------------------
 # Account lockout / throttling

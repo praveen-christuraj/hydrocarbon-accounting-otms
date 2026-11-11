@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import false, func
 from sqlalchemy.orm import Session
 
+from app.utils.errors import commit_or_409
 from app.database import get_db
 from app.models import Location, User, UserLocation, UserReportLocation
 from app.schemas import (
@@ -297,7 +298,7 @@ def save_user_locations(
         },
     )
 
-    db.commit()
+    commit_or_409(db)
 
     return {
         "user_id": user.id,
@@ -362,7 +363,7 @@ def update_user_all_locations_access(
             },
         )
 
-    db.commit()
+    commit_or_409(db)
     db.refresh(user)
 
     location_codes = [
@@ -442,6 +443,6 @@ def delete_user_location(
     )
 
     db.delete(assignment)
-    db.commit()
+    commit_or_409(db)
 
     return {"message": "User location assignment deleted successfully"}

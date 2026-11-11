@@ -43,6 +43,7 @@ configure_logging()
 logger = logging.getLogger("app.main")
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import Base, engine, get_db
@@ -75,6 +76,9 @@ from app.models import (
 from app.utils.db_migrations import (
     ensure_user_security_columns,
     ensure_security_hardening_columns,
+    ensure_auth_sessions_table,
+    ensure_prime_mover_tanker_link_asset_id_columns,
+    ensure_case_insensitive_unique_indexes,
     ensure_auth_login_challenge_columns,
     ensure_operation_ticket_number_column,
     ensure_operation_template_layout_columns,
@@ -111,6 +115,9 @@ async def lifespan(app: FastAPI):
     ensure_user_role_multi_role_constraint()
     ensure_user_security_columns()
     ensure_security_hardening_columns()
+    ensure_auth_sessions_table()
+    ensure_prime_mover_tanker_link_asset_id_columns()
+    ensure_case_insensitive_unique_indexes()
     ensure_auth_login_challenge_columns()
     ensure_operation_ticket_number_column()
     ensure_operation_template_layout_columns()
@@ -225,6 +232,18 @@ def _apply_cors_headers_to_error(response: JSONResponse, request: Request) -> No
     response.headers["Vary"] = "Origin"
     if CORS_EXPOSE_HEADERS:
         response.headers["Access-Control-Expose-Headers"] = ", ".join(CORS_EXPOSE_HEADERS)
+
+
+@app.exception_handler(IntegrityError)
+async def integrity_error_handler(request: Request, exc: IntegrityError):
+    """Translate database uniqueness/FK races to a stable conflict response."""
+    logger.info("Integrity conflict on %s %s", request.method, request.url.path)
+    response = JSONResponse(
+        status_code=409,
+        content={"detail": "This change conflicts with existing data. Refresh and try again."},
+    )
+    _apply_cors_headers_to_error(response, request)
+    return response
 
 
 @app.exception_handler(Exception)

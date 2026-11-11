@@ -25,34 +25,43 @@ const emptyLink = {
   status: 'Active',
 }
 
-const isPrimeMoverAsset = (asset) => {
+const isPrimeMoverAsset = (asset, assetTypes = [], links = []) => {
   const typeCode = String(asset.assetTypeCode || '').toUpperCase()
+  const typeName = String(assetTypes.find((item) => String(item.assetTypeCode || '').toLowerCase() === String(asset.assetTypeCode || '').toLowerCase())?.assetTypeName || '').toUpperCase()
   const name = String(asset.assetName || '').toUpperCase()
   const code = String(asset.assetCode || '').toUpperCase()
 
   return (
     typeCode.includes('PRIME') ||
     typeCode.includes('MOVER') ||
+    typeName.includes('PRIME') ||
+    typeName.includes('MOVER') ||
+    links.some((link) => link.status === 'Active' && (link.primeMoverAssetCode || link.prime_mover_asset_code) === asset.assetCode) ||
     name.includes('PRIME') ||
     name.includes('MOVER') ||
     code.startsWith('PM')
   )
 }
 
-const isTankerTrailerAsset = (asset) => {
+const isTankerTrailerAsset = (asset, assetTypes = [], links = []) => {
   const typeCode = String(asset.assetTypeCode || '').toUpperCase()
+  const typeName = String(assetTypes.find((item) => String(item.assetTypeCode || '').toLowerCase() === String(asset.assetTypeCode || '').toLowerCase())?.assetTypeName || '').toUpperCase()
   const name = String(asset.assetName || '').toUpperCase()
 
   return (
     typeCode.includes('TANKER') ||
     typeCode.includes('TRAILER') ||
     typeCode.includes('TRUCK') ||
+    typeName.includes('TANKER') ||
+    typeName.includes('TRAILER') ||
+    typeName.includes('TRUCK') ||
+    links.some((link) => link.status === 'Active' && (link.tankerAssetCode || link.tanker_asset_code) === asset.assetCode) ||
     name.includes('TANKER') ||
     name.includes('TRAILER')
   )
 }
 
-function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
+function PrimeMoverTankerLinkMaster({ assets = [], assetTypes = [], loggedInUser }) {
   const [links, setLinks] = useState([])
   const [link, setLink] = useState(emptyLink)
   const [editId, setEditId] = useState(null)
@@ -79,18 +88,19 @@ function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
   const canCreate = hasPermission('Create Prime Mover Tanker Link')
   const canEdit = hasPermission('Edit Prime Mover Tanker Link')
   const canDelete = hasPermission('Delete Prime Mover Tanker Link')
+  const canEditGlobal = hasPermission('Edit Global Prime Mover Tanker Link')
 
   const activeAssets = useMemo(() => {
     return assets.filter((asset) => asset.status === 'Active')
   }, [assets])
 
   const primeMoverAssets = useMemo(() => {
-    return activeAssets.filter(isPrimeMoverAsset)
-  }, [activeAssets])
+    return activeAssets.filter((asset) => isPrimeMoverAsset(asset, assetTypes, links))
+  }, [activeAssets, assetTypes, links])
 
   const tankerTrailerAssets = useMemo(() => {
-    return activeAssets.filter(isTankerTrailerAsset)
-  }, [activeAssets])
+    return activeAssets.filter((asset) => isTankerTrailerAsset(asset, assetTypes, links))
+  }, [activeAssets, assetTypes, links])
 
   const selectedPrimeMover = activeAssets.find((asset) => {
     return asset.assetCode === link.primeMoverAssetCode
@@ -124,7 +134,7 @@ function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
   useEffect(() => {
     loadLinks()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterStatus])
+  }, [filterStatus, assets])
 
   const handleChange = (e) => {
     const { name, value } = e.target
@@ -176,9 +186,12 @@ function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
     }
 
     if (!(editId === null ? canCreate : canEdit)) {
-      notifyError(
-        `You do not have permission to ${editId === null ? 'create' : 'edit'} prime mover - tanker links.`
-      )
+      notifyError(`You do not have permission to ${editId === null ? 'create' : 'edit'} prime mover - tanker links.`)
+      return
+    }
+    const linkedAssets = [selectedPrimeMover, selectedTanker].filter(Boolean)
+    if (linkedAssets.some((asset) => String(asset.assetScope || '').toLowerCase() === 'global') && !canEditGlobal) {
+      notifyError('You do not have permission to manage links for Global assets.')
       return
     }
 
@@ -293,10 +306,20 @@ function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
     },
   }
 
+  const hasGlobalAsset = (item) => {
+    const codes = [item?.primeMoverAssetCode, item?.tankerAssetCode, item?.prime_mover_asset_code, item?.tanker_asset_code]
+    return assets.some((asset) => codes.includes(asset.assetCode) && String(asset.assetScope || '').toLowerCase() === 'global')
+  }
+
   const handleDelete = async () => {
     clearSuccess()
     clearError()
 
+    if (hasGlobalAsset(confirmDeleteItem) && !canEditGlobal) {
+      notifyError('You do not have permission to manage links for Global assets.')
+      setConfirmDeleteItem(null)
+      return
+    }
     if (!canDelete) {
       notifyError('You do not have permission to delete prime mover - tanker links.')
       setConfirmDeleteItem(null)
@@ -338,6 +361,11 @@ function PrimeMoverTankerLinkMaster({ assets = [], loggedInUser }) {
     clearError()
 
     if (!closeForm.linkId) {
+      return
+    }
+    const linkToClose = links.find((item) => String(item.id) === String(closeForm.linkId))
+    if (hasGlobalAsset(linkToClose) && !canEditGlobal) {
+      notifyError('You do not have permission to manage links for Global assets.')
       return
     }
 

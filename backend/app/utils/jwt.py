@@ -138,3 +138,32 @@ def decode_refresh_token(token: str):
             status_code=401,
             detail="Invalid or expired refresh token",
         )
+
+
+def decode_token_claims_ignoring_exp(token: str) -> dict | None:
+    """Verify signature, issuer, and audience while ignoring ``exp`` for logout."""
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(
+            token,
+            JWT_SECRET_KEY,
+            algorithms=[JWT_ALGORITHM],
+            audience=JWT_AUDIENCE,
+            issuer=JWT_ISSUER,
+            leeway=JWT_LEEWAY_SECONDS,
+            options={
+                "require": ["iat", "nbf", "token_type", "user_id", "jti", "iss", "aud"],
+                "verify_signature": True,
+                "verify_exp": False,
+                "verify_nbf": False,
+                "verify_iat": False,
+                "verify_aud": True,
+                "verify_iss": True,
+            },
+        )
+        if payload.get("token_type") not in {"access", "refresh"}:
+            return None
+        return payload
+    except jwt.InvalidTokenError:
+        return None
