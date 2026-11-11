@@ -4,7 +4,7 @@ import PaginationControls, { paginateRows, usePageSize } from '../components/com
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import { useDataFilters } from '../hooks/useDataFilters'
 import { useAutoColumns } from '../hooks/useAutoColumns'
-import { isAdminUser, usePermissions } from '../hooks/usePermissions'
+import { usePermissions } from '../hooks/usePermissions'
 import AlertMessage from '../components/common/AlertMessage'
 import useActionFeedback from '../hooks/useActionFeedback'
 
@@ -37,12 +37,12 @@ function UserRoleAssignment({
   const visibleItems = paginateRows(filters.filteredRows, page, pageSize)
   const { hasPermission } = usePermissions(loggedInUser)
 
-  const activeUsers = users.filter((user) => user.status === 'Active' && !isAdminUser(user))
-  // The reserved bootstrap role is provisioned by the server and must not be
-  // granted interactively, even by users who can manage ordinary assignments.
-  const activeRoles = roles.filter(
-    (role) => role.status === 'Active' && String(role.roleName || '').trim().toLowerCase() !== 'admin'
+  const activeUsers = users.filter(
+    (user) => user.status === 'Active' && String(user.username || '').trim().toLowerCase() !== 'admin'
   )
+  // Elevated roles are surfaced in the selector; the API enforces whether
+  // this actor may grant Admin or the explicit Super Admin role.
+  const activeRoles = roles.filter((role) => role.status === 'Active')
   const canEdit = hasPermission('Edit User Role Assignment')
   const canDelete = hasPermission('Delete User Role Assignment')
   const canWrite = canEdit || canDelete
@@ -296,7 +296,7 @@ function UserRoleAssignment({
                 <td><span className="permission-badge">{assignment.roleName}</span></td>
                 {canWrite && (
                   <td>
-                    {String(assignment.roleName || '').toLowerCase() !== 'admin' && (
+                    {String(assignment.username || '').trim().toLowerCase() !== 'admin' && (
                       <>
                         {canEdit && (
                           <button type="button" onClick={() => handleUserChange(String(assignment.userId))}>

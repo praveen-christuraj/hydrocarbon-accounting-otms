@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.utils.errors import commit_or_409, flush_or_409
 from app.database import get_db
 from app.models import User, Role, UserRole
 from app.schemas import (
@@ -14,7 +15,7 @@ from app.dependencies.permissions import (
     ensure_user_in_actor_location_scope,
     get_user_location_codes,
     is_admin_role,
-    is_admin_user,
+    is_bootstrap_admin_account,
     require_user_permission,
     user_is_within_actor_location_scope,
 )
@@ -47,11 +48,6 @@ def _resolve_active_roles(db: Session, role_ids: list[int]) -> list[Role]:
     )
     if len(roles) != len(role_ids):
         raise HTTPException(status_code=422, detail="One or more roles are invalid or inactive")
-    if any(is_admin_role(role) for role in roles):
-        raise HTTPException(
-            status_code=403,
-            detail="The reserved Admin role is managed by system provisioning",
-        )
     return roles
 
 
@@ -65,8 +61,8 @@ def _replace_roles(
 ):
     if user.status != "Active":
         raise HTTPException(status_code=400, detail="Only Active users can be assigned roles")
-    if is_admin_user(user, db):
-        raise HTTPException(status_code=403, detail="The reserved administrator account cannot be reassigned")
+    if is_bootstrap_admin_account(user):
+        raise HTTPException(status_code=403, detail="The bootstrap administrator account cannot be reassigned")
 
     existing_rows = (
         db.query(UserRole, Role)
@@ -99,14 +95,19 @@ def _replace_roles(
 
     for assignment, _ in existing_rows:
         db.delete(assignment)
-    db.flush()
+    flush_or_409(db)
 
     created = []
     for role in roles:
         assignment = UserRole(user_id=user.id, role_id=role.id)
         db.add(assignment)
         created.append((assignment, role))
-    db.flush()
+    flush_or_409(db)
+
+    if any(is_admin_role(role) for role in roles):
+        from app.utils.password_policy import reconcile_admin_password_policy
+
+        reconcile_admin_password_policy(user, db=db)
 
     after = [{"role_id": role.id, "role_name": role.role_name} for role in roles]
     create_audit_log(
@@ -181,7 +182,7 @@ def save_user_role(
         db, current_user, user, roles, request_path="/user-roles"
     )
     if changed:
-        db.commit()
+        commit_or_409(db)
         assignment_id = results[0]["id"] if results else None
         if assignment_id is not None:
             assignment = db.query(UserRole).filter(UserRole.id == assignment_id).first()
@@ -208,7 +209,7 @@ def replace_user_roles(
         db, current_user, user, roles, request_path=f"/user-roles/{user_id}"
     )
     if changed:
-        db.commit()
+        commit_or_409(db)
         for item in results:
             assignment = db.query(UserRole).filter(UserRole.id == item["id"]).first()
             if assignment:
@@ -231,10 +232,8 @@ def delete_user_role(
     role = db.query(Role).filter(Role.id == assignment.role_id).first()
     if user:
         ensure_user_in_actor_location_scope(current_user, user, db)
-    if user and is_admin_user(user, db):
-        raise HTTPException(status_code=403, detail="The reserved administrator account cannot be reassigned")
-    if role and is_admin_role(role):
-        raise HTTPException(status_code=403, detail="The reserved Admin role cannot be unassigned")
+    if user and is_bootstrap_admin_account(user):
+        raise HTTPException(status_code=403, detail="The bootstrap administrator account cannot be reassigned")
     if role:
         ensure_role_assignable_to_user(current_user, role, db)
 
@@ -265,5 +264,5 @@ def delete_user_role(
         },
     )
     db.delete(assignment)
-    db.commit()
+    commit_or_409(db)
     return {"message": "User role assignment deleted successfully"}

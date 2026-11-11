@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger("app.errors")
 
@@ -34,3 +36,27 @@ def log_exception(context: str, exc: Exception, *, request_id: str | None = None
         type(exc).__name__,
         extra={"request_id": request_id or "-"},
     )
+
+
+def flush_or_409(
+    db: Session,
+    detail: str = "A conflicting or duplicate record already exists.",
+) -> None:
+    """Flush pending ORM changes, converting database integrity races to HTTP 409."""
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=detail) from None
+
+
+def commit_or_409(
+    db: Session,
+    detail: str = "A conflicting or duplicate record already exists.",
+) -> None:
+    """Commit the current transaction, converting database integrity races to HTTP 409."""
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=detail) from None

@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, literal, or_
 from sqlalchemy.orm import Session
 
+from app.utils.errors import commit_or_409, flush_or_409
 from app.database import get_db
 from app.services.tracking_links import get_receiver_links_for_convoy
 from app.models import (
@@ -1708,7 +1709,7 @@ def acknowledge_tanker_receipt(
     )
 
     db.add(new_acknowledgement)
-    db.flush()
+    flush_or_409(db)
 
     after_data = build_tanker_acknowledgement_audit_snapshot(
         new_acknowledgement,
@@ -1743,7 +1744,7 @@ def acknowledge_tanker_receipt(
         },
     )
 
-    db.commit()
+    commit_or_409(db)
     db.refresh(new_acknowledgement)
 
     return build_tanker_acknowledgement_response(
@@ -1805,7 +1806,7 @@ def revoke_tanker_receipt_acknowledgement(
 
     acknowledgement.updated_at = datetime.now(timezone.utc)
 
-    db.flush()
+    flush_or_409(db)
 
     after_data = build_tanker_acknowledgement_audit_snapshot(
         acknowledgement,
@@ -1850,7 +1851,7 @@ def revoke_tanker_receipt_acknowledgement(
         },
     )
 
-    db.commit()
+    commit_or_409(db)
     db.refresh(acknowledgement)
 
     return build_tanker_acknowledgement_response(
@@ -1962,7 +1963,7 @@ def close_tanker_tracking_movement(
     acknowledgement.closure_remarks = clean_optional_text(request.closure_remarks)
     acknowledgement.updated_at = datetime.now(timezone.utc)
 
-    db.flush()
+    flush_or_409(db)
 
     after_data = build_tanker_acknowledgement_audit_snapshot(
         acknowledgement,
@@ -1992,7 +1993,7 @@ def close_tanker_tracking_movement(
         },
     )
 
-    db.commit()
+    commit_or_409(db)
     db.refresh(acknowledgement)
 
     return build_tanker_acknowledgement_response(

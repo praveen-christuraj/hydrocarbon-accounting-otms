@@ -19,11 +19,67 @@ from app.models import (
 )
 
 
+ADMIN_ROLE_NAME = "Admin"
+SUPER_ADMIN_ROLE_NAME = "Super Admin"
+SUPER_ADMIN_ROLE_ALIASES = frozenset({"super admin", "super-admin", "superadmin", "super_admin"})
+SYSTEM_ADMIN_ROLE_ALIASES = frozenset({"admin", *SUPER_ADMIN_ROLE_ALIASES})
+
+
+def is_bootstrap_admin_account(user: User | None) -> bool:
+    """Identify the seeded bootstrap 'admin' account that must never be locked out."""
+    return str(getattr(user, "username", "") or "").strip().casefold() == "admin"
+
+
+def is_super_admin_role(role_or_name) -> bool:
+    """Identify the Super Admin role regardless of role ID or spacing/case."""
+    role_name = getattr(role_or_name, "role_name", role_or_name)
+    return str(role_name or "").strip().casefold() in SUPER_ADMIN_ROLE_ALIASES
+
+
+def is_admin_role(role_or_name) -> bool:
+    """Identify system administrator roles (Admin and Super Admin) without relying on IDs."""
+    role_name = getattr(role_or_name, "role_name", role_or_name)
+    return str(role_name or "").strip().casefold() in SYSTEM_ADMIN_ROLE_ALIASES
+
+
+def _get_active_user_role_names(user: User, db: Session) -> set[str]:
+    if user is None or getattr(user, "id", None) is None:
+        return set()
+    return {
+        str(role.role_name or "").strip().casefold()
+        for role in (
+            db.query(Role)
+            .join(UserRole, UserRole.role_id == Role.id)
+            .filter(UserRole.user_id == user.id, Role.status == "Active")
+            .all()
+        )
+    }
+
+
+def is_admin_user(user: User, db: Session) -> bool:
+    """Return whether the authenticated user holds an active Admin or Super Admin role."""
+    user_role_names = _get_active_user_role_names(user, db)
+    return bool(user_role_names.intersection(SYSTEM_ADMIN_ROLE_ALIASES))
+
+
+def has_explicit_super_admin_role(user: User, db: Session) -> bool:
+    """True only when ``user`` holds the explicit Super Admin role."""
+    return bool(_get_active_user_role_names(user, db).intersection(SUPER_ADMIN_ROLE_ALIASES))
+
+
+def is_super_admin(user: User, db: Session) -> bool:
+    """Compatibility name for the application's administrative capability."""
+    return is_admin_user(user, db)
+
+
 def user_has_permission(
     user: User,
     permission_name: str,
     db: Session,
 ):
+    if is_admin_user(user, db):
+        return True
+
     user_role_ids = get_user_role_ids(db, user)
     if not user_role_ids:
         return False
@@ -42,31 +98,6 @@ def user_has_permission(
     )
 
     return permission is not None
-
-
-def is_admin_user(user: User, db: Session) -> bool:
-    """Return whether the authenticated user has the active Admin role."""
-    user_role_names = {
-        str(role.role_name or "").strip().casefold()
-        for role in (
-            db.query(Role)
-            .join(UserRole, UserRole.role_id == Role.id)
-            .filter(UserRole.user_id == user.id, Role.status == "Active")
-            .all()
-        )
-    }
-    return "admin" in user_role_names
-
-
-def is_super_admin(user: User, db: Session) -> bool:
-    """Compatibility name for the application's reserved Admin capability."""
-    return is_admin_user(user, db)
-
-
-def is_admin_role(role_or_name) -> bool:
-    """Identify the reserved bootstrap role without relying on role IDs."""
-    role_name = getattr(role_or_name, "role_name", role_or_name)
-    return str(role_name or "").strip().casefold() == "admin"
 
 
 def require_user_permission(
@@ -91,6 +122,8 @@ def user_has_any_permission(
     permission_names,
     db: Session,
 ) -> bool:
+    if is_admin_user(user, db):
+        return True
     names = [str(name).strip() for name in permission_names if str(name or "").strip()]
     if not names:
         return False
@@ -219,10 +252,22 @@ def get_role_permission_names(role_id: int, db: Session) -> set[str]:
 
 def ensure_role_assignable_to_user(actor: User, role: Role, db: Session) -> None:
     """Prevent permission escalation and cross-location mutation via shared roles."""
-    if is_admin_user(actor, db):
+    if is_super_admin_role(role):
+        if not has_explicit_super_admin_role(actor, db):
+            raise HTTPException(
+                status_code=403,
+                detail="Only a Super Admin may assign or unassign the Super Admin role",
+            )
         return
     if is_admin_role(role):
-        raise HTTPException(status_code=403, detail="The reserved Admin role cannot be assigned by this user")
+        if not is_admin_user(actor, db):
+            raise HTTPException(
+                status_code=403,
+                detail="The reserved Admin role cannot be assigned by this user",
+            )
+        return
+    if is_admin_user(actor, db):
+        return
 
     actor_permissions = {name.strip().casefold() for name in get_user_permissions(actor, db)}
     elevated = {
@@ -523,6 +568,7 @@ def build_logged_in_user_response(user: User, db: Session):
         }
     )
     admin_user = is_admin_user(user, db)
+    super_admin_user = has_explicit_super_admin_role(user, db)
     all_locations_access = "Yes" if admin_user or str(user.all_locations_access or "").strip().casefold() in {"yes", "true", "1", "y"} else "No"
 
     return {
@@ -535,7 +581,8 @@ def build_logged_in_user_response(user: User, db: Session):
         "designation": user.designation,
         "status": user.status,
         "is_admin": admin_user,
-        "security": build_security_flags(user),
+        "is_super_admin": super_admin_user,
+        "security": build_security_flags(user, db=db),
         "role": role_data,
         "roles": roles_data,
         "permissions": permissions_data,

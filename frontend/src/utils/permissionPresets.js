@@ -173,7 +173,7 @@ export const planRoleApplication = ({ assigned = [], entries = [], mode = 'repla
 
 /** Why a role cannot receive permission changes from the current user ('' when it can). */
 export const roleLockReason = ({ roleName, status, assigned = [], isAdmin, actorPermissionNames }) => {
-  if (key(roleName) === 'admin') return 'The Admin role always has every permission (system managed).'
+  if (['admin', 'super admin'].includes(key(roleName))) return 'System administrator roles are managed by system provisioning.'
   if (status !== 'Active') return 'Only active roles can be changed.'
   if (!isAdmin && assigned.some((permission) => !actorPermissionNames.has(key(permission.permissionName)))) {
     return 'This role holds permissions you do not have.'

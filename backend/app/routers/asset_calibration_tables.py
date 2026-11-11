@@ -6,6 +6,7 @@ from sqlalchemy import false, func, insert, or_
 from sqlalchemy.orm import Session
 
 from app.config import MAX_CALIBRATION_ROWS
+from app.utils.errors import commit_or_409, flush_or_409
 from app.database import get_db
 from app.models import AssetCalibrationTable, AssetCalibrationData, Asset, CalibrationTemplate, CalibrationTemplateColumn, User
 from app.schemas import (
@@ -18,7 +19,6 @@ from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
     ensure_location_in_user_scope,
     get_user_location_codes,
-    is_admin_user,
     require_user_permission,
 )
 from app.services.audit_service import create_audit_log
@@ -255,8 +255,8 @@ def _bulk_insert_calibration_rows(db: Session, table_id: int, rows) -> None:
 
 def ensure_asset_calibration_scope(asset: Asset, current_user: User, db: Session, *, write: bool = False):
     if str(asset.asset_scope or "").strip().casefold() == "global":
-        if write and not is_admin_user(current_user, db):
-            raise HTTPException(status_code=403, detail="Only an administrator may change calibration data for Global assets")
+        if write:
+            require_user_permission(current_user, "Edit Global Asset Calibration", db)
         return
     ensure_location_in_user_scope(current_user, db, asset.location_code, "Asset location")
 
@@ -595,7 +595,7 @@ def create_asset_calibration_table(
 
     db.add(new_calibration_table)
     try:
-        db.flush()
+        flush_or_409(db)
     except IntegrityError as exc:
         db.rollback()
         if not _is_asset_unique_violation(exc):
@@ -626,7 +626,7 @@ def create_asset_calibration_table(
         details={"after": after_data},
     )
 
-    db.commit()
+    commit_or_409(db)
     db.refresh(new_calibration_table)
 
     if compact:
@@ -701,7 +701,7 @@ def update_asset_calibration_table(
         db.query(AssetCalibrationData).filter(
             AssetCalibrationData.calibration_table_id == calibration_table_id
         ).delete()
-        db.flush()
+        flush_or_409(db)
     except IntegrityError as exc:
         db.rollback()
         if not _is_asset_unique_violation(exc):
@@ -733,7 +733,7 @@ def update_asset_calibration_table(
         details={"before": before_data, "after": after_data},
     )
 
-    db.commit()
+    commit_or_409(db)
     db.refresh(existing_calibration_table)
 
     if compact:
@@ -796,7 +796,7 @@ def delete_asset_calibration_table(
     ).delete()
 
     db.delete(existing_calibration_table)
-    db.commit()
+    commit_or_409(db)
 
     return {
         "message": "Asset calibration table deleted successfully"

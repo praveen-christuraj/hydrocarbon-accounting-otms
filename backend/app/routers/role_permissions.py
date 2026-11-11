@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
+from app.utils.errors import commit_or_409
 from app.database import get_db
 from app.models import Permission, Role, RolePermission, User
 from app.schemas import (
@@ -239,7 +240,7 @@ def save_role_permissions(
         },
     )
 
-    db.commit()
+    commit_or_409(db)
 
     after_role_permissions = (
         db.query(Permission)

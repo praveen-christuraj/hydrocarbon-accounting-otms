@@ -23,6 +23,7 @@ from app.models import (
     AssetCalibrationTable,
     AssetType,
     CalibrationTemplate,
+    PrimeMoverTankerLink,
     ExportLocation,
     ExportTransaction,
     Location,
@@ -36,7 +37,8 @@ from app.models import (
     UserLocation,
     UserRole,
 )
-from app.routers.assets import create_asset, get_assets
+from app.routers.assets import create_asset, delete_asset, get_assets, update_asset
+from app.routers.prime_mover_tanker_links import is_prime_mover_asset, is_tanker_trailer_asset
 from app.routers.asset_calibration_tables import (
     create_asset_calibration_table,
     get_asset_calibration_tables,
@@ -360,6 +362,103 @@ def test_role_assignment_endpoint_blocks_privilege_escalation_and_admin_role(db)
         )
     assert exc.value.status_code == 403
     assert db.query(UserRole).filter(UserRole.user_id == target.id).count() == 0
+
+
+
+def test_admin_role_assignment_requires_admin_and_reconciles_password_policy(db):
+    admin_role = Role(role_name="Admin", status="Active")
+    super_role = Role(role_name="Super Admin", status="Active")
+    db.add_all([admin_role, super_role])
+    db.flush()
+    actor = create_user(db, "admin_assigner", roles=[admin_role])
+    target = create_user(db, "new_admin_target")
+    target.password_never_expires = "Yes"
+    target.password_expiry_days = 180
+    db.commit()
+
+    assigned = replace_user_roles(
+        target.id,
+        UserRolesReplaceRequest(role_ids=[admin_role.id]),
+        current_user=actor,
+        db=db,
+    )
+    assert assigned[0]["role_name"] == "Admin"
+    assert target.password_never_expires == "No"
+    assert target.password_expiry_days <= 60
+
+    # Admin is not sufficient to grant the strictly elevated Super Admin tier.
+    super_target = create_user(db, "new_super_target")
+    db.commit()
+    with pytest.raises(HTTPException) as exc:
+        replace_user_roles(
+            super_target.id,
+            UserRolesReplaceRequest(role_ids=[super_role.id]),
+            current_user=actor,
+            db=db,
+        )
+    assert exc.value.status_code == 403
+
+    super_actor = create_user(db, "explicit_super_actor", roles=[super_role])
+    db.commit()
+    result = replace_user_roles(
+        super_target.id,
+        UserRolesReplaceRequest(role_ids=[super_role.id]),
+        current_user=super_actor,
+        db=db,
+    )
+    assert result[0]["role_name"] == "Super Admin"
+    assert super_target.password_never_expires == "No"
+    assert super_target.password_expiry_days <= 60
+
+
+
+def test_asset_recode_propagates_link_codes_and_type_classification_survives_rename(db):
+    admin_role = Role(role_name="Admin", status="Active")
+    db.add(admin_role)
+    db.flush()
+    actor = create_user(db, "asset_admin", roles=[admin_role])
+    mover_type = AssetType(asset_type_name="Prime Mover", asset_type_code="MOVER", status="Active")
+    generic_type = AssetType(asset_type_name="Mobile Unit", asset_type_code="MOBILE", status="Active")
+    db.add_all([mover_type, generic_type])
+    db.flush()
+    mover = Asset(asset_name="Old Prime Mover", asset_code="PM-OLD", asset_scope="Global", asset_type_code="MOVER", status="Active")
+    tanker = Asset(asset_name="Mobile Unit 2", asset_code="MOBILE-2", asset_scope="Global", asset_type_code="MOBILE", status="Active")
+    db.add_all([mover, tanker])
+    db.flush()
+    link = PrimeMoverTankerLink(
+        prime_mover_asset_id=mover.id,
+        tanker_asset_id=tanker.id,
+        prime_mover_asset_code=mover.asset_code,
+        tanker_asset_code=tanker.asset_code,
+        linked_from=date.today(),
+        status="Active",
+    )
+    db.add(link)
+    db.commit()
+
+    changed = update_asset(
+        mover.id,
+        AssetCreate(
+            asset_name="Renamed Equipment",
+            asset_code="PM-NEW",
+            asset_scope="Global",
+            asset_type_code="MOVER",
+            status="Active",
+        ),
+        current_user=actor,
+        db=db,
+    )
+    db.refresh(link)
+    assert changed.asset_code == "PM-NEW"
+    assert link.prime_mover_asset_code == "PM-NEW"
+    assert link.prime_mover_asset_id == mover.id
+    assert is_prime_mover_asset(changed, db)
+    assert is_tanker_trailer_asset(tanker, db)  # active link classifies a generic asset
+
+    with pytest.raises(HTTPException) as exc:
+        delete_asset(mover.id, current_user=actor, db=db)
+    assert exc.value.status_code == 400
+    assert "link references" in exc.value.detail.lower()
 
 
 def test_user_and_role_administration_respects_actor_location_scope(db):

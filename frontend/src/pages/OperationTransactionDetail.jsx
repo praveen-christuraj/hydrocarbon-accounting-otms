@@ -1896,8 +1896,10 @@ function OperationTransactionDetail({ loggedInUser }) {
   const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
   const isAdminBootstrap =
     loggedInUser?.isAdmin === true ||
+    loggedInUser?.is_admin === true ||
+    loggedInUser?.is_super_admin === true ||
     (Array.isArray(loggedInUser?.roles) && loggedInUser.roles.some((role) =>
-      String(role?.role_name || role?.roleName || '').trim().toLowerCase() === 'admin'
+      ['admin', 'super admin'].includes(String(role?.role_name || role?.roleName || '').trim().toLowerCase())
     ))
 
   const hasPermission = (permissionName) => {

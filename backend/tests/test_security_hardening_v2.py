@@ -16,7 +16,8 @@ import pytest
 from sqlalchemy import func
 
 from app.config import AUTH_COOKIE_NAME
-from app.models import Permission, Role, RolePermission
+from app.models import Permission, Role, RolePermission, UserSession
+from app.utils.jwt import create_access_token, decode_access_token
 from app.utils import rate_limit
 from app.utils.rate_limit import reset_rate_limits
 from tests.conftest import create_user
@@ -269,33 +270,44 @@ def test_user_search_wildcards_are_escaped(client, db):
 # Administrator password policy
 # ---------------------------------------------------------------------------
 
-def test_admin_password_never_expires_is_refused(client, db):
+def test_admin_password_never_expires_is_refused(client, db, monkeypatch):
+    import app.config as app_config
+
     admin = _make_admin(db)
     target = _make_user(db, "policytarget")
+    super_role = _role(db, "Super Admin", [])
+    super_user = create_user(db, "superpolicy", PASSWORD, roles=[super_role])
+    db.commit()
     headers = _headers(client, "admin")
+    policy_url = lambda user: f"/auth/users/{user.id}/security/password-policy"
+    payload = {"password_expiry_days": 45, "password_never_expires": True}
 
-    refused = client.put(
-        f"/auth/users/{admin.id}/security/password-policy",
-        headers=headers,
-        json={"password_expiry_days": 90, "password_never_expires": True},
-    )
+    # Default policy refuses the exception for ordinary accounts.
+    monkeypatch.setattr(app_config, "ALLOW_NON_ADMIN_PASSWORD_NEVER_EXPIRES", False)
+    refused = client.put(policy_url(target), headers=headers, json=payload)
     assert refused.status_code == 400
-    assert "expire" in refused.json()["detail"].lower()
+    assert "disabled" in refused.json()["detail"].lower()
+
+    # A deployment may explicitly permit the exception for non-admins only.
+    monkeypatch.setattr(app_config, "ALLOW_NON_ADMIN_PASSWORD_NEVER_EXPIRES", True)
+    allowed = client.put(policy_url(target), headers=headers, json=payload)
+    assert allowed.status_code == 200, allowed.text
+    assert allowed.json()["user"]["password_never_expires"] is True
+
+    # Admin and Super Admin expiry remains mandatory, even if the override is
+    # accidentally enabled by deployment configuration.
+    monkeypatch.setattr(app_config, "ADMIN_PASSWORD_NEVER_EXPIRES_ALLOWED", True)
+    for administrator in (admin, super_user):
+        response = client.put(policy_url(administrator), headers=headers, json=payload)
+        assert response.status_code == 400
+        assert "administrator" in response.json()["detail"].lower() or "reserved" in response.json()["detail"].lower()
 
     capped = client.put(
-        f"/auth/users/{admin.id}/security/password-policy",
+        policy_url(admin),
         headers=headers,
         json={"password_expiry_days": 180, "password_never_expires": False},
     )
     assert capped.status_code == 400
-
-    allowed = client.put(
-        f"/auth/users/{target.id}/security/password-policy",
-        headers=headers,
-        json={"password_expiry_days": 45, "password_never_expires": True},
-    )
-    assert allowed.status_code == 200, allowed.text
-    assert allowed.json()["user"]["password_never_expires"] is True
 
 
 def test_admin_cannot_reset_own_password_through_admin_endpoint(client, db):
@@ -328,6 +340,28 @@ def test_admin_can_revoke_every_session_of_a_user(client, db):
     assert revoked.status_code == 200, revoked.text
 
     assert client.get("/auth/me", headers=user_headers).status_code == 401
+
+
+def test_logout_with_expired_access_token_revokes_its_session_family(client, db):
+    user = _make_user(db, "expiredlogout")
+    headers = _headers(client, user.username)
+    current_claims = decode_access_token(headers["Authorization"].split(" ", 1)[1])
+    session_id = current_claims["sid"]
+    expired = create_access_token(
+        data={
+            "user_id": user.id,
+            "username": user.username,
+            "session_epoch": user.session_epoch,
+            "sid": session_id,
+        },
+        expires_delta=timedelta(seconds=-1),
+    )
+
+    response = client.post("/auth/logout", headers={"Authorization": f"Bearer {expired}"})
+    assert response.status_code == 200, response.text
+    session_row = db.query(UserSession).filter(UserSession.session_id == session_id).first()
+    assert session_row is not None
+    assert session_row.status == "Revoked"
 
 
 def test_logout_all_revokes_the_current_access_token(client, db):

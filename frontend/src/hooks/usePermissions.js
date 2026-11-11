@@ -19,7 +19,12 @@ const normalise = (value) => String(value || '').trim().toLowerCase()
 
 export const isAdminUser = (user) => {
   if (!user) return false
-  if (user.isAdmin === true || user.is_admin === true) return true
+  if (
+    user.isAdmin === true ||
+    user.is_admin === true ||
+    user.isSuperAdmin === true ||
+    user.is_super_admin === true
+  ) return true
 
   const roles = user.roles || user.user_roles || []
   if (
@@ -27,7 +32,7 @@ export const isAdminUser = (user) => {
     roles.some((role) => {
       const name =
         role?.role_name || role?.roleName || role?.role?.role_name || role?.role?.roleName
-      return normalise(name) === 'admin'
+      return ['admin', 'super admin'].includes(normalise(name))
     })
   ) {
     return true
@@ -35,7 +40,7 @@ export const isAdminUser = (user) => {
 
   const singleRole =
     user.role?.role_name || user.role?.roleName || user.role_name || user.roleName
-  return normalise(singleRole) === 'admin'
+  return ['admin', 'super admin'].includes(normalise(singleRole))
 }
 
 export const userHasPermission = (user, permissionName) => {

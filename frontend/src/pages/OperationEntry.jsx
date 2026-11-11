@@ -772,6 +772,7 @@ function OperationLayoutRenderer({
             entry={entry}
             editId={editId}
             selectedAsset={selectedAsset}
+            assetTypes={assetTypes}
             assetCalibrationTables={assetCalibrationTables}
             calibrationTemplates={calibrationTemplates}
             handleValueChange={handleValueChange}
@@ -880,6 +881,7 @@ function OperationEntry({
   operationTypes,
   operationTemplates,
   assets,
+  assetTypes = [],
   locations,
   assetCalibrationTables = [],
   calibrationTemplates = [],
@@ -891,8 +893,10 @@ function OperationEntry({
 }) {
   const isAdminBootstrap =
     loggedInUser?.isAdmin === true ||
+    loggedInUser?.is_admin === true ||
+    loggedInUser?.is_super_admin === true ||
     (Array.isArray(loggedInUser?.roles) && loggedInUser.roles.some((role) =>
-      String(role?.role_name || role?.roleName || '').trim().toLowerCase() === 'admin'
+      ['admin', 'super admin'].includes(String(role?.role_name || role?.roleName || '').trim().toLowerCase())
     ))
 
   const hasPermission = (permissionName) =>
@@ -1418,9 +1422,14 @@ function OperationEntry({
     hasAllLocationsAccess,
   ])
 
-  const selectedAsset = activeAssets.find((asset) => {
-    return asset.assetCode === entry.primaryAssetCode
-  })
+  const selectedAssetRow = activeAssets.find((asset) => asset.assetCode === entry.primaryAssetCode)
+  const selectedAsset = selectedAssetRow
+    ? {
+        ...selectedAssetRow,
+        assetTypeName:
+          assetTypes.find((type) => String(type.assetTypeCode || '').toLowerCase() === String(selectedAssetRow.assetTypeCode || '').toLowerCase())?.assetTypeName || '',
+      }
+    : null
 
   const editableOperationEntries = operationEntries.filter((item) => {
     return item.status === 'Draft' || item.status === 'Rejected'

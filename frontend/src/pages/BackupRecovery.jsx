@@ -87,16 +87,12 @@ function BackupRecovery({ loggedInUser }) {
 
   const isAdminBootstrap =
     loggedInUser?.isAdmin === true ||
+    loggedInUser?.is_admin === true ||
+    loggedInUser?.is_super_admin === true ||
     (Array.isArray(loggedInUser?.roles) && loggedInUser.roles.some((role) =>
-      String(role?.role_name || role?.roleName || '').trim().toLowerCase() === 'admin'
+      ['admin', 'super admin'].includes(String(role?.role_name || role?.roleName || '').trim().toLowerCase())
     )) ||
-    (loggedInUser?.roles || []).some(
-      (role) =>
-        String(role?.role_name || role?.roleName || '').toLowerCase() ===
-        'admin'
-    ) ||
-    String(loggedInUser?.role_name || loggedInUser?.roleName || '').toLowerCase() ===
-      'admin'
+    ['admin', 'super admin'].includes(String(loggedInUser?.role_name || loggedInUser?.roleName || '').trim().toLowerCase())
 
   const hasPermission = (permissionName) => {
     if (isAdminBootstrap) return true

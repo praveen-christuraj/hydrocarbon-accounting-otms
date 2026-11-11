@@ -1,15 +1,17 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import false, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.utils.errors import commit_or_409, flush_or_409
 from app.database import get_db
-from app.models import Asset, AssetType, Location, AssetCalibrationTable, AssetAssignment, FlowmeterConfig, User
+from app.models import Asset, AssetType, Location, AssetCalibrationTable, AssetAssignment, FlowmeterConfig, PrimeMoverTankerLink, User
 from app.schemas import AssetCreate, AssetResponse
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
     get_user_location_codes,
-    is_admin_user,
     normalize_location_code,
     require_user_permission,
 )
@@ -106,8 +108,8 @@ def create_asset(
             detail="Asset scope must be Local or Global",
         )
     asset_scope = "Local" if asset_scope == "local" else "Global"
-    if asset_scope == "Global" and not is_admin_user(current_user, db):
-        raise HTTPException(status_code=403, detail="Only an administrator may create Global assets")
+    if asset_scope == "Global":
+        require_user_permission(current_user, "Edit Global Asset", db)
 
     location_code = clean_optional_text(asset.location_code)
 
@@ -158,7 +160,7 @@ def create_asset(
 
     db.add(new_asset)
     try:
-        db.flush()
+        flush_or_409(db)
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="Asset code already exists")
@@ -191,7 +193,7 @@ def create_asset(
     )
 
     try:
-        db.commit()
+        commit_or_409(db)
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="Asset code already exists")
@@ -224,11 +226,8 @@ def update_asset(
         )
 
     allowed = get_user_location_codes(current_user, db)
-    if (
-        str(existing_asset.asset_scope or "").strip().casefold() == "global"
-        and not is_admin_user(current_user, db)
-    ):
-        raise HTTPException(status_code=403, detail="Only an administrator may modify Global assets")
+    if str(existing_asset.asset_scope or "").strip().casefold() == "global":
+        require_user_permission(current_user, "Edit Global Asset", db)
     if (
         allowed is not None
         and existing_asset.location_code
@@ -264,8 +263,8 @@ def update_asset(
             detail="Asset scope must be Local or Global",
         )
     asset_scope = "Local" if asset_scope == "local" else "Global"
-    if asset_scope == "Global" and not is_admin_user(current_user, db):
-        raise HTTPException(status_code=403, detail="Only an administrator may create or modify Global assets")
+    if asset_scope == "Global":
+        require_user_permission(current_user, "Edit Global Asset", db)
 
     location_code = clean_optional_text(asset.location_code)
 
@@ -312,8 +311,38 @@ def update_asset(
         "status": existing_asset.status,
     }
 
+    old_asset_code = existing_asset.asset_code
+    new_asset_code = asset.asset_code.strip()
+    old_scope = existing_asset.asset_scope
+    if old_asset_code.strip().casefold() != new_asset_code.strip().casefold() or str(old_scope).casefold() != asset_scope.casefold():
+        prime_links = db.query(PrimeMoverTankerLink).filter(
+            or_(
+                func.lower(func.trim(PrimeMoverTankerLink.prime_mover_asset_code)) == old_asset_code.strip().casefold(),
+                func.lower(func.trim(PrimeMoverTankerLink.tanker_asset_code)) == old_asset_code.strip().casefold(),
+                PrimeMoverTankerLink.prime_mover_asset_id == existing_asset.id,
+                PrimeMoverTankerLink.tanker_asset_id == existing_asset.id,
+            )
+        ).all()
+        for link in prime_links:
+            if link.prime_mover_asset_id == existing_asset.id or str(link.prime_mover_asset_code or "").strip().casefold() == old_asset_code.strip().casefold():
+                link.prime_mover_asset_code = new_asset_code
+                link.prime_mover_asset_id = existing_asset.id
+            if link.tanker_asset_id == existing_asset.id or str(link.tanker_asset_code or "").strip().casefold() == old_asset_code.strip().casefold():
+                link.tanker_asset_code = new_asset_code
+                link.tanker_asset_id = existing_asset.id
+            link.updated_at = datetime.now()
+        for model in (AssetCalibrationTable, AssetAssignment, FlowmeterConfig):
+            db.query(model).filter(func.lower(func.trim(model.asset_code)) == old_asset_code.strip().casefold()).update(
+                {model.asset_code: new_asset_code}, synchronize_session=False
+            )
+        # Preserve scope on dependent records where the model exposes it.
+        for model in (AssetCalibrationTable, AssetAssignment):
+            if hasattr(model, "asset_scope"):
+                db.query(model).filter(func.lower(func.trim(model.asset_code)) == new_asset_code.casefold()).update(
+                    {model.asset_scope: asset_scope}, synchronize_session=False
+                )
     existing_asset.asset_name = asset.asset_name.strip()
-    existing_asset.asset_code = asset.asset_code.strip()
+    existing_asset.asset_code = new_asset_code
     existing_asset.asset_scope = asset_scope
     existing_asset.asset_type_code = asset.asset_type_code.strip()
     existing_asset.location_code = (
@@ -354,7 +383,7 @@ def update_asset(
     )
 
     try:
-        db.commit()
+        commit_or_409(db)
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="Asset code already exists")
@@ -385,14 +414,25 @@ def delete_asset(
             detail="Asset not found",
         )
     allowed_codes = get_user_location_codes(current_user, db)
-    if str(existing_asset.asset_scope or "").strip().casefold() == "global" and not is_admin_user(current_user, db):
-        raise HTTPException(status_code=403, detail="Only an administrator may delete Global assets")
+    if str(existing_asset.asset_scope or "").strip().casefold() == "global":
+        require_user_permission(current_user, "Edit Global Asset", db)
     if (
         allowed_codes is not None
         and existing_asset.location_code
         and normalize_location_code(existing_asset.location_code) not in allowed_codes
     ):
         raise HTTPException(status_code=403, detail="This asset's location is not in your assigned scope")
+
+    link_reference = db.query(PrimeMoverTankerLink).filter(
+        or_(
+            PrimeMoverTankerLink.prime_mover_asset_id == existing_asset.id,
+            PrimeMoverTankerLink.tanker_asset_id == existing_asset.id,
+            func.lower(func.trim(PrimeMoverTankerLink.prime_mover_asset_code)) == existing_asset.asset_code.strip().casefold(),
+            func.lower(func.trim(PrimeMoverTankerLink.tanker_asset_code)) == existing_asset.asset_code.strip().casefold(),
+        )
+    ).first()
+    if link_reference:
+        raise HTTPException(status_code=400, detail="Cannot delete asset while a Prime Mover / Tanker link references it")
 
     calibration_table = db.query(AssetCalibrationTable).filter(
         AssetCalibrationTable.asset_code.ilike(existing_asset.asset_code)
@@ -452,7 +492,7 @@ def delete_asset(
 
     db.delete(existing_asset)
     try:
-        db.commit()
+        commit_or_409(db)
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="Asset is still referenced and cannot be deleted")

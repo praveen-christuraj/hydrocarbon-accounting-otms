@@ -127,7 +127,14 @@ PERMISSION_CATALOG = [
             },
             {
                 "module_name": "Asset Master",
-                "permissions": _crud("Asset", "assets"),
+                "permissions": [
+                    *_crud("Asset", "assets"),
+                    _perm(
+                        "Edit Global Asset",
+                        OTHER,
+                        "Can create, update, and delete Global-scope shared assets across locations",
+                    ),
+                ],
             },
             {
                 "module_name": "Prime Mover - Tanker Link",
@@ -136,6 +143,11 @@ PERMISSION_CATALOG = [
                     _perm("Create Prime Mover Tanker Link", CREATE, "Can link a prime mover to a tanker"),
                     _perm("Edit Prime Mover Tanker Link", EDIT, "Can edit and close prime mover to tanker links"),
                     _perm("Delete Prime Mover Tanker Link", DELETE, "Can delete prime mover to tanker links"),
+                    _perm(
+                        "Edit Global Prime Mover Tanker Link",
+                        OTHER,
+                        "Can create, update, close, and delete prime mover to tanker links involving Global assets",
+                    ),
                 ],
             },
             {
@@ -149,6 +161,11 @@ PERMISSION_CATALOG = [
                     _perm("Create Asset Calibration", CREATE, "Can create and upload asset calibration tables"),
                     _perm("Edit Asset Calibration", EDIT, "Can edit asset calibration tables and data"),
                     _perm("Delete Asset Calibration", DELETE, "Can delete asset calibration tables"),
+                    _perm(
+                        "Edit Global Asset Calibration",
+                        OTHER,
+                        "Can upload, create, edit, and delete calibration tables for Global-scope assets",
+                    ),
                 ],
             },
             {

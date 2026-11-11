@@ -1,6 +1,9 @@
 import json
+import logging
 
-from sqlalchemy import func, inspect, select, text
+logger = logging.getLogger(__name__)
+
+from sqlalchemy import and_, func, inspect, select, text
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -16,76 +19,120 @@ from app.models import (
     RolePermission,
     User,
     UserRole,
+    UserSession,
 )
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+
+
+def ensure_auth_sessions_table():
+    """Create the additive server-side session-family table on existing installs."""
+    UserSession.__table__.create(bind=engine, checkfirst=True)
+
+
+def ensure_prime_mover_tanker_link_asset_id_columns():
+    """Add nullable asset FKs without rewriting legacy link records."""
+    inspector = inspect(engine)
+    if "prime_mover_tanker_links" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("prime_mover_tanker_links")}
+    with engine.begin() as connection:
+        if "prime_mover_asset_id" not in columns:
+            connection.execute(text("ALTER TABLE prime_mover_tanker_links ADD COLUMN prime_mover_asset_id INTEGER REFERENCES assets(id) ON DELETE SET NULL"))
+        if "tanker_asset_id" not in columns:
+            connection.execute(text("ALTER TABLE prime_mover_tanker_links ADD COLUMN tanker_asset_id INTEGER REFERENCES assets(id) ON DELETE SET NULL"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_prime_mover_tanker_links_prime_mover_asset_id ON prime_mover_tanker_links (prime_mover_asset_id)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_prime_mover_tanker_links_tanker_asset_id ON prime_mover_tanker_links (tanker_asset_id)"))
+
+
+def ensure_case_insensitive_unique_indexes():
+    """Create metadata functional-unique indexes only where data is collision-free.
+
+    Existing rows are never normalized or deleted to make a constraint fit.
+    A collision is logged and the index is skipped for that table/index only.
+    """
+    from app.database import Base
+
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    for table in Base.metadata.sorted_tables:
+        if table.name not in existing_tables:
+            continue
+        existing_columns = {column["name"] for column in inspector.get_columns(table.name)}
+        for index in table.indexes:
+            if not index.unique or not index.expressions:
+                continue
+            # Only these functional indexes are newly used for case/whitespace
+            # uniqueness; leave ordinary unique indexes to their normal DDL.
+            expressions = list(index.expressions)
+            if not any("lower" in str(expression).casefold() for expression in expressions):
+                continue
+            expression_columns = {column.name for expression in expressions for column in getattr(expression, "clauses", []) if getattr(column, "name", None)}
+            if expression_columns and not expression_columns.issubset(existing_columns):
+                continue
+            try:
+                collision = (
+                    select(*expressions)
+                    .select_from(table)
+                    .where(and_(*(expression.is_not(None) for expression in expressions)))
+                    .group_by(*expressions)
+                    .having(func.count() > 1)
+                    .limit(1)
+                )
+                with engine.connect() as connection:
+                    has_collision = connection.execute(collision).first() is not None
+                if has_collision:
+                    logger.warning("Skipping unique index %s on %s: pre-existing normalized collisions", index.name, table.name)
+                    continue
+                index.create(bind=engine, checkfirst=True)
+            except Exception as exc:
+                logger.warning("Could not create unique index %s on %s: %s", index.name, table.name, exc)
 
 
 def ensure_security_hardening_columns():
-    """Add the session-revocation, password-history and TOTP-replay columns.
-
-    Also enforces case-insensitive username uniqueness and starts the password
-    expiry clock for legacy accounts that never recorded a change timestamp.
-    Safe to run on every startup; every statement is idempotent.
-    """
+    """Add session/password hardening columns and repair admin expiry settings."""
     inspector = inspect(engine)
     if "users" not in inspector.get_table_names():
         return
-
-    cols = {c["name"] for c in inspector.get_columns("users")}
+    columns = {column["name"] for column in inspector.get_columns("users")}
+    additions = {
+        "password_history_json": "JSONB" if engine.dialect.name == "postgresql" else "JSON",
+        "session_revoked_at": "TIMESTAMP",
+        "session_epoch": "INTEGER NOT NULL DEFAULT 0",
+        "totp_last_used_step": "INTEGER",
+    }
     with engine.begin() as connection:
-        for col_name, sql in {
-            "password_history_json": "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_history_json JSONB;",
-            "session_revoked_at": "ALTER TABLE users ADD COLUMN IF NOT EXISTS session_revoked_at TIMESTAMP;",
-            "session_epoch": "ALTER TABLE users ADD COLUMN IF NOT EXISTS session_epoch INTEGER NOT NULL DEFAULT 0;",
-            "totp_last_used_step": "ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_last_used_step INTEGER;",
-        }.items():
-            if col_name not in cols:
-                connection.execute(text(sql))
-
-        # Legacy rows with no change timestamp would otherwise never expire.
-        # Starting the clock now gives every account a full policy window
-        # instead of locking anyone out at upgrade time.
-        connection.execute(
-            text("UPDATE users SET password_changed_at = NOW() WHERE password_changed_at IS NULL;")
-        )
-        connection.execute(
-            text(
-                "UPDATE users SET password_expiry_days = :days "
-                "WHERE password_expiry_days IS NULL OR password_expiry_days < 1;"
-            ),
-            {"days": 30},
-        )
-        # The reserved bootstrap administrator must never hold a non-expiring
-        # password. This also repairs databases seeded before the control existed.
-        connection.execute(
-            text(
-                "UPDATE users SET password_never_expires = 'No', "
-                "password_expiry_days = LEAST(COALESCE(password_expiry_days, 60), 60) "
-                "WHERE LOWER(TRIM(username)) = 'admin';"
-            )
-        )
-
-        # Case/whitespace-insensitive uniqueness: login uses a case-insensitive
-        # lookup, so 'Admin' and 'admin ' must not coexist. If a legacy database
-        # already contains duplicates the index creation is skipped with a
-        # warning rather than blocking startup.
-        try:
+        for name, sql_type in additions.items():
+            if name not in columns:
+                connection.execute(text(f"ALTER TABLE users ADD COLUMN {name} {sql_type}"))
+        if "auth_login_challenges" in set(inspect(connection).get_table_names()):
+            cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1)
             connection.execute(
-                text(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_users_username_normalized "
-                    "ON users (LOWER(TRIM(username)));"
-                )
+                text("DELETE FROM auth_login_challenges WHERE expires_at < :cutoff"),
+                {"cutoff": cutoff},
             )
-        except Exception as exc:  # pragma: no cover - depends on legacy data
-            print(f"[SECURITY] Could not create normalized username index: {exc}")
 
-        # Expired artefacts are useless once their token/challenge has expired.
-        try:
-            connection.execute(
-                text("DELETE FROM auth_login_challenges WHERE expires_at < NOW() - INTERVAL '1 day';")
-            )
-        except Exception:
-            pass
+    db = SessionLocal()
+    try:
+        from app.utils.password_policy import reconcile_admin_password_policy
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        for user in db.query(User).all():
+            if getattr(user, "password_changed_at", None) is None:
+                user.password_changed_at = now
+            try:
+                expiry_days = int(getattr(user, "password_expiry_days", 30) or 30)
+            except (TypeError, ValueError):
+                expiry_days = 30
+            if expiry_days < 1:
+                user.password_expiry_days = 30
+            if reconcile_admin_password_policy(user, db=db):
+                user.updated_at = now
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 def ensure_user_security_columns():
@@ -976,7 +1023,8 @@ def seed_admin_role():
     the default 'admin' user exists and is assigned the Admin role.
     Runs on every startup so the admin role/user is always fully authorized."""
     from app.utils.security import hash_password
-    from app.utils.password_policy import validate_password_policy
+    from app.utils.password_policy import validate_password_policy, reconcile_admin_password_policy
+    from app.config import ADMIN_PASSWORD_EXPIRY_DAYS
     import os
 
     db = SessionLocal()
@@ -997,6 +1045,20 @@ def seed_admin_role():
             print(f"[SEED] Created 'Admin' role (id={role.id})")
         else:
             print(f"[SEED] 'Admin' role already exists (id={role.id})")
+
+        super_role = db.query(Role).filter(func.lower(func.trim(Role.role_name)) == "super admin").first()
+        if not super_role:
+            now = datetime.now(timezone.utc)
+            super_role = Role(
+                role_name="Super Admin",
+                description="Reserved top-tier system administration role",
+                status="Active",
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(super_role)
+            db.flush()
+            print(f"[SEED] Created 'Super Admin' role (id={super_role.id})")
 
         # 2. Assign ALL permissions to the Admin role
         all_perms = db.query(Permission).filter(Permission.status == "Active").all()
@@ -1041,7 +1103,7 @@ def seed_admin_role():
                 password_changed_at=now,
                 force_password_change="Yes",
                 password_never_expires="No",
-                password_expiry_days=90,
+                password_expiry_days=ADMIN_PASSWORD_EXPIRY_DAYS,
                 failed_login_count=0,
                 totp_enabled="No",
                 force_2fa="No",
@@ -1059,7 +1121,7 @@ def seed_admin_role():
             # intentionally disabled. Authentication checks this status live.
             if str(admin_user.password_never_expires or "").strip().casefold() == "yes":
                 admin_user.password_never_expires = "No"
-                admin_user.password_expiry_days = 90
+                admin_user.password_expiry_days = ADMIN_PASSWORD_EXPIRY_DAYS
                 admin_user.updated_at = datetime.now(timezone.utc)
                 print("[SEED] Enabled password expiry for the existing admin user")
 
@@ -1078,6 +1140,21 @@ def seed_admin_role():
             print(f"[SEED] Assigned 'Admin' role to 'admin' user")
         else:
             print(f"[SEED] 'admin' user already has 'Admin' role")
+
+        super_assignment = db.query(UserRole).filter(
+            UserRole.user_id == admin_user.id,
+            UserRole.role_id == super_role.id,
+        ).first()
+        if not super_assignment:
+            db.add(UserRole(user_id=admin_user.id, role_id=super_role.id))
+            db.flush()
+            print("[SEED] Assigned 'Super Admin' role to bootstrap 'admin' user")
+
+        # Reconcile every current Admin / Super Admin holder now that roles
+        # have been seeded, not only on the next application restart.
+        for holder in db.query(User).all():
+            if reconcile_admin_password_policy(holder, db=db):
+                holder.updated_at = datetime.now(timezone.utc)
 
         # 5. Verify the setup
         print(f"[SEED] VERIFICATION: admin user (id={admin_user.id}) -> role (id={role.id}, name={role.role_name})")

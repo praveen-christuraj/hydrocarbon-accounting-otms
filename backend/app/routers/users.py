@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import ADMIN_PASSWORD_EXPIRY_DAYS, DEFAULT_PASSWORD_EXPIRY_DAYS
+from app.utils.errors import commit_or_409, flush_or_409
 from app.database import get_db
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
@@ -192,7 +193,7 @@ def create_user(
 
     db.add(new_user)
     try:
-        db.flush()
+        flush_or_409(db)
     except IntegrityError:
         # Two administrators submitting the same username at once must get a
         # controlled 409, not a 500 from the unique constraint.
@@ -216,7 +217,7 @@ def create_user(
         },
     )
 
-    db.commit()
+    commit_or_409(db)
     db.refresh(new_user)
 
     return new_user
@@ -325,7 +326,7 @@ def update_user(
         revoke_user_sessions(existing_user)
 
     try:
-        db.flush()
+        flush_or_409(db)
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="Username already exists")
@@ -348,7 +349,7 @@ def update_user(
         },
     )
 
-    db.commit()
+    commit_or_409(db)
     db.refresh(existing_user)
 
     return existing_user
@@ -411,7 +412,7 @@ def delete_user(
     )
 
     db.delete(existing_user)
-    db.commit()
+    commit_or_409(db)
 
     return {
         "message": "User deleted successfully"

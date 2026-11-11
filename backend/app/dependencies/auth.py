@@ -10,6 +10,7 @@ from app.database import get_db
 from app.models import TokenBlacklist, User
 from app.utils.jwt import decode_access_token
 from app.utils.password_policy import is_password_change_required
+from app.utils.session import is_session_active
 
 # Endpoints an account with an expired/forced password may still call so it can
 # satisfy the policy, sign out, or refresh its session. Every other route is
@@ -152,6 +153,13 @@ def get_current_user_from_token(
             detail="User is not Active",
         )
 
+    sid = payload.get("sid")
+    if sid is not None and not is_session_active(db, str(sid), user_id=user.id):
+        raise HTTPException(
+            status_code=401,
+            detail="Session has been closed. Please sign in again.",
+        )
+
     # A token issued before the user's last password change or before an
     # administrative "revoke all sessions" action is dead, even if its own
     # expiry has not passed.
@@ -163,7 +171,7 @@ def get_current_user_from_token(
 
     # Server-side enforcement of forced/expired passwords. The front end shows
     # the same gate, but the API must not trust the browser to obey it.
-    change_required, change_reason = is_password_change_required(user)
+    change_required, change_reason = is_password_change_required(user, db=db)
     if change_required and request is not None:
         # Compare against the routed path only (query strings are irrelevant).
         path = request.url.path.rstrip("/") or "/"

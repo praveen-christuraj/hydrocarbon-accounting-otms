@@ -13,6 +13,7 @@ import AlertMessage from '../components/common/AlertMessage'
 import useActionFeedback from '../hooks/useActionFeedback'
 
 const IMPORT_STATUSES = ['Active', 'Inactive', 'Blocked']
+const isSystemAdminRole = (name) => ['admin', 'super admin'].includes(String(name || '').trim().toLowerCase())
 
 function RoleMaster({ roles, reloadRoles, loggedInUser }) {
   const emptyRole = {
@@ -102,8 +103,8 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
     clearSuccess()
     setFieldErrors({})
 
-    if (String(roleToEdit.roleName || '').trim().toLowerCase() === 'admin') {
-      setError('The reserved Admin role is managed by system provisioning.')
+    if (isSystemAdminRole(roleToEdit.roleName)) {
+      setError('The reserved Admin and Super Admin roles are managed by system provisioning.')
       return
     }
     if (!canEdit) {
@@ -309,7 +310,7 @@ function RoleMaster({ roles, reloadRoles, loggedInUser }) {
 
                 {(canEdit || canDelete) && (
                   <td className="row-actions">
-                    {String(item.roleName || '').trim().toLowerCase() === 'admin' ? (
+                    {isSystemAdminRole(item.roleName) ? (
                       <span>System managed</span>
                     ) : (
                     <>
