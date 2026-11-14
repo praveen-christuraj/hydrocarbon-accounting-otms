@@ -45,6 +45,11 @@ KNOWN_TABLES = {
     "export_transactions", "export_permit_block_assignments",
     "export_consignees", "export_configs",
     "report_definitions", "report_access_grants", "report_definition_versions",
+    "book_stock_products", "book_stock_fields", "book_stock_field_products",
+    "book_stock_daily_entries", "book_stock_field_productions", "book_stock_configs",
+    "book_stock_sub_fields", "book_stock_field_stocks", "book_stock_sub_field_productions",
+    "assistant_memory", "assistant_conversations",
+    "entry_check_reviews", "asset_metric_profiles",
 }
 
 # Column names whose values should be redacted

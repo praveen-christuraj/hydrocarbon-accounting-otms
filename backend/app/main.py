@@ -71,9 +71,11 @@ from app.models import (
     ExportLocation, ExportEntity, ExportLocationEntity, ExportBlock,
     ExportPermit, ExportTransaction, ExportConfig,
     ReportDefinition, ReportAccessGrant, ReportDefinitionVersion,
+    AssistantMemory, AssistantConversation, EntryCheckReview, AssetMetricProfile,
 )
 
 from app.utils.db_migrations import (
+    ensure_ai_intelligence_tables,
     ensure_user_security_columns,
     ensure_security_hardening_columns,
     ensure_auth_sessions_table,
@@ -135,12 +137,15 @@ async def lifespan(app: FastAPI):
     ensure_report_location_scope_tables()
     ensure_export_operations_tables()
     ensure_book_stock_tables()
+    ensure_ai_intelligence_tables()
     # The new tables are additive. Historical block balances are left intact;
     # only reserved source masters are added for identifiable old production.
     from app.database import SessionLocal
     from app.routers.book_stock_hierarchy import backfill_legacy_subfields
+    from app.services.assistant_service import seed_system_memory
     with SessionLocal() as db:
         backfill_legacy_subfields(db)
+        seed_system_memory(db)
         db.commit()
     ensure_operation_transaction_indexes()
     ensure_asset_calibration_table_indexes()
@@ -268,8 +273,10 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 from app.routers import (
     admin_db_browser, asset_assignments, asset_calibration_tables, asset_types, assets,
+    assistant,
     audit_logs, auth, backup_restore, barge_seal_master, barge_trip_tracking,
     calibration_templates, company_report_profiles, correction_requests, dashboard,
+    entry_checks,
     export_operations,
     book_stock,
     book_stock_entries,
@@ -277,13 +284,16 @@ from app.routers import (
     material_balance_templates, movement_mappings, operation_entries,
     operation_tasks, operation_templates, operation_transactions, operation_types,
     permissions, prime_mover_tanker_links, report_builder, reports, role_locations, role_permissions, roles,
-    shuttle_fso_voyages, system_notifications, table11_factors, tank_operations,
+    shuttle_fso_voyages, stock_anomalies, system_notifications, table11_factors, tank_operations,
     tank_operation_summary, tank_stock_ledger, tanker_tracking, tracking_module_configs, user_locations, user_roles, users, vessel_operations,
     vessel_stock_ledger, workflow_policies,
     out_turn_summary,
 )
 
 app.include_router(admin_db_browser.router)
+app.include_router(assistant.router)
+app.include_router(entry_checks.router)
+app.include_router(stock_anomalies.router)
 app.include_router(asset_assignments.router)
 app.include_router(export_operations.router)
 app.include_router(book_stock.router)

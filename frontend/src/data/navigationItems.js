@@ -272,6 +272,16 @@ export const navigationItems = [
         permission: 'View FSO Tracking',
       },
       {
+        label: 'Stock Anomaly Analytics',
+        path: '/stock-anomaly-analytics',
+        permission: 'View Stock Anomaly Analytics',
+      },
+      {
+        label: 'AI Accounting Guide',
+        path: '/ai-assistant',
+        permission: 'View AI Assistant',
+      },
+      {
         // Published Report Builder reports are appended dynamically below
         // this entry by TopNavigation (one menu item per shared report).
         label: 'Custom Reports',

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Date, DateTime, ForeignKey, Index, Integer, BigInteger, String, Text, UniqueConstraint, Float, Time
+from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Index, Integer, BigInteger, String, Text, UniqueConstraint, Float, Time
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
 from datetime import datetime, timezone
@@ -2503,6 +2503,130 @@ class BookStockSubFieldProduction(Base):
     product_code = Column(String(50), nullable=False, index=True)
     production_qty = Column(Float, nullable=False, default=0)
     __table_args__ = (UniqueConstraint("field_stock_id", "sub_field_id", name="unique_book_stock_field_sub_production"),)
+
+
+# ---------------------------------------------------------------------------
+# Local AI Assistant Memory, Entry Check Reviews & Asset Metric Profiles
+# ---------------------------------------------------------------------------
+
+
+class AssistantMemory(Base):
+    """Curated application knowledge and site-specific operational directives.
+
+    ``is_system=True`` rows are shipped hydrocarbon accounting memory entries
+    (seeded idempotently and immutable via API). Custom rows allow
+    administrators to store local SOPs, shift rules, and variance tolerances
+    that the guide retrieves and cites identically.
+    """
+
+    __tablename__ = "assistant_memory"
+
+    id = Column(Integer, primary_key=True, index=True)
+    memory_key = Column(String(100), nullable=False, unique=True, index=True)
+    title = Column(String(200), nullable=False)
+    category = Column(String(40), nullable=False, default="faq", index=True)
+    keywords = Column(String(500), nullable=False, default="")
+    body = Column(Text, nullable=False, default="")
+    steps = Column(Text, nullable=False, default="")
+    route = Column(String(200), nullable=False, default="")
+    location_code = Column(String(50), nullable=True, index=True)
+    permission = Column(String(120), nullable=False, default="")
+    is_system = Column(Boolean, nullable=False, default=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    sort_order = Column(Integer, nullable=False, default=100)
+    created_by = Column(String(150), nullable=True)
+    updated_by = Column(String(150), nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class AssistantConversation(Base):
+    """Per-user question transcript (never shared across users)."""
+
+    __tablename__ = "assistant_conversations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    question = Column(String(500), nullable=False)
+    intent = Column(String(60), nullable=False, default="")
+    memory_key = Column(String(100), nullable=False, default="")
+    confidence = Column(String(20), nullable=False, default="medium")
+    route = Column(String(200), nullable=False, default="")
+    created_at = Column(DateTime, nullable=False, server_default=func.now(), index=True)
+
+
+class EntryCheckReview(Base):
+    """Audited operator decision to keep an unusual entry value as entered.
+
+    Bound to ``fingerprint`` (a hash of the exact evaluated value), so if the
+    underlying figure changes the finding automatically reopens. Also serves
+    as labelled feedback for calibrating Tier 2 Multi-Variable Anomaly ML.
+    """
+
+    __tablename__ = "entry_check_reviews"
+    __table_args__ = (
+        UniqueConstraint(
+            "entity_type",
+            "entity_id",
+            "check_key",
+            name="uq_entry_check_reviews_entity_key",
+        ),
+        Index("ix_entry_check_reviews_entity", "entity_type", "entity_id"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    entity_type = Column(String(50), nullable=False)
+    entity_id = Column(Integer, nullable=False)
+    location_code = Column(String(50), nullable=True, index=True)
+    asset_code = Column(String(80), nullable=True, index=True)
+    check_key = Column(String(240), nullable=False)
+    check_code = Column(String(60), nullable=False)
+    fingerprint = Column(String(96), nullable=False)
+    subject_label = Column(String(255), nullable=False, default="")
+    value_label = Column(String(160), nullable=False, default="")
+    feature_vector_json = Column(JSONB, nullable=True)
+    note = Column(String(300), nullable=False, default="")
+    reviewed_by = Column(String(160), nullable=False, default="")
+    reviewed_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class AssetMetricProfile(Base):
+    """Pre-aggregated robust statistical & CUSUM profile cache per asset metric.
+
+    Rebuilt from approved operational history asynchronously so live entry
+    checks execute in milliseconds without scanning historical JSON payloads.
+    """
+
+    __tablename__ = "asset_metric_profiles"
+    __table_args__ = (
+        UniqueConstraint(
+            "module_type",
+            "location_code",
+            "asset_code",
+            "metric_name",
+            "unit",
+            name="uq_asset_metric_profiles_subject",
+        ),
+        Index("ix_asset_metric_profiles_lookup", "module_type", "location_code", "asset_code"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    module_type = Column(String(40), nullable=False)
+    location_code = Column(String(50), nullable=False, default="")
+    asset_code = Column(String(80), nullable=False, default="")
+    metric_name = Column(String(80), nullable=False)
+    unit = Column(String(40), nullable=False, default="")
+    sample_count = Column(Integer, nullable=False, default=0)
+    median_value = Column(Float, nullable=False, default=0.0)
+    spread = Column(Float, nullable=False, default=0.0)
+    low_value = Column(Float, nullable=False, default=0.0)
+    high_value = Column(Float, nullable=False, default=0.0)
+    common_value = Column(Float, nullable=True)
+    cusum_pos = Column(Float, nullable=False, default=0.0)
+    cusum_neg = Column(Float, nullable=False, default=0.0)
+    rolling_bias = Column(Float, nullable=False, default=0.0)
+    last_observed_on = Column(Date, nullable=True)
+    refreshed_at = Column(DateTime, nullable=False, server_default=func.now())
 
 
 # Case-insensitive functional unique indexes backing router-level ilike/lower

@@ -10,6 +10,7 @@ import {
 } from '../../api/bookStockApi'
 import PageHeader from '../../components/common/PageHeader'
 import AlertMessage from '../../components/common/AlertMessage'
+import EntryChecksPanel from '../../components/entryChecks/EntryChecksPanel'
 import FormDialog from '../../components/common/FormDialog'
 import DataTableToolbar from '../../components/common/DataTableToolbar'
 import PaginationControls, {
@@ -857,6 +858,44 @@ export default function BookStockDailyEntry({ loggedInUser }) {
               · Closing{' '}
               {fmt(available.reduce((n, f) => n + stockValues(f).closing, 0))}
             </div>
+          )}
+          {available.length > 0 && form.entity_code && form.block_code && form.product_code && (
+            <EntryChecksPanel
+              mode="preview"
+              layout="book_stock"
+              entityType="book_stock_entry"
+              entityId={editing?.id || null}
+              assetCode={form.block_code}
+              loggedInUser={loggedInUser}
+              compact
+              payload={{
+                entry_date: form.entry_date,
+                entity_code: form.entity_code,
+                block_code: form.block_code,
+                product_code: form.product_code,
+                opening_stock: available.reduce(
+                  (n, f) => n + Number(stockValues(f).opening || 0),
+                  0,
+                ),
+                production: available.reduce(
+                  (n, f) => n + Number(stockValues(f).production || 0),
+                  0,
+                ),
+                dispatch: available.reduce(
+                  (n, f) => n + Number(stockValues(f).stock.dispatch || 0),
+                  0,
+                ),
+                adjustment: available.reduce(
+                  (n, f) => n + Number(stockValues(f).stock.adjustment || 0),
+                  0,
+                ),
+                field_productions: available.map((f) => ({
+                  field_code: f.field_code,
+                  field_name: f.field_name,
+                  production_qty: Number(stockValues(f).production || 0),
+                })),
+              }}
+            />
           )}
         </div>
       </FormDialog>

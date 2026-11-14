@@ -116,6 +116,9 @@ const permissionNames = [
   'Delete Book Stock Field', 'View Book Stock Product', 'Create Book Stock Product',
   'Edit Book Stock Product', 'Delete Book Stock Product', 'View Book Stock Settings',
   'Edit Book Stock Settings', 'View Book Stock Export Operations',
+  'View Entry Checks', 'Review Entry Check',
+  'View AI Assistant', 'View Stock Anomaly Analytics',
+  'View Assistant Memory', 'Create Assistant Memory', 'Edit Assistant Memory', 'Delete Assistant Memory',
 ]
 const me = {
   id: 1,
@@ -641,6 +644,138 @@ globalThis.fetch = async (input, init = {}) => {
     }
     return jsonResponse(roleLocations)
   }
+  if (path.startsWith('/assistant/overview')) {
+    return jsonResponse({
+      memory_count: 18,
+      custom_memory_count: 1,
+      manual_guides_indexed: 54,
+      outstanding_checks: 1,
+      quick_prompts: ['Show losses and gains', 'What is missing before month-end close?'],
+      ai_engine: {
+        semantic_backend: 'local_lsa',
+        multivariate_ml_enabled: true,
+        ml_models: ['NumpyIsolationForest (48 trees)', 'StreamingHalfSpaceForest (20 trees)'],
+        local_only: true,
+      },
+    })
+  }
+  if (path.startsWith('/assistant/history')) {
+    return jsonResponse({ items: [] })
+  }
+  if (path.startsWith('/assistant/memory')) {
+    return jsonResponse({
+      items: [
+        {
+          id: 1,
+          memory_key: 'calc-tank-gauging-astm',
+          title: 'How Tank Gauging Quantities Are Calculated',
+          category: 'calculation',
+          keywords: 'tov gov gsv nsv vcf',
+          body: 'GOV = TOV - Free Water; GSV = GOV * VCF; NSV = GSV - BS&W.',
+          steps: ['Ensure active calibration table exists.'],
+          route: '/operation-entry',
+          location_code: '',
+          permission: '',
+          is_system: true,
+          is_active: true,
+          sort_order: 25,
+        },
+      ],
+    })
+  }
+  if (path.startsWith('/assistant/ask')) {
+    return jsonResponse({
+      answer: 'GOV = TOV - Free Water; GSV = GOV x VCF; NSV = GSV - BS&W.',
+      intent: 'knowledge',
+      memory_key: 'calc-tank-gauging-astm',
+      confidence: 'high',
+      category: 'calculation',
+      retrieval_mode: 'semantic_lsa',
+      facts: [],
+      steps: ['Confirm active calibration chart.'],
+      sources: [{ label: 'Operation Entry', route: '/operation-entry' }],
+      follow_ups: ['Show losses and gains'],
+    })
+  }
+  if (path.startsWith('/entry-checks/')) {
+    return jsonResponse({
+      enabled: true,
+      degraded: false,
+      layout: 'tank_gauging',
+      entity_type: 'operation_transaction',
+      entity_id: 1,
+      history_count: 12,
+      open_warnings: 0,
+      open_notices: 0,
+      reviewed: 0,
+      ml: { enabled: true, available: true, model_count: 3 },
+      checks: [],
+    })
+  }
+  if (path.startsWith('/analytics/stock-anomalies/overview')) {
+    return jsonResponse({
+      generated_at: now,
+      location_code: 'ALL',
+      kpis: {
+        loss_gain_events: 1,
+        loss_gain_warnings: 1,
+        cusum_drift_alerts: 1,
+        transit_variance_alerts: 0,
+        seal_security_escalations: 0,
+        open_ticket_abnormalities: 0,
+        sequence_breaks: 0,
+        readiness_score: 92,
+      },
+      loss_gain_events: [
+        {
+          location_code: 'LOC001',
+          tank_asset_code: 'AGGE-TANK-1',
+          accounting_date: '2026-10-15',
+          product_name: 'Crude Oil',
+          book_closing_nsv_bbl: 12000,
+          actual_closing_nsv_bbl: 11920,
+          loss_gain_nsv_bbl: -80,
+          loss_gain_nsv_pct: -0.66,
+          loss_gain_gsv_bbl: -10,
+          loss_gain_gsv_pct: -0.08,
+          direction: 'Loss',
+          severity: 'warning',
+          root_cause: 'BS&W / Free Water divergence',
+          directive: 'Cross-check BS&W% lab certificate.',
+          route: '/material-balance-report',
+        },
+      ],
+      cusum_alerts: [
+        {
+          location_code: 'LOC001',
+          tank_asset_code: 'AGGE-TANK-1',
+          direction: 'Creeping Loss',
+          severity: 'warning',
+          sample_count: 14,
+          rolling_mean_pct: -0.18,
+          cumulative_pct: -2.52,
+          cusum_peak: 1.9,
+          threshold: 1.25,
+          streak_length: 8,
+          summary: 'Sustained creeping loss detected.',
+          trend_points: [
+            { date: '2026-10-01', loss_gain_nsv_bbl: -15, loss_gain_pct: -0.15 },
+            { date: '2026-10-02', loss_gain_nsv_bbl: -22, loss_gain_pct: -0.22 },
+          ],
+          route: '/material-balance-report',
+        },
+      ],
+      transit_alerts: [],
+      chronic_bias: [],
+      sequence_breaks: [],
+      open_ticket_abnormalities: [],
+      readiness_checks: [],
+    })
+  }
+  if (path.startsWith('/analytics/stock-anomalies/refresh-profiles')) {
+    return jsonResponse({ assets_scanned: 1, profiles_updated: 5 })
+  }
+
   /* Tanker Tracking + FSO Tracking: one shared convoy fixture each, so the
      convoy list / trip tabs and the FSO summary tab render with real rows. */
   if (path.startsWith('/tanker-tracking')) {
@@ -2045,6 +2180,79 @@ try {
     'barge MTR shows the receiver-vs-sender difference',
     sampleRow('API @ 60F')?.delta === '-0.30',
     sampleRow('API @ 60F')?.delta
+  )
+
+  // ---- AI Guide, Stock Anomaly Analytics & Phase 0 Guardrails -----------
+  const { runLocalEntryGuardrails } = await server.ssrLoadModule('/src/utils/entryGuardrails.js')
+  const swapFindings = runLocalEntryGuardrails({
+    layout: 'tank_gauging',
+    assetCode: 'AGGE-TANK-1',
+    payload: {
+      inputs: {
+        dipCm: '250',
+        waterLevelCm: '310',
+        tankTemperature: '86',
+        tankTemperatureUnit: 'C',
+        observedApi: '845',
+        bswPercent: '25',
+      },
+    },
+  })
+  check(
+    'Phase 0 client guardrails catch water>dip, °C/°F swap, API/density swap & high BS&W',
+    swapFindings.some((f) => f.code === 'water-exceeds-dip') &&
+      swapFindings.some((f) => f.code === 'temp-unit-swap') &&
+      swapFindings.some((f) => f.code === 'api-density-swap') &&
+      swapFindings.some((f) => f.code === 'bsw-high'),
+    swapFindings.map((f) => f.code).join(', ')
+  )
+  check('AI Guide launcher button renders in top bar', Boolean(q('.ai-launcher-btn')))
+
+  const openRouteInReporting = async (pathTarget) => {
+    const reportingBtn = qa('.top-nav-button').find((b) => text(b).includes('Reporting'))
+    if (reportingBtn) {
+      click(reportingBtn)
+      await flush(60)
+      const link = qa('.top-nav-menu a').find((a) => a.getAttribute('href') === pathTarget)
+      if (link) {
+        click(link)
+        await flush(250)
+        return true
+      }
+    }
+    return false
+  }
+
+  // Test AI Guide Launcher Drawer open & ask
+  const launcherBtn = q('.ai-launcher-btn')
+  if (launcherBtn) {
+    click(launcherBtn)
+    await flush(120)
+    check('AI Guide slide-over drawer opens on launcher click', Boolean(q('.ai-drawer')))
+    const drawerClose = q('.ai-drawer button[aria-label="Close AI Guide"]')
+    if (drawerClose) {
+      click(drawerClose)
+      await flush(60)
+    }
+    check('AI Guide drawer closes cleanly on Close button', !q('.ai-drawer'))
+  }
+
+  const openedAnalytics = await openRouteInReporting('/stock-anomaly-analytics')
+  check('Stock Anomaly Analytics route opens from Reporting menu', openedAnalytics)
+  check(
+    'Stock Anomaly Analytics page renders KPI strip and Loss/Gain diagnostic row',
+    text(q('.main-content')).includes('Hydrocarbon Accounting & Stock Anomaly Analytics') &&
+      text(q('.main-content')).includes('AGGE-TANK-1'),
+    text(q('.main-content')).slice(0, 140)
+  )
+
+  const openedGuide = await openRouteInReporting('/ai-assistant')
+  check('AI Accounting Guide route opens from Reporting menu', openedGuide)
+  check(
+    'AI Accounting Guide workspace renders with local engine status',
+    text(q('.main-content')).includes('Hydrocarbon Accounting AI Guide') &&
+      text(q('.main-content')).includes('Local AI Engine Status'),
+    text(q('.main-content')).slice(0, 140)
   )
 
   console.log('\nDownloads:', downloads.join(', ') || 'none')

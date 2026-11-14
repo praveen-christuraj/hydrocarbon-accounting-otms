@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom'
 import TopNavigation from './TopNavigation'
 import UserMenu from './UserMenu'
 import SystemNotificationCenter from '../SystemNotificationCenter'
+import AssistantLauncher from '../assistant/AssistantLauncher'
 import { logUiAction } from '../../utils/actionLogger'
 import { findNavigationItem, hiddenRouteLabels } from '../../data/navigationItems'
 
@@ -45,6 +46,7 @@ function AppShell({ loggedInUser, onLogout, children }) {
 
           <div className="app-topbar-utilities">
             <div className="app-topbar-slot" ref={setUtilitySlot} />
+            <AssistantLauncher loggedInUser={loggedInUser} />
             <UserMenu loggedInUser={loggedInUser} onLogout={onLogout} />
           </div>
         </div>

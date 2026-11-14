@@ -63,6 +63,8 @@ const TILE_META = {
   '/out-turn-summary': { icon: 'barChart', description: 'Out-turn' },
   '/material-balance-report': { icon: 'layers', description: 'Material balance' },
   '/tanker-transaction-report': { icon: 'truck', description: 'Tanker report' },
+  '/stock-anomaly-analytics': { icon: 'trendingUp', description: 'Loss/gain & CUSUM radar' },
+  '/ai-assistant': { icon: 'compass', description: 'Local AI guide & SOPs' },
   '/system-notifications': { icon: 'bellRing', description: 'Announcements' },
   '/backup-recovery': { icon: 'archive', description: 'Backups' },
   '/database-browser': { icon: 'database', description: 'Read-only data' },
