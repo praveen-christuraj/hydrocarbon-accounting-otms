@@ -1,4 +1,6 @@
 import { useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
+import Icon from '../components/common/Icon'
 import { getMaterialBalanceReport } from '../api/materialBalanceReportApi'
 import { useCompanyPrintProfile } from '../hooks/useCompanyPrintProfile'
 import { usePrintDialog } from '../components/print/printProfileContext'
@@ -326,6 +328,30 @@ function MaterialBalanceReport({ locations, assets }) {
         </div>
 
         <span className="record-count">{rows.length} Rows</span>
+      </div>
+
+      <div className="ai-diagnostic-banner no-print">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Icon name="trendingUp" size={16} />
+          <span>
+            <strong>Loss/Gain &amp; CUSUM Diagnostics:</strong> Inspect automated GSV vs NSV
+            root-cause separation, multi-day creeping losses, and sequence continuity.
+          </span>
+        </div>
+        <Link
+          to={`/stock-anomaly-analytics${
+            filters.locationCode || filters.dateFrom || filters.dateTo
+              ? `?${new URLSearchParams({
+                  ...(filters.locationCode ? { locationCode: filters.locationCode } : {}),
+                  ...(filters.dateFrom ? { dateFrom: filters.dateFrom } : {}),
+                  ...(filters.dateTo ? { dateTo: filters.dateTo } : {}),
+                }).toString()}`
+              : ''
+          }`}
+          className="btn btn-sm btn-primary"
+        >
+          Open Stock Anomaly Analytics
+        </Link>
       </div>
       {/* Action feedback: right next to the page actions + a little pop-up
           toast - never at the bottom of the page (owner rule 8). */}

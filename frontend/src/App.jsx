@@ -67,6 +67,8 @@ import ForcePasswordChange from './pages/ForcePasswordChange'
 import SystemNotificationMaster from './pages/SystemNotificationMaster'
 import BackupRecovery from './pages/BackupRecovery'
 import DatabaseBrowser from './pages/DatabaseBrowser'
+import AIAssistantPage from './pages/AIAssistantPage'
+import StockAnomalyAnalytics from './pages/StockAnomalyAnalytics'
 import {
   ExportDashboard,
   ExportTransactions,
@@ -1221,6 +1223,30 @@ function AppContent({
                 fallbackMessage="You do not have permission to view Material Balance Report."
               >
                 <MaterialBalanceReport locations={locations} assets={assets} />
+              </PermissionGuard>
+            }
+          />
+          <Route
+            path="/stock-anomaly-analytics"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View Stock Anomaly Analytics"
+                fallbackMessage="You do not have permission to view Stock Anomaly Analytics."
+              >
+                <StockAnomalyAnalytics locations={locations} />
+              </PermissionGuard>
+            }
+          />
+          <Route
+            path="/ai-assistant"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View AI Assistant"
+                fallbackMessage="You do not have permission to view the AI Accounting Guide."
+              >
+                <AIAssistantPage locations={locations} loggedInUser={loggedInUser} />
               </PermissionGuard>
             }
           />

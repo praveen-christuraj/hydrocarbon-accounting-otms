@@ -23,6 +23,7 @@ import FSOTrackingLayout from '../components/operationLayouts/FSOTrackingLayout.
 import FlowmeterReadingLayout from '../components/operationLayouts/FlowmeterReadingLayout'
 import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
 import AlertMessage from '../components/common/AlertMessage'
+import EntryChecksPanel from '../components/entryChecks/EntryChecksPanel'
 import OperationEntryBulkImportDialog from '../components/operationEntry/OperationEntryBulkImportDialog'
 import Icon from '../components/common/Icon'
 import useActionFeedback from '../hooks/useActionFeedback'
@@ -2690,6 +2691,85 @@ function OperationEntry({
           notifyError={notifyError}
           notifySuccess={notifySuccess}
         />
+
+        {(() => {
+          const payloadSpecs = [
+            { fieldCode: 'tank_gauging_payload', layout: 'tank_gauging' },
+            { fieldCode: 'multi_tank_payload', layout: 'multi_tank' },
+            { fieldCode: 'tanker_payload', layout: 'tanker' },
+            { fieldCode: 'flowmeter_payload', layout: 'flowmeter' },
+            { fieldCode: 'fso_payload', layout: 'fso' },
+            { fieldCode: 'shuttle_payload', layout: 'shuttle' },
+          ]
+          const valuesList = Array.isArray(entry.values) ? entry.values : []
+          const matchedSpec = payloadSpecs.find((s) =>
+            valuesList.some((v) => v.fieldCode === s.fieldCode && v.fieldValue)
+          )
+          if (!matchedSpec) return null
+          const rawVal = valuesList.find((v) => v.fieldCode === matchedSpec.fieldCode)?.fieldValue
+          let parsedPayload = null
+          try {
+            parsedPayload = typeof rawVal === 'string' ? JSON.parse(rawVal) : rawVal
+          } catch {
+            parsedPayload = null
+          }
+          if (!parsedPayload || typeof parsedPayload !== 'object') return null
+          const linkedSenderRaw = valuesList.find((v) => v.fieldCode === 'linked_sender_transaction_id')?.fieldValue
+          const linkedSenderId = linkedSenderRaw ? Number(linkedSenderRaw) : null
+
+          const applyFinding = (finding) => {
+            if (!finding || !finding.field) return
+            const clone = JSON.parse(JSON.stringify(parsedPayload))
+            const fieldPath = String(finding.field)
+            if (matchedSpec.layout === 'tank_gauging' || matchedSpec.layout === 'tanker') {
+              clone.inputs = clone.inputs || {}
+              if (finding.suggested_unit && (fieldPath === 'tankTemperature' || fieldPath === 'sampleTemperature')) {
+                clone.inputs[`${fieldPath}Unit`] = finding.suggested_unit
+              } else if (finding.suggested_value !== null && finding.suggested_value !== undefined) {
+                clone.inputs[fieldPath] = finding.suggested_value
+              }
+            } else if (matchedSpec.layout === 'flowmeter' && fieldPath.startsWith('meters.')) {
+              const parts = fieldPath.split('.')
+              const mIdx = Number(parts[1])
+              const mProp = parts[2]
+              if (clone.inputs?.meters?.[mIdx] && mProp) {
+                clone.inputs.meters[mIdx][mProp] = finding.suggested_value
+              }
+            } else if (matchedSpec.layout === 'fso' || matchedSpec.layout === 'shuttle') {
+              clone.inputs = clone.inputs || {}
+              clone.inputs[fieldPath] = finding.suggested_value
+            } else if (matchedSpec.layout === 'multi_tank' && fieldPath.includes('.')) {
+              const [side, prop] = fieldPath.split('.')
+              if (clone[side]) {
+                if (finding.suggested_unit && prop === 'tankTemp') {
+                  clone[side].tankTempUnit = finding.suggested_unit
+                } else {
+                  clone[side][prop] = finding.suggested_value
+                }
+              }
+            }
+            handleValueChange(matchedSpec.fieldCode, JSON.stringify(clone))
+            notifySuccess(`Applied suggestion (${finding.suggested_display || finding.suggested_value}). Verify recalculated values before saving.`)
+          }
+
+          return (
+            <div className="full-width-field">
+              <EntryChecksPanel
+                mode="preview"
+                layout={matchedSpec.layout}
+                entityType="operation_transaction"
+                entityId={editId || null}
+                locationCode={entry.originLocationCode || entry.senderLocationCode || ''}
+                assetCode={entry.primaryAssetCode || ''}
+                linkedSenderTransactionId={Number.isFinite(linkedSenderId) ? linkedSenderId : null}
+                payload={parsedPayload}
+                transactionStatus={entry.status}
+                loggedInUser={loggedInUser}
+                onApplySuggestion={applyFinding}
+              />
+            </div>
+          )
+        })()}
 
         {/* Action feedback lives right next to the Save / Update button
             (owner rule 8) - never at the bottom of the page. */}

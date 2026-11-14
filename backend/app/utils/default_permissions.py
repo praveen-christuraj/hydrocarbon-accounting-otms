@@ -321,6 +321,13 @@ PERMISSION_CATALOG = [
                     _perm("Supervise Operation Tasks", OTHER, "Can view and release every operation approval task"),
                 ],
             },
+            {
+                "module_name": "Entry Quality Checks",
+                "permissions": [
+                    _perm("View Entry Checks", VIEW, "Can view pre-save and saved ticket entry abnormality checks"),
+                    _perm("Review Entry Check", OTHER, "Can record audited Keep as entered and Reopen decisions on entry checks"),
+                ],
+            },
         ],
     },
     {
@@ -552,6 +559,13 @@ PERMISSION_CATALOG = [
                     _perm("Export Custom Report", OTHER, "Can download custom report results as Excel/CSV files"),
                 ],
             },
+            {
+                "module_name": "AI Assistant & Stock Analytics",
+                "permissions": [
+                    _perm("View AI Assistant", VIEW, "Can use the local AI guide, read memory directives, and view own question history"),
+                    _perm("View Stock Anomaly Analytics", VIEW, "Can view Material Balance Loss/Gain diagnostics, CUSUM creeping-loss, and transit variance analytics"),
+                ],
+            },
         ],
     },
     {
@@ -611,6 +625,15 @@ PERMISSION_CATALOG = [
                     _perm("Edit Dashboard", EDIT, "Can edit dashboards and dashboard data sources"),
                     _perm("Delete Dashboard", DELETE, "Can delete dashboard data sources"),
                     _perm("Publish Dashboard", OTHER, "Can publish and revert dashboard versions"),
+                ],
+            },
+            {
+                "module_name": "Assistant Memory",
+                "permissions": [
+                    _perm("View Assistant Memory", VIEW, "Can view shipped and custom AI guide memory directives"),
+                    _perm("Create Assistant Memory", CREATE, "Can create custom company or location SOP memory directives"),
+                    _perm("Edit Assistant Memory", EDIT, "Can edit custom AI guide memory directives"),
+                    _perm("Delete Assistant Memory", DELETE, "Can delete custom AI guide memory directives"),
                 ],
             },
         ],
@@ -784,6 +807,10 @@ DERIVED_PERMISSION_GRANTS = {
     "Close Tanker Movement": ["Create Operation Entry"],
     "View Tanker Transaction Report": ["View Operation Transaction"],
     "View Vessel Stock Ledger": ["View Operation Transaction"],
+    "View Entry Checks": ["View Operation Transaction", "Create Operation Entry"],
+    "Review Entry Check": ["Create Operation Entry", "Edit Operation Entry", "Review Operation Transaction"],
+    "View AI Assistant": ["View Operation Transaction", "View Tank Stock Ledger", "View Material Balance Report"],
+    "View Stock Anomaly Analytics": ["View Material Balance Report", "View Out-Turn Report"],
 }
 
 

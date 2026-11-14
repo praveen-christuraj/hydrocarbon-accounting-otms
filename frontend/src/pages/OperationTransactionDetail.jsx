@@ -14,6 +14,7 @@ import { useCompanyPrintProfile } from '../hooks/useCompanyPrintProfile'
 import { usePrintDialog } from '../components/print/printProfileContext'
 import { logUiAction } from '../utils/actionLogger'
 import TankerPayloadPreview from '../components/operationLayouts/TankerPayloadPreview'
+import EntryChecksPanel from '../components/entryChecks/EntryChecksPanel'
 import AlertMessage from '../components/common/AlertMessage'
 import useActionFeedback from '../hooks/useActionFeedback'
 import { escapeCsvCell } from '../utils/exportUtils'
@@ -2927,6 +2928,18 @@ function OperationTransactionDetail({ loggedInUser }) {
           title="Tanker Approval Preview"
         />
       )}
+
+      <div className="no-print">
+        <EntryChecksPanel
+          mode="saved"
+          entityType="operation_transaction"
+          entityId={transaction.id}
+          locationCode={transaction.originLocationCode || ''}
+          assetCode={transaction.primaryAssetCode || ''}
+          transactionStatus={transaction.status}
+          loggedInUser={loggedInUser}
+        />
+      </div>
 
       <div className="section-title">
         <h3>Status Actions</h3>

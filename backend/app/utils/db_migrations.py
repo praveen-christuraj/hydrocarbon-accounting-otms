@@ -2183,3 +2183,22 @@ def ensure_book_stock_tables():
                 """),
                 {"key": key, "value": value, "description": SETTING_DESCRIPTIONS.get(key)},
             )
+
+
+def ensure_ai_intelligence_tables():
+    """Create the additive AI memory, review and asset-profile tables."""
+    from app.models import (
+        AssetMetricProfile,
+        AssistantConversation,
+        AssistantMemory,
+        EntryCheckReview,
+    )
+
+    for model in (
+        AssistantMemory,
+        AssistantConversation,
+        EntryCheckReview,
+        AssetMetricProfile,
+    ):
+        model.__table__.create(bind=engine, checkfirst=True)
+

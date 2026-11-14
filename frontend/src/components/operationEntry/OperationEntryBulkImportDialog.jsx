@@ -8,6 +8,7 @@ import { exportRows } from '../../utils/exportUtils'
 import { logUiAction } from '../../utils/actionLogger'
 import { useBulkTemplates } from '../../hooks/useBulkTemplates'
 import { createOperationEntry } from '../../api/operationEntryApi'
+import { bulkPreviewEntryChecks } from '../../api/entryChecksApi'
 import {
   PAYLOAD_FIELD_CODES,
   activeTemplateFields,
@@ -91,6 +92,8 @@ function OperationEntryBulkImportDialog({
   const [stopOnError, setStopOnError] = useState(false)
   const [progress, setProgress] = useState({ done: 0, total: 0 })
   const [results, setResults] = useState([])
+  const [aiScreening, setAiScreening] = useState(false)
+  const [aiScreenResult, setAiScreenResult] = useState(null)
 
   const activeOperationTypes = useMemo(
     () =>
@@ -1173,6 +1176,111 @@ function OperationEntryBulkImportDialog({
             />
             <span>Stop at the first failed ticket</span>
           </label>
+
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 8,
+              padding: '8px 10px',
+              border: '1px solid var(--border)',
+              borderRadius: 6,
+              background: 'var(--surface-2)',
+              marginBottom: 8,
+            }}
+          >
+            <div style={{ fontSize: '0.84rem' }}>
+              <strong>Pre-Save AI Abnormality Screening (Advisory):</strong>{' '}
+              {aiScreenResult
+                ? `Screened ${aiScreenResult.rows_checked} row(s) — ${aiScreenResult.rows_with_warnings} warning row(s), ${aiScreenResult.rows_with_notices} notice row(s).`
+                : 'Check up to 50 valid rows for keying slips, continuity gaps, and Tier 2 ML anomalies before creating Drafts.'}
+            </div>
+            <button
+              type="button"
+              className="btn btn-sm btn-secondary"
+              disabled={aiScreening || validRows.length === 0}
+              onClick={async () => {
+                setAiScreening(true)
+                try {
+                  const payloadKeyMap = {
+                    tank_gauging: 'tank_gauging_payload',
+                    multi_tank: 'multi_tank_payload',
+                    tanker: 'tanker_payload',
+                    flowmeter: 'flowmeter_payload',
+                    fso: 'fso_payload',
+                    shuttle: 'shuttle_payload',
+                  }
+                  const normalizedLayout = String(layoutType || '').toLowerCase()
+                  const detectedLayout = normalizedLayout.includes('multi') || normalizedLayout.includes('barge')
+                    ? 'multi_tank'
+                    : normalizedLayout.includes('tanker')
+                      ? 'tanker'
+                      : normalizedLayout.includes('flowmeter')
+                        ? 'flowmeter'
+                        : normalizedLayout.includes('fso')
+                          ? 'fso'
+                          : normalizedLayout.includes('shuttle')
+                            ? 'shuttle'
+                            : 'tank_gauging'
+                  const pKey = payloadKeyMap[detectedLayout]
+                  const rowsToCheck = validRows.slice(0, 50).map((r) => {
+                    const pVal = (r.entry?.values || []).find((v) => v.fieldCode === pKey)?.fieldValue
+                    let parsedP = {}
+                    try {
+                      parsedP = typeof pVal === 'string' ? JSON.parse(pVal) : (pVal || {})
+                    } catch {
+                      parsedP = {}
+                    }
+                    return {
+                      row_number: r.rowNumber,
+                      location_code: r.entry?.senderLocationCode || r.entry?.originLocationCode || '',
+                      asset_code: r.entry?.primaryAssetCode || '',
+                      payload: parsedP,
+                    }
+                  })
+                  const res = await bulkPreviewEntryChecks({
+                    layout: detectedLayout,
+                    rows: rowsToCheck,
+                  })
+                  setAiScreenResult(res)
+                } catch {
+                  setAiScreenResult(null)
+                } finally {
+                  setAiScreening(false)
+                }
+              }}
+            >
+              {aiScreening ? 'Screening...' : 'Screen Valid Rows'}
+            </button>
+          </div>
+
+          {aiScreenResult &&
+            aiScreenResult.results?.some((r) => r.open_warnings > 0 || r.open_notices > 0) && (
+              <div
+                style={{
+                  maxHeight: 160,
+                  overflowY: 'auto',
+                  border: '1px solid var(--warning-border)',
+                  borderRadius: 6,
+                  padding: '8px 10px',
+                  marginBottom: 8,
+                  background: 'var(--warning-soft)',
+                  fontSize: '0.82rem',
+                }}
+              >
+                {aiScreenResult.results
+                  .filter((r) => r.open_warnings > 0 || r.open_notices > 0)
+                  .slice(0, 12)
+                  .map((r) => (
+                    <div key={`ai-row-${r.row_number}`} style={{ marginBottom: 4 }}>
+                      <strong>Row {r.row_number}:</strong>{' '}
+                      {r.checks?.map((c) => c.title).join('; ')}
+                    </div>
+                  ))}
+              </div>
+            )}
 
           <AlertMessage
             tone="info"

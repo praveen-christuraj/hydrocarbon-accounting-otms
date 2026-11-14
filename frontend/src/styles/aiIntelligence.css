@@ -1,0 +1,570 @@
+/* =====================================================================
+   AI Intelligence, Pre-Save Entry Checks & Stock Anomaly Analytics
+   Strictly uses OTMS Navy & White Light/Dark tokens from tokens.css.
+   Zero decorative animations, zero emojis, high contrast in Light & Dark.
+   ===================================================================== */
+
+/* ---- Entry Checks Panel ---- */
+.ai-checks-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  margin: 14px 0;
+  overflow: hidden;
+}
+
+.ai-checks-panel.has-warnings {
+  border-color: var(--warning-border);
+}
+
+.ai-checks-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--divider);
+}
+
+.ai-checks-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ai-checks-title {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.ai-checks-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.ai-pill-warning {
+  background: var(--warning-soft);
+  color: var(--warning-text);
+  border: 1px solid var(--warning-border);
+}
+
+.ai-pill-danger {
+  background: var(--danger-soft);
+  color: var(--danger-text);
+  border: 1px solid var(--danger-border);
+}
+
+.ai-pill-info {
+  background: var(--info-soft);
+  color: var(--info-text);
+  border: 1px solid var(--info-border);
+}
+
+.ai-pill-success {
+  background: var(--success-soft);
+  color: var(--success-text);
+  border: 1px solid var(--success-border);
+}
+
+.ai-pill-ml {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  border: 1px solid var(--border);
+}
+
+.ai-pill-neutral {
+  background: var(--surface-3);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+.ai-checks-body {
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ai-checks-empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.84rem;
+  color: var(--text-muted);
+}
+
+.ai-finding-card {
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--radius-control);
+  padding: 10px 12px;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai-finding-card.severity-warning {
+  border-left-color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.ai-finding-card.severity-info {
+  border-left-color: var(--info);
+  background: var(--surface-2);
+}
+
+.ai-finding-card.is-reviewed {
+  border-left-color: var(--success);
+  background: var(--surface-2);
+  opacity: 0.92;
+}
+
+.ai-finding-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ai-finding-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 0.88rem;
+  color: var(--text);
+}
+
+.ai-finding-message {
+  margin: 0;
+  font-size: 0.84rem;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.ai-finding-basis {
+  font-size: 0.77rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.ai-ml-drivers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.ai-ml-driver-chip {
+  font-size: 0.74rem;
+  font-family: var(--font-mono);
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.ai-finding-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.ai-keep-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.ai-keep-form input {
+  flex: 1 1 220px;
+  height: var(--button-height-compact);
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.82rem;
+}
+
+.ai-reviewed-meta {
+  font-size: 0.78rem;
+  color: var(--success-text);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ---- Topbar AI Guide Launcher & Slide-over Drawer ---- */
+.ai-launcher-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: var(--radius-control);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--topbar-text);
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ai-launcher-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.ai-launcher-kbd {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--text-on-navy-muted);
+}
+
+.ai-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--overlay);
+  z-index: 1200;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.ai-drawer {
+  width: min(500px, 100vw);
+  height: 100vh;
+  background: var(--surface);
+  color: var(--text);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-modal);
+  display: flex;
+  flex-direction: column;
+}
+
+.ai-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--topbar-bg);
+  color: var(--topbar-text);
+  border-bottom: 1px solid var(--topbar-border);
+}
+
+.ai-drawer-header h3 {
+  margin: 0;
+  font-size: 0.98rem;
+  font-weight: 600;
+  color: var(--topbar-text);
+}
+
+.ai-drawer-subtitle {
+  font-size: 0.76rem;
+  color: var(--topbar-muted);
+  margin-top: 2px;
+}
+
+.ai-drawer-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ai-drawer-footer {
+  padding: 12px 16px;
+  border-top: 1px solid var(--divider);
+  background: var(--surface-2);
+}
+
+.ai-ask-form {
+  display: flex;
+  gap: 8px;
+}
+
+.ai-ask-form input {
+  flex: 1 1 auto;
+  height: var(--control-height);
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.88rem;
+}
+
+.ai-quick-prompts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ai-prompt-chip {
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.ai-prompt-chip:hover {
+  background: var(--primary-soft);
+  border-color: var(--primary-soft-strong);
+  color: var(--primary);
+}
+
+/* ---- Structured Answer Card ---- */
+.ai-answer-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ai-answer-question {
+  font-weight: 600;
+  font-size: 0.88rem;
+  color: var(--primary);
+  border-bottom: 1px solid var(--divider);
+  padding-bottom: 6px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-answer-text {
+  margin: 0;
+  font-size: 0.86rem;
+  line-height: 1.55;
+  color: var(--text);
+  white-space: pre-line;
+}
+
+.ai-facts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.ai-fact-tile {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  padding: 8px 10px;
+  background: var(--surface-2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.ai-fact-tile:hover {
+  border-color: var(--primary-soft-strong);
+  background: var(--primary-soft);
+}
+
+.ai-fact-label {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+.ai-fact-value {
+  font-size: 0.94rem;
+  font-weight: 700;
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+
+.ai-fact-hint {
+  font-size: 0.73rem;
+  color: var(--text-secondary);
+}
+
+.ai-steps-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.84rem;
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ai-sources-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--divider);
+}
+
+.ai-source-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.76rem;
+  color: var(--link);
+  text-decoration: none;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+.ai-source-link:hover {
+  color: var(--link-hover);
+  background: var(--primary-soft);
+}
+
+/* ---- Stock Anomaly Analytics & AI Page Layouts ---- */
+.ai-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.ai-kpi-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ai-kpi-card.tone-warning {
+  border-top: 3px solid var(--warning);
+}
+
+.ai-kpi-card.tone-danger {
+  border-top: 3px solid var(--danger);
+}
+
+.ai-kpi-card.tone-success {
+  border-top: 3px solid var(--success);
+}
+
+.ai-kpi-card.tone-info {
+  border-top: 3px solid var(--info);
+}
+
+.ai-kpi-label {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.ai-kpi-value {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+
+.ai-kpi-sub {
+  font-size: 0.76rem;
+  color: var(--text-secondary);
+}
+
+.ai-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 14px;
+  padding-bottom: 8px;
+}
+
+.ai-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 0.84rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.ai-tab-btn.active {
+  background: var(--primary);
+  color: var(--text-inverse);
+  border-color: var(--primary);
+}
+
+.ai-workspace-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 960px) {
+  .ai-workspace-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.ai-diagnostic-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  border: 1px solid var(--info-border);
+  border-radius: var(--radius-panel);
+  background: var(--info-soft);
+  color: var(--text);
+}

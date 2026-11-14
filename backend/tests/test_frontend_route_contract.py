@@ -112,3 +112,22 @@ def test_auth_and_prime_mover_tanker_link_routes():
     _assert_route("PUT", "/prime-mover-tanker-links/{link_id}")
     _assert_route("POST", "/prime-mover-tanker-links/{link_id}/close")
     _assert_route("DELETE", "/prime-mover-tanker-links/{link_id}")
+
+
+def test_ai_assistant_entry_checks_and_stock_anomaly_routes():
+    """frontend/src/api/assistantApi.js, entryChecksApi.js & stockAnomaliesApi.js paths."""
+    _assert_route("GET", "/assistant/overview")
+    _assert_route("POST", "/assistant/ask")
+    _assert_route("GET", "/assistant/history")
+    _assert_route("GET", "/assistant/memory")
+    _assert_route("POST", "/assistant/memory")
+    _assert_route("PUT", "/assistant/memory/{memory_id}")
+    _assert_route("DELETE", "/assistant/memory/{memory_id}")
+    _assert_route("POST", "/entry-checks/preview")
+    _assert_route("POST", "/entry-checks/bulk-preview")
+    _assert_route("GET", "/entry-checks/transactions/{transaction_id}")
+    _assert_route("POST", "/entry-checks/reviews")
+    _assert_route("POST", "/entry-checks/reviews/reopen")
+    _assert_route("GET", "/entry-checks/open-summary")
+    _assert_route("GET", "/analytics/stock-anomalies/overview")
+    _assert_route("POST", "/analytics/stock-anomalies/refresh-profiles")

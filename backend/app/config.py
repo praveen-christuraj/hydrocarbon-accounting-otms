@@ -194,3 +194,16 @@ ENFORCE_HTTPS = _env_bool("ENFORCE_HTTPS", False)
 APPROVED_TRANSACTION_STATUS = "Approved"
 CORRECTION_HOLD_STATUS = "Pending Admin Review"
 APPROVED_CORRECTION_WINDOW_HOURS = 24
+
+# ---------------------------------------------------------------------------
+# Local AI Guide, Entry Checks & Tier 2 Multi-Variable Anomaly ML
+# ---------------------------------------------------------------------------
+AI_ENTRY_CHECKS_ENABLED = _env_bool("AI_ENTRY_CHECKS_ENABLED", True)
+AI_HISTORY_WINDOW = _env_int("AI_HISTORY_WINDOW", 40, minimum=5, maximum=200)
+AI_PROFILE_MAX_AGE_HOURS = _env_int("AI_PROFILE_MAX_AGE_HOURS", 24, minimum=1, maximum=720)
+AI_ML_ANOMALY_ENABLED = _env_bool("AI_ML_ANOMALY_ENABLED", True)
+AI_ML_ANOMALY_THRESHOLD = float(os.getenv("AI_ML_ANOMALY_THRESHOLD", "0.64") or "0.64")
+AI_EMBEDDING_BACKEND = (os.getenv("AI_EMBEDDING_BACKEND", "local_lsa") or "local_lsa").strip().lower()
+AI_TRANSIT_LOSS_WARNING_PCT = float(os.getenv("AI_TRANSIT_LOSS_WARNING_PCT", "0.35") or "0.35")
+AI_MATERIAL_BALANCE_WARNING_PCT = float(os.getenv("AI_MATERIAL_BALANCE_WARNING_PCT", "0.30") or "0.30")
+

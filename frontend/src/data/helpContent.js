@@ -405,4 +405,26 @@ export const helpContent = {
       'Cells that could not be calculated (for example a division by zero) show blank with a ⚠ marker and are counted in the warnings above the table.',
     ],
   },
+  '/stock-anomaly-analytics': {
+    title: 'Stock Anomaly Analytics Help',
+    description:
+      'Hydrocarbon Accounting & Stock Anomaly Analytics diagnoses Material Balance losses and gains, detects multi-day CUSUM creeping losses, tracks custody-transfer transit variances and seal mismatches, flags open Draft/Submitted tickets with entry-check or Tier 2 ML warnings, and checks terminal month-end close readiness.',
+    points: [
+      'Loss & Gain Diagnostics separates GSV vs NSV variance to distinguish BS&W / Free Water issues from physical dip, temperature, or unposted ticket gaps.',
+      'CUSUM Creeping-Loss Radar catches small sustained daily losses or gains that stay below single-day tolerances but accumulate significantly over weeks.',
+      'Custody Transfer & Seals correlates Tanker, Barge, and Movement Mapping variances with sender/receiver seal mismatches and profiles chronic asset bias.',
+      'Refresh Profiles updates cached robust per-asset statistical baselines used by pre-save Entry Quality Checks.',
+    ],
+  },
+  '/ai-assistant': {
+    title: 'AI Accounting Guide Help',
+    description:
+      'The Hydrocarbon Accounting AI Guide runs 100% locally on the OTMS backend CPU with zero external API calls. It combines curated system memory, all indexed page manuals, custom company/location SOP directives, and live permission-scoped operational diagnostics.',
+    points: [
+      'Press Alt+G from any screen to open the route-aware slide-over guide drawer without losing your place.',
+      'Ask formula or workflow questions to search curated memory and manuals via hybrid BM25 + SVD semantic retrieval.',
+      'Ask live operational questions (e.g., losses and gains, latest tank stock, open ticket abnormalities, month-end readiness) — every answer respects your exact RBAC permissions and assigned locations.',
+      'Administrators with Assistant Memory permissions can add, edit, or deactivate company and location SOP directives under the Curated Memory tab; shipped system memory remains immutable.',
+    ],
+  },
 }
