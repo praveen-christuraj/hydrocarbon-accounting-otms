@@ -165,11 +165,29 @@ const stringifyPayload = (value) => {
   return String(value || '')
 }
 
-const isPrimeMoverAsset = (asset) => {
-  const typeCode = String(asset?.assetTypeCode || '').toUpperCase()
-  const typeName = String(asset?.assetTypeName || '').toUpperCase()
-  const name = String(asset?.assetName || '').toUpperCase()
-  const code = String(asset?.assetCode || '').toUpperCase()
+const resolveAssetTypeName = (asset, assetTypes = []) => {
+  if (asset?.assetTypeName) {
+    return String(asset.assetTypeName)
+  }
+
+  const code = String(asset?.assetTypeCode || '').toLowerCase()
+  if (!code || !Array.isArray(assetTypes)) {
+    return ''
+  }
+
+  return String(
+    assetTypes.find(
+      (item) => String(item?.assetTypeCode || '').toLowerCase() === code
+    )?.assetTypeName || ''
+  )
+}
+
+const isPrimeMoverAsset = (asset, assetTypes = []) => {
+  if (!asset) return false
+  const typeCode = String(asset.assetTypeCode || '').toUpperCase()
+  const typeName = resolveAssetTypeName(asset, assetTypes).toUpperCase()
+  const name = String(asset.assetName || '').toUpperCase()
+  const code = String(asset.assetCode || '').toUpperCase()
 
   return (
     typeCode.includes('PRIME') ||
@@ -182,10 +200,11 @@ const isPrimeMoverAsset = (asset) => {
   )
 }
 
-const isTankerTrailerAsset = (asset) => {
-  const typeCode = String(asset?.assetTypeCode || '').toUpperCase()
-  const typeName = String(asset?.assetTypeName || '').toUpperCase()
-  const name = String(asset?.assetName || '').toUpperCase()
+const isTankerTrailerAsset = (asset, assetTypes = []) => {
+  if (!asset) return false
+  const typeCode = String(asset.assetTypeCode || '').toUpperCase()
+  const typeName = resolveAssetTypeName(asset, assetTypes).toUpperCase()
+  const name = String(asset.assetName || '').toUpperCase()
 
   return (
     typeCode.includes('TANKER') ||
@@ -296,6 +315,7 @@ function TankerTruckLayout({
   entry,
   editId,
   selectedAsset,
+  assetTypes = [],
   assetCalibrationTables = [],
   calibrationTemplates = [],
   handleValueChange,
@@ -326,7 +346,7 @@ function TankerTruckLayout({
     return {
       ...emptyTankerInput,
       tankerTransactionDate: entry.operationDate || '',
-      primeMoverNumber: isPrimeMoverAsset(selectedAsset)
+      primeMoverNumber: isPrimeMoverAsset(selectedAsset, assetTypes)
         ? selectedAsset?.assetCode || ''
         : '',
     }
@@ -355,7 +375,7 @@ function TankerTruckLayout({
       try {
         setLinkLoading(true)
 
-        if (isPrimeMoverAsset(selectedAsset)) {
+        if (isPrimeMoverAsset(selectedAsset, assetTypes)) {
           const response = await getCurrentPrimeMoverTankerLink(
             selectedAsset.assetCode
           )
@@ -376,7 +396,7 @@ function TankerTruckLayout({
           return
         }
 
-        if (isTankerTrailerAsset(selectedAsset)) {
+        if (isTankerTrailerAsset(selectedAsset, assetTypes)) {
           const selectedTanker = buildTankerFromSelectedAsset(selectedAsset)
 
           const activeLinks = await getPrimeMoverTankerLinks({
@@ -434,7 +454,7 @@ function TankerTruckLayout({
           return
         }
 
-        if (isTankerTrailerAsset(selectedAsset)) {
+        if (isTankerTrailerAsset(selectedAsset, assetTypes)) {
           setLinkedTanker(buildTankerFromSelectedAsset(selectedAsset))
         } else {
           setLinkedTanker(buildLinkAssetFromPayload(existingPayload))
@@ -478,7 +498,7 @@ function TankerTruckLayout({
     setTankerInput({
       ...emptyTankerInput,
       tankerTransactionDate: entry.operationDate || '',
-      primeMoverNumber: isPrimeMoverAsset(selectedAsset)
+      primeMoverNumber: isPrimeMoverAsset(selectedAsset, assetTypes)
         ? selectedAsset?.assetCode || ''
         : linkedTanker?.primeMoverAssetCode || '',
       tankerName: linkedTanker?.tankerAssetName || '',
@@ -493,7 +513,7 @@ function TankerTruckLayout({
         current.tankerTransactionDate || entry.operationDate || '',
       primeMoverNumber:
         current.primeMoverNumber ||
-        (isPrimeMoverAsset(selectedAsset) ? selectedAsset?.assetCode || '' : '') ||
+        (isPrimeMoverAsset(selectedAsset, assetTypes) ? selectedAsset?.assetCode || '' : '') ||
         linkedTanker?.primeMoverAssetCode ||
         '',
       tankerName:
@@ -579,7 +599,7 @@ function TankerTruckLayout({
       errors.push('Primary Asset is required.')
     }
 
-    if (selectedAsset?.assetCode && isPrimeMoverAsset(selectedAsset) && !linkedTanker?.tankerAssetCode) {
+    if (selectedAsset?.assetCode && isPrimeMoverAsset(selectedAsset, assetTypes) && !linkedTanker?.tankerAssetCode) {
       errors.push('No active Tanker Trailer is linked to the selected Prime Mover.')
     }
 
@@ -723,8 +743,8 @@ function TankerTruckLayout({
   }, [calculated, table11Lookup])
 
   const tankerPayload = useMemo(() => {
-    const selectedIsPrimeMover = isPrimeMoverAsset(selectedAsset)
-    const selectedIsTanker = isTankerTrailerAsset(selectedAsset)
+    const selectedIsPrimeMover = isPrimeMoverAsset(selectedAsset, assetTypes)
+    const selectedIsTanker = isTankerTrailerAsset(selectedAsset, assetTypes)
 
     const tankerAsset = selectedIsTanker
       ? selectedAsset
@@ -1147,7 +1167,7 @@ function TankerTruckLayout({
             value={
               linkedTanker?.primeMoverAssetName && linkedTanker?.primeMoverAssetCode
                 ? `${linkedTanker.primeMoverAssetName} (${linkedTanker.primeMoverAssetCode})`
-                : isPrimeMoverAsset(selectedAsset)
+                : isPrimeMoverAsset(selectedAsset, assetTypes)
                   ? `${selectedAsset.assetName} (${selectedAsset.assetCode})`
                   : ''
             }

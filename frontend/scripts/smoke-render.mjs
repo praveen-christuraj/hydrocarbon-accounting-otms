@@ -245,6 +245,13 @@ const auditLogs = Array.from({ length: 30 }, (_, i) => ({
   new_values: null,
 }))
 
+const assetTypesFixture = [
+  { id: 1, asset_type_name: 'Storage Tank', asset_type_code: 'TANK', description: '', status: 'Active', created_at: now, updated_at: now },
+  { id: 2, asset_type_name: 'Barge', asset_type_code: 'BARGE', description: '', status: 'Active', created_at: now, updated_at: now },
+  { id: 3, asset_type_name: 'Prime Mover', asset_type_code: 'VEH_TRK', description: '', status: 'Active', created_at: now, updated_at: now },
+  { id: 4, asset_type_name: 'Tanker Trailer', asset_type_code: 'TANKER', description: '', status: 'Active', created_at: now, updated_at: now },
+]
+
 const assets = [
   {
     id: 1, asset_name: 'Agge Tank 1', asset_code: 'AGGE-TANK-1', asset_scope: 'Local',
@@ -253,6 +260,14 @@ const assets = [
   {
     id: 2, asset_name: 'Barge Ada', asset_code: 'BRG-001', asset_scope: 'Local',
     asset_type_code: 'BARGE', location_code: 'LOC001', status: 'Active', created_at: now, updated_at: now,
+  },
+  {
+    id: 3, asset_name: 'Truck Head 1', asset_code: 'TRK-001', asset_scope: 'Global',
+    asset_type_code: 'VEH_TRK', location_code: null, status: 'Active', created_at: now, updated_at: now,
+  },
+  {
+    id: 4, asset_name: 'Tanker Alpha', asset_code: 'TNK-001', asset_scope: 'Global',
+    asset_type_code: 'TANKER', serial_number: 'CHS-001', location_code: null, status: 'Active', created_at: now, updated_at: now,
   },
 ]
 
@@ -295,6 +310,13 @@ const operationTypesFixture = [
     requires_comparison: 'No', requires_approval: 'Yes', description: '', status: 'Active',
     created_at: now, updated_at: now,
   },
+  {
+    id: 2, operation_type_name: 'Tanker Loading Operations', operation_type_code: 'TANKER_LOADING',
+    operation_category: 'Tanker', applicable_asset_type_code: 'VEH_TRK',
+    requires_sender_location: 'Yes', requires_receiver_location: 'Yes',
+    requires_comparison: 'Yes', requires_approval: 'Yes', description: '', status: 'Active',
+    created_at: now, updated_at: now,
+  },
 ]
 
 const operationTemplatesFixture = [
@@ -313,6 +335,19 @@ const operationTemplatesFixture = [
         id: 2, field_name: 'Sample Reference', field_code: 'sample_reference', field_group: 'General',
         data_type: 'Text', unit: null, is_required: 'Yes', input_mode: 'Manual',
         calculation_role: 'Input', sort_order: 2, status: 'Active',
+      },
+    ],
+  },
+  {
+    id: 2, template_name: 'Tanker Loading – Crude', operation_type_code: 'TANKER_LOADING',
+    operation_type_name: 'Tanker Loading Operations', entry_layout_type: 'Tanker Loading',
+    calculation_engine: 'Tanker Quantity', description: '', status: 'Active',
+    created_at: now, updated_at: now,
+    fields: [
+      {
+        id: 3, field_name: 'Tanker Payload', field_code: 'tanker_payload', field_group: 'Payload',
+        data_type: 'JSON', unit: null, is_required: 'No', input_mode: 'System',
+        calculation_role: 'Input', sort_order: 1, status: 'Active',
       },
     ],
   },
@@ -598,7 +633,31 @@ globalThis.fetch = async (input, init = {}) => {
     }
     return jsonResponse(trackingModuleConfigs)
   }
+  if (path.startsWith('/asset-types')) return jsonResponse(paged(assetTypesFixture, path))
   if (path.startsWith('/assets')) return jsonResponse(paged(assets, path))
+  if (path.startsWith('/prime-mover-tanker-links')) {
+    const activeLink = {
+      id: 1,
+      prime_mover_asset_code: 'TRK-001',
+      prime_mover_asset_name: 'Truck Head 1',
+      prime_mover_asset_type_code: 'VEH_TRK',
+      tanker_asset_code: 'TNK-001',
+      tanker_asset_name: 'Tanker Alpha',
+      tanker_asset_type_code: 'TANKER',
+      tanker_chassis_number: 'CHS-001',
+      linked_from: '2026-01-01',
+      linked_to: null,
+      remarks: '',
+      status: 'Active',
+      created_by: 'admin',
+      created_at: now,
+      updated_at: now,
+    }
+    if (path.startsWith('/prime-mover-tanker-links/current-by-prime-mover/')) {
+      return jsonResponse({ has_active_link: true, link: activeLink })
+    }
+    return jsonResponse([activeLink])
+  }
   if (path.startsWith('/calibration-templates')) return jsonResponse(calibrationTemplates)
   if (path.startsWith('/asset-calibration-tables')) {
     const rowsMatch = path.match(/^\/asset-calibration-tables\/(\d+)\/rows/)
@@ -1568,6 +1627,34 @@ try {
           check('bulk upload dialog closes after the run', !q('.operation-entry-import-dialog'))
         }
       }
+
+      // Regression check: selecting Tanker Loading Operations + Tanker Loading
+      // template must render TankerTruckLayout cleanly with assetTypes passed
+      // through OperationLayoutRenderer (no ReferenceError / blank screen).
+      const opTypeSelect = q('.main-content select[name="operationTypeCode"]')
+      setValue(opTypeSelect, 'TANKER_LOADING')
+      await flush(120)
+      const opTemplateSelect = q('.main-content select[name="operationTemplateId"]')
+      setValue(opTemplateSelect, '2')
+      await flush(150)
+      check(
+        'tanker loading layout renders without crashing',
+        Boolean(q('.main-content .tanker-compact-layout')) &&
+          text(q('.main-content .tanker-compact-layout')).includes('Tanker Loading / Receipt')
+      )
+      check(
+        'convoy number field appears for tanker loading',
+        Boolean(q('.main-content input[name="convoyNumber"]'))
+      )
+      const primaryAssetSelect = q('.main-content select[name="primaryAssetCode"]')
+      setValue(primaryAssetSelect, 'TRK-001')
+      await flush(200)
+      check(
+        'tanker loading resolves prime mover via assetTypes and loads linked tanker',
+        text(q('.main-content .tanker-status-strip')).includes('Tanker Alpha (TNK-001)') &&
+          text(q('.main-content .tanker-status-strip')).includes('CHS-001'),
+        text(q('.main-content .tanker-status-strip'))
+      )
     }
 
     if (path === '/user-locations') {

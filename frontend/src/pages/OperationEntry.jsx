@@ -493,6 +493,7 @@ function OperationLayoutRenderer({
   selectedTemplateFields,
   selectedAsset,
   assets = [],
+  assetTypes = [],
   locations = [],
   assetCalibrationTables,
   calibrationTemplates,
@@ -1428,7 +1429,7 @@ function OperationEntry({
     ? {
         ...selectedAssetRow,
         assetTypeName:
-          assetTypes.find((type) => String(type.assetTypeCode || '').toLowerCase() === String(selectedAssetRow.assetTypeCode || '').toLowerCase())?.assetTypeName || '',
+          (Array.isArray(assetTypes) ? assetTypes : []).find((type) => String(type.assetTypeCode || '').toLowerCase() === String(selectedAssetRow.assetTypeCode || '').toLowerCase())?.assetTypeName || '',
       }
     : null
 
@@ -2676,6 +2677,7 @@ function OperationEntry({
           selectedTemplateFields={selectedTemplateFields}
           selectedAsset={selectedAsset}
           assets={assets}
+          assetTypes={assetTypes}
           locations={locations}
           assetCalibrationTables={assetCalibrationTables}
           calibrationTemplates={calibrationTemplates}
