@@ -1,33 +1,44 @@
-"""Application logging with secret redaction.
+"""Application logging with a safety net for accidental secret disclosure.
 
-Never log credentials, tokens, cookies, 2FA secrets or database URLs. The
-filter below is a safety net for accidental inclusion; call sites should still
-log identifiers, not secrets.
+Call sites should log identifiers and approved metadata, never credentials or
+raw exception text. Redaction runs on the fully formatted record so it also
+covers exception output.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import re
 import sys
 
 REDACTED = "***REDACTED***"
 
-# (compiled pattern, replacement) pairs applied in order.
+_COOKIE_NAME = re.escape(os.getenv("AUTH_COOKIE_NAME", "hydrocarbon_refresh").strip() or "hydrocarbon_refresh")
+_SECRET_KEYS = (
+    r"password|passwd|pwd|secret|token|refresh[_-]?token|access[_-]?token|auth[_-]?token|"
+    r"authorization|api[_-]?key|client[_-]?secret|totp[_-]?secret|otp|backup[_-]?code|"
+    r"private[_-]?key|INITIAL_ADMIN_PASSWORD|SECURITY_KDF_SALT|JWT_SECRET_KEY|"
+    rf"ENCRYPTION_KEY|PGPASSWORD|DATABASE_URL|HYDROCARBON_REFRESH|{_COOKIE_NAME}"
+)
+_QUOTED_VALUE = r'\"[^\"]*\"|\'[^\']*\'|[^\s,;&}\]]+'
+
+# Optional JSON/shell quotes around key names, including uppercase env names.
+_KEY_VALUE = re.compile(
+    rf"(?i)(?<![A-Za-z0-9])([\"']?(?:{_SECRET_KEYS})(?:[_-][A-Za-z0-9]+)*[\"']?)(\s*[=:]\s*)({_QUOTED_VALUE})"
+)
 _REDACTIONS: list[tuple[re.Pattern[str], str]] = [
-    # key=value / "key": "value" for common secret names. Only the value is
-    # replaced so operators keep the surrounding diagnostic context.
-    (
-        re.compile(
-            r"(?i)\b(password|passwd|pwd|secret|refresh_token|access_token|authorization|"
-            r"api[_-]?key|client_secret|totp_secret|otp|backup_code|private[_-]?key)"
-            r"(\s*[=:]\s*)(\"[^\"]*\"|'[^']*'|[^\s,;&}\]]+)"
-        ),
-        r"\1\2" + REDACTED,
-    ),
+    (_KEY_VALUE, r"\1\2" + REDACTED),
+    # Cookie headers may use an operator-configured cookie name. Mask each
+    # cookie value without disturbing attributes such as Path/SameSite.
+    (re.compile(r"(?i)(set-cookie:\s*[^=;\s,]+=)[^;\s,]+"), r"\1" + REDACTED),
     (re.compile(r"(?i)bearer\s+[A-Za-z0-9._\-]+"), "Bearer " + REDACTED),
     (
         re.compile(r"(?i)(postgres(?:ql)?(?:\+\w+)?://[^:\s]+:)([^@\s]+)(@)"),
+        r"\1" + REDACTED + r"\3",
+    ),
+    (
+        re.compile(r"(?i)([A-Za-z][A-Za-z0-9+.-]*://[^:\s/@]+:)([^@\s]+)(@)"),
         r"\1" + REDACTED + r"\3",
     ),
     (
@@ -73,8 +84,6 @@ def configure_logging(level: int = logging.INFO) -> None:
     )
     root.handlers = [handler]
     root.setLevel(level)
-    # Uvicorn installs its own handlers; make sure records they emit still get
-    # the redaction formatter by clearing propagated duplicate handlers.
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         logger = logging.getLogger(name)
         logger.handlers = []

@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import logging
 
 import bcrypt
 from cryptography.fernet import Fernet
@@ -10,6 +11,8 @@ from app.config import ENCRYPTION_KEY, SECURITY_KDF_SALT
 
 _fernet_instance = None
 _legacy_fernet_instance = None
+_legacy_decrypt_count = 0
+logger = logging.getLogger(__name__)
 KDF_ITERATIONS = 600_000
 KDF_CIPHERTEXT_PREFIX = "v2:"
 
@@ -66,6 +69,10 @@ def decrypt_security_value(value: str | None):
         if encoded.startswith(KDF_CIPHERTEXT_PREFIX):
             token = encoded[len(KDF_CIPHERTEXT_PREFIX):]
             return get_fernet().decrypt(token.encode("utf-8")).decode("utf-8")
-        return get_legacy_fernet().decrypt(encoded.encode("utf-8")).decode("utf-8")
+        global _legacy_decrypt_count
+        plaintext = get_legacy_fernet().decrypt(encoded.encode("utf-8")).decode("utf-8")
+        _legacy_decrypt_count += 1
+        logger.info("Legacy TOTP ciphertext decrypted (count=%d)", _legacy_decrypt_count)
+        return plaintext
     except Exception:
         return None

@@ -166,7 +166,7 @@ SECURITY_HEADERS = {
     "X-Permitted-Cross-Domain-Policies": "none",
     "Content-Security-Policy": (
         "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data:; font-src 'self' data:; connect-src 'self'; "
+        "img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; "
         "object-src 'none'; media-src 'none'; frame-src 'none'; worker-src 'self'; "
         "manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
     ),
@@ -175,4 +175,4 @@ SECURITY_HEADERS = {
 if IS_PRODUCTION and not ALLOW_INSECURE_HTTP:
     # HSTS is ignored over plain HTTP; an explicitly insecure deployment must
     # not advertise upgrade-to-HTTPS either.
-    SECURITY_HEADERS["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    SECURITY_HEADERS["Strict-Transport-Security"] = "max-age=300"

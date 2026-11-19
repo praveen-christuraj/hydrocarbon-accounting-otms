@@ -52,11 +52,25 @@ KNOWN_TABLES = {
     "entry_check_reviews", "asset_metric_profiles",
 }
 
-# Column names whose values should be redacted
-SENSITIVE_COLUMN_PATTERNS = re.compile(
-    r"^(password|password_hash|totp_secret|totp_secret_encrypted|backup_codes|backup_codes_hash_json"
-    r"|mfa_secret|otp_secret|refresh_token|access_token|auth_token|session_id|api_key|secret_key"
-    r"|private_key|encrypted_key|passphrase)$",
+# Explicitly classified secret-bearing fields plus a conservative fallback for
+# future schema columns. Keep safe password-policy metadata visible.
+SENSITIVE_COLUMNS: dict[str, set[str]] = {
+    "users": {
+        "password_hash", "password_history_json", "totp_secret_encrypted",
+        "backup_codes_hash_json", "mfa_secret", "otp_secret", "session_id",
+    },
+    "token_blacklist": {"token_hash"},
+    "auth_sessions": {"session_id", "refresh_token", "access_token", "token_hash"},
+    "auth_login_challenges": {"token_hash", "challenge_hash", "challenge_id", "totp_secret", "backup_codes_hash_json"},
+    "password_reset_requests": {"token_hash", "reset_token", "token"},
+}
+SAFE_PASSWORD_METADATA = {
+    "password_changed_at", "password_expiry_days", "password_never_expires",
+    "force_password_change",
+}
+SENSITIVE_STEMS = re.compile(
+    r"(^password|secret|totp|(^|_)otp($|_)|token|_hash$|^passphrase$|"
+    r"^api_key$|^private_key$|^encrypted_key$|^session_id$|cookie)",
     re.IGNORECASE,
 )
 
@@ -77,19 +91,21 @@ def _reflected_table(table_name: str) -> Table:
     return Table(table_name, MetaData(), autoload_with=engine)
 
 
-def _is_sensitive_column(col_name: str) -> bool:
-    return bool(SENSITIVE_COLUMN_PATTERNS.match(col_name))
+def _is_sensitive_column(col_name: str, table_name: str | None = None) -> bool:
+    normalized = col_name.casefold()
+    if normalized in SAFE_PASSWORD_METADATA:
+        return False
+    if table_name and normalized in {name.casefold() for name in SENSITIVE_COLUMNS.get(table_name, set())}:
+        return True
+    return bool(SENSITIVE_STEMS.search(normalized))
 
 
-def _redact_row(row: dict, columns: list[str]) -> dict:
-    """Return a copy of row with sensitive column values replaced."""
-    out = {}
-    for col in columns:
-        if _is_sensitive_column(col):
-            out[col] = "*** REDACTED ***"
-        else:
-            out[col] = row.get(col)
-    return out
+def _redact_row(row: dict, columns: list[str], table_name: str) -> dict:
+    """Return visible values while preserving the schema's column ordering."""
+    return {
+        col: "*** REDACTED ***" if _is_sensitive_column(col, table_name) else row.get(col)
+        for col in columns
+    }
 
 
 @router.get("/tables")
@@ -140,10 +156,11 @@ def get_table_data(
     offset = (page - 1) * per_page
 
     try:
-        query = select(table).limit(per_page).offset(offset)
-        first_column = next(iter(table.columns), None)
-        if first_column is not None:
-            query = query.order_by(first_column.asc())
+        safe_columns = [column for column in table.columns if not _is_sensitive_column(column.name, table_name)]
+        query = select(*safe_columns).limit(per_page).offset(offset)
+        first_safe_column = safe_columns[0] if safe_columns else None
+        if first_safe_column is not None:
+            query = query.order_by(first_safe_column.asc())
         rows = db.execute(query).mappings().all()
         total = db.execute(select(func.count()).select_from(table)).scalar()
     except Exception:
@@ -161,7 +178,7 @@ def get_table_data(
         commit_or_409(db)
         raise HTTPException(status_code=500, detail="Unable to read the requested table")
 
-    data = [_redact_row(dict(row), columns) for row in rows]
+    data = [_redact_row(dict(row), columns, table_name) for row in rows]
 
     # Reading raw tables is a privileged diagnostic action: record who read
     # what, without copying row contents into the audit log.
@@ -180,7 +197,7 @@ def get_table_data(
             "per_page": per_page,
             "returned_rows": len(data),
             "total_rows": total,
-            "sensitive_columns_redacted": [c for c in columns if _is_sensitive_column(c)],
+            "sensitive_columns_redacted": [c for c in columns if _is_sensitive_column(c, table_name)],
         },
     )
     commit_or_409(db)

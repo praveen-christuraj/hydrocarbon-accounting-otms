@@ -84,7 +84,7 @@ function FlowmeterRecordEntry({ locations = [], assets = [] }) {
     ]
 
     const lines = [
-      headers.join(','),
+      headers.map(escapeCsvCell).join(','),
       ...rows.map((r) =>
         [
           r.readingDate,

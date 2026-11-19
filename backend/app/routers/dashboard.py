@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy import and_, func, literal, or_
+from sqlalchemy import and_, false, func, literal, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -16,6 +16,7 @@ from app.models import (
     DashboardConfig,
     DashboardDataSource,
     DashboardVersion,
+    Location,
     OperationTransaction,
     OperationTransactionValue,
     ShuttleVoyage,
@@ -36,9 +37,15 @@ from app.schemas import (
     DashboardVersionResponse,
 )
 from app.dependencies.auth import get_current_user_from_token
-from app.dependencies.permissions import require_user_permission
+from app.dependencies.permissions import (
+    apply_transaction_party_scope_filter,
+    ensure_location_in_user_scope,
+    get_user_location_codes,
+    normalize_location_code,
+    require_user_permission,
+)
 from app.services.audit_service import create_audit_log
-from app.utils.helpers import clean_optional_text, get_asset_by_code, get_current_user_display_name, get_location_by_code, safe_float
+from app.utils.helpers import clean_optional_text, escape_like, get_asset_by_code, get_current_user_display_name, get_location_by_code, safe_float
 from app.routers.shuttle_fso_voyages import get_shuttle_voyage_by_key
 from app.routers.reports import build_fso_material_balance, build_fso_otr_report, build_fso_outturn_report
 from app.services.transaction_helpers import approved_transaction_not_on_correction_hold
@@ -111,6 +118,31 @@ def build_dashboard_version_response(version: DashboardVersion):
         "created_by": version.created_by,
         "created_at": version.created_at,
     }
+
+
+def _dashboard_config_visible(config: DashboardConfig, user: User, db: Session) -> bool:
+    scope_type = str(config.scope_type or "").strip().upper()
+    if scope_type == "GLOBAL":
+        return True
+    if scope_type != "LOCATION":
+        return False
+    allowed = get_user_location_codes(user, db)
+    return allowed is None or normalize_location_code(config.location_code) in allowed
+
+
+def _ensure_dashboard_location(user: User, db: Session, location_code: str | None) -> str:
+    normalized = normalize_location_code(location_code)
+    if normalized is None:
+        raise HTTPException(status_code=400, detail="location_code is required")
+    ensure_location_in_user_scope(user, db, normalized)
+    canonical = db.query(Location.location_code).filter(
+        func.lower(func.trim(Location.location_code)) == normalized
+    ).scalar()
+    return canonical or normalized
+
+
+def _normalized_location_filter(query, column, location_code: str):
+    return query.filter(func.lower(func.trim(column)) == location_code)
 
 
 def normalize_dashboard_data_source_code(value: str | None):
@@ -462,6 +494,7 @@ def build_shuttle_summary_rows(
     search: str | None = None,
     page: int = 1,
     page_size: int = 20,
+    user: User | None = None,
 ):
     def _norm(v):
         return str(v or "").strip().upper()
@@ -542,14 +575,16 @@ def build_shuttle_summary_rows(
     if date_to:
         base_q = base_q.filter(OperationTransaction.operation_date <= date_to)
     if lc:
-        base_q = base_q.filter(OperationTransaction.origin_location_code.ilike(lc))
+        base_q = _normalized_location_filter(base_q, OperationTransaction.origin_location_code, normalize_location_code(lc))
+    if user is not None:
+        base_q = apply_transaction_party_scope_filter(base_q, OperationTransaction, user, db)
     if sn:
         base_q = base_q.filter(OperationTransaction.convoy_number.ilike(sn))
     if ac:
         base_q = base_q.filter(OperationTransaction.primary_asset_code.ilike(ac))
 
     if search_norm:
-        like = f"%{search_norm}%"
+        like = f"%{escape_like(search_norm)}%"
         base_q = base_q.filter(
             or_(
                 OperationTransaction.origin_location_code.ilike(like),
@@ -621,7 +656,7 @@ def build_shuttle_summary_rows(
             )
         )
 
-    payload_rows = (
+    payload_query = (
         db.query(
             OperationTransaction.origin_location_code,
             OperationTransaction.convoy_number,
@@ -638,8 +673,10 @@ def build_shuttle_summary_rows(
             approved_transaction_not_on_correction_hold(db),
         )
         .filter(or_(*key_filters))
-        .all()
     )
+    if user is not None:
+        payload_query = apply_transaction_party_scope_filter(payload_query, OperationTransaction, user, db)
+    payload_rows = payload_query.all()
 
     totals_map = {}
     for (loc_code, sh_num, asset_code, field_value) in payload_rows:
@@ -709,17 +746,26 @@ def get_dashboard_configs(
         db,
     )
 
-    query = db.query(DashboardConfig)
+    query = db.query(DashboardConfig).filter(
+        func.upper(func.trim(DashboardConfig.scope_type)).in_({"GLOBAL", "LOCATION"})
+    )
+    allowed_locations = get_user_location_codes(current_user, db)
+    if allowed_locations is not None:
+        location_configs = and_(
+            func.upper(func.trim(DashboardConfig.scope_type)) == "LOCATION",
+            func.lower(func.trim(DashboardConfig.location_code)).in_(allowed_locations),
+        )
+        query = query.filter(or_(func.upper(func.trim(DashboardConfig.scope_type)) == "GLOBAL", location_configs))
 
     if scope_type:
         query = query.filter(
-            DashboardConfig.scope_type == normalize_dashboard_scope_type(scope_type)
+            func.upper(func.trim(DashboardConfig.scope_type)) == normalize_dashboard_scope_type(scope_type)
         )
 
     if location_code is not None and str(location_code).strip() != "":
-        query = query.filter(
-            DashboardConfig.location_code.ilike(str(location_code).strip())
-        )
+        normalized = normalize_location_code(location_code)
+        ensure_location_in_user_scope(current_user, db, normalized)
+        query = query.filter(func.lower(func.trim(DashboardConfig.location_code)) == normalized)
 
     if status:
         query = query.filter(
@@ -759,11 +805,8 @@ def get_dashboard_config_by_id(
         .first()
     )
 
-    if not config:
-        raise HTTPException(
-            status_code=404,
-            detail="Dashboard config not found",
-        )
+    if not config or not _dashboard_config_visible(config, current_user, db):
+        raise HTTPException(status_code=404, detail="Dashboard config not found")
 
     return build_dashboard_config_response(config)
 
@@ -798,6 +841,7 @@ def create_dashboard_config(
                 status_code=400,
                 detail="location_code is required when scope_type is LOCATION",
             )
+        location_code = _ensure_dashboard_location(current_user, db, location_code)
 
     new_config = DashboardConfig(
         name=name,
@@ -864,6 +908,9 @@ def update_dashboard_config(
             detail="Dashboard config not found",
         )
 
+    if not _dashboard_config_visible(config, current_user, db):
+        raise HTTPException(status_code=404, detail="Dashboard config not found")
+
     old_details = build_dashboard_config_response(config)
     payload = request.model_dump(exclude_unset=True)
 
@@ -896,6 +943,7 @@ def update_dashboard_config(
                 status_code=400,
                 detail="location_code is required when scope_type is LOCATION",
             )
+        config.location_code = _ensure_dashboard_location(current_user, db, config.location_code)
 
     config.updated_at = datetime.now()
 
@@ -951,11 +999,8 @@ def get_dashboard_versions_for_config(
         .first()
     )
 
-    if not config:
-        raise HTTPException(
-            status_code=404,
-            detail="Dashboard config not found",
-        )
+    if not config or not _dashboard_config_visible(config, current_user, db):
+        raise HTTPException(status_code=404, detail="Dashboard config not found")
 
     versions = (
         db.query(DashboardVersion)
@@ -989,10 +1034,10 @@ def get_dashboard_version_by_id(
     )
 
     if not version:
-        raise HTTPException(
-            status_code=404,
-            detail="Dashboard version not found",
-        )
+        raise HTTPException(status_code=404, detail="Dashboard version not found")
+    config = db.query(DashboardConfig).filter(DashboardConfig.id == version.config_id).first()
+    if not config or not _dashboard_config_visible(config, current_user, db):
+        raise HTTPException(status_code=404, detail="Dashboard version not found")
 
     return build_dashboard_version_response(version)
 
@@ -1016,11 +1061,11 @@ def publish_dashboard_config(
         .first()
     )
 
-    if not config:
-        raise HTTPException(
-            status_code=404,
-            detail="Dashboard config not found",
-        )
+    if not config or not _dashboard_config_visible(config, current_user, db):
+        raise HTTPException(status_code=404, detail="Dashboard config not found")
+
+    if str(config.scope_type or "").strip().upper() == "LOCATION":
+        _ensure_dashboard_location(current_user, db, config.location_code)
 
     max_version = (
         db.query(func.max(DashboardVersion.version_number))
@@ -1093,11 +1138,11 @@ def revert_dashboard_config(
         .first()
     )
 
-    if not config:
-        raise HTTPException(
-            status_code=404,
-            detail="Dashboard config not found",
-        )
+    if not config or not _dashboard_config_visible(config, current_user, db):
+        raise HTTPException(status_code=404, detail="Dashboard config not found")
+
+    if str(config.scope_type or "").strip().upper() == "LOCATION":
+        _ensure_dashboard_location(current_user, db, config.location_code)
 
     version = (
         db.query(DashboardVersion)
@@ -1537,10 +1582,12 @@ def dashboard_data_gateway(
 
     handler_key = str(data_source.handler_key or "").strip().upper()
     if handler_key not in VALID_DASHBOARD_HANDLER_KEYS:
-        raise HTTPException(
-            status_code=400,
-            detail="Unsupported handler_key",
-        )
+        raise HTTPException(status_code=400, detail="Unsupported handler_key")
+
+    if handler_key in {"FSO_OTR", "FSO_MATERIAL_BALANCE", "FSO_OUTTURN", "TANK_STOCK_SNAPSHOT"}:
+        resolved["location_code"] = _ensure_dashboard_location(current_user, db, resolved.get("location_code"))
+    elif resolved.get("location_code") not in (None, ""):
+        resolved["location_code"] = _ensure_dashboard_location(current_user, db, resolved["location_code"])
 
     if handler_key == "FSO_OTR":
         rows, totals = build_fso_otr_report(
@@ -1602,6 +1649,7 @@ def dashboard_data_gateway(
             search=resolved.get("search"),
             page=resolved.get("page") or 1,
             page_size=resolved.get("page_size") or 20,
+            user=current_user,
         )
         return {
             "data_source_code": code,
@@ -1616,9 +1664,15 @@ def dashboard_data_gateway(
 
     if handler_key == "ASSET_LIST":
         q = db.query(Asset)
+        allowed_locations = get_user_location_codes(current_user, db)
+        if allowed_locations is not None:
+            if allowed_locations:
+                q = q.filter(or_(func.lower(func.trim(Asset.asset_scope)) == "global", func.lower(func.trim(Asset.location_code)).in_(allowed_locations)))
+            else:
+                q = q.filter(false())
 
         if resolved.get("location_code"):
-            q = q.filter(Asset.location_code == resolved["location_code"])
+            q = _normalized_location_filter(q, Asset.location_code, normalize_location_code(resolved["location_code"]))
 
         if resolved.get("asset_type_code"):
             q = q.filter(Asset.asset_type_code == resolved["asset_type_code"])
@@ -1656,12 +1710,10 @@ def dashboard_data_gateway(
         }
 
     if handler_key == "OP_TRANSACTIONS":
-        q = db.query(OperationTransaction)
+        q = apply_transaction_party_scope_filter(db.query(OperationTransaction), OperationTransaction, current_user, db)
 
         if resolved.get("location_code"):
-            q = q.filter(
-                OperationTransaction.origin_location_code == resolved["location_code"]
-            )
+            q = _normalized_location_filter(q, OperationTransaction.origin_location_code, normalize_location_code(resolved["location_code"]))
 
         if resolved.get("asset_type_code"):
             q = q.filter(
@@ -1731,10 +1783,9 @@ def dashboard_data_gateway(
             func.count(OperationTransaction.id).label("count"),
         )
 
+        q = apply_transaction_party_scope_filter(q, OperationTransaction, current_user, db)
         if resolved.get("location_code"):
-            q = q.filter(
-                OperationTransaction.origin_location_code == resolved["location_code"]
-            )
+            q = _normalized_location_filter(q, OperationTransaction.origin_location_code, normalize_location_code(resolved["location_code"]))
 
         if resolved.get("asset_type_code"):
             q = q.filter(
@@ -1794,7 +1845,7 @@ def dashboard_data_gateway(
             type_list = [asset_type_code.strip().upper()]
 
         aq = db.query(Asset).filter(
-            Asset.location_code == location_code,
+            func.lower(func.trim(Asset.location_code)) == normalize_location_code(location_code),
             Asset.status == "Active",
         )
         if type_list:
@@ -1822,7 +1873,7 @@ def dashboard_data_gateway(
 
         lq = db.query(TankStockLedger).filter(
             TankStockLedger.status == "Active",
-            TankStockLedger.location_code == location_code,
+            func.lower(func.trim(TankStockLedger.location_code)) == normalize_location_code(location_code),
             TankStockLedger.tank_asset_code.in_(asset_code_list),
         )
 

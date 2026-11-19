@@ -1,3 +1,4 @@
+import logging
 import math
 import os
 
@@ -27,7 +28,17 @@ from app.utils.helpers import clean_optional_text
 from sqlalchemy.exc import IntegrityError
 
 router = APIRouter(prefix="/asset-calibration-tables", tags=["Asset Calibration Tables"])
-MAX_CALIBRATION_VALUE = float(os.getenv("MAX_CALIBRATION_VALUE", "1000000000000"))
+logger = logging.getLogger(__name__)
+def _load_max_calibration_value() -> float:
+    default = 1_000_000_000_000.0
+    try:
+        value = float(os.getenv("MAX_CALIBRATION_VALUE", str(default)))
+        return value if math.isfinite(value) and value > 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+MAX_CALIBRATION_VALUE = _load_max_calibration_value()
 CALIBRATION_INSERT_BATCH_SIZE = 2_000
 
 
@@ -323,7 +334,12 @@ def validate_asset_calibration_table(calibration_table: AssetCalibrationTableCre
         _norm_col(col.column_name): col.column_name
         for col in template_columns
         if str(col.data_type or "").strip().casefold() in {"number", "numeric", "decimal", "float", "integer"}
+        or str(col.interpolation_role or "").strip().casefold() in {"input x", "input y", "x", "y", "z", "axis", "x_axis", "y_axis", "z_axis"}
     }
+    axis_columns = [
+        col for col in template_columns
+        if str(col.interpolation_role or "").strip().casefold() in {"input x", "input y", "x", "y", "z", "axis", "x_axis", "y_axis", "z_axis"}
+    ]
 
     for row in calibration_table.rows:
         original = row.row_data or {}
@@ -395,6 +411,37 @@ def validate_asset_calibration_table(calibration_table: AssetCalibrationTableCre
                     detail=f"Column '{column_name}' exceeds the maximum supported value. RowNumber={getattr(row, 'row_number', None)}.",
                 )
             row.row_data[template_key] = numeric_value
+
+    if axis_columns:
+        seen_axis_points = set()
+        for row in calibration_table.rows:
+            point = []
+            for axis in axis_columns:
+                value = row.row_data.get(axis.column_name)
+                if value is None or str(value).strip() == "":
+                    continue
+                try:
+                    point.append(float(value))
+                except (TypeError, ValueError):
+                    raise HTTPException(status_code=400, detail=f"Interpolation axis '{axis.column_name}' must be numeric.")
+            if len(point) == len(axis_columns):
+                coordinates = tuple(point)
+                if coordinates in seen_axis_points:
+                    raise HTTPException(status_code=400, detail="Calibration interpolation axis coordinates must be unique.")
+                seen_axis_points.add(coordinates)
+        if len(axis_columns) == 1:
+            axis_name = axis_columns[0].column_name
+            values = [
+                float(row.row_data[axis_name])
+                for row in calibration_table.rows
+                if row.row_data.get(axis_name) is not None and str(row.row_data.get(axis_name)).strip() != ""
+            ]
+            if len(values) > 2 and not (values == sorted(values) or values == sorted(values, reverse=True)):
+                logger.warning(
+                    "Non-monotonic calibration axis found (asset_code=%s, template_id=%s)",
+                    asset.asset_code,
+                    template.id,
+                )
 
     return asset
 

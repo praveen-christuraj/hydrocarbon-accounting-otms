@@ -79,9 +79,7 @@ export const getAllPermissions = async () => {
  * Module-wise CRUD structure of the standard permissions:
  * { actions: ['View','Create','Edit','Delete','Other'], categories: [{ category, modules: [{ module_name, permissions: [{ permission_name, action, description }] }] }] }
  */
-export const getPermissionCatalog = async () => {
-  const data = await apiGet('/permissions/catalog')
-  return {
+const normalizePermissionCatalog = (data) => ({
     actions: data?.actions || ['View', 'Create', 'Edit', 'Delete', 'Other'],
     totalStandardPermissions: data?.total_standard_permissions || 0,
     categories: (data?.categories || []).map((category) => ({
@@ -95,7 +93,21 @@ export const getPermissionCatalog = async () => {
         })),
       })),
     })),
-  }
+  })
+
+export const getPermissionCatalog = async () =>
+  normalizePermissionCatalog(await apiGet('/permissions/catalog'))
+
+export const getMyPermissionCatalog = async () =>
+  normalizePermissionCatalog(await apiGet('/permissions/catalog/mine'))
+
+export const getPermissionCatalogForCaller = async (loggedInUser) => {
+  const permissions = loggedInUser?.permissions || []
+  const canViewPermission = permissions.some((permission) => {
+    const name = typeof permission === 'string' ? permission : permission.permissionName || permission.permission_name
+    return String(name || '').trim().toLowerCase() === 'view permission'
+  })
+  return canViewPermission ? getPermissionCatalog() : getMyPermissionCatalog()
 }
 
 export const seedStandardPermissions = async () => apiPost('/permissions/seed-standard', {})

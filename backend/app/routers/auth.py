@@ -69,7 +69,8 @@ from app.schemas import (
     DeclinePasswordResetRequest,
     PasswordPolicyUpdate,
 )
-from app.services.audit_service import create_audit_log
+from app.services.audit_service import audit_privileged_read, create_audit_log
+from app.utils.errors import log_exception
 from app.utils.helpers import clean_optional_text, normalize_yes_no
 from app.utils.jwt import (
     create_access_token,
@@ -652,60 +653,80 @@ def get_logged_in_user(
 
 @router.get("/me/rbac-diagnostics")
 def get_rbac_diagnostics(
+    request: Request,
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
     """Return elevated RBAC diagnostics for authorized support users."""
-    require_user_permission(current_user, "Edit System Settings", db)
+    try:
+        require_user_permission(current_user, "Edit System Settings", db)
+    except HTTPException as error:
+        audit_privileged_read(
+            db, current_user, endpoint="/auth/me/rbac-diagnostics", outcome="denied",
+            details={"request_id": getattr(request.state, "request_id", "-")},
+        )
+        raise error
     from app.dependencies.permissions import (
         get_user_permissions,
         get_user_location_codes,
         is_super_admin,
     )
 
-    role_rows = (
-        db.query(UserRole, Role)
-        .join(Role, Role.id == UserRole.role_id)
-        .filter(UserRole.user_id == current_user.id)
-        .order_by(Role.role_name, Role.id)
-        .all()
-    )
-    role_details = []
-    for assignment, role in role_rows:
-        active_permission_count = (
-            db.query(func.count(RolePermission.id))
-            .join(Permission, Permission.id == RolePermission.permission_id)
-            .filter(
-                RolePermission.role_id == role.id,
-                Permission.status == "Active",
-            )
-            .scalar()
-            or 0
+    try:
+        role_rows = (
+            db.query(UserRole, Role)
+            .join(Role, Role.id == UserRole.role_id)
+            .filter(UserRole.user_id == current_user.id)
+            .order_by(Role.role_name, Role.id)
+            .all()
         )
-        role_details.append({
-            "assignment_id": assignment.id,
-            "role_id": role.id,
-            "role_name": role.role_name,
-            "status": role.status,
-            "active_permission_count": active_permission_count,
-        })
+        role_details = []
+        for assignment, role in role_rows:
+            active_permission_count = (
+                db.query(func.count(RolePermission.id))
+                .join(Permission, Permission.id == RolePermission.permission_id)
+                .filter(
+                    RolePermission.role_id == role.id,
+                    Permission.status == "Active",
+                )
+                .scalar()
+                or 0
+            )
+            role_details.append({
+                "assignment_id": assignment.id,
+                "role_id": role.id,
+                "role_name": role.role_name,
+                "status": role.status,
+                "active_permission_count": active_permission_count,
+            })
 
-    granted_permissions = sorted(get_user_permissions(current_user, db))
-    allowed_locations = get_user_location_codes(current_user, db)
-    unrestricted_locations = allowed_locations is None
-    return {
-        "user_id": current_user.id,
-        "username": current_user.username,
-        "full_name": current_user.full_name,
-        "is_super_admin": is_super_admin(current_user, db),
-        "assigned_roles": role_details,
-        "active_role_count": sum(1 for role in role_details if role["status"] == "Active"),
-        "granted_permission_count": len(granted_permissions),
-        "granted_permissions": granted_permissions,
-        "assigned_location_codes": sorted(allowed_locations or set()),
-        "location_count": None if unrestricted_locations else len(allowed_locations or set()),
-        "all_locations_access": unrestricted_locations,
-    }
+        granted_permissions = sorted(get_user_permissions(current_user, db))
+        allowed_locations = get_user_location_codes(current_user, db)
+        unrestricted_locations = allowed_locations is None
+        result = {
+            "user_id": current_user.id,
+            "username": current_user.username,
+            "full_name": current_user.full_name,
+            "is_super_admin": is_super_admin(current_user, db),
+            "assigned_roles": role_details,
+            "active_role_count": sum(1 for role in role_details if role["status"] == "Active"),
+            "granted_permission_count": len(granted_permissions),
+            "granted_permissions": granted_permissions,
+            "assigned_location_codes": sorted(allowed_locations or set()),
+            "location_count": None if unrestricted_locations else len(allowed_locations or set()),
+            "all_locations_access": unrestricted_locations,
+        }
+    except Exception:
+        audit_privileged_read(
+            db, current_user, endpoint="/auth/me/rbac-diagnostics", outcome="error",
+            details={"request_id": getattr(request.state, "request_id", "-"), "target_user_id": current_user.id},
+        )
+        raise
+    audit_privileged_read(
+        db, current_user, endpoint="/auth/me/rbac-diagnostics", outcome="allowed",
+        details={"request_id": getattr(request.state, "request_id", "-"), "target_user_id": current_user.id},
+    )
+    return result
 
 
 @router.post("/change-password")
@@ -971,12 +992,14 @@ def logout_user(
                 if legacy_user:
                     revoke_user_sessions(legacy_user, db=db, reason="Legacy token logout")
             db.commit()
-        except Exception:
+        except Exception as error:
             db.rollback()
-    except Exception:
+            log_exception("logout session revocation retry", error)
+    except Exception as error:
         # Logout remains best-effort for malformed credentials or transient
         # blacklist storage failures; the client cookie is still cleared.
         db.rollback()
+        log_exception("logout server-side revocation", error)
 
     clear_refresh_cookie(response)
     return {"message": "Logged out successfully"}

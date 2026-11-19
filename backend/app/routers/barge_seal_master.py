@@ -1,16 +1,32 @@
 from datetime import datetime, date
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import BargeSealMaster, Asset, User
 from app.schemas import BargeSealMasterBulkSaveRequest, BargeSealMasterResponse
 from app.dependencies.auth import get_current_user_from_token
-from app.dependencies.permissions import require_user_permission
+from app.dependencies.permissions import ensure_location_in_user_scope, normalize_location_code, require_user_permission
 from app.services.audit_service import create_audit_log
 from app.utils.helpers import clean_optional_text
 
 router = APIRouter(prefix="/barge-seal-master", tags=["Barge Seal Master"])
+
+
+def _resolve_authorized_asset(db: Session, current_user: User, asset_code: str) -> Asset:
+    normalized = str(asset_code or "").strip().casefold()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="asset_code is required")
+    asset = db.query(Asset).filter(func.lower(func.trim(Asset.asset_code)) == normalized).first()
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    if str(asset.asset_scope or "").strip().casefold() != "global":
+        location = normalize_location_code(asset.location_code)
+        if location is None:
+            raise HTTPException(status_code=403, detail="Local asset has no assigned location")
+        ensure_location_in_user_scope(current_user, db, location)
+    return asset
 
 
 @router.get("", response_model=list[BargeSealMasterResponse])
@@ -26,12 +42,10 @@ def get_barge_seal_master(
         db,
     )
 
-    asset_code_clean = (asset_code or "").strip()
-    if asset_code_clean == "":
-        raise HTTPException(status_code=400, detail="asset_code is required")
+    asset = _resolve_authorized_asset(db, current_user, asset_code)
 
     query = db.query(BargeSealMaster).filter(
-        BargeSealMaster.asset_code.ilike(asset_code_clean)
+        BargeSealMaster.asset_code == asset.asset_code
     )
 
     if effective_date is None:
@@ -61,13 +75,8 @@ def bulk_save_barge_seal_master(
         db,
     )
 
-    asset_code = (request.asset_code or "").strip()
-    if asset_code == "":
-        raise HTTPException(status_code=400, detail="asset_code is required")
-
-    asset = db.query(Asset).filter(Asset.asset_code.ilike(asset_code)).first()
-    if not asset:
-        raise HTTPException(status_code=400, detail="Asset not found")
+    asset = _resolve_authorized_asset(db, current_user, request.asset_code)
+    asset_code = asset.asset_code
 
     if request.rows is None or len(request.rows) == 0:
         raise HTTPException(status_code=400, detail="Please provide at least one seal row")
@@ -113,7 +122,7 @@ def bulk_save_barge_seal_master(
         )
 
     existing_q = db.query(BargeSealMaster).filter(
-        BargeSealMaster.asset_code.ilike(asset_code)
+        BargeSealMaster.asset_code == asset_code
     )
 
     if request.effective_date is None:
@@ -172,7 +181,7 @@ def bulk_save_barge_seal_master(
                 obj.updated_at = datetime.now()
         else:
             new_row = BargeSealMaster(
-                asset_code=asset_code,
+                asset_code=asset.asset_code,
                 tank_id=incoming["tank_id"],
                 seal_position=incoming["seal_position"],
                 seal_number=incoming["seal_number"],
@@ -220,7 +229,7 @@ def bulk_save_barge_seal_master(
     db.commit()
 
     out_q = db.query(BargeSealMaster).filter(
-        BargeSealMaster.asset_code.ilike(asset_code)
+        BargeSealMaster.asset_code == asset_code
     )
 
     if request.effective_date is None:

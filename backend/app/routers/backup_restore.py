@@ -6,11 +6,14 @@ import os
 import re
 import shutil
 import subprocess
+import stat
 import threading
 import time
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
+from starlette.background import BackgroundTask
+from urllib.parse import quote
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
@@ -65,6 +68,11 @@ def _approved_backup_path(path_value: str | Path, *, label: str) -> Path:
     candidate = Path(path_value).expanduser()
     if not candidate.is_absolute():
         candidate = root / candidate
+    try:
+        if candidate.exists() and candidate.is_symlink():
+            raise HTTPException(status_code=400, detail=f"{label} cannot be a symbolic link")
+    except OSError:
+        raise HTTPException(status_code=400, detail=f"{label} is invalid")
     resolved = candidate.resolve()
     try:
         resolved.relative_to(root)
@@ -310,9 +318,56 @@ def resolve_backup_directory(settings: BackupSettings | None = None):
     return backup_dir
 
 
+def _open_backup_file(path_value: str | Path):
+    """Open a backup beneath BACKUP_ROOT without following symlinks."""
+    root = get_backup_root()
+    path = _approved_backup_path(path_value, label="Backup file path")
+    relative = path.relative_to(root)
+    if not relative.parts:
+        raise HTTPException(status_code=404, detail="Backup file not found on server")
+    directory_fd = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        for part in relative.parts[:-1]:
+            child_fd = os.open(
+                part,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=directory_fd,
+            )
+            os.close(directory_fd)
+            directory_fd = child_fd
+        file_fd = os.open(relative.parts[-1], os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+        if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+            os.close(file_fd)
+            raise HTTPException(status_code=404, detail="Backup file not found on server")
+        return os.fdopen(file_fd, "rb")
+    except (FileNotFoundError, NotADirectoryError, OSError) as error:
+        raise HTTPException(status_code=404, detail="Backup file not found on server") from error
+    finally:
+        os.close(directory_fd)
+
+
+def _safe_unlink_backup_file(path_value: str | Path) -> None:
+    root = get_backup_root()
+    path = _approved_backup_path(path_value, label="Backup file path")
+    relative = path.relative_to(root)
+    directory_fd = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        for part in relative.parts[:-1]:
+            child_fd = os.open(
+                part,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=directory_fd,
+            )
+            os.close(directory_fd)
+            directory_fd = child_fd
+        os.unlink(relative.parts[-1], dir_fd=directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
 def calculate_file_sha256(path: Path):
     digest = hashlib.sha256()
-    with path.open("rb") as file_handle:
+    with _open_backup_file(path) as file_handle:
         for chunk in iter(lambda: file_handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
@@ -345,12 +400,24 @@ def postgres_cli_connection(database_url: str) -> tuple[list[str], dict[str, str
     if parsed.username:
         args.extend(["--username", str(parsed.username)])
 
-    process_env = os.environ.copy()
+    # Do not inherit application secrets into database CLI processes.
+    process_env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+    for safe_name in ("LANG", "LC_ALL"):
+        if os.environ.get(safe_name):
+            process_env[safe_name] = os.environ[safe_name]
     if parsed.password:
         process_env["PGPASSWORD"] = str(parsed.password)
-    sslmode = parsed.query.get("sslmode") if parsed.query else None
-    if sslmode:
-        process_env["PGSSLMODE"] = str(sslmode)
+    options = parsed.query or {}
+    for query_name, env_name in (
+        ("sslmode", "PGSSLMODE"),
+        ("sslrootcert", "PGSSLROOTCERT"),
+        ("sslcert", "PGSSLCERT"),
+        ("sslkey", "PGSSLKEY"),
+        ("sslcrl", "PGSSLCRL"),
+    ):
+        value = options.get(query_name)
+        if value:
+            process_env[env_name] = str(value)
     return args, process_env
 
 
@@ -521,6 +588,7 @@ def run_restore_validation(
         )
 
     path = get_backup_file_path_or_404(job)
+    backup_handle = _open_backup_file(path)
     validation = BackupRestoreValidation(
         validation_number=generate_backup_restore_validation_number(db),
         restore_request_id=restore_request.id,
@@ -572,7 +640,7 @@ def run_restore_validation(
         "--no-owner",
         "--no-privileges",
         *connection_args,
-        str(path),
+        f"/proc/self/fd/{backup_handle.fileno()}",
     ]
 
     try:
@@ -583,6 +651,7 @@ def run_restore_validation(
             timeout=3600,
             check=False,
             env=process_env,
+            pass_fds=(backup_handle.fileno(),),
         )
         if result.returncode != 0:
             raise RuntimeError((result.stderr or result.stdout or "pg_restore validation failed").strip())
@@ -687,6 +756,8 @@ def run_restore_validation(
         )
         db.commit()
         raise
+    finally:
+        backup_handle.close()
 
 
 def get_production_database_url():
@@ -707,6 +778,7 @@ def run_production_restore(
 
     database_url = get_production_database_url()
     connection_args, process_env = postgres_cli_connection(database_url)
+    backup_handle = _open_backup_file(backup_path)
     restore_maintenance_state["active"] = True
     restore_maintenance_state["started_at"] = datetime.now().isoformat()
     restore_maintenance_state["request_number"] = request_number
@@ -714,25 +786,29 @@ def run_production_restore(
         "Production restore is running. Normal application actions are temporarily blocked."
     )
 
-    command = [
-        "pg_restore",
-        "--clean",
-        "--if-exists",
-        "--single-transaction",
-        "--exit-on-error",
-        "--no-owner",
-        "--no-privileges",
-        *connection_args,
-        str(backup_path),
-    ]
-    result = subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
-        timeout=3600,
-        check=False,
-        env=process_env,
-    )
+    try:
+        command = [
+            "pg_restore",
+            "--clean",
+            "--if-exists",
+            "--single-transaction",
+            "--exit-on-error",
+            "--no-owner",
+            "--no-privileges",
+            *connection_args,
+            f"/proc/self/fd/{backup_handle.fileno()}",
+        ]
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=3600,
+            check=False,
+            env=process_env,
+            pass_fds=(backup_handle.fileno(),),
+        )
+    finally:
+        backup_handle.close()
     if result.returncode != 0:
         raise RuntimeError((result.stderr or result.stdout or "pg_restore failed").strip())
 
@@ -927,7 +1003,7 @@ def execute_backup_job(
         job.updated_at = datetime.now()
         if file_path.exists():
             try:
-                file_path.unlink()
+                _safe_unlink_backup_file(file_path)
             except Exception:
                 pass
         if settings:
@@ -1175,7 +1251,7 @@ def cleanup_backup_files(
         old_status = job.status
         try:
             path = get_backup_file_path_or_404(job)
-            path.unlink()
+            _safe_unlink_backup_file(path)
             job.status = "Deleted"
             job.error_message = None
             job.updated_at = datetime.now()
@@ -1313,10 +1389,13 @@ def download_backup_file(
         },
     )
     db.commit()
-    return FileResponse(
-        path=str(path),
-        filename=job.file_name or path.name,
+    file_handle = _open_backup_file(path)
+    filename = quote(job.file_name or path.name, safe="")
+    return StreamingResponse(
+        iter(lambda: file_handle.read(1024 * 1024), b""),
         media_type="application/octet-stream",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+        background=BackgroundTask(file_handle.close),
     )
 
 
@@ -1340,7 +1419,7 @@ def delete_backup_file(
     try:
         path = get_backup_file_path_or_404(job)
         deleted_file = path.name
-        path.unlink()
+        _safe_unlink_backup_file(path)
     except HTTPException as exc:
         if old_status == "Completed":
             raise exc
