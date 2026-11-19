@@ -27,6 +27,7 @@ from app.dependencies.permissions import (
     apply_location_filter,
     apply_transaction_party_scope_filter,
     ensure_location_in_user_scope,
+    normalize_location_code,
     require_user_permission,
 )
 from app.services.audit_service import create_audit_log
@@ -1577,7 +1578,7 @@ def build_fso_otr_report(
         .filter(
             OperationTransaction.status == APPROVED_TRANSACTION_STATUS,
             approved_transaction_not_on_correction_hold(db),
-            OperationTransaction.origin_location_code == loc_code,
+            func.lower(func.trim(OperationTransaction.origin_location_code)) == normalize_location_code(loc_code),
             OperationTransaction.primary_asset_code == asset_code,
             OperationTransactionValue.field_code == "fso_payload",
         )
@@ -1693,7 +1694,7 @@ def build_fso_material_balance(
         .filter(
             OperationTransaction.status == APPROVED_TRANSACTION_STATUS,
             approved_transaction_not_on_correction_hold(db),
-            OperationTransaction.origin_location_code == loc_code,
+            func.lower(func.trim(OperationTransaction.origin_location_code)) == normalize_location_code(loc_code),
             OperationTransaction.primary_asset_code == asset_code,
             OperationTransactionValue.field_code == "fso_payload",
         )
@@ -1800,7 +1801,7 @@ def build_fso_outturn_report(
         .filter(
             OperationTransaction.status == APPROVED_TRANSACTION_STATUS,
             approved_transaction_not_on_correction_hold(db),
-            OperationTransaction.origin_location_code == loc_code,
+            func.lower(func.trim(OperationTransaction.origin_location_code)) == normalize_location_code(loc_code),
             OperationTransaction.primary_asset_code == asset_code,
             OperationTransactionValue.field_code == "fso_payload",
         )

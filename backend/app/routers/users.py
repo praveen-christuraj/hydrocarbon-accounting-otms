@@ -247,6 +247,8 @@ def update_user(
     target_is_admin = is_admin_user(existing_user, db) or _normalized_username(existing_user.username) == "admin"
     if target_is_admin and not is_admin_user(current_user, db):
         raise HTTPException(status_code=403, detail="Only an administrator can edit an administrator account")
+    if _normalized_username(existing_user.username) == "admin" and _normalized_username(user.username) != "admin":
+        raise HTTPException(status_code=400, detail="The bootstrap administrator username cannot be changed")
     validate_reserved_username(user.username, existing_username=existing_user.username)
     if _normalized_username(user.username) != _normalized_username(existing_user.username):
         validate_username_format(user.username)

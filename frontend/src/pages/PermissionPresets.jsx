@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getRolePermissions, saveRolePermissions } from '../api/rolePermissionApi'
-import { getPermissionCatalog } from '../api/permissionApi'
+import { getPermissionCatalogForCaller } from '../api/permissionApi'
 import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import PageHeader from '../components/common/PageHeader'
@@ -88,7 +88,7 @@ function PermissionPresets({ roles, permissions, rolePermissionAssignments, relo
 
   useEffect(() => {
     let cancelled = false
-    getPermissionCatalog()
+    getPermissionCatalogForCaller(loggedInUser)
       .then((data) => {
         if (!cancelled) setCatalog(data)
       })
@@ -98,7 +98,7 @@ function PermissionPresets({ roles, permissions, rolePermissionAssignments, relo
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [loggedInUser])
 
   // Same permission source as Role Permission Assignment: the full list when
   // the user can view Permission Master, plus everything assigned to a role.

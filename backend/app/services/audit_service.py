@@ -66,3 +66,43 @@ def build_audit_log_response(audit_log: AuditLog):
         "details": audit_log.details,
         "created_at": audit_log.created_at,
     }
+
+
+def audit_privileged_read(
+    db: Session,
+    current_user: User,
+    *,
+    endpoint: str,
+    outcome: str,
+    details: dict | None = None,
+) -> None:
+    """Persist a minimal audit record for privileged diagnostic reads.
+
+    These endpoints fail closed when audit persistence fails: the diagnostic
+    profile is not returned without its corresponding audit row.
+    """
+    from fastapi import HTTPException
+
+    payload = {
+        "endpoint": endpoint,
+        "outcome": outcome,
+        "actor_user_id": current_user.id,
+        "actor_name": get_current_user_display_name(current_user),
+    }
+    payload.update(details or {})
+    try:
+        create_audit_log(
+            db=db,
+            module_name="Access Diagnostics",
+            action="Read Access Diagnostics",
+            current_user=current_user,
+            entity_type="DiagnosticEndpoint",
+            entity_label=endpoint,
+            remarks="Privileged access diagnostic read",
+            request_path=endpoint,
+            details=payload,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Unable to audit diagnostic request") from None

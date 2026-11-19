@@ -191,12 +191,15 @@ export const apiRequest = async (endpoint, options = {}, timeoutMs = REQUEST_TIM
       clearAccessToken()
     }
 
-    const retryAfter = response.headers.get('retry-after')
+    const retryAfterHeader = response.headers.get('retry-after') || ''
+    const retryAfter = /^\d+$/.test(retryAfterHeader) ? Number(retryAfterHeader) : Number.NaN
     const baseMessage = formatApiError(data)
     throw new Error(
-      response.status === 429 && retryAfter
-        ? `${baseMessage} Try again in ${retryAfter} seconds.`
-        : baseMessage
+      response.status === 429 && Number.isFinite(retryAfter) && retryAfter >= 0 && retryAfter <= 86400
+        ? `${baseMessage} Please try again in about ${retryAfter} seconds.`
+        : response.status === 429
+          ? `${baseMessage} Please try again shortly.`
+          : baseMessage
     )
   }
 

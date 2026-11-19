@@ -1,9 +1,9 @@
 # Hydrocarbon Accounting OTMS — Security Implementation Plan
 
 **Date:** 2026-11-19
-**Branch:** `arena/c193e5f4-hydrocarbon-accounting-otms` (base `57061d6`)
+**Branch:** `arena/5b8ad7e2-hydrocarbon-accounting-otms` (base `aec2b66b6f1f81151b4b092a62165eb88cf527f6`)
 **Source of findings:** `Hydrocarbon_Open_Security_Issues.xlsx` (5 tabs: Open Issues 1–8, Hardening H-01–H-07, Doc/claim mismatches D-01–D-04, Checked-not-issues N-01–N-12, How-to-read)
-**Status of this document:** PLAN ONLY. No code was changed, no database was touched, no tests were run against a live system. Every code reference below was verified by reading the current checkout.
+**Status of this document:** The plan was prepared before implementation; implementation is now underway on the branch above. No live database was touched. Code references below describe the pre-implementation checkout.
 
 ---
 

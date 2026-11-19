@@ -1000,13 +1000,13 @@ def seed_default_permissions():
             )
         db.commit()
         if result["created_count"] or result["updated_count"]:
-            print(
+            logger.info(
                 f"Permission catalog: {result['created_count']} created, "
                 f"{result['updated_count']} updated "
                 f"({result['total_standard_permissions']} standard permissions)"
             )
         if migration["migrated"]:
-            print(
+            logger.info(
                 f"Permission migration: removed {migration['legacy_permissions_removed']} legacy "
                 f"permissions, granted {migration['role_permissions_granted']} replacement "
                 f"assignments across {migration['roles_affected']} roles"
@@ -1042,9 +1042,9 @@ def seed_admin_role():
             )
             db.add(role)
             db.flush()
-            print(f"[SEED] Created 'Admin' role (id={role.id})")
+            logger.info(f"[SEED] Created 'Admin' role (id={role.id})")
         else:
-            print(f"[SEED] 'Admin' role already exists (id={role.id})")
+            logger.info(f"[SEED] 'Admin' role already exists (id={role.id})")
 
         super_role = db.query(Role).filter(func.lower(func.trim(Role.role_name)) == "super admin").first()
         if not super_role:
@@ -1058,7 +1058,7 @@ def seed_admin_role():
             )
             db.add(super_role)
             db.flush()
-            print(f"[SEED] Created 'Super Admin' role (id={super_role.id})")
+            logger.info(f"[SEED] Created 'Super Admin' role (id={super_role.id})")
 
         # 2. Assign ALL permissions to the Admin role
         all_perms = db.query(Permission).filter(Permission.status == "Active").all()
@@ -1113,17 +1113,17 @@ def seed_admin_role():
             )
             db.add(admin_user)
             db.flush()
-            print(f"[SEED] Created 'admin' user (id={admin_user.id})")
-            print("[SEED] Initial admin credential accepted; password value is never logged")
+            logger.info(f"[SEED] Created 'admin' user (id={admin_user.id})")
+            logger.info("[SEED] Initial admin credential accepted; password value is never logged")
         else:
-            print(f"[SEED] 'admin' user already exists (id={admin_user.id})")
+            logger.info(f"[SEED] 'admin' user already exists (id={admin_user.id})")
             # Do not reactivate an administrator account that an operator has
             # intentionally disabled. Authentication checks this status live.
             if str(admin_user.password_never_expires or "").strip().casefold() == "yes":
                 admin_user.password_never_expires = "No"
                 admin_user.password_expiry_days = ADMIN_PASSWORD_EXPIRY_DAYS
                 admin_user.updated_at = datetime.now(timezone.utc)
-                print("[SEED] Enabled password expiry for the existing admin user")
+                logger.info("[SEED] Enabled password expiry for the existing admin user")
 
         # 4. Add the reserved Admin role without replacing any legacy role
         # assignments. The association table supports multiple roles after the
@@ -1137,9 +1137,9 @@ def seed_admin_role():
             user_role = UserRole(user_id=admin_user.id, role_id=role.id)
             db.add(user_role)
             db.flush()
-            print(f"[SEED] Assigned 'Admin' role to 'admin' user")
+            logger.info(f"[SEED] Assigned 'Admin' role to 'admin' user")
         else:
-            print(f"[SEED] 'admin' user already has 'Admin' role")
+            logger.info(f"[SEED] 'admin' user already has 'Admin' role")
 
         super_assignment = db.query(UserRole).filter(
             UserRole.user_id == admin_user.id,
@@ -1148,7 +1148,7 @@ def seed_admin_role():
         if not super_assignment:
             db.add(UserRole(user_id=admin_user.id, role_id=super_role.id))
             db.flush()
-            print("[SEED] Assigned 'Super Admin' role to bootstrap 'admin' user")
+            logger.info("[SEED] Assigned 'Super Admin' role to bootstrap 'admin' user")
 
         # Reconcile every current Admin / Super Admin holder now that roles
         # have been seeded, not only on the next application restart.
@@ -1157,16 +1157,16 @@ def seed_admin_role():
                 holder.updated_at = datetime.now(timezone.utc)
 
         # 5. Verify the setup
-        print(f"[SEED] VERIFICATION: admin user (id={admin_user.id}) -> role (id={role.id}, name={role.role_name})")
+        logger.info(f"[SEED] VERIFICATION: admin user (id={admin_user.id}) -> role (id={role.id}, name={role.role_name})")
 
         db.commit()
         if assigned:
-            print(f"[SEED] Assigned {assigned} permissions to 'Admin' role ({skipped} already existed)")
+            logger.info(f"[SEED] Assigned {assigned} permissions to 'Admin' role ({skipped} already existed)")
         else:
-            print(f"[SEED] Admin role already has all {skipped} permissions assigned")
+            logger.info(f"[SEED] Admin role already has all {skipped} permissions assigned")
     except Exception as e:
         db.rollback()
-        print(f"[SEED] ERROR: {e}")
+        logger.error("[SEED] startup failed (error_type=%s)", type(e).__name__)
         raise
     finally:
         db.close()
@@ -1724,7 +1724,7 @@ def ensure_sender_receiver_pairing_backfill():
             for statement in statements:
                 connection.execute(text(statement))
     except Exception as error:  # pragma: no cover - start-up must not fail
-        print(f"[migrations] sender/receiver pairing backfill skipped: {error}")
+        logger.warning("[migrations] sender/receiver pairing backfill skipped (error_type=%s)", type(error).__name__)
 
 
 FSO_SHUTTLE_PAYLOAD_FIELD_CODES = ("fso_payload", "shuttle_payload")
@@ -1838,13 +1838,13 @@ def ensure_fso_shuttle_payload_operation_date():
 
         if updated:
             session.commit()
-            print(
+            logger.info(
                 f"[migrations] fso/shuttle payload operation date added to "
                 f"{updated} row(s)"
             )
     except Exception as error:  # pragma: no cover - start-up must not fail
         session.rollback()
-        print(f"[migrations] fso/shuttle payload date backfill skipped: {error}")
+        logger.warning("[migrations] fso/shuttle payload date backfill skipped (error_type=%s)", type(error).__name__)
     finally:
         session.close()
 
@@ -1949,9 +1949,9 @@ def ensure_payload_operation_dates():
                     sync_summary.get("rows_scanned", 0)
                 ) + int(sync_summary.get("rows_created", 0))
             except Exception as error:  # pragma: no cover
-                print(
-                    "[migrations] payload operation date ledger sync/rebuild "
-                    f"skipped: {error}"
+                logger.warning(
+                    "[migrations] payload operation date ledger sync/rebuild skipped (error_type=%s)",
+                    type(error).__name__,
                 )
 
         # --- 3. vessel_stock_ledger.operation_date ----------------------
@@ -1971,7 +1971,7 @@ def ensure_payload_operation_dates():
 
         if updated_transactions or updated_ledger_rows or updated_vessel_rows:
             session.commit()
-            print(
+            logger.info(
                 "[migrations] payload operation dates applied: "
                 f"{updated_transactions} transaction(s), "
                 f"{updated_ledger_rows} tank stock ledger row(s), "
@@ -1979,7 +1979,7 @@ def ensure_payload_operation_dates():
             )
     except Exception as error:  # pragma: no cover - start-up must not fail
         session.rollback()
-        print(f"[migrations] payload operation date backfill skipped: {error}")
+        logger.warning("[migrations] payload operation date backfill skipped (error_type=%s)", type(error).__name__)
     finally:
         session.close()
 
@@ -2014,7 +2014,7 @@ def ensure_asset_calibration_unique_asset_index():
                     f"{row.asset_code} ({row.chart_count} charts)"
                     for row in duplicates[:20]
                 )
-                print(
+                logger.info(
                     "[migrations] Asset calibration one-chart-per-asset unique index "
                     f"skipped: duplicate calibration charts already exist for: {summary}. "
                     "Merge or delete the duplicates, then restart to enforce the index."
@@ -2027,7 +2027,7 @@ def ensure_asset_calibration_unique_asset_index():
                 )
             )
     except Exception as error:  # pragma: no cover - start-up must not fail
-        print(f"[migrations] asset calibration unique asset index skipped: {error}")
+        logger.warning("[migrations] asset calibration unique asset index skipped (error_type=%s)", type(error).__name__)
 
 
 def ensure_asset_calibration_table_indexes():

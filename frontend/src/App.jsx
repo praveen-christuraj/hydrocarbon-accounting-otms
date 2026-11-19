@@ -452,6 +452,7 @@ function AppContent({
                   permissions={permissions}
                   userRoleAssignments={userRoleAssignments}
                   rolePermissionAssignments={rolePermissionAssignments}
+                  loggedInUser={loggedInUser}
                 />
               </PermissionGuard>
             }

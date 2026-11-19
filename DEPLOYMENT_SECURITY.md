@@ -27,7 +27,7 @@ Fill `.env`:
 
 | Variable | Required | Notes |
 |---|---|---|
-| `ENVIRONMENT` | yes | `production` enables HSTS, Secure cookies, docs gating and HTTPS assertions |
+| `ENVIRONMENT` | yes | `production` enables HSTS on HTTPS responses (short initial max-age), Secure cookies, docs gating and HTTPS assertions |
 | `CORS_ORIGINS` | yes | Exact public origin(s), comma separated. `*` is rejected at startup |
 | `JWT_SECRET_KEY` | yes | 48+ random bytes; rotating it signs everyone out |
 | `ENCRYPTION_KEY` | yes | Encrypts TOTP secrets; keep stable, back it up |

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { getAccessDiagnostic, getPermissionCatalog } from '../api/permissionApi'
+import { getAccessDiagnostic, getPermissionCatalogForCaller } from '../api/permissionApi'
 import PaginationControls, { paginateRows, usePageSize } from '../components/common/PaginationControls'
 import DataTableToolbar from '../components/common/DataTableToolbar'
 import PageHeader from '../components/common/PageHeader'
@@ -44,6 +44,7 @@ function AccessSummary({
   permissions = [],
   userRoleAssignments = [],
   rolePermissionAssignments = [],
+  loggedInUser,
 }) {
   const [catalog, setCatalog] = useState(null)
   const [catalogError, setCatalogError] = useState('')
@@ -59,7 +60,7 @@ function AccessSummary({
 
   useEffect(() => {
     let cancelled = false
-    getPermissionCatalog()
+    getPermissionCatalogForCaller(loggedInUser)
       .then((data) => {
         if (!cancelled) setCatalog(data)
       })
@@ -69,7 +70,7 @@ function AccessSummary({
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [loggedInUser])
 
   const knownPermissions = useMemo(() => {
     const byId = new Map()

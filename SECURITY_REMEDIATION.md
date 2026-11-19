@@ -37,7 +37,7 @@ some modified files; these are not addressed as part of this security pass.
 | 20 | Low | RBAC diagnostics disclosure | Verified. `/auth/me/rbac-diagnostics` requires `Edit System Settings`. |
 | 21 | Low | Admin password never expires | Fixed. Admin and Super Admin accounts are capped at `ADMIN_PASSWORD_EXPIRY_DAYS` (≤ 90), non-expiring passwords are always refused for administrators, and ordinary accounts may use them only when `ALLOW_NON_ADMIN_PASSWORD_NEVER_EXPIRES=true`. Newly elevated users are reconciled immediately. |
 | 22 | Low | Fast unsalted encryption-key derivation | Verified. New ciphertext uses PBKDF2-HMAC-SHA256, 600k iterations, with the persistent `SECURITY_KDF_SALT`; legacy SHA-256 ciphertext remains readable for migration. |
-| 23 | Low | Missing browser security headers | Verified and extended. Every API response sets CSP, `X-Frame-Options: DENY`, `nosniff`, referrer, permissions, COOP/CORP, `Cache-Control: no-store`, and HSTS in production. The production SPA image sets the same headers at nginx. |
+| 23 | Low | Missing browser security headers | Verified and extended. API and SPA responses set CSP, `X-Frame-Options: DENY`, `nosniff`, referrer, permissions, COOP/CORP, and cache controls. HSTS is emitted only for HTTPS requests, with a short `max-age=300` while domain coverage is confirmed. |
 | 24 | Low | Public database diagnostic | Verified. `/db-test` requires authentication plus `Edit System Settings`; `/health` is a non-database liveness probe. |
 
 ## 2. Pass-2 controls added on top of the assessment

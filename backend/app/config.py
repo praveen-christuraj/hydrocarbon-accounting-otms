@@ -122,7 +122,7 @@ PASSWORD_MAX_LENGTH = _env_int("PASSWORD_MAX_LENGTH", 128, minimum=64, maximum=2
 DEFAULT_PASSWORD_EXPIRY_DAYS = _env_int("DEFAULT_PASSWORD_EXPIRY_DAYS", 30, minimum=1, maximum=365)
 ADMIN_PASSWORD_EXPIRY_DAYS = _env_int("ADMIN_PASSWORD_EXPIRY_DAYS", 60, minimum=1, maximum=90)
 MAX_PASSWORD_EXPIRY_DAYS = _env_int("MAX_PASSWORD_EXPIRY_DAYS", 365, minimum=30, maximum=730)
-PASSWORD_HISTORY_COUNT = _env_int("PASSWORD_HISTORY_COUNT", 5, minimum=1, maximum=24)
+PASSWORD_HISTORY_COUNT = _env_int("PASSWORD_HISTORY_COUNT", 5, minimum=3, maximum=24)
 # Never allow "password never expires" to be set for the reserved Admin account
 # or any account holding the Admin / Super Admin role.
 ADMIN_PASSWORD_NEVER_EXPIRES_ALLOWED = False

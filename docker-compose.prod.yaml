@@ -42,7 +42,7 @@ services:
       TRUSTED_HOSTS: ${TRUSTED_HOSTS:-}
       TRUST_PROXY_HEADERS: "true"
       # The API port is not published; only the proxy can reach it.
-      TRUSTED_PROXY_IPS: "*"
+      TRUSTED_PROXY_IPS: "172.28.0.0/16"
       ENFORCE_HTTPS: ${ENFORCE_HTTPS:-true}
       # Temporary internal HTTP deployments only: set ALLOW_INSECURE_HTTP=true
       # (and ENFORCE_HTTPS=false) in .env. Behind HTTPS leave it false.
@@ -86,3 +86,6 @@ volumes:
 networks:
   appnet:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

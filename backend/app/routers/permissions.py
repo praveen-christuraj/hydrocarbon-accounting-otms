@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -6,8 +6,8 @@ from app.database import get_db
 from app.models import Location, Permission, RolePermission, Role, User
 from app.schemas import PermissionCreate, PermissionResponse
 from app.dependencies.auth import get_current_user_from_token
-from app.dependencies.permissions import is_admin_user, require_user_permission
-from app.services.audit_service import create_audit_log
+from app.dependencies.permissions import get_user_permissions, is_admin_user, require_user_permission
+from app.services.audit_service import audit_privileged_read, create_audit_log
 from app.services.permission_catalog import apply_permission_catalog
 from app.utils.default_permissions import ACTION_ORDER, STANDARD_PERMISSIONS, get_permission_catalog
 from app.utils.helpers import clean_optional_text, escape_like
@@ -60,15 +60,46 @@ def get_permissions(
     }
 
 
+@router.get("/catalog/mine")
+def get_my_permission_catalog(
+    current_user: User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db),
+):
+    """Return only standard permission names the caller effectively holds."""
+    allowed = {name.strip().casefold() for name in get_user_permissions(current_user, db)}
+    catalog = get_permission_catalog()
+    categories = []
+    for category in catalog:
+        modules = []
+        for module in category.get("modules", []):
+            permissions = [
+                item for item in module.get("permissions", [])
+                if str(item.get("permission_name") or "").strip().casefold() in allowed
+            ]
+            if permissions:
+                modules.append({**module, "permissions": permissions})
+        if modules:
+            categories.append({**category, "modules": modules})
+    return {
+        "actions": ACTION_ORDER,
+        "categories": categories,
+        "total_standard_permissions": sum(
+            len(module["permissions"]) for category in categories for module in category["modules"]
+        ),
+    }
+
+
 @router.get("/catalog")
 def get_standard_permission_catalog(
     current_user: User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db),
 ):
     """Module-wise CRUD structure of the standard permissions.
 
     Static metadata (no role or user data): categories follow the navigation
     menu, each module lists its permissions with the CRUD action they map to.
     """
+    require_user_permission(current_user, "View Permission", db)
     return {
         "actions": ACTION_ORDER,
         "categories": get_permission_catalog(),
@@ -413,6 +444,7 @@ WORKFLOW_ACTION_CODES = [
 
 @router.get("/access-diagnostic")
 def get_access_diagnostic(
+    request: Request,
     user_id: int = Query(..., description="User whose access is explained"),
     transaction_id: int | None = Query(
         None, description="Optional operation ticket to evaluate the party rule against"
@@ -423,155 +455,173 @@ def get_access_diagnostic(
     current_user: User = Depends(get_current_user_from_token),
     db: Session = Depends(get_db),
 ):
-    require_user_permission(current_user, "View Access Summary", db)
-
-    target_user = db.query(User).filter(User.id == user_id).first()
-    if target_user is None:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    from app.dependencies.permissions import (
-        TRANSACTION_PARTY_LOCATION_FIELDS,
-        evaluate_operation_workflow_policy,
-        get_user_location_codes,
-        get_user_permissions,
-        get_user_role_ids,
-        is_operation_type_available_for_location,
-        normalize_location_code,
-    )
-    from app.models import OperationTransaction
-
-    role_ids = set(get_user_role_ids(db, target_user) or [])
-    role_names = []
-    if role_ids:
-        role_names = [
-            role.role_name
-            for role in db.query(Role).filter(Role.id.in_(role_ids)).order_by(Role.role_name).all()
-        ]
-
-    effective_codes = get_user_location_codes(target_user, db)
-    assigned_location_codes = None
-    if effective_codes is not None:
-        # The engine stores normalized (lower-case) codes; show the location
-        # master's spelling when it is known so the panel is easy to read.
-        stored_codes = {
-            str(row.location_code or "").strip().lower(): row.location_code
-            for row in db.query(Location).all()
-        }
-        assigned_location_codes = sorted(
-            stored_codes.get(code, code) for code in effective_codes
-        )
-
-    criteria = {
-        "permission": {
-            "is_admin": is_admin_user(target_user, db),
-            "roles": role_names,
-            "permissions": sorted(get_user_permissions(target_user, db)),
-        },
-        "location_scope": {
-            "all_locations_access": str(target_user.all_locations_access or "").strip().lower()
-            in ("yes", "true", "1"),
-            "assigned_location_codes": assigned_location_codes,
-            "unrestricted": effective_codes is None,
-        },
-        "operation_availability": None,
-        "workflow_policy": None,
+    audit_context = {
+        "request_id": getattr(request.state, "request_id", "-"),
+        "target_user_id": user_id,
+        "transaction_id": transaction_id,
+        "transaction_id_supplied": transaction_id is not None,
+        "action_code_supplied": bool(str(action_code or "").strip()),
     }
+    try:
+        require_user_permission(current_user, "View Access Summary", db)
 
-    record = None
-    resolved_action_code = None
+        target_user = db.query(User).filter(User.id == user_id).first()
+        if target_user is None:
+            raise HTTPException(status_code=404, detail="User not found")
 
-    if transaction_id is not None:
-        transaction = (
-            db.query(OperationTransaction)
-            .filter(OperationTransaction.id == transaction_id)
-            .first()
+        from app.dependencies.permissions import (
+            TRANSACTION_PARTY_LOCATION_FIELDS,
+            evaluate_operation_workflow_policy,
+            get_user_location_codes,
+            get_user_permissions,
+            get_user_role_ids,
+            is_operation_type_available_for_location,
+            normalize_location_code,
         )
-        if transaction is None:
-            raise HTTPException(status_code=404, detail="Operation ticket not found")
+        from app.models import OperationTransaction
 
-        party_locations = []
-        for field_name in TRANSACTION_PARTY_LOCATION_FIELDS:
-            raw_code = getattr(transaction, field_name, None)
-            normalized = normalize_location_code(raw_code)
-            if normalized is None:
-                continue
-            party_locations.append(
-                {
-                    "field": field_name,
-                    "location_code": normalized,
-                    "in_scope": effective_codes is None or normalized in effective_codes,
-                }
+        role_ids = set(get_user_role_ids(db, target_user) or [])
+        role_names = []
+        if role_ids:
+            role_names = [
+                role.role_name
+                for role in db.query(Role).filter(Role.id.in_(role_ids)).order_by(Role.role_name).all()
+            ]
+
+        effective_codes = get_user_location_codes(target_user, db)
+        assigned_location_codes = None
+        if effective_codes is not None:
+            # The engine stores normalized (lower-case) codes; show the location
+            # master's spelling when it is known so the panel is easy to read.
+            stored_codes = {
+                str(row.location_code or "").strip().lower(): row.location_code
+                for row in db.query(Location).all()
+            }
+            assigned_location_codes = sorted(
+                stored_codes.get(code, code) for code in effective_codes
             )
 
-        in_scope_codes = [row["location_code"] for row in party_locations if row["in_scope"]]
-        if effective_codes is None:
-            visible = True
-            reason = "Unrestricted location access (all locations)."
-        elif not party_locations:
-            visible = True
-            reason = "Ticket has no populated location (legacy row) - visible to every user."
-        elif in_scope_codes:
-            visible = True
-            reason = (
-                "Party rule: at least one party location is inside the assigned scope "
-                f"({', '.join(in_scope_codes)})."
-            )
-        else:
-            visible = False
-            reason = (
-                "Party rule: none of the ticket's party locations (origin, destination, "
-                "sender, receiver) is inside the assigned scope."
-            )
-
-        criteria["operation_availability"] = {
-            "location_code": transaction.origin_location_code,
-            "operation_type_code": transaction.operation_type_code,
-            "available": is_operation_type_available_for_location(
-                db, transaction.origin_location_code, transaction.operation_type_code
-            ),
+        criteria = {
+            "permission": {
+                "is_admin": is_admin_user(target_user, db),
+                "roles": role_names,
+                "permissions": sorted(get_user_permissions(target_user, db)),
+            },
+            "location_scope": {
+                "all_locations_access": str(target_user.all_locations_access or "").strip().lower()
+                in ("yes", "true", "1"),
+                "assigned_location_codes": assigned_location_codes,
+                "unrestricted": effective_codes is None,
+            },
+            "operation_availability": None,
+            "workflow_policy": None,
         }
 
-        resolved_action_code = clean_optional_text(action_code)
-        if resolved_action_code is not None:
-            allowed, policy_reason, policy = evaluate_operation_workflow_policy(
-                db=db,
-                current_user=target_user,
-                action_code=resolved_action_code.upper(),
-                operation_type_code=transaction.operation_type_code,
-                operation_template_id=transaction.operation_template_id,
-                asset_type_code=transaction.primary_asset_type_code,
-                location_code=transaction.origin_location_code,
+        record = None
+        resolved_action_code = None
+
+        if transaction_id is not None:
+            transaction = (
+                db.query(OperationTransaction)
+                .filter(OperationTransaction.id == transaction_id)
+                .first()
             )
-            criteria["workflow_policy"] = {
-                "action_code": resolved_action_code.upper(),
-                "allowed": allowed,
-                "reason": policy_reason,
-                "policy_id": getattr(policy, "id", None),
+            if transaction is None:
+                raise HTTPException(status_code=404, detail="Operation ticket not found")
+
+            party_locations = []
+            for field_name in TRANSACTION_PARTY_LOCATION_FIELDS:
+                raw_code = getattr(transaction, field_name, None)
+                normalized = normalize_location_code(raw_code)
+                if normalized is None:
+                    continue
+                party_locations.append(
+                    {
+                        "field": field_name,
+                        "location_code": normalized,
+                        "in_scope": effective_codes is None or normalized in effective_codes,
+                    }
+                )
+
+            in_scope_codes = [row["location_code"] for row in party_locations if row["in_scope"]]
+            if effective_codes is None:
+                visible = True
+                reason = "Unrestricted location access (all locations)."
+            elif not party_locations:
+                visible = True
+                reason = "Ticket has no populated location (legacy row) - visible to every user."
+            elif in_scope_codes:
+                visible = True
+                reason = (
+                    "Party rule: at least one party location is inside the assigned scope "
+                    f"({', '.join(in_scope_codes)})."
+                )
+            else:
+                visible = False
+                reason = (
+                    "Party rule: none of the ticket's party locations (origin, destination, "
+                    "sender, receiver) is inside the assigned scope."
+                )
+
+            criteria["operation_availability"] = {
+                "location_code": transaction.origin_location_code,
+                "operation_type_code": transaction.operation_type_code,
+                "available": is_operation_type_available_for_location(
+                    db, transaction.origin_location_code, transaction.operation_type_code
+                ),
             }
 
-        record = {
-            "kind": "ticket",
-            "transaction_id": transaction.id,
-            "ticket_number": transaction.operation_ticket_number,
-            "operation_number": transaction.operation_number,
-            "status": transaction.status,
-            "origin_location_code": transaction.origin_location_code,
-            "destination_location_code": transaction.destination_location_code,
-            "sender_location_code": transaction.sender_location_code,
-            "receiver_location_code": transaction.receiver_location_code,
-            "party_locations": party_locations,
-            "visible": visible,
-            "reason": reason,
-        }
+            resolved_action_code = clean_optional_text(action_code)
+            if resolved_action_code is not None:
+                allowed, policy_reason, policy = evaluate_operation_workflow_policy(
+                    db=db,
+                    current_user=target_user,
+                    action_code=resolved_action_code.upper(),
+                    operation_type_code=transaction.operation_type_code,
+                    operation_template_id=transaction.operation_template_id,
+                    asset_type_code=transaction.primary_asset_type_code,
+                    location_code=transaction.origin_location_code,
+                )
+                criteria["workflow_policy"] = {
+                    "action_code": resolved_action_code.upper(),
+                    "allowed": allowed,
+                    "reason": policy_reason,
+                    "policy_id": getattr(policy, "id", None),
+                }
 
-    return {
-        "user": {
-            "id": target_user.id,
-            "username": target_user.username,
-            "full_name": target_user.full_name,
-            "status": target_user.status,
-        },
-        "criteria": criteria,
-        "record": record,
-        "workflow_action_codes": WORKFLOW_ACTION_CODES,
-    }
+            record = {
+                "kind": "ticket",
+                "transaction_id": transaction.id,
+                "ticket_number": transaction.operation_ticket_number,
+                "operation_number": transaction.operation_number,
+                "status": transaction.status,
+                "origin_location_code": transaction.origin_location_code,
+                "destination_location_code": transaction.destination_location_code,
+                "sender_location_code": transaction.sender_location_code,
+                "receiver_location_code": transaction.receiver_location_code,
+                "party_locations": party_locations,
+                "visible": visible,
+                "reason": reason,
+            }
+
+        result = {
+            "user": {
+                "id": target_user.id,
+                "username": target_user.username,
+                "full_name": target_user.full_name,
+                "status": target_user.status,
+            },
+            "criteria": criteria,
+            "record": record,
+            "workflow_action_codes": WORKFLOW_ACTION_CODES,
+        }
+    except HTTPException as error:
+        outcome = "denied" if error.status_code == 403 else "not_found" if error.status_code == 404 else "error"
+        audit_privileged_read(db, current_user, endpoint="/permissions/access-diagnostic", outcome=outcome, details=audit_context)
+        raise
+    except Exception:
+        audit_privileged_read(db, current_user, endpoint="/permissions/access-diagnostic", outcome="error", details=audit_context)
+        raise
+
+    audit_privileged_read(db, current_user, endpoint="/permissions/access-diagnostic", outcome="allowed", details=audit_context)
+    return result

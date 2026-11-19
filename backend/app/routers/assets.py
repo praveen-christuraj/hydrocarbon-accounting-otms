@@ -2,7 +2,6 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import false, func, or_
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.utils.errors import commit_or_409, flush_or_409
@@ -159,11 +158,7 @@ def create_asset(
     )
 
     db.add(new_asset)
-    try:
-        flush_or_409(db)
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(status_code=409, detail="Asset code already exists")
+    flush_or_409(db, detail="Asset code already exists")
 
     after_data = {
         "asset_name": new_asset.asset_name,
@@ -192,11 +187,7 @@ def create_asset(
         details={"after": after_data},
     )
 
-    try:
-        commit_or_409(db)
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(status_code=409, detail="Asset code already exists")
+    commit_or_409(db, detail="Asset code already exists")
     db.refresh(new_asset)
 
     return new_asset
@@ -382,11 +373,7 @@ def update_asset(
         details={"before": before_data, "after": after_data},
     )
 
-    try:
-        commit_or_409(db)
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(status_code=409, detail="Asset code already exists")
+    commit_or_409(db, detail="Asset code already exists")
     db.refresh(existing_asset)
 
     return existing_asset
@@ -491,10 +478,6 @@ def delete_asset(
     )
 
     db.delete(existing_asset)
-    try:
-        commit_or_409(db)
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(status_code=409, detail="Asset is still referenced and cannot be deleted")
+    commit_or_409(db, detail="Asset is still referenced and cannot be deleted")
 
     return {"message": "Asset deleted successfully"}

@@ -96,7 +96,7 @@ export const exportXlsx = async ({ rows, columns, fileName, sheetName = 'Data', 
   const { header, body } = buildMatrix(rows, columns)
 
   sheet.columns = columns.map((column, index) => ({
-    header: header[index],
+    header: neutralizeSpreadsheetFormula(header[index]),
     key: column.key || `col${index}`,
     width: Math.min(
       60,

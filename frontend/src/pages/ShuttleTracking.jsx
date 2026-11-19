@@ -644,7 +644,7 @@ function ShuttleTracking({
       'Status',
     ]
 
-    const lines = [headers.join(',')]
+    const lines = [headers.map(escapeCsvCell).join(',')]
     rows.forEach((t) => {
       lines.push(
         [

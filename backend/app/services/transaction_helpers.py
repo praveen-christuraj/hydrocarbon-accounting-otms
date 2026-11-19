@@ -1,4 +1,4 @@
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
@@ -257,11 +257,15 @@ def ensure_approved_correction_window_open(db: Session, transaction: OperationTr
     if not approved_at:
         approved_at = transaction.updated_at or transaction.created_at
 
-    if approved_at and datetime.now() > approved_at + timedelta(hours=APPROVED_CORRECTION_WINDOW_HOURS):
-        raise HTTPException(
-            status_code=400,
-            detail="Approved transaction correction window expired after 24 hours",
-        )
+    if approved_at:
+        database_now = datetime.now(timezone.utc).replace(tzinfo=None)
+        if getattr(approved_at, "tzinfo", None) is not None:
+            approved_at = approved_at.astimezone(timezone.utc).replace(tzinfo=None)
+        if database_now > approved_at + timedelta(hours=APPROVED_CORRECTION_WINDOW_HOURS):
+            raise HTTPException(
+                status_code=400,
+                detail="Approved transaction correction window expired after 24 hours",
+            )
 
 
 def require_approved_transaction_for_tracking(

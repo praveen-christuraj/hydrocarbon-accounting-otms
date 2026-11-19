@@ -137,12 +137,34 @@ def test_export_operations_has_its_own_permissions():
 
 
 def test_catalog_endpoint_returns_categories_and_actions(db):
-    user = create_user(db, "catalog_reader")
+    role, _ = create_role_with_permission(db, "catalog_reader_role", "View Permission")
+    user = create_user(db, "catalog_reader", roles=[role])
     db.commit()
-    response = get_standard_permission_catalog(current_user=user)
+    response = get_standard_permission_catalog(current_user=user, db=db)
     assert response["actions"] == ACTION_ORDER
     assert response["total_standard_permissions"] == len(STANDARD_PERMISSIONS)
     assert response["categories"][0]["modules"][0]["module_name"] == "User Master"
+
+
+def test_full_catalog_requires_permission_and_mine_is_filtered(db):
+    from app.routers.permissions import get_my_permission_catalog
+
+    role, _ = create_role_with_permission(db, "limited_catalog_role", "View User")
+    user = create_user(db, "limited_catalog_reader", roles=[role])
+    db.commit()
+
+    with pytest.raises(HTTPException) as denied:
+        get_standard_permission_catalog(current_user=create_user(db, "no_catalog_permission"), db=db)
+    assert denied.value.status_code == 403
+
+    subset = get_my_permission_catalog(current_user=user, db=db)
+    names = {
+        item["permission_name"]
+        for category in subset["categories"]
+        for module in category["modules"]
+        for item in module["permissions"]
+    }
+    assert names == {"View User"}
 
 
 # ---------------------------------------------------------------------------
