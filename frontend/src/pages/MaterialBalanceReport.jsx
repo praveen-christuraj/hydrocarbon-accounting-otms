@@ -31,13 +31,14 @@ function MaterialBalanceReport({ locations, assets }) {
   const [template, setTemplate] = useState(null)
   const [columns, setColumns] = useState([])
   const [rows, setRows] = useState([])
+  const [coverage, setCoverage] = useState(null)
   const [loading, setLoading] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
   const pageSize = usePageSize()
   // Action feedback: little pop-up (toast) + inline message near the
   // action area (owner rule 8) - never at the bottom of the page.
   const feedback = useActionFeedback()
-  const { notifySuccess, notifyError, clearSuccess, clearError } = feedback
+  const { notifyError, clearSuccess, clearError } = feedback
 
   const activeLocations = useMemo(() => {
     return (locations || []).filter((location) => location.status === 'Active')
@@ -151,6 +152,7 @@ function MaterialBalanceReport({ locations, assets }) {
       setTemplate(data.template)
       setColumns(data.columns)
       setRows(data.rows)
+      setCoverage(data.coverage)
       setCurrentPage(1)
     } catch (error) {
       notifyError(error.message)
@@ -171,6 +173,7 @@ function MaterialBalanceReport({ locations, assets }) {
       setTemplate(null)
       setColumns([])
       setRows([])
+      setCoverage(null)
       clearError()
       setCurrentPage(1)
       return
@@ -194,6 +197,7 @@ function MaterialBalanceReport({ locations, assets }) {
     setTemplate(null)
     setColumns([])
     setRows([])
+    setCoverage(null)
     setCurrentPage(1)
   }
 
@@ -478,6 +482,21 @@ function MaterialBalanceReport({ locations, assets }) {
           Columns shown below are loaded from Material Balance Template
           Configuration.
         </div>
+      )}
+
+      {coverage?.unmappedOperations?.length > 0 && (
+        <AlertMessage tone="warning">
+          <span>
+            {coverage.unmappedOperations.length} active IN/OUT Tank Operation
+            {coverage.unmappedOperations.length === 1 ? ' is' : 's are'} not mapped to a movement column in
+            the active template. These movements are excluded from this report and Book Closing:{' '}
+            {coverage.unmappedOperations
+              .map((operation) => `${operation.operationLabel || operation.operationCode} (${operation.operationSign})`)
+              .join(', ')}.
+            {coverage.unmappedLedgerRowsCount > 0 &&
+              ` ${coverage.unmappedLedgerRowsCount} ledger row(s) in the selected date range are affected.`}
+          </span>
+        </AlertMessage>
       )}
 
       <div className="summary-card-grid">

@@ -85,7 +85,7 @@ function OperandPicker({ label, operand, onChange, columns }) {
  * text stays visible (and editable) with a plain-English reading and live
  * server validation.
  */
-function FormulaBuilder({ open, initial, columns, onClose, onSave }) {
+function FormulaBuilder({ open, initial, columns, onClose, onSave, validateFormula = validateReportFormula }) {
   const [label, setLabel] = useState('')
   const [formula, setFormula] = useState('')
   const [mode, setMode] = useState('click') // click | if | ifs | text
@@ -125,7 +125,7 @@ function FormulaBuilder({ open, initial, columns, onClose, onSave }) {
     }
     setChecking(true)
     try {
-      const result = await validateReportFormula(text, columnKeys)
+      const result = await validateFormula(text, columnKeys)
       setVerdict(result)
       return result
     } catch (error) {
@@ -135,7 +135,7 @@ function FormulaBuilder({ open, initial, columns, onClose, onSave }) {
     } finally {
       setChecking(false)
     }
-  }, [columnKeys])
+  }, [columnKeys, validateFormula])
 
   useEffect(() => {
     if (!open) return undefined

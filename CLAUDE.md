@@ -110,6 +110,21 @@ Rules:
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
 
+## Recent Changes (2026-11-24) - Material Balance Operation-Code Matching + Interactive Analytics Core
+
+### Approved implementation scope
+- Owner explicitly approved backend work for the Material Balance multi-operation fix and the additive Analytics dashboard extension. Existing legacy Dashboard / FSO routes remain unchanged.
+- Material Balance decision defaults applied from `MATERIAL_BALANCE_TEMPLATE_MULTI_OPERATION_FIX.md`: Phase 1 + Phase 3 (no stored-data Phase 2 rewrite); reject unknown and ambiguous operation mappings on save; report coverage banner only; report does not fail for unmapped movements; include a read-only audit script. No notification/email or automatic data repair.
+- Operation codes are normalized through `services/material_balance_helpers.normalize_operation_code()` for both persisted template mappings and raw ledger values, including Book Closing and internal-transfer comparisons. This is intentionally distinct from fixed enum normalization.
+- Coverage is returned from the Material Balance report endpoint and warns about active unmapped IN/OUT operations and affected ledger rows. Template save validation checks active operations at the template location; the designer reports canonical collisions and can repair legacy normalized text to raw operation codes.
+
+### Analytics dashboard core
+- New additive models: `analytics_dashboard_definitions`, `analytics_dashboard_grants`, and `analytics_dashboard_versions`; they are created by the existing startup `Base.metadata.create_all` path. `dashboard_*` models/endpoints are untouched.
+- New `/analytics` API reuses `report_catalog` + `report_engine` for validated query visuals, report-location scope, caps, formulas, and sensitive-field exclusions. It adds grants, publishing/version snapshots, audit logging, visual batch runs and XLSX/CSV export.
+- Frontend adds Analytics gallery, Studio and viewer routes, permissions, top navigation, ECharts rendering, date/location filters, select slicers, and dynamic Material Balance table source. A Material Balance visual also requires `View Material Balance Report`.
+- Analytics defaults: GLOBAL creation remains admin-only; sharing is PRIVATE with explicit grants; dashboards are shared by location as View by default from Studio. Legacy Dashboard routes coexist. Cross-filter/drill-through, advanced visuals, distinct-value dropdowns, multi-page canvases and whole-dashboard workbook export remain later-phase work.
+- User instructed not to run pytest or GitHub checks; neither was run during this implementation.
+
 ## Recent Changes (2026-10-30) - Government Data: Book Stock Management
 
 **Owner request:** a self-contained Book Stock module under the **Government Data**

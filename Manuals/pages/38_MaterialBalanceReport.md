@@ -21,6 +21,8 @@ Generate material balance reports for regulatory compliance and operational reco
 - Closing inventory
 - Loss/gain analysis
 - Reconciliation against expected balances
+- Coverage warning for active IN/OUT Tank Operations that have no movement-column mapping; the warning includes affected ledger-row count for the selected date range
+- Separator-safe Tank Operation code matching (spaces, hyphens and slashes canonicalize consistently with saved template mappings)
 
 ## Props
 | Prop | Source |

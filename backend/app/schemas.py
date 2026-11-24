@@ -1568,10 +1568,23 @@ class MaterialBalanceDynamicRowResponse(BaseModel):
     last_ticket_number: Optional[str] = None
 
 
+class MaterialBalanceCoverageOperation(BaseModel):
+    operation_code: str
+    operation_label: str
+    operation_category: Optional[str] = None
+    operation_sign: Optional[str] = None
+
+
+class MaterialBalanceCoverageResponse(BaseModel):
+    unmapped_operations: list[MaterialBalanceCoverageOperation] = []
+    unmapped_ledger_rows_count: int = 0
+
+
 class MaterialBalanceDynamicReportResponse(BaseModel):
     template: MaterialBalanceDynamicTemplateResponse
     columns: list[MaterialBalanceDynamicColumnResponse]
     rows: list[MaterialBalanceDynamicRowResponse]
+    coverage: Optional[MaterialBalanceCoverageResponse] = None
 
 class MaterialBalanceReportResponse(BaseModel):
     accounting_date: date
@@ -3220,6 +3233,40 @@ class ReportAccessGrantIn(BaseModel):
 class ReportAccessGrantResponse(ReportAccessGrantIn):
     id: Optional[int] = None
     label: Optional[str] = None
+
+
+class AnalyticsDashboardGrantIn(BaseModel):
+    grant_type: str
+    user_id: Optional[int] = None
+    role_id: Optional[int] = None
+    location_code: Optional[str] = None
+    access_level: str = "VIEW"
+
+
+class AnalyticsDashboardCreate(BaseModel):
+    dashboard_name: str = Field(min_length=2, max_length=200)
+    description: Optional[str] = None
+    scope_type: str = "LOCATION"
+    location_code: Optional[str] = None
+    definition: dict[str, Any]
+    visibility: str = "PRIVATE"
+    is_published: bool = False
+    status: str = "Active"
+    grants: list[AnalyticsDashboardGrantIn] = []
+    change_note: Optional[str] = None
+
+
+class AnalyticsDashboardUpdate(AnalyticsDashboardCreate):
+    pass
+
+
+class AnalyticsBatchRunRequest(BaseModel):
+    date_from: Optional[date] = None
+    date_to: Optional[date] = None
+    location_codes: list[str] = []
+    runtime_values: dict[str, Any] = {}
+    visual_ids: Optional[list[str]] = None
+    format: str = "xlsx"
 
 
 class ReportDefinitionCreate(BaseModel):

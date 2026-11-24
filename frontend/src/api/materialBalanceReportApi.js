@@ -79,5 +79,16 @@ export const getMaterialBalanceReport = async (filters = {}) => {
     },
     columns: (data?.columns || []).map(convertMaterialBalanceColumnFromApi),
     rows: (data?.rows || []).map(convertMaterialBalanceRowFromApi),
+    coverage: data?.coverage
+      ? {
+          unmappedOperations: (data.coverage.unmapped_operations || []).map((operation) => ({
+            operationCode: operation.operation_code || '',
+            operationLabel: operation.operation_label || '',
+            operationCategory: operation.operation_category || '',
+            operationSign: operation.operation_sign || '',
+          })),
+          unmappedLedgerRowsCount: Number(data.coverage.unmapped_ledger_rows_count || 0),
+        }
+      : null,
   }
 }

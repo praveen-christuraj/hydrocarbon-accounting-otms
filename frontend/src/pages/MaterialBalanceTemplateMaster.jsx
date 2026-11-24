@@ -486,6 +486,33 @@ function MaterialBalanceTemplateMaster({ locations, loggedInUser }) {
     }
   }
 
+  const handleRepairMapping = async (check) => {
+    const template = selectedTemplate
+    const column = check?.column
+    if (!canEdit || !template || !column?.id || designerBusy) return
+
+    setDesignerBusy(true)
+    clearMessages()
+    try {
+      await updateMaterialBalanceTemplateColumn(column.id, {
+        ...column,
+        mappedOperationCodes: check.repairedMappedOperationCodes || column.mappedOperationCodes || [],
+        excludedOperationCodes: check.repairedExcludedOperationCodes || column.excludedOperationCodes || [],
+      })
+      await refreshTemplate(template.id)
+      logUiAction(MODULE, 'Repair Operation Code Mapping', {
+        templateId: template.id,
+        columnId: column.id,
+        columnLabel: column.columnLabel,
+      })
+      notifySuccess(`Operation-code mapping repaired for “${column.columnLabel}”.`)
+    } catch (error) {
+      notifyError(error.message || 'Unable to repair the operation-code mapping.')
+    } finally {
+      setDesignerBusy(false)
+    }
+  }
+
   const handleDeleteColumn = async (column) => {
     const template = selectedTemplate
     if (!canEdit || !template) return
@@ -965,6 +992,7 @@ function MaterialBalanceTemplateMaster({ locations, loggedInUser }) {
             onClose={() => setSelectedId(null)}
             onAddColumn={() => openColumnDialog(null)}
             onEditColumn={(column) => openColumnDialog(column)}
+            onRepairMapping={handleRepairMapping}
             onDeleteColumn={handleDeleteColumn}
             onMoveColumn={handleMoveColumn}
             onGenerate={openGenerateDialog}

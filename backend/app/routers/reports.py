@@ -79,6 +79,7 @@ from app.services.transaction_helpers import parse_date_filter
 from app.services.material_balance_helpers import (
     normalize_material_balance_category,
     normalize_material_balance_code_value,
+    build_material_balance_coverage,
     get_active_material_balance_template_for_location,
     get_active_material_balance_template_columns,
     get_movement_value_for_unit,
@@ -1546,6 +1547,14 @@ def get_material_balance_report(
         tank_rows=tank_rows,
         columns=columns,
     )
+    coverage = build_material_balance_coverage(
+        db=db,
+        location_code=cleaned_location_code,
+        columns=columns,
+        ledger_rows=ledger_rows,
+        date_from_value=date_from_value,
+        date_to_value=date_to_value,
+    )
 
     return {
         "template": {
@@ -1555,6 +1564,7 @@ def get_material_balance_report(
         },
         "columns": build_dynamic_material_balance_columns_response(columns),
         "rows": report_rows,
+        "coverage": coverage,
     }
 
 

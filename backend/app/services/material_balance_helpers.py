@@ -4,6 +4,7 @@ from fastapi import HTTPException
 from app.models import (
     MaterialBalanceTemplate,
     MaterialBalanceTemplateColumn,
+    TankOperation,
     TankStockLedger,
 )
 from app.utils.helpers import safe_float
@@ -28,6 +29,22 @@ def normalize_material_balance_category(value: str | None):
 
 def normalize_material_balance_code_value(value):
     return str(value or "").strip().upper()
+
+
+def normalize_operation_code(value: str | None) -> str:
+    """Canonical form shared by Tank Operation codes and template mappings.
+
+    Operation codes are free text; spaces, hyphens, and slashes are valid.
+    The ledger stores the original code while template writes historically
+    canonicalise it, so comparisons must canonicalise both sides.
+    """
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    text = text.replace(" ", "_").replace("-", "_").replace("/", "_")
+    while "__" in text:
+        text = text.replace("__", "_")
+    return text.upper()
 
 
 def get_active_material_balance_template_for_location(
@@ -105,15 +122,15 @@ def should_row_match_material_balance_column(
 ):
     if normalize_material_balance_code_value(column.column_type) != "MOVEMENT":
         return False
-    row_operation_code = normalize_material_balance_code_value(row.tank_operation_code)
+    row_operation_code = normalize_operation_code(row.tank_operation_code)
     row_sign = normalize_material_balance_code_value(row.tank_operation_sign)
     column_direction = normalize_material_balance_code_value(column.movement_direction)
     mapped_operation_codes = {
-        normalize_material_balance_code_value(code)
+        normalize_operation_code(code)
         for code in (column.mapped_operation_codes or [])
     }
     excluded_operation_codes = {
-        normalize_material_balance_code_value(code)
+        normalize_operation_code(code)
         for code in (column.excluded_operation_codes or [])
     }
     if row_operation_code in excluded_operation_codes:
@@ -141,14 +158,14 @@ def get_global_internal_transfer_operation_codes(
         )
         if is_internal_transfer:
             for code in column.mapped_operation_codes or []:
-                internal_codes.add(normalize_material_balance_code_value(code))
+                internal_codes.add(normalize_operation_code(code))
         if (
             normalize_material_balance_code_value(column.column_type) == "MOVEMENT"
             and not include_in_material_balance
             and not include_in_book_closing
         ):
             for code in column.mapped_operation_codes or []:
-                internal_codes.add(normalize_material_balance_code_value(code))
+                internal_codes.add(normalize_operation_code(code))
     return internal_codes
 
 
@@ -157,7 +174,7 @@ def should_row_be_in_book_closing_formula(
     columns: list[MaterialBalanceTemplateColumn],
     global_internal_transfer_codes: set[str],
 ):
-    row_operation_code = normalize_material_balance_code_value(row.tank_operation_code)
+    row_operation_code = normalize_operation_code(row.tank_operation_code)
     row_sign = normalize_material_balance_code_value(row.tank_operation_sign)
     if row_sign not in ["IN", "OUT"]:
         return False
@@ -185,6 +202,76 @@ def should_row_be_in_book_closing_formula(
         if should_row_match_material_balance_column(row, column):
             return True
     return False
+
+
+def build_material_balance_coverage(
+    db: Session,
+    location_code: str,
+    columns: list[MaterialBalanceTemplateColumn],
+    ledger_rows: list[TankStockLedger],
+    date_from_value,
+    date_to_value,
+):
+    """Describe active movement operations absent from the selected template.
+
+    ``ledger_rows`` is the same continuity-aware ledger set used to build the
+    report; this avoids introducing a second, inconsistent ledger query.
+    """
+    active_operations = (
+        db.query(TankOperation)
+        .filter(
+            TankOperation.location_code.ilike(location_code),
+            TankOperation.status == "Active",
+        )
+        .order_by(TankOperation.sort_order.asc(), TankOperation.id.asc())
+        .all()
+    )
+
+    mapped_operation_signs = set()
+    for column in columns:
+        if normalize_material_balance_code_value(column.column_type) != "MOVEMENT":
+            continue
+        excluded_codes = {
+            normalize_operation_code(code)
+            for code in (column.excluded_operation_codes or [])
+        }
+        direction = normalize_material_balance_code_value(column.movement_direction)
+        for code in column.mapped_operation_codes or []:
+            canonical = normalize_operation_code(code)
+            if canonical and canonical not in excluded_codes:
+                mapped_operation_signs.add((canonical, direction))
+
+    unmapped_operations = [
+        {
+            "operation_code": operation.operation_code,
+            "operation_label": operation.operation_label,
+            "operation_category": operation.operation_category,
+            "operation_sign": operation.operation_sign,
+        }
+        for operation in active_operations
+        if str(operation.operation_sign or "").strip().upper() in {"IN", "OUT"}
+        and (
+            normalize_operation_code(operation.operation_code),
+            str(operation.operation_sign or "").strip().upper(),
+        ) not in mapped_operation_signs
+    ]
+
+    unmapped_ledger_rows_count = sum(
+        1
+        for row in ledger_rows
+        if row.accounting_date is not None
+        and date_from_value <= row.accounting_date <= date_to_value
+        and str(row.tank_operation_sign or "").strip().upper() in {"IN", "OUT"}
+        and (
+            normalize_operation_code(row.tank_operation_code),
+            str(row.tank_operation_sign or "").strip().upper(),
+        ) not in mapped_operation_signs
+    )
+
+    return {
+        "unmapped_operations": unmapped_operations,
+        "unmapped_ledger_rows_count": unmapped_ledger_rows_count,
+    }
 
 
 def calculate_book_closing_from_eligible_ledger_rows(

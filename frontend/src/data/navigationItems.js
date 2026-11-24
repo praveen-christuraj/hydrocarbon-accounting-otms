@@ -232,6 +232,14 @@ export const navigationItems = [
     ],
   },
   {
+    label: 'Analytics',
+    type: 'dropdown',
+    items: [
+      { label: 'My Dashboards', path: '/analytics', permission: 'View Analytics Dashboard' },
+      { label: 'Analytics Studio', path: '/analytics/builder', permission: 'View Analytics Definition' },
+    ],
+  },
+  {
     label: 'Reporting',
     type: 'dropdown',
     items: [

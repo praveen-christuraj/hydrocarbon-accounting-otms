@@ -29,7 +29,15 @@ from app.database import Base
 from app.services.operation_datetime import coerce_payload_dict, parse_date_value
 
 # Tables that must never be reportable (credentials / session internals).
-DENIED_TABLES = {"token_blacklist", "auth_login_challenges"}
+DENIED_TABLES = {
+    "token_blacklist",
+    "auth_login_challenges",
+    # Analytics definitions, grants and version snapshots are configuration
+    # and access-control state, not user-facing report datasets.
+    "analytics_dashboard_definitions",
+    "analytics_dashboard_grants",
+    "analytics_dashboard_versions",
+}
 
 _SENSITIVE_RE = re.compile(
     r"(password|passwd|secret|totp|otp_secret|backup_code|api_key|private_key"

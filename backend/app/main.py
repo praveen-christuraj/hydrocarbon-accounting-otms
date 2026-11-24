@@ -71,6 +71,7 @@ from app.models import (
     ExportLocation, ExportEntity, ExportLocationEntity, ExportBlock,
     ExportPermit, ExportTransaction, ExportConfig,
     ReportDefinition, ReportAccessGrant, ReportDefinitionVersion,
+    AnalyticsDashboardDefinition, AnalyticsDashboardGrant, AnalyticsDashboardVersion,
     AssistantMemory, AssistantConversation, EntryCheckReview, AssetMetricProfile,
 )
 
@@ -272,7 +273,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     return response
 
 from app.routers import (
-    admin_db_browser, asset_assignments, asset_calibration_tables, asset_types, assets,
+    admin_db_browser, analytics, asset_assignments, asset_calibration_tables, asset_types, assets,
     assistant,
     audit_logs, auth, backup_restore, barge_seal_master, barge_trip_tracking,
     calibration_templates, company_report_profiles, correction_requests, dashboard,
@@ -325,6 +326,7 @@ app.include_router(out_turn_summary.router)
 app.include_router(permissions.router)
 app.include_router(prime_mover_tanker_links.router)
 app.include_router(report_builder.router)
+app.include_router(analytics.router)
 app.include_router(reports.router)
 app.include_router(role_locations.router)
 app.include_router(role_permissions.router)
