@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import (
     MaterialBalanceTemplate, MaterialBalanceTemplateColumn,
-    TankStockLedger, User, Location,
+    TankOperation, TankStockLedger, User, Location,
 )
 from app.schemas import (
     MaterialBalanceTemplateCreate, MaterialBalanceTemplateUpdate,
@@ -24,6 +24,7 @@ from app.utils.helpers import safe_float, clean_optional_text, get_location_by_c
 from app.services.material_balance_helpers import (
     normalize_material_balance_category,
     normalize_material_balance_code_value,
+    normalize_operation_code,
     get_active_material_balance_template_for_location,
     get_active_material_balance_template_columns,
     get_movement_value_for_unit,
@@ -57,20 +58,7 @@ VALID_MATERIAL_BALANCE_DIRECTIONS = {
 
 
 def normalize_column_key(value: str):
-    cleaned_value = clean_optional_text(value)
-
-    if not cleaned_value:
-        return ""
-
-    normalized = cleaned_value.strip().lower()
-    normalized = normalized.replace(" ", "_")
-    normalized = normalized.replace("-", "_")
-    normalized = normalized.replace("/", "_")
-
-    while "__" in normalized:
-        normalized = normalized.replace("__", "_")
-
-    return normalized.upper()
+    return normalize_operation_code(value)
 
 
 def validate_yes_no(value: str | None, field_name: str):
@@ -172,6 +160,59 @@ def validate_material_balance_template_column_payload(column):
         "include_in_book_closing": include_in_book_closing,
         "is_internal_transfer": is_internal_transfer,
     }
+
+
+def validate_operation_codes_for_template(db, template, validated):
+    """Reject stale or ambiguous mappings before they can silently yield zero."""
+    if validated["column_type"] != "MOVEMENT":
+        return
+
+    operations = (
+        db.query(TankOperation)
+        .filter(
+            TankOperation.location_code.ilike(template.location_code),
+            TankOperation.status == "Active",
+        )
+        .order_by(TankOperation.operation_code.asc(), TankOperation.id.asc())
+        .all()
+    )
+    by_canonical = {}
+    for operation in operations:
+        by_canonical.setdefault(
+            normalize_operation_code(operation.operation_code), []
+        ).append(operation)
+
+    submitted_codes = list(dict.fromkeys(
+        [*(validated["mapped_operation_codes"] or []), *(validated["excluded_operation_codes"] or [])]
+    ))
+    unknown = []
+    ambiguous = []
+    for code in submitted_codes:
+        matches = by_canonical.get(normalize_operation_code(code), [])
+        if not matches:
+            unknown.append(code)
+        elif len(matches) > 1:
+            raw_codes = ", ".join(operation.operation_code for operation in matches)
+            ambiguous.append(f"{code} -> {raw_codes}")
+
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Mapped Tank Operation(s) not found for this location: "
+                + ", ".join(unknown)
+                + ". Create them in Tank Operation Master first, or remove them from the column."
+            ),
+        )
+    if ambiguous:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Mapped Tank Operation code(s) match more than one operation of this location: "
+                + "; ".join(ambiguous)
+                + ". Rename the operations so their codes differ after normalisation."
+            ),
+        )
 
 
 def build_material_balance_template_response(
@@ -563,6 +604,7 @@ def create_material_balance_template_column(
     ensure_location_in_user_scope(current_user, db, template.location_code, "Location")
 
     validated = validate_material_balance_template_column_payload(column_data)
+    validate_operation_codes_for_template(db, template, validated)
 
     duplicate_column = (
         db.query(MaterialBalanceTemplateColumn)
@@ -653,6 +695,7 @@ def update_material_balance_template_column(
     ensure_location_in_user_scope(current_user, db, template.location_code, "Location")
 
     validated = validate_material_balance_template_column_payload(column_data)
+    validate_operation_codes_for_template(db, template, validated)
 
     duplicate_column = (
         db.query(MaterialBalanceTemplateColumn)

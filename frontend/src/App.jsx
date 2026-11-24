@@ -46,6 +46,9 @@ import Table11FactorMaster from './pages/Table11FactorMaster'
 import CompanyReportProfileMaster from './pages/CompanyReportProfileMaster'
 import ReportBuilder from './pages/ReportBuilder'
 import CustomReportViewer from './pages/CustomReportViewer'
+import AnalyticsHome from './pages/AnalyticsHome'
+import AnalyticsBuilder from './pages/AnalyticsBuilder'
+import AnalyticsViewer from './pages/AnalyticsViewer'
 import AuditLog from './pages/AuditLog'
 import BargeSealMaster from './pages/BargeSealMaster'
 import BargeTracking from './pages/BargeTracking'
@@ -710,6 +713,46 @@ function AppContent({
                 fallbackMessage="You do not have permission to view the Report Builder."
               >
                 <ReportBuilder loggedInUser={loggedInUser} />
+              </PermissionGuard>
+            }
+          />
+          <Route
+            path="/analytics"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View Analytics Dashboard"
+                fallbackMessage="You do not have permission to view Analytics dashboards."
+              >
+                <AnalyticsHome loggedInUser={loggedInUser} />
+              </PermissionGuard>
+            }
+          />
+          <Route
+            path="/analytics/builder"
+            element={
+              <PermissionGuard loggedInUser={loggedInUser} requiredPermission="View Analytics Definition">
+                <AnalyticsBuilder loggedInUser={loggedInUser} />
+              </PermissionGuard>
+            }
+          />
+          <Route
+            path="/analytics/builder/:dashboardId"
+            element={
+              <PermissionGuard loggedInUser={loggedInUser} requiredPermission="View Analytics Definition">
+                <AnalyticsBuilder loggedInUser={loggedInUser} />
+              </PermissionGuard>
+            }
+          />
+          <Route
+            path="/analytics/view/:dashboardId"
+            element={
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                requiredPermission="View Analytics Dashboard"
+                fallbackMessage="You do not have permission to view Analytics dashboards."
+              >
+                <AnalyticsViewer loggedInUser={loggedInUser} />
               </PermissionGuard>
             }
           />

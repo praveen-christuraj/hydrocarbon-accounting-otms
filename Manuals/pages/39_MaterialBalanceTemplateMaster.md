@@ -54,6 +54,7 @@ Formula column, and movement columns add up the Tank Operations mapped to them.
   one-click fixes, ordered column list with move up / down, Edit and Delete.
 - **Column dialog** in decision order: label (key follows the label), type, direction, Tank Operations to count /
   exclude, Book Closing treatment, position in the report, status, remarks.
+- Operation-code matching canonicalizes both saved mappings and ledger codes (spaces, hyphens and slashes are equivalent separators). Save-time validation rejects unknown or canonically ambiguous codes. The designer flags canonical collisions and offers **Repair mapping** to replace legacy canonical text with the actual Tank Operation code; no bulk data repair runs automatically.
 - **Duplicate** a template, **Export Columns** in the bulk-upload layout, and **Bulk Upload** (one row per column;
   an existing column key is updated).
 

@@ -569,6 +569,28 @@ PERMISSION_CATALOG = [
         ],
     },
     {
+        "category": "Analytics",
+        "modules": [
+            {
+                "module_name": "Analytics Definition",
+                "permissions": [
+                    _perm("View Analytics Definition", VIEW, "Can view analytics dashboard designs in Analytics Builder"),
+                    _perm("Create Analytics Definition", CREATE, "Can design new analytics dashboards"),
+                    _perm("Edit Analytics Definition", EDIT, "Can edit analytics dashboard designs and access grants"),
+                    _perm("Delete Analytics Definition", DELETE, "Can delete analytics dashboard designs"),
+                    _perm("Publish Analytics Definition", OTHER, "Can publish analytics dashboards to My Dashboards"),
+                ],
+            },
+            {
+                "module_name": "Analytics Dashboard",
+                "permissions": [
+                    _perm("View Analytics Dashboard", VIEW, "Can run published analytics dashboards shared with the user, roles or locations"),
+                    _perm("Export Analytics Dashboard", OTHER, "Can export analytics visual results"),
+                ],
+            },
+        ],
+    },
+    {
         "category": "Administration",
         "modules": [
             {
@@ -811,6 +833,8 @@ DERIVED_PERMISSION_GRANTS = {
     "Review Entry Check": ["Create Operation Entry", "Edit Operation Entry", "Review Operation Transaction"],
     "View AI Assistant": ["View Operation Transaction", "View Tank Stock Ledger", "View Material Balance Report"],
     "View Stock Anomaly Analytics": ["View Material Balance Report", "View Out-Turn Report"],
+    "View Analytics Dashboard": ["View Dashboard", "View Custom Report", "View Material Balance Report"],
+    "View Analytics Definition": ["View Report Definition"],
 }
 
 

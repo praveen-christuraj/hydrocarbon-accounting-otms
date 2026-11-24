@@ -59,6 +59,7 @@ function TemplateDesigner({
   onClose,
   onAddColumn,
   onEditColumn,
+  onRepairMapping,
   onDeleteColumn,
   onMoveColumn,
   onGenerate,
@@ -300,6 +301,16 @@ function TemplateDesigner({
                         disabled={busy}
                       >
                         Add standard columns
+                      </button>
+                    )}
+                    {canEdit && check.code === 'normalised-mapping' && (
+                      <button
+                        type="button"
+                        className="btn-secondary btn-sm mb-inline-action"
+                        onClick={() => onRepairMapping(check)}
+                        disabled={busy}
+                      >
+                        Repair mapping
                       </button>
                     )}
                   </AlertMessage>

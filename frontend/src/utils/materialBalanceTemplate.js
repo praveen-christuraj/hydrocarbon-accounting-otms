@@ -556,26 +556,54 @@ export const analyzeTemplate = ({ columns = [], operations = null }) => {
     })
 
   if (Array.isArray(operations)) {
-    const byCode = new Map(operations.map((operation) => [normalizeOperationCode(operation.operationCode), operation]))
+    const activeOperations = operations.filter(isActive)
+    const byCode = new Map()
+    activeOperations.forEach((operation) => {
+      const canonical = normalizeOperationCode(operation.operationCode)
+      byCode.set(canonical, [...(byCode.get(canonical) || []), operation])
+    })
+
+    byCode.forEach((matches, canonical) => {
+      if (matches.length > 1) {
+        checks.push({
+          level: 'error',
+          code: 'canonical-collision',
+          message: `Tank Operation codes ${matches.map((operation) => operation.operationCode).join(', ')} normalize to the same value (${canonical}). Rename the codes so their normalized values are unique before mapping them.`,
+          operations: matches,
+        })
+      }
+    })
 
     movement.forEach((column) => {
       const direction = String(column.movementDirection || '').toUpperCase()
       const unknown = []
+      const ambiguous = []
       const wrongSign = []
+      ;[...(column.mappedOperationCodes || []), ...(column.excludedOperationCodes || [])].forEach((code) => {
+        const matches = byCode.get(normalizeOperationCode(code)) || []
+        if (!matches.length) unknown.push(code)
+        else if (matches.length > 1) ambiguous.push(code)
+      })
       ;(column.mappedOperationCodes || []).forEach((code) => {
-        const operation = byCode.get(normalizeOperationCode(code))
-        if (!operation) unknown.push(code)
-        else if (String(operation.operationSign).toUpperCase() !== direction) {
-          wrongSign.push(`${code} (${operation.operationSign})`)
+        const matches = byCode.get(normalizeOperationCode(code)) || []
+        if (matches.length === 1 && String(matches[0].operationSign).toUpperCase() !== direction) {
+          wrongSign.push(`${code} (${matches[0].operationSign})`)
         }
       })
       if (unknown.length > 0) {
         checks.push({
           level: 'warning',
           code: 'unknown-operation',
-          message: `“${labelOf(column)}” maps ${unknown.join(', ')}, which ${
+          message: `“${labelOf(column)}” maps ${[...new Set(unknown)].join(', ')}, which ${
             unknown.length === 1 ? 'is' : 'are'
           } not an active Tank Operation of this location.`,
+        })
+      }
+      if (ambiguous.length > 0) {
+        checks.push({
+          level: 'error',
+          code: 'ambiguous-operation',
+          message: `“${labelOf(column)}” maps ${[...new Set(ambiguous)].join(', ')}, which match multiple active Tank Operations. Resolve the canonical-code collision before saving.`,
         })
       }
       if (wrongSign.length > 0) {
@@ -585,6 +613,31 @@ export const analyzeTemplate = ({ columns = [], operations = null }) => {
           message: `“${labelOf(column)}” is an ${direction} column but maps ${wrongSign.join(
             ', '
           )}; those movements never match it.`,
+        })
+      }
+
+      const repairCodes = (codes = []) => codes.map((code) => {
+        const matches = byCode.get(normalizeOperationCode(code)) || []
+        return matches.length === 1 ? matches[0].operationCode : code
+      })
+      const repairedMapped = repairCodes(column.mappedOperationCodes || [])
+      const repairedExcluded = repairCodes(column.excludedOperationCodes || [])
+      const hasNormalisedMapping = [
+        ...(column.mappedOperationCodes || []),
+        ...(column.excludedOperationCodes || []),
+      ].some((code) => {
+        const matches = byCode.get(normalizeOperationCode(code)) || []
+        const raw = matches.length === 1 ? matches[0].operationCode : code
+        return String(raw) !== String(code)
+      })
+      if (hasNormalisedMapping) {
+        checks.push({
+          level: 'info',
+          code: 'normalised-mapping',
+          message: `“${labelOf(column)}” stores canonicalized operation codes. Repair the mapping to store the original Tank Operation codes for clarity.`,
+          column,
+          repairedMappedOperationCodes: repairedMapped,
+          repairedExcludedOperationCodes: repairedExcluded,
         })
       }
     })
@@ -598,7 +651,7 @@ export const analyzeTemplate = ({ columns = [], operations = null }) => {
         if (!excluded.includes(normalized)) mapped.add(`${normalized}|${direction}`)
       })
     })
-    const notInReport = operations.filter((operation) => {
+    const notInReport = activeOperations.filter((operation) => {
       const sign = String(operation.operationSign).toUpperCase()
       if (sign !== 'IN' && sign !== 'OUT') return false
       return !mapped.has(`${normalizeOperationCode(operation.operationCode)}|${sign}`)

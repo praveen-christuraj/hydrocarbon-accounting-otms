@@ -2191,6 +2191,79 @@ class TrackingModuleConfig(Base):
     )
 
 
+class AnalyticsDashboardDefinition(Base):
+    """User-authored interactive analytics dashboard definition."""
+
+    __tablename__ = "analytics_dashboard_definitions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    dashboard_code = Column(String(120), nullable=False, unique=True, index=True)
+    dashboard_name = Column(String(200), nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    scope_type = Column(String(20), nullable=False, index=True)  # GLOBAL | LOCATION
+    location_code = Column(String(50), nullable=True, index=True)
+    definition_json = Column(JSONB, nullable=False, default=dict)
+    visibility = Column(String(20), nullable=False, default="PRIVATE")
+    is_published = Column(String(10), nullable=False, default="No", index=True)
+    status = Column(String(20), nullable=False, default="Active", index=True)
+    version = Column(Integer, nullable=False, default=1)
+    owner_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    created_by = Column(String(150), nullable=True)
+    updated_by = Column(String(150), nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "dashboard_name", "scope_type", "location_code",
+            name="unique_analytics_dashboard_scope",
+        ),
+    )
+
+
+class AnalyticsDashboardGrant(Base):
+    __tablename__ = "analytics_dashboard_grants"
+
+    id = Column(Integer, primary_key=True, index=True)
+    dashboard_id = Column(
+        Integer,
+        ForeignKey("analytics_dashboard_definitions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    grant_type = Column(String(20), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    role_id = Column(Integer, ForeignKey("roles.id", ondelete="CASCADE"), nullable=True, index=True)
+    location_code = Column(String(50), nullable=True, index=True)
+    access_level = Column(String(10), nullable=False, default="VIEW")
+    created_by = Column(String(150), nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class AnalyticsDashboardVersion(Base):
+    __tablename__ = "analytics_dashboard_versions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    dashboard_id = Column(
+        Integer,
+        ForeignKey("analytics_dashboard_definitions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    version_number = Column(Integer, nullable=False)
+    definition_json = Column(JSONB, nullable=False, default=dict)
+    change_note = Column(Text, nullable=True)
+    created_by = Column(String(150), nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "dashboard_id", "version_number",
+            name="unique_analytics_dashboard_version",
+        ),
+    )
+
+
 class ReportDefinition(Base):
     """One user-built report (Report Builder, Configurations module).
 
