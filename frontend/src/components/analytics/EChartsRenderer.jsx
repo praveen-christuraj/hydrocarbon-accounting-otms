@@ -103,6 +103,12 @@ function EChartsRenderer({
     const warningCol = isDark ? '#e0a030' : '#b36b00'
     const defaultPalette = isDark ? DARK_CHART_PALETTE : NAVY_CHART_PALETTE
     const palette = Array.isArray(chartStyle.palette) && chartStyle.palette.length ? chartStyle.palette : defaultPalette
+    const labelDefaultByType = {
+      PIE: true, DONUT: true, FUNNEL: true, TREEMAP: true, SUNBURST: true, SANKEY: true,
+    }
+    const resolvedShowLabels = chartStyle.showLabels === true || chartStyle.showLabels === false
+      ? chartStyle.showLabels
+      : Boolean(labelDefaultByType[type])
 
     // 1. GAUGE (does not require dimensionKey)
     if (type === 'GAUGE') {
@@ -225,7 +231,7 @@ function EChartsRenderer({
           nodeAlign: 'justify',
           data: nodes,
           links,
-          label: { color: textColor, fontSize: 11 },
+          label: { show: resolvedShowLabels, color: textColor, fontSize: 11 },
           lineStyle: { color: 'source', curveness: 0.45, opacity: 0.35 },
         }],
       }
@@ -266,7 +272,7 @@ function EChartsRenderer({
               type: 'treemap',
               roam: false,
               breadcrumb: { show: true, itemStyle: { color: borderCol, textStyle: { color: textColor } } },
-              label: { show: true, formatter: '{b}\n{c}', color: '#ffffff', fontSize: 11 },
+              label: { show: resolvedShowLabels, formatter: '{b}\n{c}', color: '#ffffff', fontSize: 11 },
               itemStyle: { borderColor: surfaceCol, borderWidth: 2, gapWidth: 2 },
               data: treeData,
             }
@@ -274,7 +280,7 @@ function EChartsRenderer({
               type: 'sunburst',
               radius: ['18%', '86%'],
               data: treeData,
-              label: { rotate: 'radial', color: textColor, fontSize: 10 },
+              label: { show: resolvedShowLabels, rotate: 'radial', color: textColor, fontSize: 10 },
               itemStyle: { borderColor: surfaceCol, borderWidth: 1.5 },
             },
         ],
@@ -328,7 +334,7 @@ function EChartsRenderer({
         series: [{
           type: 'heatmap',
           data: heatData,
-          label: { show: heatData.length <= 48, color: textColor, fontSize: 10 },
+          label: { show: chartStyle.showLabels === true ? true : chartStyle.showLabels === false ? false : heatData.length <= 48, color: textColor, fontSize: 10 },
         }],
       }
     }
@@ -382,7 +388,7 @@ function EChartsRenderer({
               width: '68%',
               sort: 'descending',
               gap: 3,
-              label: { show: true, position: 'inside', color: '#ffffff', fontSize: 11 },
+              label: { show: resolvedShowLabels, position: 'inside', color: '#ffffff', fontSize: 11 },
               data: pieData,
             }
             : {
@@ -391,7 +397,7 @@ function EChartsRenderer({
               radius: type === 'DONUT' ? ['44%', '74%'] : '72%',
               center: ['36%', '52%'],
               data: pieData,
-              label: { color: textColor, show: chartStyle.showLabels !== false, fontSize: 11 },
+              label: { color: textColor, show: resolvedShowLabels, fontSize: 11 },
             },
         ],
       }
@@ -422,6 +428,7 @@ function EChartsRenderer({
             name: mc.label || mc.key,
             value: topCats.map((g) => Number((g[mc.key] || 0).toFixed(2))),
             areaStyle: { opacity: 0.14 },
+            label: { show: resolvedShowLabels, color: textColor, fontSize: 10 },
           })),
         }],
       }
@@ -480,6 +487,7 @@ function EChartsRenderer({
             stack: 'wf',
             barMaxWidth: 42,
             itemStyle: { color: successCol },
+            label: { show: resolvedShowLabels, position: 'top', color: textColor, fontSize: 10 },
             data: [...posSeries, cumulative >= 0 ? { value: Number(cumulative.toFixed(3)), itemStyle: { color: palette[0] } } : '-'],
           },
           {
@@ -488,6 +496,7 @@ function EChartsRenderer({
             stack: 'wf',
             barMaxWidth: 42,
             itemStyle: { color: dangerCol },
+            label: { show: resolvedShowLabels, position: 'top', color: textColor, fontSize: 10 },
             data: [...negSeries, cumulative < 0 ? { value: Number(Math.abs(cumulative).toFixed(3)), itemStyle: { color: palette[0] } } : '-'],
           },
           {
@@ -496,6 +505,7 @@ function EChartsRenderer({
             smooth: false,
             symbolSize: 6,
             lineStyle: { width: 2, color: palette[1] || palette[0] },
+            label: { show: resolvedShowLabels, position: 'top', color: textColor, fontSize: 10 },
             data: [...runningLine, Number(cumulative.toFixed(3))],
           },
         ],
@@ -551,7 +561,7 @@ function EChartsRenderer({
         ...(sType === 'line' && (type === 'AREA' || chartStyle.areaFill) ? { areaStyle: { opacity: 0.18 } } : {}),
         ...(stackMode !== 'none' && !isComboLine ? { stack: 'total' } : {}),
         label: {
-          show: chartStyle.showLabels === true,
+          show: resolvedShowLabels,
           position: isHorizontal ? 'right' : 'top',
           color: textColor,
           fontSize: 10,

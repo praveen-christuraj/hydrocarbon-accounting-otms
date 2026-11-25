@@ -8,6 +8,7 @@ import { useToast } from '../components/common/Toast'
 import AnalyticsVisual from '../components/analytics/AnalyticsVisual'
 import GridStackCanvas from '../components/analytics/GridStackCanvas'
 import FormulaBuilder from '../components/reportBuilder/FormulaBuilder'
+import ComparisonConditionsEditor from '../components/reportBuilder/ComparisonConditionsEditor'
 import usePermissions from '../hooks/usePermissions'
 import {
   createAnalyticsDefinition,
@@ -21,6 +22,7 @@ import {
   validateAnalyticsFormula,
 } from '../api/analyticsApi'
 import { logUiAction } from '../utils/actionLogger'
+import { FILTER_OPERATORS } from '../utils/reportBuilder'
 import {
   BUCKET_OPTIONS,
   ECHARTS_VISUAL_TYPES,
@@ -82,6 +84,40 @@ function buildQueryFromDataset(dataset, visualType, customTitle = '') {
       query: { source: { kind: 'tank_snapshot' }, unit: 'nsv' },
       style: {},
       explorer: { allowViewSwitch: type !== 'TANK_VISUAL' },
+      interactions: { crossFilter: true, drillThrough: { enabled: true, mode: 'RECORDS' } },
+    }
+  }
+
+  if (dataset?.kind === 'tracking_status' || String(dataset?.kind || '').includes('tracking_status')) {
+    const defaultDim = 'current_status'
+    const defaultMeasure = 'quantity_gsv_bbl'
+    return {
+      title: customTitle || 'Vessel & Barge Tracking Status',
+      type: ['KPI_CARD', 'TABLE', 'PIVOT_GRID', 'MATRIX', 'BAR', 'COLUMN', 'LINE', 'AREA', 'PIE', 'DONUT'].includes(type) ? type : 'TABLE',
+      query: {
+        source: { kind: dataset?.kind || 'tracking_status' },
+        tracking_module: 'ALL',
+        dimension_key: defaultDim,
+        measure_key: defaultMeasure,
+        metric_key: defaultMeasure,
+        columns: [
+          { key: 'tracking_module', label: 'Tracking Module', kind: 'data', source: { type: 'column', column: 'tracking_module' }, data_type: 'text', aggregate: 'FIRST', format: {} },
+          { key: 'tracking_ref', label: 'Tracking Ref / Convoy', kind: 'data', source: { type: 'column', column: 'tracking_ref' }, data_type: 'text', aggregate: 'FIRST', format: {} },
+          { key: 'asset_code', label: 'Asset Code', kind: 'data', source: { type: 'column', column: 'asset_code' }, data_type: 'text', aggregate: 'FIRST', format: {} },
+          { key: 'location_code', label: 'Location', kind: 'data', source: { type: 'column', column: 'location_code' }, data_type: 'text', aggregate: 'FIRST', format: {} },
+          { key: 'current_status', label: 'Current Status', kind: 'data', source: { type: 'column', column: 'current_status' }, data_type: 'text', aggregate: 'FIRST', format: {} },
+          { key: 'last_event_at', label: 'Last Event Date/Time', kind: 'data', source: { type: 'column', column: 'last_event_at' }, data_type: 'datetime', aggregate: 'MAX', format: {} },
+          { key: 'quantity_gsv_bbl', label: 'Last Qty GSV (BBL)', kind: 'data', source: { type: 'column', column: 'quantity_gsv_bbl' }, data_type: 'number', aggregate: 'SUM', show_total: true, format: { decimals: 2 } },
+        ],
+        filters: [],
+        filter_logic: 'AND',
+        runtime_filters: [],
+        group_by: ['KPI_CARD', 'BAR', 'COLUMN', 'LINE', 'AREA', 'PIE', 'DONUT'].includes(type) ? [{ key: defaultDim, bucket: 'VALUE' }] : [],
+        sort: [],
+        options: { show_totals: true, page_size: 500 },
+      },
+      style: { chart: { showLabels: true } },
+      explorer: { allowViewSwitch: true, showShelfByDefault: type === 'PIVOT_GRID' },
       interactions: { crossFilter: true, drillThrough: { enabled: true, mode: 'RECORDS' } },
     }
   }
@@ -785,6 +821,74 @@ function AnalyticsBuilder({ loggedInUser }) {
     [selectedVisual]
   )
 
+  const visualConditionFields = useMemo(() => {
+    if (!selectedVisual || selectedVisual.type === 'TEXT') return []
+    const ds = selectedDataset
+    if (!ds) return []
+    const fields = []
+    const seen = new Set()
+    const add = (label, source, dataType = 'text', group = 'Available fields') => {
+      if (!source?.type) return
+      const id = JSON.stringify(source)
+      if (seen.has(id)) return
+      seen.add(id)
+      fields.push({ id, label, source, data_type: dataType || 'text', group })
+    }
+    ;(ds.virtual_fields || []).forEach((field) => add(
+      field.label || field.field,
+      { type: 'virtual', field: field.field },
+      field.data_type || 'text',
+      field.group || 'Derived fields',
+    ))
+    ;(ds.columns || []).filter((c) => !c.is_json).forEach((col) => add(
+      col.label || col.column,
+      { type: 'column', column: col.column || col.key },
+      col.data_type || 'text',
+      col.group || 'Data columns',
+    ))
+    // Also include current visual columns so user can reference them
+    ;(selectedVisual.query?.columns || []).forEach((col) => {
+      if (col?.kind === 'calculated' || !col?.source) return
+      add(col.label || col.key, col.source, col.data_type || 'text', 'Visual columns')
+    })
+    return fields
+  }, [selectedDataset, selectedVisual])
+
+  const getSlicerFieldOptions = (targetVisualIds = []) => {
+    const targets = (definition.visuals || []).filter((v) => (targetVisualIds || []).includes(v.id) && v.type !== 'TEXT')
+    const seen = new Set()
+    const options = []
+    const pushOption = (key, label, dataType, sourceLabel) => {
+      const normalizedKey = String(key || '').trim()
+      if (!normalizedKey || seen.has(normalizedKey)) return
+      seen.add(normalizedKey)
+      options.push({ key: normalizedKey, label: label || normalizedKey, dataType: dataType || 'text', sourceLabel })
+    }
+
+    for (const visual of targets) {
+      const dsId = getDatasetIdForSource(visual?.query?.source, activeDatasetId)
+      const ds = allDatasets.find((d) => d.id === dsId)
+      for (const col of (ds?.columns || [])) {
+        const key = col.column || col.key || col.field
+        if (!key) continue
+        pushOption(key, col.label || key, col.data_type || 'text', ds?.name || dsId)
+      }
+      // Also include columns already in the visual query (calculated/virtual/custom)
+      for (const col of (visual?.query?.columns || [])) {
+        if (!col?.key) continue
+        pushOption(col.key, col.label || col.key, col.data_type || 'text', 'Visual column')
+      }
+    }
+    // Fallback: if no targets, show active dataset columns
+    if (!options.length) {
+      for (const col of (selectedDataset?.columns || [])) {
+        const key = col.column || col.key || col.field
+        if (key) pushOption(key, col.label || key, col.data_type || 'text', selectedDataset?.name || 'Dataset')
+      }
+    }
+    return options.sort((a, b) => String(a.label).localeCompare(String(b.label)))
+  }
+
   if (loading) {
     return (
       <div className="page-shell analytics-page">
@@ -1072,7 +1176,7 @@ function AnalyticsBuilder({ loggedInUser }) {
                 />
               </div>
 
-              {selectedVisual && selectedVisual.type !== 'TEXT' && selectedDataset?.kind !== 'material_balance' && selectedDataset?.kind !== 'tank_snapshot' && (
+              {selectedVisual && selectedVisual.type !== 'TEXT' && selectedDataset?.kind !== 'material_balance' && selectedDataset?.kind !== 'tank_snapshot' && selectedDataset?.kind !== 'tracking_status' && (
                 <button
                   type="button"
                   className="btn-secondary btn-sm analytics-fx-btn"
@@ -1106,8 +1210,10 @@ function AnalyticsBuilder({ loggedInUser }) {
                 })}
                 {!filteredDatasetFields.length && (
                   <p className="analytics-muted-hint">
-                    {selectedDataset?.kind === 'tank_snapshot' || selectedDataset?.kind === 'material_balance'
-                      ? 'Pre-modeled engine dataset with built-in stock, inflow, outflow, and ullage columns.'
+                    {['tank_snapshot','material_balance','tracking_status'].includes(selectedDataset?.kind)
+                      ? (selectedDataset?.kind === 'tracking_status'
+                        ? 'Pre-modeled tracking dataset with live barge, shuttle, FSO and tanker status columns. Use slicers/filters to focus by module, status, location or asset.'
+                        : 'Pre-modeled engine dataset with built-in stock, inflow, outflow, and ullage columns.')
                       : 'No columns matched search.'}
                   </p>
                 )}
@@ -1285,17 +1391,31 @@ function AnalyticsBuilder({ loggedInUser }) {
                       </select>
                     </label>
                     <label>
-                      Bound Column Key
-                      <input
-                        value={slicer.column_key || slicer.field || ''}
-                        placeholder="e.g. product_name or tank_asset_code"
-                        onChange={(e) => setDefinition((prev) => ({
-                          ...prev,
-                          slicers: prev.slicers.map((s, i) => (
-                            i === idx ? { ...s, column_key: e.target.value, field: e.target.value } : s
-                          )),
-                        }))}
-                      />
+                      Bound DB / Source Column
+                      {(() => {
+                        const fieldOptions = getSlicerFieldOptions(slicer.visual_ids || (definition.visuals || []).map((v) => v.id))
+                        const currentKey = slicer.column_key || slicer.field || ''
+                        const hasCurrent = !currentKey || fieldOptions.some((opt) => opt.key === currentKey)
+                        return (
+                          <select
+                            value={currentKey}
+                            onChange={(e) => setDefinition((prev) => ({
+                              ...prev,
+                              slicers: prev.slicers.map((s, i) => (
+                                i === idx ? { ...s, column_key: e.target.value, field: e.target.value } : s
+                              )),
+                            }))}
+                          >
+                            <option value="">Select a column…</option>
+                            {!hasCurrent && <option value={currentKey}>{currentKey} (current)</option>}
+                            {fieldOptions.map((opt) => (
+                              <option key={opt.key} value={opt.key}>
+                                {opt.label}{opt.dataType ? ` — ${opt.dataType}` : ''}
+                              </option>
+                            ))}
+                          </select>
+                        )
+                      })()}
                     </label>
                     <div className="analytics-slicer-targets">
                       <span>Target Visuals:</span>
@@ -1380,6 +1500,24 @@ function AnalyticsBuilder({ loggedInUser }) {
                     ))}
                   </select>
                 </label>
+
+                {String(selectedVisual.query?.source?.kind || '') === 'tracking_status' && (
+                  <label>
+                    Tracking Module
+                    <select
+                      value={selectedVisual.query?.tracking_module || 'ALL'}
+                      onChange={(e) => updateVisualById(selectedVisual.id, {
+                        query: { ...selectedVisual.query, tracking_module: e.target.value },
+                      })}
+                    >
+                      <option value="ALL">All Tracking Modules</option>
+                      <option value="BARGE">Barge Tracking</option>
+                      <option value="SHUTTLE">Shuttle Tracking</option>
+                      <option value="FSO">FSO Tracking</option>
+                      <option value="TANKER">Tanker Tracking</option>
+                    </select>
+                  </label>
+                )}
 
                 {selectedVisual.type === 'TEXT' ? (
                   <label>
@@ -1646,8 +1784,131 @@ function AnalyticsBuilder({ loggedInUser }) {
                               />
                             )}
                           </div>
+                          {(col.kind || 'data') === 'data' && (
+                            <ComparisonConditionsEditor
+                              column={col}
+                              fields={visualConditionFields}
+                              onChange={(patch) => {
+                                const nextCols = selectedVisualColumns.map((item, i) => (
+                                  i === cIdx ? { ...item, ...patch } : item
+                                ))
+                                updateVisualById(selectedVisual.id, { query: { ...selectedVisual.query, columns: nextCols } })
+                              }}
+                            />
+                          )}
                         </div>
                       ))}
+                    </div>
+
+                    <div className="analytics-inspector-subbox">
+                      <div className="analytics-section-head">
+                        <span>Visual Filters</span>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                          <select
+                            aria-label="Filter logic"
+                            value={selectedVisual.query?.filter_logic || 'AND'}
+                            onChange={(e) => updateVisualById(selectedVisual.id, {
+                              query: { ...selectedVisual.query, filter_logic: e.target.value },
+                            })}
+                          >
+                            <option value="AND">AND</option>
+                            <option value="OR">OR</option>
+                          </select>
+                          <button
+                            type="button"
+                            className="btn-link"
+                            onClick={() => {
+                              const defaultField = visualConditionFields[0]
+                              if (!defaultField) return
+                              const nextFilters = [...(selectedVisual.query?.filters || []), {
+                                column_key: defaultField.source?.column || defaultField.source?.field || defaultField.source?.field_code || '',
+                                operator: 'eq',
+                                value: '',
+                              }]
+                              updateVisualById(selectedVisual.id, { query: { ...selectedVisual.query, filters: nextFilters } })
+                            }}
+                          >
+                            + Filter
+                          </button>
+                        </div>
+                      </div>
+                      {(selectedVisual.query?.filters || []).length === 0 && (
+                        <p className="analytics-muted-hint">Add fixed filters to limit data for this visual (e.g. receipt only, specific operation code/label).</p>
+                      )}
+                      {(selectedVisual.query?.filters || []).map((flt, fIdx) => {
+                        const colKey = flt.column_key || ''
+                        return (
+                          <div key={`flt-${fIdx}`} className="analytics-filter-row" style={{ display: 'grid', gap: 6, marginBottom: 8 }}>
+                            <select
+                              aria-label={`Filter column ${fIdx + 1}`}
+                              value={colKey}
+                              onChange={(e) => {
+                                const nextFilters = (selectedVisual.query?.filters || []).map((item, i) => (
+                                  i === fIdx ? { ...item, column_key: e.target.value } : item
+                                ))
+                                updateVisualById(selectedVisual.id, { query: { ...selectedVisual.query, filters: nextFilters } })
+                              }}
+                            >
+                              <option value="">Select column…</option>
+                              {visualConditionFields.map((field) => {
+                                const key = field.source?.column || field.source?.field || field.source?.field_code || ''
+                                return <option key={field.id || key} value={key}>{field.label}</option>
+                              })}
+                            </select>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 6 }}>
+                              <select
+                                aria-label={`Filter operator ${fIdx + 1}`}
+                                value={flt.operator || 'eq'}
+                                onChange={(e) => {
+                                  const nextFilters = (selectedVisual.query?.filters || []).map((item, i) => (
+                                    i === fIdx ? { ...item, operator: e.target.value } : item
+                                  ))
+                                  updateVisualById(selectedVisual.id, { query: { ...selectedVisual.query, filters: nextFilters } })
+                                }}
+                              >
+                                {FILTER_OPERATORS.map((op) => <option key={op.value} value={op.value}>{op.label}</option>)}
+                              </select>
+                              {!['is_blank', 'is_not_blank'].includes(flt.operator) && (
+                                <input
+                                  aria-label={`Filter value ${fIdx + 1}`}
+                                  value={flt.value ?? ''}
+                                  placeholder={flt.operator === 'between' ? 'From' : 'Value'}
+                                  onChange={(e) => {
+                                    const nextFilters = (selectedVisual.query?.filters || []).map((item, i) => (
+                                      i === fIdx ? { ...item, value: e.target.value } : item
+                                    ))
+                                    updateVisualById(selectedVisual.id, { query: { ...selectedVisual.query, filters: nextFilters } })
+                                  }}
+                                />
+                              )}
+                              <button
+                                type="button"
+                                className="btn-link is-danger"
+                                aria-label={`Remove filter ${fIdx + 1}`}
+                                onClick={() => {
+                                  const nextFilters = (selectedVisual.query?.filters || []).filter((_, i) => i !== fIdx)
+                                  updateVisualById(selectedVisual.id, { query: { ...selectedVisual.query, filters: nextFilters } })
+                                }}
+                              >
+                                ×
+                              </button>
+                            </div>
+                            {flt.operator === 'between' && (
+                              <input
+                                aria-label={`Filter value 2 ${fIdx + 1}`}
+                                value={flt.value2 ?? ''}
+                                placeholder="To"
+                                onChange={(e) => {
+                                  const nextFilters = (selectedVisual.query?.filters || []).map((item, i) => (
+                                    i === fIdx ? { ...item, value2: e.target.value } : item
+                                  ))
+                                  updateVisualById(selectedVisual.id, { query: { ...selectedVisual.query, filters: nextFilters } })
+                                }}
+                              />
+                            )}
+                          </div>
+                        )
+                      })}
                     </div>
 
                     <button
@@ -1921,12 +2182,12 @@ function AnalyticsBuilder({ loggedInUser }) {
                     <label className="analytics-mini-check">
                       <input
                         type="checkbox"
-                        checked={Boolean(selectedVisual.style?.chart?.showLabels)}
+                        checked={selectedVisual.style?.chart?.showLabels === true || (selectedVisual.style?.chart?.showLabels == null && ['PIE','DONUT','FUNNEL','TREEMAP','SUNBURST','SANKEY'].includes(String(selectedVisual.type || '').toUpperCase()))}
                         onChange={(e) => updateVisualById(selectedVisual.id, {
                           style: { ...(selectedVisual.style || {}), chart: { ...(selectedVisual.style?.chart || {}), showLabels: e.target.checked } },
                         })}
                       />
-                      <span>Show Value Callout Labels</span>
+                      <span>Show Data Labels</span>
                     </label>
                     <label className="analytics-mini-check">
                       <input
@@ -1953,6 +2214,18 @@ function AnalyticsBuilder({ loggedInUser }) {
 
                 {PLOTLY_VISUAL_TYPES.has(selectedVisual.type) && (
                   <>
+                    {['SCATTER', 'HISTOGRAM', 'PLOTLY_WATERFALL'].includes(String(selectedVisual.type || '').toUpperCase()) && (
+                      <label className="analytics-mini-check">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(selectedVisual.style?.chart?.showLabels)}
+                          onChange={(e) => updateVisualById(selectedVisual.id, {
+                            style: { ...(selectedVisual.style || {}), chart: { ...(selectedVisual.style?.chart || {}), showLabels: e.target.checked } },
+                          })}
+                        />
+                        <span>Show Data Labels</span>
+                      </label>
+                    )}
                     <label className="analytics-mini-check">
                       <input
                         type="checkbox"

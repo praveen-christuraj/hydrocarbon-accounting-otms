@@ -92,6 +92,8 @@ function PlotlyRenderer({
   const style = visual?.style || {}
   const plotlyStyle = style.plotly || {}
   const kpiStyle = style.kpi || {}
+  const chartStyle = style.chart || {}
+  const showDataLabels = chartStyle.showLabels === true
 
   const numericCols = useMemo(() => columns.filter((c) => c.data_type === 'number'), [columns])
   const textCols = useMemo(() => columns.filter((c) => c.data_type !== 'number'), [columns])
@@ -224,6 +226,8 @@ function PlotlyRenderer({
               line: { color: isDark ? '#121b2e' : '#ffffff', width: 1 },
             },
             opacity: 0.88,
+            texttemplate: showDataLabels ? '%{y}' : undefined,
+            textposition: showDataLabels ? 'outside' : undefined,
           },
         ],
         layout: {
@@ -255,7 +259,8 @@ function PlotlyRenderer({
             measure,
             x,
             y,
-            textposition: 'outside',
+            textposition: showDataLabels ? 'outside' : 'none',
+            texttemplate: showDataLabels ? '%{y:,.2f}' : undefined,
             connector: { line: { color: borderCol, width: 1.2 } },
             increasing: { marker: { color: successCol } },
             decreasing: { marker: { color: dangerCol } },
@@ -304,11 +309,13 @@ function PlotlyRenderer({
       const traces = [
         {
           type: 'scatter',
-          mode: 'markers',
+          mode: showDataLabels ? 'markers+text' : 'markers',
           name: `${measureCol.label || measureCol.key}`,
           x: xs,
           y: ys,
           text: labels,
+          textposition: 'top center',
+          textfont: { size: 9, color: textColor },
           hovertemplate: `<b>%{text}</b><br>${xNumCol?.label || 'Index'}: %{x}<br>${measureCol.label || 'Value'}: %{y}<extra></extra>`,
           marker: {
             size: markerSizes,
@@ -432,6 +439,7 @@ function PlotlyRenderer({
     plotlyStyle.showOutliers,
     plotlyStyle.trendline,
     rows,
+    showDataLabels,
     textCols,
     themeTick,
     totals,
