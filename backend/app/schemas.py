@@ -3265,8 +3265,12 @@ class AnalyticsBatchRunRequest(BaseModel):
     date_to: Optional[date] = None
     location_codes: list[str] = []
     runtime_values: dict[str, Any] = {}
+    selection_filters: list[dict[str, Any]] = []
     visual_ids: Optional[list[str]] = None
     format: str = "xlsx"
+    page: int = 1
+    page_size: int = 50
+    search: Optional[str] = None
 
 
 class ReportDefinitionCreate(BaseModel):

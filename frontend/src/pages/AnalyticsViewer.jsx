@@ -1,336 +1,588 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
-import { Responsive, WidthProvider } from 'react-grid-layout'
-import 'react-grid-layout/css/styles.css'
-import 'react-resizable/css/styles.css'
-import PageHeader from '../components/common/PageHeader'
+import { useNavigate, useParams } from 'react-router-dom'
 import AlertMessage from '../components/common/AlertMessage'
+import ExportMenu from '../components/common/ExportMenu'
+import Icon from '../components/common/Icon'
+import Modal from '../components/common/Modal'
+import { useToast } from '../components/common/Toast'
 import AnalyticsVisual from '../components/analytics/AnalyticsVisual'
-import { exportAnalyticsVisual, getAnalyticsSlicerValues, getMyAnalyticsDashboard, runAnalyticsDashboard } from '../api/analyticsApi'
-import { usePermissions } from '../hooks/usePermissions'
+import GridStackCanvas from '../components/analytics/GridStackCanvas'
+import PerspectiveGrid from '../components/analytics/PerspectiveGrid'
+import SlicerBar from '../components/analytics/SlicerBar'
+import CompanyPrintHeader from '../components/reports/CompanyPrintHeader'
+import CompanyPrintFooter from '../components/reports/CompanyPrintFooter'
+import { useCompanyPrintProfile } from '../hooks/useCompanyPrintProfile'
 import { usePrintDialog } from '../components/print/printProfileContext'
+import usePermissions from '../hooks/usePermissions'
+import {
+  exportAnalyticsVisual,
+  exportAnalyticsWorkbook,
+  getAnalyticsLookups,
+  getAnalyticsSlicerValues,
+  getAnalyticsVisualRecords,
+  getMyAnalyticsDashboard,
+  runAnalyticsDashboard,
+} from '../api/analyticsApi'
 import { logUiAction } from '../utils/actionLogger'
+import { normalizeLayoutForGridStack } from '../utils/analyticsEngine'
+import '../styles/analytics.css'
 
-const ResponsiveGridLayout = WidthProvider(Responsive)
-const isoDate = (value) => value.toISOString().slice(0, 10)
-const startOfMonth = () => { const now = new Date(); return isoDate(new Date(now.getFullYear(), now.getMonth(), 1)) }
-const today = () => isoDate(new Date())
-
-const normalizeLayouts = (layout, visuals) => {
-  const visualIds = (visuals || []).map((v) => v.id)
-  if (layout && !Array.isArray(layout) && typeof layout === 'object') {
-    const out = {}
-    for (const bp of ['lg', 'md', 'sm', 'xs']) {
-      const items = Array.isArray(layout[bp]) ? layout[bp] : []
-      out[bp] = items.filter((item) => visualIds.includes(item.i))
-    }
-    return out
-  }
-  const base = Array.isArray(layout) ? layout.filter((item) => visualIds.includes(item.i)) : []
-  const ensure = (items, cols) => {
-    const seen = new Set(items.map((i) => i.i))
-    const filled = [...items.map((item) => ({ ...item, w: Math.min(cols, Math.max(1, Number(item.w) || cols)), x: Math.max(0, Math.min(cols - Math.min(cols, Math.max(1, Number(item.w) || cols)), Number(item.x) || 0)), h: Math.max(2, Number(item.h) || 6) }))]
-    visuals.forEach((visual, index) => {
-      if (seen.has(visual.id)) return
-      filled.push({ i: visual.id, x: 0, y: 1000 + index * 6, w: cols, h: 6 })
-    })
-    return filled
-  }
-  return {
-    lg: ensure(base, 12),
-    md: ensure(base.map((i) => ({ ...i, w: Math.min(10, i.w || 10) })), 10),
-    sm: ensure(base.map((i) => ({ ...i, w: Math.min(6, i.w || 6), x: 0 })), 6),
-    xs: ensure(base.map((i) => ({ ...i, w: 2, x: 0 })), 2),
-  }
+function getSessionLayoutKey(dashboardId) {
+  return `otms_analytics_layout_v2_${dashboardId}`
 }
 
-function SlicerControl({ slicer, value, onChange, options, loading }) {
-  const type = String(slicer?.type || 'SELECT').toUpperCase()
-  const label = slicer?.label || slicer?.key
-  if (type === 'DATE_RANGE') {
-    const range = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
-    return (
-      <div className="analytics-slicer-control analytics-slicer-range">
-        <span className="analytics-slicer-label">{label}</span>
-        <div className="analytics-slicer-range-inputs">
-          <input type="date" aria-label={`${label} from`} value={range.from || ''} onChange={(e) => onChange({ ...range, from: e.target.value })} />
-          <input type="date" aria-label={`${label} to`} value={range.to || ''} onChange={(e) => onChange({ ...range, to: e.target.value })} />
-        </div>
-      </div>
-    )
-  }
-  if (type === 'DATE') {
-    return <label className="analytics-slicer-control"><span className="analytics-slicer-label">{label}</span><input type="date" value={value || ''} onChange={(e) => onChange(e.target.value)} /></label>
-  }
-  if (type === 'NUMBER_RANGE') {
-    const range = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
-    return (
-      <div className="analytics-slicer-control analytics-slicer-range">
-        <span className="analytics-slicer-label">{label}</span>
-        <div className="analytics-slicer-range-inputs">
-          <input type="number" placeholder="Min" aria-label={`${label} min`} value={range.min ?? ''} onChange={(e) => onChange({ ...range, min: e.target.value })} />
-          <input type="number" placeholder="Max" aria-label={`${label} max`} value={range.max ?? ''} onChange={(e) => onChange({ ...range, max: e.target.value })} />
-        </div>
-      </div>
-    )
-  }
-  if (type === 'NUMBER') {
-    return <label className="analytics-slicer-control"><span className="analytics-slicer-label">{label}</span><input type="number" value={value ?? ''} onChange={(e) => onChange(e.target.value)} placeholder="Any value" /></label>
-  }
-  if (type === 'TEXT') {
-    return <label className="analytics-slicer-control"><span className="analytics-slicer-label">{label}</span><input type="text" value={value || ''} onChange={(e) => onChange(e.target.value)} placeholder={slicer?.config?.placeholder || 'Contains...'} /></label>
-  }
-
-  // SELECT
-  const multi = slicer?.config?.multi !== false
-  const selected = Array.isArray(value) ? value.map(String) : (value ? [String(value)] : [])
-  return (
-    <label className="analytics-slicer-control">
-      <span className="analytics-slicer-label">{label}{loading ? ' …' : ''}</span>
-      <select
-        multiple={multi}
-        value={multi ? selected : (selected[0] || '')}
-        onChange={(e) => {
-          if (multi) {
-            const next = Array.from(e.target.selectedOptions).map((opt) => opt.value)
-            onChange(next)
-          } else {
-            onChange(e.target.value)
-          }
-        }}
-        size={multi ? Math.min(6, Math.max(3, (options?.length || 0) + 1)) : undefined}
-      >
-        {!multi && <option value="">All</option>}
-        {(options || []).map((opt) => <option key={String(opt.value)} value={String(opt.value)}>{opt.label ?? String(opt.value)}</option>)}
-      </select>
-    </label>
-  )
-}
-
-function AnalyticsViewer({ loggedInUser }) {
-  const { dashboardId } = useParams()
-  const { hasPermission } = usePermissions(loggedInUser)
+function AnalyticsViewer() {
+  const { id } = useParams()
+  const navigate = useNavigate()
+  const toast = useToast()
+  const { profile } = useCompanyPrintProfile()
   const { requestPrint } = usePrintDialog()
+  const { hasAnyPermission } = usePermissions()
+
+  const canEdit = hasAnyPermission(['Update Analytics Dashboard'])
+  const canExport = hasAnyPermission(['Export Analytics Dashboard'])
+
   const [dashboard, setDashboard] = useState(null)
+  const [availableLocations, setAvailableLocations] = useState([])
   const [results, setResults] = useState({})
-  const [locations, setLocations] = useState([])
-  const [locationCodes, setLocationCodes] = useState([])
-  const [slicerValues, setSlicerValues] = useState({})
-  const [slicerOptions, setSlicerOptions] = useState({})
-  const [slicerLoading, setSlicerLoading] = useState({})
-  const [dateFrom, setDateFrom] = useState(startOfMonth)
-  const [dateTo, setDateTo] = useState(today)
   const [loading, setLoading] = useState(true)
   const [running, setRunning] = useState(false)
+  const [exportingWorkbook, setExportingWorkbook] = useState(false)
   const [error, setError] = useState('')
-  const [success, setSuccess] = useState('')
-  const canEdit = hasPermission('Edit Analytics Definition')
-  const canExport = hasPermission('Export Analytics Dashboard')
+  const [lastExecutedAt, setLastExecutedAt] = useState('')
 
-  const hasMaterialBalance = useMemo(
-    () => (dashboard?.definition?.visuals || []).some((visual) => visual.query?.source?.kind === 'material_balance'),
-    [dashboard]
-  )
-  const visuals = useMemo(() => dashboard?.definition?.visuals || [], [dashboard])
-  const layouts = useMemo(() => normalizeLayouts(dashboard?.definition?.layout, visuals), [dashboard, visuals])
+  // Separate Date Range vs Single Date + Locations + Slicers + Cross-Filters
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const [singleDate, setSingleDate] = useState('')
+  const [activePreset, setActivePreset] = useState('')
+  const [selectedLocations, setSelectedLocations] = useState([])
+  const [runtimeValues, setRuntimeValues] = useState({})
+  const [slicerOptions, setSlicerOptions] = useState({})
+  const [selectionFilters, setSelectionFilters] = useState([])
 
-  useEffect(() => {
-    let cancelled = false
-    getMyAnalyticsDashboard(dashboardId)
-      .then((item) => {
-        if (cancelled) return
-        setDashboard(item)
-        setLocations(item.available_locations || [])
-        const nextSlicerValues = {}
-        for (const slicer of (item.definition?.slicers || [])) {
-          const type = String(slicer.type || 'SELECT').toUpperCase()
-          if (type === 'DATE_RANGE' || type === 'NUMBER_RANGE') nextSlicerValues[slicer.key] = slicer.default && typeof slicer.default === 'object' ? slicer.default : {}
-          else if (type === 'SELECT' && slicer.config?.multi !== false) nextSlicerValues[slicer.key] = Array.isArray(slicer.default) ? slicer.default : []
-          else nextSlicerValues[slicer.key] = slicer.default ?? ''
-        }
-        setSlicerValues(nextSlicerValues)
-        if (item.scope_type === 'LOCATION' && item.location_code) setLocationCodes([item.location_code])
-        else if ((item.available_locations || []).length === 1) setLocationCodes([item.available_locations[0].location_code])
-      })
-      .catch((loadError) => { if (!cancelled) setError(loadError.message || 'Unable to open this dashboard.') })
-      .finally(() => { if (!cancelled) setLoading(false) })
-    return () => { cancelled = true }
-  }, [dashboardId])
+  // Session GridStack Arrange Mode
+  const [arrangeMode, setArrangeMode] = useState(false)
+  const [sessionLayout, setSessionLayout] = useState(null)
 
-  const loadSlicerOptions = useCallback(async (dash, currentFilters) => {
-    if (!dash) return
-    const selectSlicers = (dash.definition?.slicers || []).filter((s) => String(s.type || 'SELECT').toUpperCase() === 'SELECT')
-    if (!selectSlicers.length) return
-    setSlicerLoading((prev) => ({ ...prev, ...Object.fromEntries(selectSlicers.map((s) => [s.key, true])) }))
-    await Promise.all(selectSlicers.map(async (slicer) => {
-      try {
-        const res = await getAnalyticsSlicerValues(dash.id, {
-          slicer_key: slicer.key,
-          date_from: currentFilters.dateFrom || null,
-          date_to: currentFilters.dateTo || null,
-          location_codes: currentFilters.locationCodes || [],
-          runtime_values: currentFilters.slicerValues || {},
-        })
-        setSlicerOptions((prev) => ({ ...prev, [slicer.key]: res.values || [] }))
-      } catch {
-        setSlicerOptions((prev) => ({ ...prev, [slicer.key]: prev[slicer.key] || [] }))
-      } finally {
-        setSlicerLoading((prev) => ({ ...prev, [slicer.key]: false }))
-      }
-    }))
-  }, [])
+  // Underlying Source Records Drill-Through Modal
+  const [recordsModalVisual, setRecordsModalVisual] = useState(null)
+  const [recordsLoading, setRecordsLoading] = useState(false)
+  const [recordsPayload, setRecordsPayload] = useState(null)
 
-  useEffect(() => {
-    if (!dashboard) return
-    loadSlicerOptions(dashboard, { dateFrom, dateTo, locationCodes, slicerValues: {} })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dashboard?.id])
-
-  const run = async (event) => {
-    event?.preventDefault()
-    if (!dashboard) return
-    if (dateFrom && dateTo && dateFrom > dateTo) {
-      setError('Date From cannot be after Date To.')
-      return
+  const effectiveDateWindow = useMemo(() => {
+    if (singleDate) {
+      return { from: singleDate, to: singleDate }
     }
-    if (hasMaterialBalance && (!dateFrom || !dateTo || locationCodes.length !== 1)) {
-      setError('Material Balance visuals require a date range and exactly one selected location.')
-      return
-    }
+    return { from: dateFrom || null, to: dateTo || null }
+  }, [dateFrom, dateTo, singleDate])
+
+  const buildRunnerPayload = useCallback((overrides = {}) => ({
+    date_from: overrides.date_from !== undefined ? overrides.date_from : effectiveDateWindow.from,
+    date_to: overrides.date_to !== undefined ? overrides.date_to : effectiveDateWindow.to,
+    location_codes: (overrides.location_codes ?? selectedLocations).length
+      ? (overrides.location_codes ?? selectedLocations)
+      : null,
+    runtime_values: overrides.runtime_values ?? runtimeValues,
+    selection_filters: overrides.selection_filters ?? selectionFilters,
+  }), [effectiveDateWindow.from, effectiveDateWindow.to, runtimeValues, selectedLocations, selectionFilters])
+
+  const runBatch = useCallback(async (dashboardId, payload) => {
     setRunning(true)
     setError('')
-    setSuccess('')
     try {
-      const payload = {
-        date_from: dateFrom || null,
-        date_to: dateTo || null,
-        location_codes: locationCodes,
-        runtime_values: slicerValues,
+      const response = await runAnalyticsDashboard(dashboardId, payload)
+      setResults(response?.results || {})
+      const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      setLastExecutedAt(nowStr)
+    } catch (err) {
+      setError(err.message || 'Unable to execute analytics queries.')
+    } finally {
+      setRunning(false)
+    }
+  }, [])
+
+  // Load dashboard definition, lookups, slicer options, and auto-execute queries immediately
+  useEffect(() => {
+    let active = true
+    const loadDashboard = async () => {
+      setLoading(true)
+      setError('')
+      try {
+        const [item, lookupData] = await Promise.all([
+          getMyAnalyticsDashboard(id),
+          getAnalyticsLookups().catch(() => ({ locations: [] })),
+        ])
+        if (!active) return
+        setDashboard(item)
+
+        const locs = Array.isArray(lookupData?.locations) && lookupData.locations.length
+          ? lookupData.locations
+          : (Array.isArray(item.available_locations) ? item.available_locations : [])
+        setAvailableLocations(locs)
+
+        const initLocations = item.location_code ? [item.location_code] : []
+        setSelectedLocations(initLocations)
+
+        // Restore optional browser-session custom arrangement if valid
+        try {
+          const savedStr = window.localStorage.getItem(getSessionLayoutKey(item.id))
+          if (savedStr) {
+            const parsed = JSON.parse(savedStr)
+            if (Array.isArray(parsed) && parsed.length) {
+              setSessionLayout(parsed)
+            }
+          }
+        } catch {
+          // Ignore storage error
+        }
+
+        // Auto-execute initial batch run immediately
+        const initialPayload = {
+          date_from: null,
+          date_to: null,
+          location_codes: initLocations.length ? initLocations : null,
+          runtime_values: {},
+          selection_filters: [],
+        }
+        runBatch(item.id, initialPayload)
+
+        // Load distinct options for SELECT slicers in parallel
+        const slicers = item.definition_json?.slicers || []
+        const selectSlicers = slicers.filter((s) => String(s.type || 'SELECT').toUpperCase() === 'SELECT')
+        if (selectSlicers.length) {
+          const entries = await Promise.all(
+            selectSlicers.map(async (slicer) => {
+              try {
+                const res = await getAnalyticsSlicerValues(item.id, {
+                  slicer_id: slicer.id,
+                  location_codes: initLocations.length ? initLocations : null,
+                })
+                return [slicer.id, res?.values || []]
+              } catch {
+                return [slicer.id, []]
+              }
+            })
+          )
+          if (active) setSlicerOptions(Object.fromEntries(entries))
+        }
+      } catch (err) {
+        if (active) setError(err.message || 'Unable to load analytics dashboard.')
+      } finally {
+        if (active) setLoading(false)
       }
-      const result = await runAnalyticsDashboard(dashboard.id, payload)
-      setResults(result.results || {})
-      setSuccess(`Dashboard refreshed${result.dashboard?.version ? ` · version ${result.dashboard.version}` : ''}.`)
-      logUiAction('Analytics', 'Run Dashboard', { dashboardId: dashboard.id, dateFrom, dateTo, locationCodes })
-      loadSlicerOptions(dashboard, { dateFrom, dateTo, locationCodes, slicerValues })
-    } catch (runError) {
-      setError(runError.message || 'Dashboard run failed.')
-    } finally {
-      setRunning(false)
     }
-  }
+    loadDashboard()
+    return () => { active = false }
+  }, [id, runBatch])
 
-  const exportVisual = async (visual, format) => {
-    if (!canExport) return
-    setRunning(true)
-    try {
-      await exportAnalyticsVisual(dashboard.id, visual.id, {
-        date_from: dateFrom || null,
-        date_to: dateTo || null,
-        location_codes: locationCodes,
-        runtime_values: slicerValues,
-      }, format)
-      logUiAction('Analytics', 'Export Visual', { dashboardId: dashboard.id, visualId: visual.id, format })
-    } catch (exportError) {
-      setError(exportError.message || 'Unable to export this visual.')
-    } finally {
-      setRunning(false)
-    }
-  }
-
-  const print = () => {
-    requestPrint({
-      module: 'Analytics',
-      reportName: dashboard?.dashboard_name || 'Analytics Dashboard',
-      onBeforePrint: () => logUiAction('Analytics', 'Print Dashboard', { dashboardId: dashboard?.id }),
-    })
-  }
-
-  const slicerControls = (dashboard?.definition?.slicers || []).map((slicer) => (
-    <SlicerControl
-      key={slicer.id || slicer.key}
-      slicer={slicer}
-      value={slicerValues[slicer.key]}
-      options={slicerOptions[slicer.key] || []}
-      loading={Boolean(slicerLoading[slicer.key])}
-      onChange={(value) => setSlicerValues((current) => ({ ...current, [slicer.key]: value }))}
-    />
-  ))
-
-  const expandedControls = (
-    <div className="analytics-expand-filters">
-      <div className="analytics-filter-bar">
-        <label>Date from<input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} /></label>
-        <label>Date to<input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} /></label>
-        {dashboard?.scope_type !== 'LOCATION' && (
-          <label>Location
-            <select value={locationCodes[0] || ''} onChange={(event) => setLocationCodes(event.target.value ? [event.target.value] : [])}>
-              <option value="">All locations in my reporting scope</option>
-              {locations.map((location) => <option key={location.location_code} value={location.location_code}>{location.location_name} ({location.location_code})</option>)}
-            </select>
-          </label>
-        )}
-        {slicerControls}
-        <button type="button" className="btn-primary" onClick={run} disabled={running}>{running ? 'Refreshing…' : 'Apply filters'}</button>
-      </div>
-    </div>
+  const visuals = useMemo(
+    () => dashboard?.definition_json?.visuals || [],
+    [dashboard]
+  )
+  const slicers = useMemo(
+    () => dashboard?.definition_json?.slicers || [],
+    [dashboard]
   )
 
-  if (loading) return <div className="page-container"><p>Loading dashboard…</p></div>
-  if (!dashboard) return <div className="page-container"><PageHeader title="Analytics Dashboard" /><AlertMessage tone="error" message={error || 'Dashboard not found.'} /><Link to="/analytics">Back to Analytics</Link></div>
+  const activeLayout = useMemo(
+    () => normalizeLayoutForGridStack(sessionLayout || dashboard?.definition_json?.layout || [], visuals),
+    [dashboard?.definition_json?.layout, sessionLayout, visuals]
+  )
+
+  const handleToggleCrossFilter = useCallback((sourceVisualId, filterItem) => {
+    setSelectionFilters((prev) => {
+      const exists = prev.some(
+        (sf) => sf.column_key === filterItem.column_key && String(sf.value) === String(filterItem.value)
+      )
+      const next = exists
+        ? prev.filter((sf) => !(sf.column_key === filterItem.column_key && String(sf.value) === String(filterItem.value)))
+        : [
+          ...prev.filter((sf) => sf.column_key !== filterItem.column_key),
+          {
+            source_visual_id: sourceVisualId,
+            column_key: filterItem.column_key,
+            operator: 'eq',
+            value: filterItem.value,
+            label: filterItem.label || `${filterItem.column_key}: ${filterItem.value}`,
+          },
+        ]
+      if (dashboard?.id) {
+        runBatch(dashboard.id, buildRunnerPayload({ selection_filters: next }))
+      }
+      return next
+    })
+  }, [buildRunnerPayload, dashboard, runBatch])
+
+  const handleRemoveSelectionFilter = useCallback((targetSf) => {
+    setSelectionFilters((prev) => {
+      const next = prev.filter(
+        (sf) => !(sf.column_key === targetSf.column_key && String(sf.value) === String(targetSf.value))
+      )
+      if (dashboard?.id) {
+        runBatch(dashboard.id, buildRunnerPayload({ selection_filters: next }))
+      }
+      return next
+    })
+  }, [buildRunnerPayload, dashboard, runBatch])
+
+  const handleClearAllFilters = () => {
+    const defaultLocs = dashboard?.location_code ? [dashboard.location_code] : []
+    setDateFrom('')
+    setDateTo('')
+    setSingleDate('')
+    setActivePreset('')
+    setSelectedLocations(defaultLocs)
+    setRuntimeValues({})
+    setSelectionFilters([])
+    if (dashboard?.id) {
+      runBatch(dashboard.id, {
+        date_from: null,
+        date_to: null,
+        location_codes: defaultLocs.length ? defaultLocs : null,
+        runtime_values: {},
+        selection_filters: [],
+      })
+    }
+  }
+
+  const handleInspectRecords = async (visual) => {
+    if (!dashboard?.id || !visual?.id) return
+    setRecordsModalVisual(visual)
+    setRecordsLoading(true)
+    setRecordsPayload(null)
+    try {
+      const data = await getAnalyticsVisualRecords(dashboard.id, visual.id, buildRunnerPayload())
+      setRecordsPayload(data)
+      logUiAction({
+        module: 'Analytics',
+        action: 'Inspect Visual Underlying Records',
+        entityType: 'AnalyticsDashboardDefinition',
+        entityId: `${dashboard.id}:${visual.id}`,
+      })
+    } catch (err) {
+      toast.error(err.message || 'Unable to load underlying source records.')
+    } finally {
+      setRecordsLoading(false)
+    }
+  }
+
+  const handleExportVisual = async (visual, format = 'xlsx') => {
+    if (!dashboard?.id) return
+    try {
+      await exportAnalyticsVisual(dashboard.id, visual.id, buildRunnerPayload(), format)
+      toast.success(`Exported "${visual.title}" (${format.toUpperCase()}).`)
+    } catch (err) {
+      toast.error(err.message || 'Unable to export visual.')
+    }
+  }
+
+  const handleExportWorkbook = async () => {
+    if (!dashboard?.id) return
+    setExportingWorkbook(true)
+    try {
+      await exportAnalyticsWorkbook(dashboard.id, buildRunnerPayload())
+      logUiAction({
+        module: 'Analytics',
+        action: 'Export Dashboard Workbook',
+        entityType: 'AnalyticsDashboardDefinition',
+        entityId: String(dashboard.id),
+      })
+      toast.success('Exported multi-sheet Analytics Excel workbook.')
+    } catch (err) {
+      toast.error(err.message || 'Unable to export dashboard workbook.')
+    } finally {
+      setExportingWorkbook(false)
+    }
+  }
+
+  const handleSessionLayoutChange = (nextLayout) => {
+    setSessionLayout(nextLayout)
+    if (dashboard?.id) {
+      try {
+        window.localStorage.setItem(getSessionLayoutKey(dashboard.id), JSON.stringify(nextLayout))
+      } catch {
+        // Ignore storage quota
+      }
+    }
+  }
+
+  const resetSessionLayout = () => {
+    setSessionLayout(null)
+    if (dashboard?.id) {
+      try {
+        window.localStorage.removeItem(getSessionLayoutKey(dashboard.id))
+      } catch {
+        // Ignore
+      }
+    }
+    toast.info('Restored canonical published layout.')
+  }
+
+  if (loading) {
+    return (
+      <div className="page-shell analytics-page">
+        <div className="card">Loading executive analytics dashboard…</div>
+      </div>
+    )
+  }
+
+  if (!dashboard) {
+    return (
+      <div className="page-shell analytics-page">
+        <AlertMessage tone="error" message={error || 'Analytics dashboard not found or access denied.'} />
+      </div>
+    )
+  }
 
   return (
-    <div className="page-container analytics-page analytics-viewer">
-      <PageHeader
-        title={dashboard.dashboard_name}
-        description={dashboard.description || `Version ${dashboard.version} · ${dashboard.scope_type === 'LOCATION' ? dashboard.location_code : 'Global'}`}
-        actions={<div className="analytics-header-actions"><Link className="btn-secondary" to="/analytics">All dashboards</Link>{canEdit && dashboard.my_access !== 'VIEW' && <Link className="btn-secondary" to={`/analytics/builder/${dashboard.id}`}>Edit dashboard</Link>}<button type="button" className="btn-secondary" onClick={print}>Print</button></div>}
-      />
-      <AlertMessage tone="error" message={error} onDismiss={() => setError('')} />
-      <AlertMessage tone="success" message={success} onDismiss={() => setSuccess('')} />
-      <form className="analytics-filter-bar" onSubmit={run}>
-        <label>Date from<input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} /></label>
-        <label>Date to<input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} /></label>
-        {dashboard.scope_type === 'LOCATION' ? (
-          <label>Location<input value={`${dashboard.location_code || ''}`} readOnly /></label>
-        ) : (
-          <label>Location
-            <select value={locationCodes[0] || ''} onChange={(event) => setLocationCodes(event.target.value ? [event.target.value] : [])}>
-              <option value="">All locations in my reporting scope</option>
-              {locations.map((location) => <option key={location.location_code} value={location.location_code}>{location.location_name} ({location.location_code})</option>)}
-            </select>
-          </label>
-        )}
-        {slicerControls}
-        <button type="submit" className="btn-primary" disabled={running}>{running ? 'Refreshing…' : 'Apply filters'}</button>
-      </form>
-      {hasMaterialBalance && <AlertMessage tone="info" compact message="Material Balance visuals use the active location template and require exactly one location and a date range." />}
-      <section className="analytics-viewer-canvas" aria-label="Dashboard visuals">
-        <ResponsiveGridLayout
-          className="analytics-grid-layout analytics-grid-layout-viewer"
-          layouts={layouts}
-          breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480 }}
-          cols={{ lg: 12, md: 10, sm: 6, xs: 2 }}
-          rowHeight={56}
-          isDraggable={false}
-          isResizable={false}
-          compactType="vertical"
-          margin={[16, 16]}
-          measureBeforeMount
-        >
-          {visuals.map((visual) => (
-            <div key={visual.id} className="analytics-viewer-grid-item">
+    <div className="page-shell analytics-page analytics-viewer-page">
+      <div className="printable-report">
+        <CompanyPrintHeader
+          profile={profile}
+          defaultSubtitle={[
+            dashboard.name,
+            dashboard.location_code ? `Location: ${dashboard.location_code}` : 'All Scoped Locations',
+            effectiveDateWindow.from || effectiveDateWindow.to
+              ? `Period: ${effectiveDateWindow.from || 'Start'} to ${effectiveDateWindow.to || 'Latest'}`
+              : 'Period: All Dates',
+          ].join(' · ')}
+        />
+      </div>
+
+      <div className="page-header analytics-header no-print">
+        <div>
+          <p className="eyebrow">
+            Analytics Dashboard · {dashboard.visibility_scope} · v{dashboard.version}
+          </p>
+          <h1>{dashboard.name}</h1>
+          {dashboard.description && <p className="page-subtitle">{dashboard.description}</p>}
+        </div>
+
+        <div className="analytics-header-actions">
+          <button
+            type="button"
+            className={`btn-secondary ${arrangeMode ? 'is-active-toggle' : ''}`}
+            onClick={() => setArrangeMode((m) => !m)}
+            title="Temporarily rearrange or resize visual cards in your browser session"
+          >
+            <Icon name="grid" size={15} /> {arrangeMode ? 'Lock Layout' : 'Arrange Layout'}
+          </button>
+
+          {sessionLayout && (
+            <button
+              type="button"
+              className="btn-secondary btn-sm"
+              onClick={resetSessionLayout}
+            >
+              Reset Layout
+            </button>
+          )}
+
+          {canExport && (
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={handleExportWorkbook}
+              disabled={exportingWorkbook || !visuals.length}
+            >
+              <Icon name="fileSpreadsheet" size={15} />
+              <span>{exportingWorkbook ? 'Exporting…' : 'Export Workbook'}</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => requestPrint()}
+          >
+            <Icon name="print" size={15} /> Print
+          </button>
+
+          {canEdit && (
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => navigate(`/analytics/studio/${dashboard.id}`)}
+            >
+              <Icon name="edit" size={15} /> Edit in Studio
+            </button>
+          )}
+
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => navigate('/analytics')}
+          >
+            Back
+          </button>
+        </div>
+      </div>
+
+      <div className="no-print">
+        <SlicerBar
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+          singleDate={singleDate}
+          activePreset={activePreset}
+          onDateRangeChange={(from, to) => {
+            setSingleDate('')
+            setActivePreset('')
+            setDateFrom(from)
+            setDateTo(to)
+          }}
+          onSingleDateChange={(exact) => {
+            setSingleDate(exact)
+            if (exact) {
+              setDateFrom('')
+              setDateTo('')
+              setActivePreset('')
+            }
+          }}
+          onApplyPreset={(presetKey, range) => {
+            setSingleDate('')
+            setActivePreset(presetKey)
+            setDateFrom(range.from)
+            setDateTo(range.to)
+            runBatch(dashboard.id, buildRunnerPayload({ date_from: range.from, date_to: range.to }))
+          }}
+          availableLocations={availableLocations}
+          selectedLocations={selectedLocations}
+          onLocationsChange={setSelectedLocations}
+          slicers={slicers}
+          slicerOptions={slicerOptions}
+          runtimeValues={runtimeValues}
+          onRuntimeValueChange={(key, val) => setRuntimeValues((prev) => ({ ...prev, [key]: val }))}
+          selectionFilters={selectionFilters}
+          onRemoveSelectionFilter={handleRemoveSelectionFilter}
+          onClearAllFilters={handleClearAllFilters}
+          onApply={() => runBatch(dashboard.id, buildRunnerPayload())}
+          running={running}
+          lastExecutedAt={lastExecutedAt}
+        />
+      </div>
+
+      {error && <AlertMessage tone="error" message={error} />}
+
+      {visuals.length === 0 ? (
+        <div className="card analytics-empty-canvas">
+          <Icon name="barChart" size={28} />
+          <h3>No visuals configured on this dashboard</h3>
+          {canEdit && (
+            <button type="button" className="btn-primary" onClick={() => navigate(`/analytics/studio/${dashboard.id}`)}>
+              Configure Visuals in Studio
+            </button>
+          )}
+        </div>
+      ) : (
+        <GridStackCanvas
+          visuals={visuals}
+          layout={activeLayout}
+          editable={arrangeMode}
+          floatMode={Boolean(dashboard?.definition_json?.canvas?.floatMode)}
+          cellHeight={Number(dashboard?.definition_json?.canvas?.cellHeight) || 64}
+          margin={Number(dashboard?.definition_json?.canvas?.margin) || 14}
+          onLayoutChange={arrangeMode ? handleSessionLayoutChange : null}
+          renderVisual={(visual, layoutItem) => {
+            const activeSelForOthers = selectionFilters.find((sf) => sf.source_visual_id === visual.id) || selectionFilters[0] || null
+            return (
               <AnalyticsVisual
                 visual={visual}
                 result={results[visual.id]}
-                onExport={canExport ? (format) => exportVisual(visual, format) : null}
-                busy={running}
-                expandedControls={expandedControls}
+                loading={running}
+                editable={arrangeMode}
+                isLocked={Boolean(layoutItem?.locked)}
+                activeSelection={activeSelForOthers}
+                onCrossFilter={(filterSpec) => handleToggleCrossFilter(visual.id, filterSpec)}
+                onInspectRecords={handleInspectRecords}
+                onExport={canExport ? handleExportVisual : null}
               />
+            )
+          }}
+        />
+      )}
+
+      {/* Print Footer */}
+      <div className="printable-report">
+        <CompanyPrintFooter profile={profile} />
+      </div>
+
+      {/* Underlying Source Records Modal */}
+      <Modal
+        isOpen={Boolean(recordsModalVisual)}
+        onClose={() => {
+          setRecordsModalVisual(null)
+          setRecordsPayload(null)
+        }}
+        title={recordsModalVisual ? `Underlying Records — ${recordsModalVisual.title}` : 'Underlying Source Records'}
+        size="xl"
+        footer={(
+          <div className="analytics-modal-footer-bar">
+            <div className="analytics-modal-footer-left">
+              {recordsPayload?.rows?.length > 0 && (
+                <ExportMenu
+                  label="Export Records"
+                  title={`${recordsModalVisual?.title || 'Visual'} — Underlying Records`}
+                  filenameBase="analytics_underlying_records"
+                  columns={(recordsPayload.columns || []).map((c) => ({ key: c.key, header: c.label || c.key }))}
+                  rows={recordsPayload.rows}
+                />
+              )}
+              {recordsModalVisual?.query?.source?.kind === 'tank_stock_ledger' && (
+                <button
+                  type="button"
+                  className="btn-secondary btn-sm"
+                  onClick={() => navigate('/reports/tank-ledger')}
+                >
+                  Open Tank Stock Ledger <Icon name="externalLink" size={13} />
+                </button>
+              )}
+              {recordsModalVisual?.query?.source?.kind === 'operation_tickets' && (
+                <button
+                  type="button"
+                  className="btn-secondary btn-sm"
+                  onClick={() => navigate('/transactions')}
+                >
+                  Open Transactions Register <Icon name="externalLink" size={13} />
+                </button>
+              )}
             </div>
-          ))}
-        </ResponsiveGridLayout>
-      </section>
-      {!Object.keys(results).length && <div className="analytics-empty-state">Select the date and location filters, then apply them to run this dashboard.</div>}
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => {
+                setRecordsModalVisual(null)
+                setRecordsPayload(null)
+              }}
+            >
+              Close
+            </button>
+          </div>
+        )}
+      >
+        <div className="analytics-expanded-modal-body">
+          {recordsLoading ? (
+            <div className="analytics-visual-loading">Fetching ungrouped underlying source records…</div>
+          ) : recordsPayload ? (
+            <PerspectiveGrid
+              visual={{
+                id: `records_${recordsModalVisual?.id}`,
+                type: 'TABLE',
+                explorer: { showShelfByDefault: true },
+                style: { table: { dataBars: true, showSummaryBar: true, stickyHeader: true, striped: true } },
+              }}
+              columns={(recordsPayload.columns || []).filter((c) => !c.hidden)}
+              rows={recordsPayload.rows || []}
+              totals={recordsPayload.totals || {}}
+              expanded
+              shelfOpen
+              containerWidth={1100}
+            />
+          ) : (
+            <AlertMessage tone="info" message="No underlying records available." />
+          )}
+        </div>
+      </Modal>
     </div>
   )
 }
