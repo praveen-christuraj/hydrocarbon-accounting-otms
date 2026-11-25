@@ -6,6 +6,7 @@ import {
   Link,
   Navigate,
   useLocation,
+  useParams,
 } from 'react-router-dom'
 
 import Home from './pages/Home'
@@ -49,6 +50,7 @@ import CustomReportViewer from './pages/CustomReportViewer'
 import AnalyticsHome from './pages/AnalyticsHome'
 import AnalyticsBuilder from './pages/AnalyticsBuilder'
 import AnalyticsViewer from './pages/AnalyticsViewer'
+import AnalyticsErrorBoundary from './components/analytics/AnalyticsErrorBoundary'
 import AuditLog from './pages/AuditLog'
 import BargeSealMaster from './pages/BargeSealMaster'
 import BargeTracking from './pages/BargeTracking'
@@ -151,7 +153,10 @@ function PageHelp() {
   const location = useLocation()
   const [showHelp, setShowHelp] = useState(false)
 
-  const currentHelp = helpContent[location.pathname]
+  const currentHelp =
+    helpContent[location.pathname]
+    || (location.pathname.startsWith('/analytics/builder/') ? helpContent['/analytics/builder'] : null)
+    || (location.pathname.startsWith('/analytics/view/') ? helpContent['/analytics/view'] : null)
 
   if (!currentHelp) {
     return null
@@ -197,6 +202,15 @@ function PageHelp() {
       </Modal>
     </>
   )
+}
+
+function AnalyticsStudioLegacyRedirect() {
+  const { dashboardId } = useParams()
+  const location = useLocation()
+  const target = dashboardId && dashboardId !== 'new'
+    ? `/analytics/builder/${encodeURIComponent(dashboardId)}${location.search || ''}`
+    : `/analytics/builder${location.search || ''}`
+  return <Navigate to={target} replace />
 }
 
 function LegacyPageDisabled({ title, description, primaryPath, primaryLabel }) {
@@ -291,6 +305,7 @@ function AppContent({
   reloadLocationOperationAvailability,
 }) {
 
+  const location = useLocation()
   const hasPermission = (permissionName) => userHasPermission(loggedInUser, permissionName)
   return (
     <AppShell loggedInUser={loggedInUser} onLogout={onLogout}>
@@ -721,29 +736,59 @@ function AppContent({
             element={
               <PermissionGuard
                 loggedInUser={loggedInUser}
-                requiredPermission="View Analytics Dashboard"
+                anyOfPermissions={[
+                  'View Analytics Dashboard',
+                  'View Analytics Definition',
+                  'Create Analytics Definition',
+                  'Edit Analytics Definition',
+                ]}
                 fallbackMessage="You do not have permission to view Analytics dashboards."
               >
-                <AnalyticsHome loggedInUser={loggedInUser} />
+                <AnalyticsErrorBoundary resetKey={location.pathname}>
+                  <AnalyticsHome loggedInUser={loggedInUser} />
+                </AnalyticsErrorBoundary>
               </PermissionGuard>
             }
           />
           <Route
             path="/analytics/builder"
             element={
-              <PermissionGuard loggedInUser={loggedInUser} requiredPermission="View Analytics Definition">
-                <AnalyticsBuilder loggedInUser={loggedInUser} />
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                anyOfPermissions={[
+                  'View Analytics Definition',
+                  'Create Analytics Definition',
+                  'Edit Analytics Definition',
+                ]}
+                fallbackMessage="You do not have permission to access Analytics Studio."
+              >
+                <AnalyticsErrorBoundary resetKey={location.pathname}>
+                  <AnalyticsBuilder loggedInUser={loggedInUser} />
+                </AnalyticsErrorBoundary>
               </PermissionGuard>
             }
           />
           <Route
             path="/analytics/builder/:dashboardId"
             element={
-              <PermissionGuard loggedInUser={loggedInUser} requiredPermission="View Analytics Definition">
-                <AnalyticsBuilder loggedInUser={loggedInUser} />
+              <PermissionGuard
+                loggedInUser={loggedInUser}
+                anyOfPermissions={[
+                  'View Analytics Definition',
+                  'Create Analytics Definition',
+                  'Edit Analytics Definition',
+                ]}
+                fallbackMessage="You do not have permission to access Analytics Studio."
+              >
+                <AnalyticsErrorBoundary resetKey={location.pathname}>
+                  <AnalyticsBuilder loggedInUser={loggedInUser} />
+                </AnalyticsErrorBoundary>
               </PermissionGuard>
             }
           />
+          <Route path="/analytics/studio" element={<AnalyticsStudioLegacyRedirect />} />
+          <Route path="/analytics/studio/new" element={<AnalyticsStudioLegacyRedirect />} />
+          <Route path="/analytics/studio/:dashboardId" element={<AnalyticsStudioLegacyRedirect />} />
           <Route
             path="/analytics/view/:dashboardId"
             element={
@@ -752,7 +797,9 @@ function AppContent({
                 requiredPermission="View Analytics Dashboard"
                 fallbackMessage="You do not have permission to view Analytics dashboards."
               >
-                <AnalyticsViewer loggedInUser={loggedInUser} />
+                <AnalyticsErrorBoundary resetKey={location.pathname}>
+                  <AnalyticsViewer loggedInUser={loggedInUser} />
+                </AnalyticsErrorBoundary>
               </PermissionGuard>
             }
           />

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import AlertMessage from '../components/common/AlertMessage'
 import { useConfirm } from '../components/common/ConfirmProvider'
@@ -15,7 +15,6 @@ import {
   getAnalyticsDefinition,
   getAnalyticsLookups,
   getAnalyticsVersions,
-  publishAnalyticsDefinition,
   revertAnalyticsDefinition,
   runAnalyticsPreview,
   updateAnalyticsDefinition,
@@ -37,6 +36,7 @@ import {
 import '../styles/analytics.css'
 
 const REPORT_AGG_OPTIONS = ['SUM', 'AVG', 'COUNT', 'MIN', 'MAX', 'FIRST', 'LAST']
+const MATERIAL_BALANCE_VISUAL_TYPES = new Set(['TABLE', 'PIVOT_GRID', 'MATRIX'])
 
 const EMPTY_DEFINITION = {
   schema_version: 2,
@@ -46,8 +46,21 @@ const EMPTY_DEFINITION = {
   layout: [],
 }
 
+function getDatasetDisplayName(ds) {
+  return ds?.name || ds?.label || ds?.table || ds?.id || 'Dataset'
+}
+
+function getDatasetIdForSource(source, fallbackId = 'tank_stock_ledger') {
+  if (!source || typeof source !== 'object') return fallbackId
+  if (source.kind === 'table' && source.table) return `table:${source.table}`
+  return source.kind || fallbackId
+}
+
 function buildQueryFromDataset(dataset, visualType, customTitle = '') {
-  const type = String(visualType || 'COLUMN').toUpperCase()
+  const requestedType = String(visualType || 'COLUMN').toUpperCase()
+  const type = dataset?.kind === 'material_balance' && !MATERIAL_BALANCE_VISUAL_TYPES.has(requestedType)
+    ? 'PIVOT_GRID'
+    : requestedType
   const meta = getVisualMeta(type)
 
   if (type === 'TEXT') {
@@ -75,14 +88,11 @@ function buildQueryFromDataset(dataset, visualType, customTitle = '') {
 
   if (dataset?.kind === 'material_balance') {
     return {
-      title: customTitle || `${meta.shortLabel} · Material Balance`,
+      title: customTitle || `Material Balance · ${meta.shortLabel}`,
       type,
       query: {
         source: { kind: 'material_balance' },
         unit: 'nsv',
-        dimension_key: 'tank',
-        measure_key: 'closing_stock',
-        metric_key: 'closing_stock',
       },
       style: {
         table: { dataBars: true, showSummaryBar: true, stickyHeader: true, striped: true },
@@ -93,14 +103,18 @@ function buildQueryFromDataset(dataset, visualType, customTitle = '') {
     }
   }
 
-  const dsCols = Array.isArray(dataset?.columns) ? dataset.columns : []
-  const textCols = dsCols.filter((c) => c.data_type !== 'number')
-  const numCols = dsCols.filter((c) => c.data_type === 'number')
+  const rawCols = Array.isArray(dataset?.columns) ? dataset.columns : []
+  const scalarCols = rawCols.filter((c) => !c.is_json && c.data_type !== 'json')
+  const preferredCols = scalarCols.filter((c) => c.column !== 'id' && !String(c.column || '').endsWith('_id'))
+  const candidateCols = preferredCols.length >= 2 ? preferredCols : (scalarCols.length ? scalarCols : rawCols)
+
+  const textCols = candidateCols.filter((c) => c.data_type !== 'number')
+  const numCols = candidateCols.filter((c) => c.data_type === 'number')
   const pickedRaw = [
     ...textCols.slice(0, 2),
     ...numCols.slice(0, 2),
   ]
-  const fallbackRaw = pickedRaw.length ? pickedRaw : dsCols.slice(0, 4)
+  const fallbackRaw = pickedRaw.length ? pickedRaw : candidateCols.slice(0, 4)
 
   const columns = fallbackRaw.map((col) => {
     const key = makeSafeKey(col.column || col.label)
@@ -124,18 +138,24 @@ function buildQueryFromDataset(dataset, visualType, customTitle = '') {
   const firstMeasure = columns.find((c) => c.data_type === 'number')?.key || columns[columns.length - 1]?.key || ''
   const needsUnaggregatedDistribution = ['BOX_PLOT', 'VIOLIN_PLOT', 'HISTOGRAM', 'SCATTER', 'PIVOT_GRID', 'TABLE', 'CONTOUR_2D'].includes(type)
 
+  const source = dataset?.kind === 'table' && dataset?.table
+    ? { kind: 'table', table: dataset.table }
+    : {
+      kind: dataset?.kind || 'tank_stock_ledger',
+      operation_type_codes: [],
+      template_ids: [],
+      statuses: dataset?.kind === 'operation_tickets' ? ['Approved'] : [],
+    }
+
+  const shortDsName = getDatasetDisplayName(dataset).split('—')[0].trim()
+
   return {
-    title: customTitle || `${dataset?.label || 'Dataset'} · ${meta.shortLabel}`,
+    title: customTitle || `${shortDsName} · ${meta.shortLabel}`,
     type,
     query: {
       schema_version: 1,
       report_type: 'TABULAR',
-      source: {
-        kind: dataset?.kind || 'tank_stock_ledger',
-        operation_type_codes: [],
-        template_ids: [],
-        statuses: dataset?.kind === 'operation_tickets' ? ['Approved'] : [],
-      },
+      source,
       date_basis: 'ACCOUNTING_DATE',
       columns,
       filters: [],
@@ -164,7 +184,7 @@ function buildQueryFromDataset(dataset, visualType, customTitle = '') {
       kpi: { decimals: 1, showSparkline: true },
       chart: { showLegend: true, showToolbox: true, dataZoom: false },
       table: { dataBars: true, colorScale: 'none', showSummaryBar: true, stickyHeader: true, striped: true },
-      plotly: { showModeBar: true, trendline: true, boxMean: true, showOutliers: true },
+      plotly: { showModeBar: true, trendline: true, boxMean: true, showOutliers: true, bins: 20 },
     },
     interactions: {
       crossFilter: true,
@@ -173,32 +193,38 @@ function buildQueryFromDataset(dataset, visualType, customTitle = '') {
   }
 }
 
-function AnalyticsBuilder() {
-  const { id } = useParams()
+function AnalyticsBuilder({ loggedInUser }) {
+  const { dashboardId } = useParams()
+  const id = dashboardId
   const [searchParams] = useSearchParams()
+  const templateParam = searchParams.get('template') || ''
   const isNew = !id || id === 'new'
   const navigate = useNavigate()
   const toast = useToast()
   const confirm = useConfirm()
-  const { hasAny } = usePermissions()
-  const canPublish = hasAny(['Publish Analytics Dashboard'])
+  const { hasAny } = usePermissions(loggedInUser)
+
+  const canCreate = hasAny(['Create Analytics Definition'])
+  const canEdit = hasAny(['Edit Analytics Definition'])
+  const canPublish = hasAny(['Publish Analytics Definition'])
 
   const starterTemplates = useMemo(() => buildStarterTemplates(), [])
 
-  const [catalog, setCatalog] = useState({ is_admin: false, datasets: [], templates: [], operation_types: [] })
+  const [catalog, setCatalog] = useState({ is_admin: false, datasets: [], tables: [], locations: [] })
   const [lookups, setLookups] = useState({ users: [], roles: [], locations: [] })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [previewing, setPreviewing] = useState(false)
   const [error, setError] = useState('')
 
-  // Dashboard Metadata & Access
+  // Dashboard Metadata & Access (canonical backend fields)
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
-  const [visibilityScope, setVisibilityScope] = useState('PRIVATE')
+  const [scopeType, setScopeType] = useState('LOCATION')
   const [locationCode, setLocationCode] = useState('')
   const [isPublished, setIsPublished] = useState(false)
   const [versionNum, setVersionNum] = useState(1)
+  const [myAccess, setMyAccess] = useState('OWNER')
   const [grants, setGrants] = useState([])
   const [definition, setDefinition] = useState(EMPTY_DEFINITION)
 
@@ -214,6 +240,16 @@ function AnalyticsBuilder() {
   const [previewDateTo, setPreviewDateTo] = useState('')
   const [previewResults, setPreviewResults] = useState({})
 
+  // Refs to keep executePreview stable and avoid resetting unsaved work on date/location changes
+  const locationCodeRef = useRef(locationCode)
+  const previewDateFromRef = useRef(previewDateFrom)
+  const previewDateToRef = useRef(previewDateTo)
+  const definitionRef = useRef(definition)
+  useEffect(() => { locationCodeRef.current = locationCode }, [locationCode])
+  useEffect(() => { previewDateFromRef.current = previewDateFrom }, [previewDateFrom])
+  useEffect(() => { previewDateToRef.current = previewDateTo }, [previewDateTo])
+  useEffect(() => { definitionRef.current = definition }, [definition])
+
   // Modals: FormulaBuilder, RBAC Sharing, Version History
   const [formulaModalOpen, setFormulaModalOpen] = useState(false)
   const [editingFormulaCol, setEditingFormulaCol] = useState(null)
@@ -223,22 +259,48 @@ function AnalyticsBuilder() {
   const [loadingVersions, setLoadingVersions] = useState(false)
 
   // Grant adder draft inside Access Modal
-  const [grantTargetKind, setGrantTargetKind] = useState('role')
+  const [grantTargetKind, setGrantTargetKind] = useState('ROLE')
   const [grantRoleId, setGrantRoleId] = useState('')
   const [grantUserId, setGrantUserId] = useState('')
-  const [grantType, setGrantType] = useState('VIEW')
+  const [grantLocationCode, setGrantLocationCode] = useState('')
+  const [grantAccessLevel, setGrantAccessLevel] = useState('VIEW')
 
-  const executePreview = useCallback(async (defToRun, fromDate = previewDateFrom, toDate = previewDateTo) => {
+  const canModify = isNew
+    ? canCreate
+    : (canEdit && (myAccess === 'OWNER' || myAccess === 'EDIT'))
+
+  const allDatasets = useMemo(() => {
+    const featured = (catalog.datasets || []).map((ds) => ({
+      ...ds,
+      id: ds.id || ds.kind,
+      name: getDatasetDisplayName(ds),
+      isFeatured: true,
+    }))
+    const tables = (catalog.tables || []).map((tbl) => ({
+      id: `table:${tbl.table}`,
+      kind: 'table',
+      table: tbl.table,
+      name: tbl.label || tbl.table,
+      columns: tbl.columns || [],
+      isFeatured: false,
+    }))
+    return [...featured, ...tables]
+  }, [catalog.datasets, catalog.tables])
+
+  const executePreview = useCallback(async (defToRun, overrides = {}) => {
     if (!defToRun?.visuals?.length) {
       setPreviewResults({})
       return
     }
+    const fromDate = overrides.date_from !== undefined ? overrides.date_from : previewDateFromRef.current
+    const toDate = overrides.date_to !== undefined ? overrides.date_to : previewDateToRef.current
+    const loc = overrides.location_code !== undefined ? overrides.location_code : locationCodeRef.current
     setPreviewing(true)
     try {
       const response = await runAnalyticsPreview(defToRun, {
         date_from: fromDate || null,
         date_to: toDate || null,
-        location_codes: locationCode ? [locationCode] : null,
+        location_codes: loc ? [loc] : [],
         runtime_values: {},
       })
       setPreviewResults(response?.results || {})
@@ -247,7 +309,7 @@ function AnalyticsBuilder() {
     } finally {
       setPreviewing(false)
     }
-  }, [locationCode, previewDateFrom, previewDateTo, toast])
+  }, [toast])
 
   useEffect(() => {
     let active = true
@@ -261,24 +323,37 @@ function AnalyticsBuilder() {
           isNew ? Promise.resolve(null) : getAnalyticsDefinition(id),
         ])
         if (!active) return
-        setCatalog(catalogData || { is_admin: false, datasets: [] })
-        setLookups(lookupData || { users: [], roles: [], locations: [] })
-        const firstDs = catalogData?.datasets?.find((d) => d.id === 'tank_stock_ledger')?.id || catalogData?.datasets?.[0]?.id || 'tank_stock_ledger'
+        setCatalog(catalogData || { is_admin: false, datasets: [], tables: [], locations: [] })
+        const resolvedLookups = {
+          users: lookupData?.users || [],
+          roles: lookupData?.roles || [],
+          locations: (lookupData?.locations?.length ? lookupData.locations : catalogData?.locations) || [],
+        }
+        setLookups(resolvedLookups)
+        const firstDs = catalogData?.datasets?.find((d) => d.id === 'tank_stock_ledger')?.id
+          || catalogData?.datasets?.[0]?.id
+          || 'tank_stock_ledger'
         setActiveDatasetId(firstDs)
 
         if (existing) {
-          setName(existing.name || '')
+          setName(existing.dashboard_name || existing.name || '')
           setDescription(existing.description || '')
-          setVisibilityScope(existing.visibility_scope || 'PRIVATE')
-          setLocationCode(existing.location_code || '')
+          setScopeType(existing.scope_type || 'LOCATION')
+          const existingLoc = existing.location_code || ''
+          setLocationCode(existingLoc)
+          locationCodeRef.current = existingLoc
           setIsPublished(Boolean(existing.is_published))
           setVersionNum(Number(existing.version) || 1)
+          setMyAccess(existing.my_access || 'VIEW')
           setGrants(Array.isArray(existing.grants) ? existing.grants.map((g) => ({
+            grant_type: String(g.grant_type || (g.role_id ? 'ROLE' : (g.user_id ? 'USER' : 'LOCATION'))).toUpperCase(),
             user_id: g.user_id || null,
             role_id: g.role_id || null,
-            grant_type: g.grant_type || 'VIEW',
+            location_code: g.location_code || null,
+            access_level: String(g.access_level || 'VIEW').toUpperCase(),
+            label: g.label || '',
           })) : [])
-          const rawDef = existing.definition_json || EMPTY_DEFINITION
+          const rawDef = existing.definition || existing.definition_json || EMPTY_DEFINITION
           const normLayout = normalizeLayoutForGridStack(rawDef.layout, rawDef.visuals || [])
           const hydrated = {
             ...EMPTY_DEFINITION,
@@ -287,22 +362,47 @@ function AnalyticsBuilder() {
             layout: normLayout,
           }
           setDefinition(hydrated)
+          definitionRef.current = hydrated
           if (hydrated.visuals?.length) {
             setSelectedVisualId(hydrated.visuals[0].id)
-            executePreview(hydrated)
+            executePreview(hydrated, { location_code: existingLoc })
           }
         } else {
-          const tplId = searchParams.get('template')
-          const matchedTpl = tplId ? starterTemplates.find((t) => t.id === tplId) : null
+          // Initialize sensible defaults for a new dashboard so first-click Save works cleanly
+          const isAdmin = Boolean(catalogData?.is_admin)
+          const defaultLoc = resolvedLookups.locations?.[0]?.location_code || ''
+          const initScope = isAdmin ? 'GLOBAL' : 'LOCATION'
+          const initLoc = initScope === 'LOCATION' ? defaultLoc : ''
+          setScopeType(initScope)
+          setLocationCode(initLoc)
+          locationCodeRef.current = initLoc
+          setIsPublished(false)
+          setVersionNum(1)
+          setMyAccess('OWNER')
+          setGrants(
+            initScope === 'LOCATION' && initLoc
+              ? [{ grant_type: 'LOCATION', user_id: null, role_id: null, location_code: initLoc, access_level: 'VIEW' }]
+              : []
+          )
+
+          const matchedTpl = templateParam ? starterTemplates.find((t) => t.id === templateParam) : null
           if (matchedTpl) {
             const built = matchedTpl.buildDefinition()
             setName(matchedTpl.name)
             setDescription(matchedTpl.description)
             setDefinition(built)
+            definitionRef.current = built
             if (built.visuals?.length) {
               setSelectedVisualId(built.visuals[0].id)
-              executePreview(built)
+              executePreview(built, { location_code: initLoc })
             }
+          } else {
+            setName('')
+            setDescription('')
+            setDefinition(EMPTY_DEFINITION)
+            definitionRef.current = EMPTY_DEFINITION
+            setSelectedVisualId(null)
+            setPreviewResults({})
           }
         }
       } catch (err) {
@@ -313,7 +413,7 @@ function AnalyticsBuilder() {
     }
     load()
     return () => { active = false }
-  }, [executePreview, id, isNew, searchParams, starterTemplates])
+  }, [executePreview, id, isNew, starterTemplates, templateParam])
 
   const selectedVisual = useMemo(
     () => (definition.visuals || []).find((v) => String(v.id) === String(selectedVisualId)) || null,
@@ -321,9 +421,11 @@ function AnalyticsBuilder() {
   )
 
   const selectedDataset = useMemo(() => {
-    const kind = selectedVisual?.query?.source?.kind || activeDatasetId
-    return (catalog.datasets || []).find((ds) => ds.kind === kind || ds.id === kind) || catalog.datasets?.[0] || null
-  }, [activeDatasetId, catalog.datasets, selectedVisual?.query?.source?.kind])
+    const targetId = selectedVisual
+      ? getDatasetIdForSource(selectedVisual.query?.source, activeDatasetId)
+      : activeDatasetId
+    return allDatasets.find((ds) => ds.id === targetId || ds.kind === targetId) || allDatasets[0] || null
+  }, [activeDatasetId, allDatasets, selectedVisual])
 
   const updateVisualById = useCallback((visualId, updater) => {
     setDefinition((prev) => {
@@ -340,61 +442,64 @@ function AnalyticsBuilder() {
   }, [])
 
   const addVisualToCanvas = useCallback((visualType, dropCoords = null) => {
-    const ds = (catalog.datasets || []).find((d) => d.id === activeDatasetId || d.kind === activeDatasetId) || catalog.datasets?.[0]
+    const ds = allDatasets.find((d) => d.id === activeDatasetId || d.kind === activeDatasetId) || allDatasets[0]
     const idStr = `vis_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`
     const visualSkeleton = buildQueryFromDataset(ds, visualType)
+    if (ds?.kind === 'material_balance' && visualSkeleton.type !== String(visualType || '').toUpperCase()) {
+      toast.info('Material Balance visuals render as Table, Pivot Grid, or Matrix. Switched to Pivot Grid.')
+    }
     const newVisual = { id: idStr, ...visualSkeleton }
-    const defaults = defaultLayoutForVisualType(visualType)
+    const defaults = defaultLayoutForVisualType(newVisual.type)
 
-    setDefinition((prev) => {
-      const nextVisuals = [...(prev.visuals || []), newVisual]
-      const existingNorm = normalizeLayoutForGridStack(prev.layout, prev.visuals || [])
-      const maxBottom = existingNorm.reduce((acc, item) => Math.max(acc, (item.y || 0) + (item.h || 4)), 0)
-      const newLayoutItem = {
-        i: idStr,
-        id: idStr,
-        x: dropCoords?.x != null ? Math.max(0, Math.min(12 - defaults.w, dropCoords.x)) : 0,
-        y: dropCoords?.y != null ? Math.max(0, dropCoords.y) : maxBottom,
-        w: defaults.w,
-        h: defaults.h,
-        minW: defaults.minW,
-        minH: defaults.minH,
-        locked: false,
-      }
-      const nextDef = {
-        ...prev,
-        visuals: nextVisuals,
-        layout: [...existingNorm, newLayoutItem],
-      }
-      executePreview(nextDef)
-      return nextDef
-    })
+    const prev = definitionRef.current || EMPTY_DEFINITION
+    const nextVisuals = [...(prev.visuals || []), newVisual]
+    const existingNorm = normalizeLayoutForGridStack(prev.layout, prev.visuals || [])
+    const maxBottom = existingNorm.reduce((acc, item) => Math.max(acc, (item.y || 0) + (item.h || 4)), 0)
+    const newLayoutItem = {
+      i: idStr,
+      id: idStr,
+      x: dropCoords?.x != null ? Math.max(0, Math.min(12 - defaults.w, dropCoords.x)) : 0,
+      y: dropCoords?.y != null ? Math.max(0, dropCoords.y) : maxBottom,
+      w: defaults.w,
+      h: defaults.h,
+      minW: defaults.minW,
+      minH: defaults.minH,
+      locked: false,
+    }
+    const nextDef = {
+      ...prev,
+      visuals: nextVisuals,
+      layout: [...existingNorm, newLayoutItem],
+    }
+    definitionRef.current = nextDef
+    setDefinition(nextDef)
     setSelectedVisualId(idStr)
     setInspectorTab('data')
-  }, [activeDatasetId, catalog.datasets, executePreview])
+    executePreview(nextDef)
+  }, [activeDatasetId, allDatasets, executePreview, toast])
 
   const handleDuplicateVisual = useCallback((visualId) => {
-    const orig = (definition.visuals || []).find((v) => String(v.id) === String(visualId))
+    const prev = definitionRef.current || EMPTY_DEFINITION
+    const orig = (prev.visuals || []).find((v) => String(v.id) === String(visualId))
     if (!orig) return
     const copyId = `vis_${Date.now().toString(36)}`
     const cloned = JSON.parse(JSON.stringify(orig))
     cloned.id = copyId
     cloned.title = `${orig.title || 'Visual'} (Copy)`
     const defaults = defaultLayoutForVisualType(cloned.type)
-    setDefinition((prev) => {
-      const nextVisuals = [...(prev.visuals || []), cloned]
-      const norm = normalizeLayoutForGridStack(prev.layout, prev.visuals || [])
-      const maxY = norm.reduce((m, item) => Math.max(m, (item.y || 0) + (item.h || 4)), 0)
-      const nextDef = {
-        ...prev,
-        visuals: nextVisuals,
-        layout: [...norm, { i: copyId, id: copyId, x: 0, y: maxY, w: defaults.w, h: defaults.h, minW: defaults.minW, minH: defaults.minH }],
-      }
-      executePreview(nextDef)
-      return nextDef
-    })
+    const nextVisuals = [...(prev.visuals || []), cloned]
+    const norm = normalizeLayoutForGridStack(prev.layout, prev.visuals || [])
+    const maxY = norm.reduce((m, item) => Math.max(m, (item.y || 0) + (item.h || 4)), 0)
+    const nextDef = {
+      ...prev,
+      visuals: nextVisuals,
+      layout: [...norm, { i: copyId, id: copyId, x: 0, y: maxY, w: defaults.w, h: defaults.h, minW: defaults.minW, minH: defaults.minH }],
+    }
+    definitionRef.current = nextDef
+    setDefinition(nextDef)
     setSelectedVisualId(copyId)
-  }, [definition.visuals, executePreview])
+    executePreview(nextDef)
+  }, [executePreview])
 
   const handleDeleteVisual = useCallback(async (visualId) => {
     const target = (definition.visuals || []).find((v) => String(v.id) === String(visualId))
@@ -403,7 +508,7 @@ function AnalyticsBuilder() {
       message: `Remove "${target?.title || visualId}" from this dashboard?`,
       confirmLabel: 'Remove Visual',
       cancelLabel: 'Cancel',
-      variant: 'danger',
+      tone: 'danger',
     })
     if (!ok) return
     setDefinition((prev) => {
@@ -447,6 +552,7 @@ function AnalyticsBuilder() {
     const built = tpl.buildDefinition()
     if (!name.trim()) setName(tpl.name)
     if (!description.trim()) setDescription(tpl.description)
+    definitionRef.current = built
     setDefinition(built)
     setSelectedVisualId(built.visuals?.[0]?.id || null)
     executePreview(built)
@@ -544,11 +650,15 @@ function AnalyticsBuilder() {
   }
 
   const saveDashboard = async (publishAfterSave = null) => {
+    if (!canModify) {
+      toast.error('You have read-only access to this dashboard definition.')
+      return
+    }
     if (!name.trim()) {
       toast.error('Please enter a Dashboard Name before saving.')
       return
     }
-    if (visibilityScope === 'LOCATION' && !locationCode.trim()) {
+    if (scopeType === 'LOCATION' && !locationCode.trim()) {
       toast.error('Please choose a Location inside Scope & Access when Scope is LOCATION.')
       setAccessModalOpen(true)
       return
@@ -560,33 +670,55 @@ function AnalyticsBuilder() {
         schema_version: 2,
         layout: normalizeLayoutForGridStack(definition.layout, definition.visuals || []),
       }
+      const nextPublished = publishAfterSave !== null && canPublish
+        ? Boolean(publishAfterSave)
+        : Boolean(isPublished)
+
+      const canonicalGrants = grants
+        .map((g) => {
+          const kind = String(g.grant_type || '').toUpperCase()
+          if (kind === 'ROLE' && g.role_id) {
+            return { grant_type: 'ROLE', role_id: Number(g.role_id), user_id: null, location_code: null, access_level: g.access_level === 'EDIT' ? 'EDIT' : 'VIEW' }
+          }
+          if (kind === 'USER' && g.user_id) {
+            return { grant_type: 'USER', user_id: Number(g.user_id), role_id: null, location_code: null, access_level: g.access_level === 'EDIT' ? 'EDIT' : 'VIEW' }
+          }
+          if (kind === 'LOCATION' && g.location_code) {
+            return { grant_type: 'LOCATION', location_code: String(g.location_code).trim().toUpperCase(), user_id: null, role_id: null, access_level: 'VIEW' }
+          }
+          return null
+        })
+        .filter(Boolean)
+
       const payload = {
-        name: name.trim(),
+        dashboard_name: name.trim(),
         description: description.trim() || null,
-        visibility_scope: visibilityScope,
-        location_code: locationCode.trim() || null,
-        definition_json: cleanDefinition,
-        grants,
+        scope_type: scopeType,
+        location_code: scopeType === 'LOCATION' ? (locationCode.trim() || null) : null,
+        visibility: 'PRIVATE',
+        is_published: nextPublished,
+        status: 'Active',
+        definition: cleanDefinition,
+        grants: canonicalGrants,
       }
       const saved = isNew
         ? await createAnalyticsDefinition(payload)
         : await updateAnalyticsDefinition(id, payload)
 
-      if (publishAfterSave !== null && canPublish) {
-        await publishAnalyticsDefinition(saved.id, Boolean(publishAfterSave))
-        setIsPublished(Boolean(publishAfterSave))
-      }
-
+      setIsPublished(Boolean(saved.is_published))
       setVersionNum(Number(saved.version) || versionNum + 1)
-      logUiAction({
-        module: 'Analytics',
-        action: isNew ? 'Create Dashboard' : 'Update Dashboard',
-        entityType: 'AnalyticsDashboardDefinition',
-        entityId: String(saved.id),
+      logUiAction('Analytics', isNew ? 'Create Dashboard' : 'Update Dashboard', {
+        dashboardId: saved.id,
+        dashboardName: saved.dashboard_name || name.trim(),
+        isPublished: Boolean(saved.is_published),
       })
-      toast.success(publishAfterSave ? 'Dashboard saved and published.' : 'Analytics dashboard saved.')
+      toast.success(
+        publishAfterSave === true
+          ? 'Dashboard saved and published.'
+          : (publishAfterSave === false ? 'Dashboard saved and unpublished.' : 'Analytics dashboard saved.')
+      )
       if (isNew) {
-        navigate(`/analytics/studio/${saved.id}`, { replace: true })
+        navigate(`/analytics/builder/${saved.id}`, { replace: true })
       }
     } catch (err) {
       toast.error(err.message || 'Unable to save analytics dashboard.')
@@ -610,25 +742,27 @@ function AnalyticsBuilder() {
   }
 
   const handleRevertVersion = async (ver) => {
+    const vNum = ver.version_number ?? ver.version
     const ok = await confirm({
-      title: `Revert to Version v${ver.version}`,
-      message: `Restore dashboard layout, visuals, and slicers from Version v${ver.version} (${String(ver.created_at || '').slice(0, 19).replace('T', ' ')})? A new audit snapshot will be recorded.`,
-      confirmLabel: `Restore v${ver.version}`,
+      title: `Revert to Version v${vNum}`,
+      message: `Restore dashboard layout, visuals, and slicers from Version v${vNum} (${String(ver.created_at || '').slice(0, 19).replace('T', ' ')})? A new audit snapshot will be recorded.`,
+      confirmLabel: `Restore v${vNum}`,
       cancelLabel: 'Cancel',
     })
     if (!ok) return
     try {
       const restored = await revertAnalyticsDefinition(id, { version_id: ver.id })
-      const rawDef = restored.definition_json || EMPTY_DEFINITION
+      const rawDef = restored.definition || restored.definition_json || EMPTY_DEFINITION
       const hydrated = {
         ...EMPTY_DEFINITION,
         ...rawDef,
         layout: normalizeLayoutForGridStack(rawDef.layout, rawDef.visuals || []),
       }
       setDefinition(hydrated)
+      definitionRef.current = hydrated
       setVersionNum(Number(restored.version) || versionNum + 1)
       setHistoryModalOpen(false)
-      toast.success(`Reverted dashboard to v${ver.version}.`)
+      toast.success(`Reverted dashboard to v${vNum}.`)
       executePreview(hydrated)
     } catch (err) {
       toast.error(err.message || 'Unable to revert dashboard version.')
@@ -742,7 +876,8 @@ function AnalyticsBuilder() {
               className="btn-secondary btn-sm"
               onClick={() => setAccessModalOpen(true)}
             >
-              <Icon name="shield" size={14} /> Scope: {visibilityScope}
+              <Icon name="shield" size={14} /> Scope: {scopeType}
+              {scopeType === 'LOCATION' && locationCode ? ` · ${locationCode}` : ''}
               {grants.length > 0 ? ` (${grants.length})` : ''}
             </button>
 
@@ -756,7 +891,7 @@ function AnalyticsBuilder() {
               </button>
             )}
 
-            {!isNew && (
+            {!isNew && isPublished && (
               <button
                 type="button"
                 className="btn-secondary btn-sm"
@@ -778,12 +913,13 @@ function AnalyticsBuilder() {
               type="button"
               className="btn-primary"
               onClick={() => saveDashboard(null)}
-              disabled={saving}
+              disabled={saving || !canModify}
+              title={!canModify ? 'Read-only access — requires Create/Edit Analytics Definition permission' : undefined}
             >
-              {saving ? 'Saving…' : 'Save Draft'}
+              {saving ? 'Saving…' : (isPublished ? 'Save Changes' : 'Save Draft')}
             </button>
 
-            {canPublish && (
+            {canPublish && canModify && (
               <button
                 type="button"
                 className={isPublished ? 'btn-secondary' : 'btn-primary'}
@@ -796,6 +932,14 @@ function AnalyticsBuilder() {
           </div>
         </div>
       </div>
+
+      {!canModify && (
+        <AlertMessage
+          tone="info"
+          compact
+          message="You are viewing this dashboard definition in read-only mode. Contact an administrator for Edit Analytics Definition access to save changes."
+        />
+      )}
 
       {error && <AlertMessage tone="error" message={error} />}
 
@@ -833,9 +977,18 @@ function AnalyticsBuilder() {
                   value={activeDatasetId}
                   onChange={(e) => setActiveDatasetId(e.target.value)}
                 >
-                  {(catalog.datasets || []).map((ds) => (
-                    <option key={ds.id} value={ds.id}>{ds.label}</option>
-                  ))}
+                  <optgroup label="Featured Terminal Datasets">
+                    {allDatasets.filter((ds) => ds.isFeatured).map((ds) => (
+                      <option key={ds.id} value={ds.id}>{ds.name}</option>
+                    ))}
+                  </optgroup>
+                  {allDatasets.some((ds) => !ds.isFeatured) && (
+                    <optgroup label="Reportable Database Tables">
+                      {allDatasets.filter((ds) => !ds.isFeatured).map((ds) => (
+                        <option key={ds.id} value={ds.id}>{ds.name}</option>
+                      ))}
+                    </optgroup>
+                  )}
                 </select>
                 <small>Drag any tile onto the 12-col GridStack canvas or click to append.</small>
               </div>
@@ -874,22 +1027,38 @@ function AnalyticsBuilder() {
                 </label>
                 <select
                   id="explorer-ds-select"
-                  value={selectedVisual?.query?.source?.kind || activeDatasetId}
+                  value={selectedVisual ? getDatasetIdForSource(selectedVisual.query?.source, activeDatasetId) : activeDatasetId}
                   onChange={(e) => {
-                    const nextKind = e.target.value
-                    setActiveDatasetId(nextKind)
+                    const nextId = e.target.value
+                    setActiveDatasetId(nextId)
                     if (selectedVisual && selectedVisual.type !== 'TEXT') {
-                      const ds = (catalog.datasets || []).find((d) => d.kind === nextKind || d.id === nextKind)
+                      const ds = allDatasets.find((d) => d.id === nextId || d.kind === nextId)
                       if (ds) {
                         const rebuilt = buildQueryFromDataset(ds, selectedVisual.type, selectedVisual.title)
-                        updateVisualById(selectedVisual.id, { query: rebuilt.query, explorer: rebuilt.explorer })
+                        updateVisualById(selectedVisual.id, {
+                          type: rebuilt.type,
+                          query: rebuilt.query,
+                          explorer: rebuilt.explorer,
+                        })
+                        if (ds.kind === 'material_balance' && rebuilt.type !== selectedVisual.type) {
+                          toast.info('Material Balance visuals render as Table, Pivot Grid, or Matrix. Switched to Pivot Grid.')
+                        }
                       }
                     }
                   }}
                 >
-                  {(catalog.datasets || []).map((ds) => (
-                    <option key={ds.id} value={ds.kind}>{ds.label}</option>
-                  ))}
+                  <optgroup label="Featured Terminal Datasets">
+                    {allDatasets.filter((ds) => ds.isFeatured).map((ds) => (
+                      <option key={ds.id} value={ds.id}>{ds.name}</option>
+                    ))}
+                  </optgroup>
+                  {allDatasets.some((ds) => !ds.isFeatured) && (
+                    <optgroup label="Reportable Database Tables">
+                      {allDatasets.filter((ds) => !ds.isFeatured).map((ds) => (
+                        <option key={ds.id} value={ds.id}>{ds.name}</option>
+                      ))}
+                    </optgroup>
+                  )}
                 </select>
               </div>
 
@@ -974,6 +1143,8 @@ function AnalyticsBuilder() {
               visuals={definition.visuals}
               layout={definition.layout}
               editable
+              preserveTwelveColumns
+              dragInTrigger={`${leftTab}:${activeDatasetId}:${(definition.visuals || []).length}`}
               floatMode={Boolean(definition.canvas?.floatMode)}
               cellHeight={Number(definition.canvas?.cellHeight) || 64}
               margin={Number(definition.canvas?.margin) || 14}
@@ -1099,17 +1270,18 @@ function AnalyticsBuilder() {
                     <label>
                       Control Type
                       <select
-                        value={slicer.type || 'SELECT'}
+                        value={slicer.type === 'SINGLE_DATE' ? 'DATE' : (slicer.type || 'SELECT')}
                         onChange={(e) => setDefinition((prev) => ({
                           ...prev,
                           slicers: prev.slicers.map((s, i) => (i === idx ? { ...s, type: e.target.value } : s)),
                         }))}
                       >
                         <option value="SELECT">Multi-Select Dropdown</option>
-                        <option value="SINGLE_DATE">Single Date</option>
+                        <option value="DATE">Single Date</option>
                         <option value="DATE_RANGE">Date Range</option>
                         <option value="TEXT">Text Contains</option>
                         <option value="NUMBER">Numeric Equals</option>
+                        <option value="NUMBER_RANGE">Numeric Range</option>
                       </select>
                     </label>
                     <label>
@@ -1200,7 +1372,10 @@ function AnalyticsBuilder() {
                       }))
                     }}
                   >
-                    {VISUAL_CATALOG.map((vc) => (
+                    {(selectedVisual.query?.source?.kind === 'material_balance'
+                      ? VISUAL_CATALOG.filter((vc) => MATERIAL_BALANCE_VISUAL_TYPES.has(vc.type))
+                      : VISUAL_CATALOG
+                    ).map((vc) => (
                       <option key={vc.type} value={vc.type}>{vc.label}</option>
                     ))}
                   </select>
@@ -1226,10 +1401,34 @@ function AnalyticsBuilder() {
                     >
                       <option value="nsv">Net Standard Volume (NSV BBL)</option>
                       <option value="gsv">Gross Standard Volume (GSV BBL)</option>
+                      <option value="lt">Long Tons (LT)</option>
+                      <option value="mt">Metric Tons (MT)</option>
                     </select>
                   </label>
                 ) : selectedVisual.query?.source?.kind === 'material_balance' ? (
                   <>
+                    <label>
+                      Material Balance Location
+                      <select
+                        value={selectedVisual.query?.source?.location_code || ''}
+                        onChange={(e) => updateVisualById(selectedVisual.id, {
+                          query: {
+                            ...selectedVisual.query,
+                            source: {
+                              ...(selectedVisual.query?.source || { kind: 'material_balance' }),
+                              location_code: e.target.value || undefined,
+                            },
+                          },
+                        })}
+                      >
+                        <option value="">Use Dashboard / Slicer Location</option>
+                        {(lookups.locations || []).map((loc) => (
+                          <option key={loc.location_code} value={loc.location_code}>
+                            {loc.location_code} — {loc.location_name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
                     <label>
                       Volume Basis
                       <select
@@ -1240,23 +1439,13 @@ function AnalyticsBuilder() {
                       >
                         <option value="nsv">NSV (BBL)</option>
                         <option value="gsv">GSV (BBL)</option>
+                        <option value="lt">Long Tons (LT)</option>
+                        <option value="mt">Metric Tons (MT)</option>
                       </select>
                     </label>
-                    <label>
-                      Primary Metric
-                      <select
-                        value={selectedVisual.query?.measure_key || 'closing_stock'}
-                        onChange={(e) => updateVisualById(selectedVisual.id, {
-                          query: { ...selectedVisual.query, measure_key: e.target.value, metric_key: e.target.value },
-                        })}
-                      >
-                        <option value="opening_stock">Opening Stock</option>
-                        <option value="total_in">Total Receipts (In)</option>
-                        <option value="total_out">Total Dispatches (Out)</option>
-                        <option value="closing_stock">Closing Stock</option>
-                        <option value="loss_gain">Loss / Gain Variance</option>
-                      </select>
-                    </label>
+                    <p className="analytics-muted-hint">
+                      Material Balance visuals load columns dynamically from the active Material Balance Template for the chosen location and preview date range.
+                    </p>
                   </>
                 ) : (
                   <>
@@ -1798,6 +1987,26 @@ function AnalyticsBuilder() {
                         <span>Plot Outlier Points &amp; Mean Diamond</span>
                       </label>
                     )}
+                    {selectedVisual.type === 'HISTOGRAM' && (
+                      <label>
+                        Histogram Bins (5–100)
+                        <input
+                          type="number"
+                          min={5}
+                          max={100}
+                          value={selectedVisual.style?.plotly?.bins ?? 20}
+                          onChange={(e) => updateVisualById(selectedVisual.id, {
+                            style: {
+                              ...(selectedVisual.style || {}),
+                              plotly: {
+                                ...(selectedVisual.style?.plotly || {}),
+                                bins: Math.max(5, Math.min(100, Number(e.target.value) || 20)),
+                              },
+                            },
+                          })}
+                        />
+                      </label>
+                    )}
                   </>
                 )}
 
@@ -1845,9 +2054,9 @@ function AnalyticsBuilder() {
 
       {/* RBAC Scope & Explicit Sharing Modal */}
       <Modal
-        isOpen={accessModalOpen}
+        open={accessModalOpen}
         onClose={() => setAccessModalOpen(false)}
-        title="Dashboard Visibility Scope & Access Grants"
+        title="Dashboard Scope & Explicit Access Grants"
         size="lg"
         footer={(
           <button type="button" className="btn-primary" onClick={() => setAccessModalOpen(false)}>
@@ -1858,27 +2067,34 @@ function AnalyticsBuilder() {
         <div className="analytics-access-modal">
           <div className="analytics-access-grid">
             <label>
-              Visibility Scope
+              Dashboard Scope
               <select
-                value={visibilityScope}
-                onChange={(e) => setVisibilityScope(e.target.value)}
+                value={scopeType}
+                onChange={(e) => {
+                  const nextScope = e.target.value
+                  setScopeType(nextScope)
+                  if (nextScope === 'GLOBAL') {
+                    setLocationCode('')
+                  } else if (!locationCode && lookups.locations?.[0]?.location_code) {
+                    setLocationCode(lookups.locations[0].location_code)
+                  }
+                }}
               >
-                <option value="PRIVATE">PRIVATE (Creator &amp; Explicit Grants Only)</option>
-                <option value="ROLE">ROLE (Granted Roles &amp; Users)</option>
-                <option value="LOCATION">LOCATION (Users Scoped to Location)</option>
-                {(catalog.is_admin || visibilityScope === 'GLOBAL') && (
+                <option value="LOCATION">LOCATION (Bound to a Terminal Location)</option>
+                {(catalog.is_admin || scopeType === 'GLOBAL') && (
                   <option value="GLOBAL">GLOBAL (All Terminal Locations — Admin)</option>
                 )}
               </select>
             </label>
 
             <label>
-              Bound Location {visibilityScope === 'LOCATION' ? '(Required)' : '(Optional)'}
+              Bound Location {scopeType === 'LOCATION' ? '(Required)' : '(Not used for GLOBAL)'}
               <select
-                value={locationCode}
+                value={scopeType === 'LOCATION' ? locationCode : ''}
+                disabled={scopeType === 'GLOBAL'}
                 onChange={(e) => setLocationCode(e.target.value)}
               >
-                <option value="">All Accessible Locations</option>
+                <option value="">{scopeType === 'GLOBAL' ? 'All Accessible Locations' : 'Select Location…'}</option>
                 {(lookups.locations || []).map((loc) => (
                   <option key={loc.location_code} value={loc.location_code}>
                     {loc.location_code} — {loc.location_name}
@@ -1889,48 +2105,73 @@ function AnalyticsBuilder() {
           </div>
 
           <div className="analytics-grants-box">
-            <h4>Explicit Role &amp; User Access Grants</h4>
+            <h4>Explicit Role, User &amp; Location Access Grants</h4>
             <div className="analytics-grant-adder-row">
-              <select value={grantTargetKind} onChange={(e) => setGrantTargetKind(e.target.value)}>
-                <option value="role">Role</option>
-                <option value="user">User</option>
+              <select
+                value={grantTargetKind}
+                onChange={(e) => {
+                  const nextKind = e.target.value
+                  setGrantTargetKind(nextKind)
+                  if (nextKind === 'LOCATION') setGrantAccessLevel('VIEW')
+                }}
+              >
+                <option value="ROLE">Role</option>
+                <option value="USER">User</option>
+                <option value="LOCATION">Location (View Only)</option>
               </select>
 
-              {grantTargetKind === 'role' ? (
+              {grantTargetKind === 'ROLE' ? (
                 <select value={grantRoleId} onChange={(e) => setGrantRoleId(e.target.value)}>
                   <option value="">Select Role…</option>
                   {(lookups.roles || []).map((r) => (
                     <option key={r.id} value={r.id}>{r.role_name}</option>
                   ))}
                 </select>
-              ) : (
+              ) : grantTargetKind === 'USER' ? (
                 <select value={grantUserId} onChange={(e) => setGrantUserId(e.target.value)}>
                   <option value="">Select User…</option>
                   {(lookups.users || []).map((u) => (
                     <option key={u.id} value={u.id}>{u.full_name} ({u.username})</option>
                   ))}
                 </select>
+              ) : (
+                <select value={grantLocationCode} onChange={(e) => setGrantLocationCode(e.target.value)}>
+                  <option value="">Select Location…</option>
+                  {(lookups.locations || []).map((loc) => (
+                    <option key={loc.location_code} value={loc.location_code}>
+                      {loc.location_code} — {loc.location_name}
+                    </option>
+                  ))}
+                </select>
               )}
 
-              <select value={grantType} onChange={(e) => setGrantType(e.target.value)}>
+              <select
+                value={grantTargetKind === 'LOCATION' ? 'VIEW' : grantAccessLevel}
+                disabled={grantTargetKind === 'LOCATION'}
+                onChange={(e) => setGrantAccessLevel(e.target.value)}
+              >
                 <option value="VIEW">VIEW</option>
-                <option value="EXPORT">EXPORT</option>
-                <option value="EDIT">EDIT</option>
+                {grantTargetKind !== 'LOCATION' && <option value="EDIT">EDIT</option>}
               </select>
 
               <button
                 type="button"
                 className="btn-secondary btn-sm"
                 onClick={() => {
-                  if (grantTargetKind === 'role' && grantRoleId) {
+                  if (grantTargetKind === 'ROLE' && grantRoleId) {
                     const rId = Number(grantRoleId)
-                    if (!grants.some((g) => g.role_id === rId && g.grant_type === grantType)) {
-                      setGrants([...grants, { role_id: rId, user_id: null, grant_type: grantType }])
+                    if (!grants.some((g) => g.grant_type === 'ROLE' && g.role_id === rId && g.access_level === grantAccessLevel)) {
+                      setGrants([...grants, { grant_type: 'ROLE', role_id: rId, user_id: null, location_code: null, access_level: grantAccessLevel }])
                     }
-                  } else if (grantTargetKind === 'user' && grantUserId) {
+                  } else if (grantTargetKind === 'USER' && grantUserId) {
                     const uId = Number(grantUserId)
-                    if (!grants.some((g) => g.user_id === uId && g.grant_type === grantType)) {
-                      setGrants([...grants, { user_id: uId, role_id: null, grant_type: grantType }])
+                    if (!grants.some((g) => g.grant_type === 'USER' && g.user_id === uId && g.access_level === grantAccessLevel)) {
+                      setGrants([...grants, { grant_type: 'USER', user_id: uId, role_id: null, location_code: null, access_level: grantAccessLevel }])
+                    }
+                  } else if (grantTargetKind === 'LOCATION' && grantLocationCode) {
+                    const locCode = grantLocationCode.trim().toUpperCase()
+                    if (!grants.some((g) => g.grant_type === 'LOCATION' && g.location_code === locCode)) {
+                      setGrants([...grants, { grant_type: 'LOCATION', location_code: locCode, user_id: null, role_id: null, access_level: 'VIEW' }])
                     }
                   }
                 }}
@@ -1941,13 +2182,23 @@ function AnalyticsBuilder() {
 
             <div className="analytics-grants-list">
               {grants.map((g, idx) => {
-                const roleName = g.role_id ? lookups.roles?.find((r) => r.id === g.role_id)?.role_name || `Role #${g.role_id}` : null
-                const userObj = g.user_id ? lookups.users?.find((u) => u.id === g.user_id) : null
-                const label = roleName ? `Role: ${roleName}` : `User: ${userObj ? `${userObj.full_name} (${userObj.username})` : `#${g.user_id}`}`
+                let label = g.label
+                if (!label) {
+                  if (g.grant_type === 'ROLE') {
+                    const roleName = lookups.roles?.find((r) => r.id === g.role_id)?.role_name || `Role #${g.role_id}`
+                    label = `Role: ${roleName}`
+                  } else if (g.grant_type === 'USER') {
+                    const userObj = lookups.users?.find((u) => u.id === g.user_id)
+                    label = `User: ${userObj ? `${userObj.full_name} (${userObj.username})` : `#${g.user_id}`}`
+                  } else {
+                    const locObj = lookups.locations?.find((l) => l.location_code === g.location_code)
+                    label = `Location: ${locObj ? `${locObj.location_code} — ${locObj.location_name}` : g.location_code}`
+                  }
+                }
                 return (
-                  <div key={`${g.role_id || 'u'}-${g.user_id || 'r'}-${g.grant_type}-${idx}`} className="analytics-grant-pill">
+                  <div key={`${g.grant_type}-${g.role_id || g.user_id || g.location_code}-${g.access_level}-${idx}`} className="analytics-grant-pill">
                     <span>{label}</span>
-                    <span className="analytics-scope-pill">{g.grant_type}</span>
+                    <span className="analytics-scope-pill">{g.grant_type} · {g.access_level || 'VIEW'}</span>
                     <button
                       type="button"
                       className="btn-link is-danger"
@@ -1958,7 +2209,7 @@ function AnalyticsBuilder() {
                   </div>
                 )
               })}
-              {!grants.length && <p className="analytics-muted-hint">No explicit role or user grants added.</p>}
+              {!grants.length && <p className="analytics-muted-hint">No explicit role, user, or location grants added (private to creator &amp; admins).</p>}
             </div>
           </div>
         </div>
@@ -1966,7 +2217,7 @@ function AnalyticsBuilder() {
 
       {/* Version History & One-Click Revert Modal */}
       <Modal
-        isOpen={historyModalOpen}
+        open={historyModalOpen}
         onClose={() => setHistoryModalOpen(false)}
         title={`Version History — ${name || 'Dashboard'}`}
         size="lg"
@@ -1985,29 +2236,34 @@ function AnalyticsBuilder() {
                 <tr>
                   <th scope="col">Version</th>
                   <th scope="col">Timestamp</th>
-                  <th scope="col">Change Summary</th>
+                  <th scope="col">Change Note</th>
                   <th scope="col">Visuals</th>
                   <th scope="col">Action</th>
                 </tr>
               </thead>
               <tbody>
-                {versions.map((ver) => (
-                  <tr key={ver.id}>
-                    <td><strong>v{ver.version}</strong></td>
-                    <td>{String(ver.created_at || '').slice(0, 19).replace('T', ' ')}</td>
-                    <td>{ver.change_summary || 'Saved snapshot'}</td>
-                    <td>{Array.isArray(ver.definition_json?.visuals) ? ver.definition_json.visuals.length : 0}</td>
-                    <td>
-                      <button
-                        type="button"
-                        className="btn-secondary btn-sm"
-                        onClick={() => handleRevertVersion(ver)}
-                      >
-                        <Icon name="repeat" size={13} /> Revert to v{ver.version}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {versions.map((ver) => {
+                  const vNum = ver.version_number ?? ver.version
+                  const verDef = ver.definition || ver.definition_json || {}
+                  return (
+                    <tr key={ver.id}>
+                      <td><strong>v{vNum}</strong></td>
+                      <td>{String(ver.created_at || '').slice(0, 19).replace('T', ' ')}</td>
+                      <td>{ver.change_note || ver.change_summary || 'Saved snapshot'}</td>
+                      <td>{Array.isArray(verDef.visuals) ? verDef.visuals.length : 0}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="btn-secondary btn-sm"
+                          disabled={!canModify}
+                          onClick={() => handleRevertVersion(ver)}
+                        >
+                          <Icon name="repeat" size={13} /> Revert to v{vNum}
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
                 {!versions.length && (
                   <tr>
                     <td colSpan={5}>No historical versions recorded yet.</td>

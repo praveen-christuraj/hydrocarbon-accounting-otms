@@ -218,7 +218,10 @@ def _normalize_style(style):
             "showOutliers": _as_bool(plotly_cfg.get("showOutliers"), True),
             "trendline": _as_bool(plotly_cfg.get("trendline"), True),
             "colorscale": str(plotly_cfg.get("colorscale") or "Blues")[:30],
-            "bins": _clamp_int(plotly_cfg.get("bins"), 5, 100, 20),
+            "bins": _clamp_int(
+                plotly_cfg.get("bins") if plotly_cfg.get("bins") is not None else plotly_cfg.get("binCount"),
+                5, 100, 20,
+            ),
         },
     }
     return normalized
@@ -388,10 +391,17 @@ def _slicer_column_key(slicer):
     return str(slicer.get("column_key") or slicer.get("field") or (slicer.get("source") or {}).get("column") or "")
 
 
+def _canonical_slicer_type(raw_type) -> str:
+    stype = str(raw_type or "SELECT").upper().strip()
+    if stype == "SINGLE_DATE":
+        return "DATE"
+    return stype
+
+
 def _normalize_slicer(slicer, valid_visual_ids):
     if not isinstance(slicer, dict):
         return None
-    stype = str(slicer.get("type") or "SELECT").upper()
+    stype = _canonical_slicer_type(slicer.get("type"))
     if stype not in ALLOWED_SLICER_TYPES:
         return None
     key = str(slicer.get("key") or "").strip()
@@ -577,7 +587,7 @@ def validate_analytics_definition(definition: dict) -> dict:
     for slicer in slicers_raw:
         normalized = _normalize_slicer(slicer, valid_ids)
         if normalized is None:
-            if isinstance(slicer, dict) and str(slicer.get("type") or "").upper() not in ALLOWED_SLICER_TYPES:
+            if isinstance(slicer, dict) and _canonical_slicer_type(slicer.get("type")) not in ALLOWED_SLICER_TYPES:
                 raise ReportDefinitionError(f"Slicer '{slicer.get('label') or slicer.get('key') or 'slicer'}' has an unsupported type.")
             raise ReportDefinitionError("Each dashboard slicer must be a valid object with a unique key.")
         key = normalized["key"]
@@ -605,17 +615,31 @@ def validate_analytics_definition(definition: dict) -> dict:
         except ReportDefinitionError as exc:
             raise ReportDefinitionError(f"Visual '{visual.get('title') or visual.get('id')}': {exc}") from exc
 
+    tank_snapshot_cols = (
+        "tank_asset_code", "tank_asset_name", "location_code", "product_name",
+        "current_stock", "capacity", "ullage", "fill_pct", "accounting_date",
+        "stock_nsv_bbl", "stock_gsv_bbl", "stock_lt", "stock_mt",
+    )
     exposed = {}
     for visual in visuals:
         if not isinstance(visual, dict):
             continue
         vid = str(visual.get("id"))
+        source_kind = (((visual.get("query") or {}).get("source") or {}).get("kind") or "")
+        vtype = str(visual.get("type") or "").upper()
+        if source_kind == "tank_snapshot" or (vtype == "TANK_VISUAL" and not ((visual.get("query") or {}).get("columns"))):
+            for ckey in tank_snapshot_cols:
+                exposed[(vid, ckey)] = {"key": ckey}
+            continue
         for column in ((visual.get("query") or {}).get("columns") or []):
             if isinstance(column, dict) and column.get("key"):
                 exposed[(vid, str(column.get("key")))] = column
     unsupported_slicer_visuals = {
         str(v.get("id")) for v in visuals
-        if isinstance(v, dict) and _is_special_source(v)
+        if isinstance(v, dict) and (
+            str(v.get("type") or "").upper() == "TEXT"
+            or (((v.get("query") or {}).get("source") or {}).get("kind") or "") == "material_balance"
+        )
     }
     for slicer in normalized_slicers:
         targets = [vid for vid in (slicer.get("visual_ids") or []) if vid in valid_ids and vid not in unsupported_slicer_visuals]
@@ -635,7 +659,104 @@ def validate_analytics_definition(definition: dict) -> dict:
     return candidate
 
 
-def _run_tank_snapshot_visual(db, user, visual: dict, params: dict) -> dict:
+def _row_matches_tank_filters(row: dict, visual: dict, slicers: list[dict] | None, params: dict, ignore_source_match: bool = True) -> bool:
+    vid = str(visual.get("id") or "")
+    runtime_values = params.get("runtime_values") or {}
+    for slicer in slicers or []:
+        if not isinstance(slicer, dict):
+            continue
+        targets = slicer.get("visual_ids") or []
+        if targets and vid not in {str(t) for t in targets}:
+            continue
+        skey = str(slicer.get("key") or "")
+        col_key = _slicer_column_key(slicer)
+        if not skey or not col_key or col_key not in row:
+            continue
+        val = runtime_values.get(skey)
+        if val is None or val == "" or val == []:
+            continue
+        stype = _canonical_slicer_type(slicer.get("type"))
+        cell = row.get(col_key)
+        if stype == "SELECT":
+            expected = val if isinstance(val, list) else [val]
+            expected_norm = {str(item).strip().casefold() for item in expected if item not in (None, "")}
+            if expected_norm and str(cell or "").strip().casefold() not in expected_norm:
+                return False
+        elif stype == "TEXT":
+            if str(val).strip().casefold() not in str(cell or "").casefold():
+                return False
+        elif stype in {"DATE_RANGE", "NUMBER_RANGE"}:
+            if isinstance(val, dict):
+                lower = val.get("from", val.get("date_from", val.get("min", val.get("start"))))
+                upper = val.get("to", val.get("date_to", val.get("max", val.get("end"))))
+            elif isinstance(val, (list, tuple)) and len(val) == 2:
+                lower, upper = val[0], val[1]
+            else:
+                lower, upper = None, None
+            if lower in (None, "") and upper in (None, ""):
+                continue
+            if cell is None:
+                return False
+            if stype == "NUMBER_RANGE":
+                try:
+                    cnum = float(cell)
+                    if lower not in (None, "") and cnum < float(lower):
+                        return False
+                    if upper not in (None, "") and cnum > float(upper):
+                        return False
+                except (TypeError, ValueError):
+                    return False
+            else:
+                cstr = str(cell)[:10]
+                if lower not in (None, "") and cstr < str(lower)[:10]:
+                    return False
+                if upper not in (None, "") and cstr > str(upper)[:10]:
+                    return False
+        elif stype == "NUMBER":
+            try:
+                if float(cell) != float(val):
+                    return False
+            except (TypeError, ValueError):
+                return False
+        else:
+            if str(cell or "").strip().casefold() != str(val).strip().casefold():
+                return False
+
+    selection_filters = params.get("selection_filters") or []
+    if selection_filters and (not ignore_source_match or _as_bool((visual.get("interactions") or {}).get("crossFilter"), True)):
+        for sel in selection_filters[:8]:
+            if not isinstance(sel, dict):
+                continue
+            if ignore_source_match and sel.get("source_visual_id") and str(sel.get("source_visual_id")) == vid:
+                continue
+            col_key = str(sel.get("column_key") or "").strip()
+            if not col_key or col_key not in row:
+                continue
+            val = sel.get("value")
+            if val is None or val == "" or val == []:
+                continue
+            op = str(sel.get("operator") or "eq").lower()
+            cell = row.get(col_key)
+            if op == "in":
+                expected = val if isinstance(val, list) else [val]
+                expected_norm = {str(item).strip().casefold() for item in expected if item not in (None, "")}
+                if expected_norm and str(cell or "").strip().casefold() not in expected_norm:
+                    return False
+            elif op == "between":
+                lo, hi = val, sel.get("value2")
+                if cell is None:
+                    return False
+                if lo not in (None, "") and str(cell) < str(lo):
+                    return False
+                if hi not in (None, "") and str(cell) > str(hi):
+                    return False
+            else:
+                if str(cell or "").strip().casefold() != str(val).strip().casefold():
+                    return False
+    return True
+
+
+def _run_tank_snapshot_visual(db, user, visual: dict, params: dict, slicers: list[dict] | None = None, ignore_source_match: bool = True) -> dict:
     from app.dependencies.permissions import get_user_report_location_codes, normalize_location_code
     from app.models import (
         Asset,
@@ -717,55 +838,92 @@ def _run_tank_snapshot_visual(db, user, visual: dict, params: dict) -> dict:
         except (TypeError, ValueError):
             return 0.0
 
-    def _max_capacity(asset_code: str) -> float:
-        tables = (
-            db.query(AssetCalibrationTable)
-            .filter(AssetCalibrationTable.asset_code == asset_code, AssetCalibrationTable.status == "Active")
-            .order_by(AssetCalibrationTable.id.desc())
-            .all()
-        )
-        for tbl in tables:
+    # Batch-load active calibration capacities for all candidate tanks (avoids N+1 queries)
+    cap_by_asset: dict[str, float] = {}
+    cal_tables = (
+        db.query(AssetCalibrationTable)
+        .filter(AssetCalibrationTable.asset_code.in_(asset_codes), AssetCalibrationTable.status == "Active")
+        .order_by(AssetCalibrationTable.id.desc())
+        .all()
+    )
+    if cal_tables:
+        template_ids = list({tbl.template_id for tbl in cal_tables if tbl.template_id is not None})
+        out_key_by_template: dict[int, str] = {}
+        if template_ids:
             out_cols = (
                 db.query(CalibrationTemplateColumn)
-                .filter(CalibrationTemplateColumn.template_id == tbl.template_id, CalibrationTemplateColumn.interpolation_role == "Output")
+                .filter(
+                    CalibrationTemplateColumn.template_id.in_(template_ids),
+                    CalibrationTemplateColumn.interpolation_role == "Output",
+                )
                 .order_by(CalibrationTemplateColumn.sort_order.asc(), CalibrationTemplateColumn.id.asc())
                 .all()
             )
-            if not out_cols:
-                continue
-            out_key = str(out_cols[0].column_name or "").strip()
-            if not out_key:
-                continue
-            cal_rows = db.query(AssetCalibrationData).filter(AssetCalibrationData.calibration_table_id == tbl.id).all()
-            max_v = max((_safe_float((cr.row_data or {}).get(out_key)) for cr in cal_rows if isinstance(cr.row_data, dict)), default=0.0)
-            if max_v > 0:
-                return max_v
-        return 0.0
+            for col in out_cols:
+                if col.template_id not in out_key_by_template:
+                    cname = str(col.column_name or "").strip()
+                    if cname:
+                        out_key_by_template[col.template_id] = cname
+
+        relevant_tables = [tbl for tbl in cal_tables if tbl.template_id in out_key_by_template]
+        table_ids = [tbl.id for tbl in relevant_tables]
+        max_by_table: dict[int, float] = {}
+        if table_ids:
+            out_key_by_table = {tbl.id: out_key_by_template[tbl.template_id] for tbl in relevant_tables}
+            cal_rows = (
+                db.query(AssetCalibrationData.calibration_table_id, AssetCalibrationData.row_data)
+                .filter(AssetCalibrationData.calibration_table_id.in_(table_ids))
+                .all()
+            )
+            for tbl_id, row_data in cal_rows:
+                if not isinstance(row_data, dict):
+                    continue
+                val = _safe_float(row_data.get(out_key_by_table[tbl_id]))
+                if val > max_by_table.get(tbl_id, 0.0):
+                    max_by_table[tbl_id] = val
+        for tbl in relevant_tables:
+            if tbl.asset_code not in cap_by_asset:
+                max_v = max_by_table.get(tbl.id, 0.0)
+                if max_v > 0:
+                    cap_by_asset[tbl.asset_code] = max_v
 
     rows = []
     total_stock = 0.0
     total_cap = 0.0
     for asset in assets:
         ledger = latest_row.get(asset.asset_code)
-        cap = _max_capacity(asset.asset_code)
+        cap = cap_by_asset.get(asset.asset_code, 0.0)
         if ledger is None and cap <= 0:
             continue
         stock_val = _safe_float(getattr(ledger, stock_attr, 0.0)) if ledger else 0.0
+        nsv_val = _safe_float(getattr(ledger, "stock_nsv_bbl", 0.0)) if ledger else 0.0
+        gsv_val = _safe_float(getattr(ledger, "stock_gsv_bbl", 0.0)) if ledger else 0.0
+        lt_val = _safe_float(getattr(ledger, "stock_lt", 0.0)) if ledger else 0.0
+        mt_val = _safe_float(getattr(ledger, "stock_mt", 0.0)) if ledger else 0.0
         ullage = max(0.0, cap - stock_val) if cap > 0 else 0.0
         fill_pct = round(min(100.0, max(0.0, (stock_val / cap) * 100.0)), 2) if cap > 0 else 0.0
-        total_stock += stock_val
-        total_cap += cap
-        rows.append({
+        row_obj = {
             "tank_asset_code": asset.asset_code,
             "tank_asset_name": asset.asset_name or asset.asset_code,
             "location_code": asset.location_code,
             "product_name": (ledger.product_name if ledger and ledger.product_name else "Unassigned"),
             "current_stock": round(stock_val, 3),
+            "stock_nsv_bbl": round(nsv_val, 3),
+            "stock_gsv_bbl": round(gsv_val, 3),
+            "stock_lt": round(lt_val, 3),
+            "stock_mt": round(mt_val, 3),
             "capacity": round(cap, 3),
+            "capacity_nsv_bbl": round(cap, 3),
+            "capacity_gsv_bbl": round(cap, 3),
             "ullage": round(ullage, 3),
             "fill_pct": fill_pct,
             "accounting_date": str(ledger.accounting_date) if ledger and ledger.accounting_date else None,
-        })
+        }
+        if not _row_matches_tank_filters(row_obj, visual, slicers, params, ignore_source_match=ignore_source_match):
+            continue
+        total_stock += stock_val
+        total_cap += cap
+        rows.append(row_obj)
 
     totals = {
         "current_stock": round(total_stock, 3),
@@ -887,11 +1045,19 @@ def _strip_hidden_columns(result: dict, visual: dict) -> dict:
     return result
 
 
-def _inject_selection_filters(report_definition: dict, visual: dict, selection_filters: list | None, ignore_source_match: bool = True) -> dict:
+def _inject_selection_filters(
+    report_definition: dict,
+    visual: dict,
+    selection_filters: list | None,
+    params: dict | None = None,
+    ignore_source_match: bool = True,
+) -> tuple[dict, dict]:
+    updated_params = dict(params or {})
+    updated_params["runtime_values"] = dict(updated_params.get("runtime_values") or {})
     if not selection_filters or not isinstance(selection_filters, list):
-        return report_definition
+        return report_definition, updated_params
     if not _as_bool((visual.get("interactions") or {}).get("crossFilter"), True) and ignore_source_match:
-        return report_definition
+        return report_definition, updated_params
     available_keys = {
         str(col.get("key"))
         for col in (report_definition.get("columns") or [])
@@ -918,24 +1084,43 @@ def _inject_selection_filters(report_definition: dict, visual: dict, selection_f
         extra_filters.append(rule)
 
     if not extra_filters:
-        return report_definition
+        return report_definition, updated_params
 
     cloned = copy.deepcopy(report_definition)
     if cloned.get("filter_logic") == "OR" and cloned.get("filters"):
         # Preserve existing OR filters and add cross-filter as runtime filter so it intersects with AND.
+        existing_rt = cloned.setdefault("runtime_filters", [])
+        existing_rt_keys = {str(item.get("key") or "") for item in existing_rt}
         for index, ef in enumerate(extra_filters):
-            rt_key = f"__cf_{index}_{ef['column_key']}"
-            cloned.setdefault("runtime_filters", []).append({
+            if len(existing_rt) >= 12:
+                break
+            safe_col = re.sub(r"[^a-z0-9_]", "_", ef["column_key"].lower()).strip("_") or "col"
+            rt_key = f"cf_{index}_{safe_col}"
+            while rt_key in existing_rt_keys:
+                rt_key = f"{rt_key}_x"
+            existing_rt_keys.add(rt_key)
+            if ef["operator"] == "in":
+                rt_type = "select"
+                rt_val = ef["value"] if isinstance(ef["value"], list) else [ef["value"]]
+            elif ef["operator"] == "between":
+                rt_type = "number_range" if isinstance(ef["value"], (int, float)) else "date_range"
+                rt_val = {"from": ef["value"], "to": ef.get("value2")}
+            else:
+                rt_type = "text"
+                rt_val = ef["value"]
+            existing_rt.append({
                 "key": rt_key,
                 "label": ef["column_key"],
-                "type": "select" if ef["operator"] == "in" else "text",
+                "type": rt_type,
+                "operator": ef["operator"],
                 "column_key": ef["column_key"],
                 "required": False,
             })
+            updated_params["runtime_values"][rt_key] = rt_val
     else:
         cloned["filter_logic"] = "AND"
         cloned.setdefault("filters", []).extend(extra_filters)
-    return cloned
+    return cloned, updated_params
 
 
 def run_visual(db, user, visual: dict, definition: dict, params: dict) -> dict:
@@ -950,12 +1135,14 @@ def run_visual(db, user, visual: dict, definition: dict, params: dict) -> dict:
     if source.get("kind") == "tank_snapshot" or (vtype == "TANK_VISUAL" and not ((visual.get("query") or {}).get("columns"))):
         from app.dependencies.permissions import require_any_user_permission
         require_any_user_permission(user, ["View Analytics Dashboard", "View Tank Stock Ledger", "View Analytics Definition"], db)
-        return _run_tank_snapshot_visual(db, user, visual, params)
+        return _run_tank_snapshot_visual(db, user, visual, params, slicers=definition.get("slicers") or [], ignore_source_match=True)
 
     report_definition = report_definition_for_visual(visual, definition.get("slicers") or [])
     report_definition["report_type"] = "MATRIX" if vtype == "MATRIX" and report_definition.get("matrix") else "TABULAR"
-    report_definition = _inject_selection_filters(report_definition, visual, params.get("selection_filters"), ignore_source_match=True)
-    result = run_report(db, user, report_definition, params)
+    report_definition, effective_params = _inject_selection_filters(
+        report_definition, visual, params.get("selection_filters"), params=params, ignore_source_match=True
+    )
+    result = run_report(db, user, report_definition, effective_params)
     return _strip_hidden_columns(result, visual)
 
 
@@ -965,8 +1152,15 @@ def run_visual_records(db, user, visual: dict, definition: dict, params: dict) -
     vtype = str(visual.get("type") or "").upper()
     if vtype == "TEXT":
         return {"columns": [], "rows": [], "totals": {}, "meta": {"warnings": [], "total_rows": 0}}
-    if source.get("kind") in {"material_balance", "tank_snapshot"} or (vtype == "TANK_VISUAL" and not ((visual.get("query") or {}).get("columns"))):
+    if source.get("kind") == "material_balance":
         res = run_visual(db, user, visual, definition, params)
+    elif source.get("kind") == "tank_snapshot" or (vtype == "TANK_VISUAL" and not ((visual.get("query") or {}).get("columns"))):
+        from app.dependencies.permissions import require_any_user_permission
+        require_any_user_permission(user, ["View Analytics Dashboard", "View Tank Stock Ledger", "View Analytics Definition"], db)
+        res = _run_tank_snapshot_visual(db, user, visual, params, slicers=definition.get("slicers") or [], ignore_source_match=False)
+    else:
+        res = None
+    if res is not None:
         rows = res.get("rows") or []
         search_q = str(params.get("search") or "").strip().casefold()
         if search_q:
@@ -985,8 +1179,9 @@ def run_visual_records(db, user, visual: dict, definition: dict, params: dict) -
             col["hidden"] = False
     report_definition["options"] = {"show_totals": True, "page_size": 500}
     # For underlying records, ALSO apply selection filters even if clicked on the same visual!
-    report_definition = _inject_selection_filters(report_definition, visual, params.get("selection_filters"), ignore_source_match=False)
-    run_params = dict(params or {})
+    report_definition, run_params = _inject_selection_filters(
+        report_definition, visual, params.get("selection_filters"), params=params, ignore_source_match=False
+    )
     run_params["page_size"] = 500
     result = run_report(db, user, report_definition, run_params)
     search_q = str(params.get("search") or "").strip().casefold()

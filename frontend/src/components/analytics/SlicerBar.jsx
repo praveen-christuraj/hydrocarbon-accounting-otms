@@ -231,14 +231,14 @@ function SlicerBar({
                 key={slicer.id || sKey}
                 label={slicer.label || sKey}
                 icon="filter"
-                placeholder="All"
-                options={slicerOptions[slicer.id] || []}
+                placeholder={slicer.config?.placeholder || 'All'}
+                options={slicerOptions[sKey] || slicerOptions[slicer.id] || []}
                 selected={Array.isArray(val) ? val : (val ? [val] : [])}
                 onChange={(nextList) => onRuntimeValueChange(sKey, nextList)}
               />
             )
           }
-          if (sType === 'SINGLE_DATE') {
+          if (sType === 'DATE' || sType === 'SINGLE_DATE') {
             return (
               <div key={slicer.id || sKey} className="analytics-slicer-single-date">
                 <span className="analytics-slicer-field-label">{slicer.label || sKey}</span>
@@ -271,12 +271,35 @@ function SlicerBar({
               </div>
             )
           }
+          if (sType === 'NUMBER_RANGE') {
+            const obj = typeof val === 'object' && val !== null ? val : { from: '', to: '' }
+            return (
+              <div key={slicer.id || sKey} className="analytics-slicer-date-group">
+                <span className="analytics-slicer-field-label">{slicer.label || sKey}</span>
+                <div className="analytics-date-range-inputs">
+                  <input
+                    type="number"
+                    placeholder="Min"
+                    value={obj.from ?? ''}
+                    onChange={(e) => onRuntimeValueChange(sKey, { ...obj, from: e.target.value })}
+                  />
+                  <span className="analytics-date-sep">–</span>
+                  <input
+                    type="number"
+                    placeholder="Max"
+                    value={obj.to ?? ''}
+                    onChange={(e) => onRuntimeValueChange(sKey, { ...obj, to: e.target.value })}
+                  />
+                </div>
+              </div>
+            )
+          }
           return (
             <div key={slicer.id || sKey} className="analytics-slicer-single-date">
               <span className="analytics-slicer-field-label">{slicer.label || sKey}</span>
               <input
                 type={sType === 'NUMBER' ? 'number' : 'text'}
-                placeholder={`Filter ${(slicer.label || sKey).toLowerCase()}…`}
+                placeholder={slicer.config?.placeholder || `Filter ${(slicer.label || sKey).toLowerCase()}…`}
                 value={val ?? ''}
                 onChange={(e) => onRuntimeValueChange(sKey, e.target.value)}
               />

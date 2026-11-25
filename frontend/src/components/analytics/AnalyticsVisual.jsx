@@ -426,11 +426,10 @@ function AnalyticsVisual({
 
             {!editable && onExport && savedType !== 'TEXT' && bodyRect.width >= 380 && (
               <ExportMenu
-                compact
                 label="Export"
                 title={visual?.title || 'Analytics Visual'}
-                filenameBase={(visual?.title || 'analytics_visual').toLowerCase().replace(/[^a-z0-9]+/g, '_')}
-                columns={columns.map((c) => ({ key: c.key, header: c.label || c.key }))}
+                fileName={(visual?.title || 'analytics_visual').toLowerCase().replace(/[^a-z0-9]+/g, '_')}
+                columns={columns.map((c) => ({ key: c.key, label: c.label || c.key }))}
                 rows={rows}
                 disabled={!rows.length}
               />
@@ -456,7 +455,7 @@ function AnalyticsVisual({
       </article>
 
       <Modal
-        isOpen={expanded}
+        open={expanded}
         onClose={() => setExpanded(false)}
         title={visual?.title || visualMeta.label}
         size="xl"

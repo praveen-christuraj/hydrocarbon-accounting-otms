@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import AlertMessage from '../common/AlertMessage'
 
 function TankVisualRenderer({
@@ -7,7 +7,15 @@ function TankVisualRenderer({
   activeSelection = null,
   onCrossFilter = null,
 }) {
-  const [unit, setUnit] = useState(() => visual?.query?.unit || 'nsv')
+  const clipPrefix = useId().replace(/[^a-zA-Z0-9_-]/g, '')
+  const [unit, setUnit] = useState(() => String(visual?.query?.unit || 'nsv').toLowerCase())
+
+  useEffect(() => {
+    const nextUnit = String(visual?.query?.unit || 'nsv').toLowerCase()
+    if (nextUnit === 'nsv' || nextUnit === 'gsv') {
+      setUnit(nextUnit)
+    }
+  }, [visual?.query?.unit])
 
   const tanks = useMemo(() => {
     if (!Array.isArray(rows) || !rows.length) return []
@@ -15,19 +23,23 @@ function TankVisualRenderer({
     for (const r of rows) {
       const code = String(r.tank_asset_code || r.asset_code || r.tank || 'TANK')
       if (!byTank.has(code)) {
-        const nsv = Number(r.stock_nsv_bbl ?? r.movement_nsv_bbl ?? 0)
-        const gsv = Number(r.stock_gsv_bbl ?? r.movement_gsv_bbl ?? nsv)
-        const capNsv = Number(r.capacity_nsv_bbl ?? 0)
+        const fallbackStock = Number(r.current_stock ?? 0)
+        const nsv = Number(r.stock_nsv_bbl ?? r.current_stock ?? r.movement_nsv_bbl ?? 0)
+        const gsv = Number(r.stock_gsv_bbl ?? r.current_stock ?? r.movement_gsv_bbl ?? nsv)
+        const capBase = Number(r.capacity ?? 0)
+        const capNsv = Number(r.capacity_nsv_bbl ?? capBase)
         const capGsv = Number(r.capacity_gsv_bbl ?? capNsv)
-        const stock = unit === 'gsv' ? gsv : nsv
+        const stock = unit === 'gsv' ? gsv : (unit === 'nsv' ? nsv : fallbackStock)
         const cap = unit === 'gsv' ? capGsv : capNsv
         const pct = cap > 0
           ? Math.max(0, Math.min(100, (stock / cap) * 100))
           : (r.fill_pct != null ? Math.max(0, Math.min(100, Number(r.fill_pct))) : null)
-        const ullage = cap > 0 ? Math.max(0, cap - stock) : null
+        const ullage = cap > 0
+          ? Math.max(0, cap - stock)
+          : (r.ullage != null && Number.isFinite(Number(r.ullage)) ? Math.max(0, Number(r.ullage)) : null)
         byTank.set(code, {
           code,
-          name: r.tank_name || code,
+          name: r.tank_asset_name || r.tank_name || code,
           location: r.location_code || '',
           product: r.product_name || 'Unassigned',
           stock,
@@ -123,7 +135,7 @@ function TankVisualRenderer({
                   aria-hidden="true"
                 >
                   <defs>
-                    <clipPath id={`clip-${tank.code.replace(/[^a-zA-Z0-9]/g, '_')}`}>
+                    <clipPath id={`clip-${clipPrefix}-${tank.code.replace(/[^a-zA-Z0-9]/g, '_')}`}>
                       <rect x="14" y="18" width="60" height="72" rx="4" />
                     </clipPath>
                   </defs>
@@ -132,7 +144,7 @@ function TankVisualRenderer({
                   {/* Tank cylinder body */}
                   <rect x="14" y="18" width="60" height="72" rx="3" className="tank-svg-body" />
                   {/* Liquid fill */}
-                  <g clipPath={`url(#clip-${tank.code.replace(/[^a-zA-Z0-9]/g, '_')})`}>
+                  <g clipPath={`url(#clip-${clipPrefix}-${tank.code.replace(/[^a-zA-Z0-9]/g, '_')})`}>
                     <rect
                       x="14"
                       y={liquidY}
