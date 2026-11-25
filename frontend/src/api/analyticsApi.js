@@ -24,6 +24,10 @@ export const runAnalyticsPreview = (definition, params = {}) =>
   apiPost('/analytics/run-preview', { definition, params })
 export const runAnalyticsDashboard = (id, params = {}) =>
   apiPost(`/analytics/my-dashboards/${id}/run-batch`, params)
+export const getAnalyticsSlicerValues = (id, payload = {}) =>
+  apiPost(`/analytics/my-dashboards/${id}/slicer-values`, payload)
+export const getAnalyticsDefinitionSlicerValues = (id, payload = {}) =>
+  apiPost(`/analytics/definitions/${id}/slicer-values`, payload)
 
 export const exportAnalyticsVisual = async (id, visualId, params = {}, format = 'xlsx') => {
   const endpoint = `/analytics/my-dashboards/${id}/visual/${encodeURIComponent(visualId)}/export`

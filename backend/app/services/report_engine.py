@@ -114,7 +114,7 @@ FILTER_OPERATORS = {
     "eq", "ne", "gt", "gte", "lt", "lte", "contains", "not_contains",
     "starts_with", "ends_with", "in", "not_in", "between", "is_blank", "is_not_blank",
 }
-RUNTIME_TYPES = {"location", "operation_type", "status", "asset", "text", "number", "date", "select"}
+RUNTIME_TYPES = {"location", "operation_type", "status", "asset", "text", "number", "number_range", "date", "date_range", "select"}
 BUILTIN_RUNTIME_TYPES = {"location", "operation_type", "status", "asset"}
 
 
@@ -1042,22 +1042,62 @@ def _row_passes_filters(row, definition, params):
         target = entry.get("column_key") or entry.get("_target")
         if not target:
             continue
-        operator = entry.get("operator") or ("contains" if entry.get("type") == "text" else "eq" if entry.get("type") != "select" else "in")
+        rtype = str(entry.get("type") or "").lower()
+
+        if rtype in {"date_range", "number_range"}:
+            if isinstance(value, dict):
+                lower = value.get("from", value.get("date_from", value.get("min", value.get("start"))))
+                upper = value.get("to", value.get("date_to", value.get("max", value.get("end"))))
+            elif isinstance(value, (list, tuple)) and len(value) == 2:
+                lower, upper = value[0], value[1]
+            else:
+                lower, upper = None, None
+            if lower in (None, "") and upper in (None, ""):
+                continue
+            current = row.get(target)
+            if lower not in (None, "") and not _apply_operator("gte", current, lower):
+                return False
+            if upper not in (None, "") and not _apply_operator("lte", current, upper):
+                return False
+            continue
+
+        operator = entry.get("operator") or (
+            "contains" if rtype == "text"
+            else "in" if rtype == "select"
+            else "eq"
+        )
         expected = value
         if operator == "in" and not isinstance(expected, list):
             expected = [expected]
+        if operator == "in":
+            expected = [item for item in expected if item not in (None, "")]
+            if not expected:
+                continue
         if not _apply_operator(operator, row.get(target), expected, entry.get("value2")):
             return False
     return True
+
+
+def _runtime_value_missing(value, rtype: str) -> bool:
+    if value is None or value == "" or value == []:
+        return True
+    if rtype in {"date_range", "number_range"} and isinstance(value, dict):
+        lower = value.get("from", value.get("date_from", value.get("min", value.get("start"))))
+        upper = value.get("to", value.get("date_to", value.get("max", value.get("end"))))
+        return lower in (None, "") and upper in (None, "")
+    if rtype in {"date_range", "number_range"} and isinstance(value, (list, tuple)):
+        return len(value) < 2 or all(item in (None, "") for item in value[:2])
+    return False
 
 
 def _check_required_runtime(definition, params):
     runtime_values = params.get("runtime_values") or {}
     for entry in definition.get("runtime_filters") or []:
         if entry.get("required"):
+            rtype = str(entry.get("type") or "").lower()
             value = runtime_values.get(entry.get("key"))
-            if value is None or value == "" or value == []:
-                if entry.get("default") not in (None, "", []):
+            if _runtime_value_missing(value, rtype):
+                if not _runtime_value_missing(entry.get("default"), rtype):
                     runtime_values[entry["key"]] = entry["default"]
                     continue
                 raise ReportDefinitionError(f"Please choose '{entry.get('label') or entry.get('key')}' before running this report.")

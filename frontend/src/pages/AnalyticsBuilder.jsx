@@ -5,6 +5,7 @@ import 'react-grid-layout/css/styles.css'
 import 'react-resizable/css/styles.css'
 import PageHeader from '../components/common/PageHeader'
 import AlertMessage from '../components/common/AlertMessage'
+import Modal from '../components/common/Modal'
 import AnalyticsVisual from '../components/analytics/AnalyticsVisual'
 import FormulaBuilder from '../components/reportBuilder/FormulaBuilder'
 import { usePermissions } from '../hooks/usePermissions'
@@ -27,6 +28,89 @@ const makeKey = (value) => {
   const key = String(value || 'column').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'column'
   return /^[a-z]/.test(key) ? key : `field_${key}`
 }
+const defaultLayoutForType = (type) => {
+  if (type === 'KPI_CARD' || type === 'GAUGE') return { w: 3, h: 4 }
+  if (type === 'TABLE' || type === 'MATRIX') return { w: 12, h: 8 }
+  if (type === 'PIE' || type === 'DONUT') return { w: 5, h: 7 }
+  return { w: 6, h: 7 }
+}
+const SLICER_TYPES = ['SELECT', 'TEXT', 'NUMBER', 'NUMBER_RANGE', 'DATE', 'DATE_RANGE']
+
+function StyleEditor({ visual, onChange, onClose }) {
+  if (!visual) return null
+  const style = visual.style || {}
+  const kpi = style.kpi || {}
+  const table = style.table || {}
+  const chart = style.chart || {}
+  const type = String(visual.type || '').toUpperCase()
+  const update = (patch) => onChange({ ...style, ...patch })
+  const updateKpi = (patch) => update({ kpi: { ...kpi, ...patch } })
+  const updateTable = (patch) => update({ table: { ...table, ...patch } })
+  const updateChart = (patch) => update({ chart: { ...chart, ...patch } })
+
+  return (
+    <Modal open title={`Customize: ${visual.title || 'Visual'}`} onClose={onClose} size="lg">
+      <div className="analytics-style-editor">
+        <section className="analytics-style-section">
+          <h4>Card</h4>
+          <div className="analytics-builder-fields">
+            <label>Title color<input type="color" value={style.titleColor || '#1f2937'} onChange={(e) => update({ titleColor: e.target.value })} /></label>
+            <label>Card background<input type="color" value={style.cardBackground || '#ffffff'} onChange={(e) => update({ cardBackground: e.target.value })} /></label>
+            <label className="analytics-inline-check"><input type="checkbox" checked={style.cardBorder !== false} onChange={(e) => update({ cardBorder: e.target.checked })} /> Show border</label>
+            <button type="button" className="btn-link" onClick={() => update({ titleColor: null, cardBackground: null, cardBorder: true })}>Reset card style</button>
+          </div>
+        </section>
+
+        {(type === 'KPI_CARD' || type === 'GAUGE') && (
+          <section className="analytics-style-section">
+            <h4>KPI</h4>
+            <div className="analytics-builder-fields">
+              <label>Value color<input type="color" value={kpi.valueColor || '#f27b2f'} onChange={(e) => updateKpi({ valueColor: e.target.value })} /></label>
+              <label>Label color<input type="color" value={kpi.labelColor || '#6b7280'} onChange={(e) => updateKpi({ labelColor: e.target.value })} /></label>
+              <label>Value font size<input type="number" min="20" max="96" value={kpi.valueFontSize ?? 48} onChange={(e) => updateKpi({ valueFontSize: Number(e.target.value) })} /></label>
+              <label>Label font size<input type="number" min="10" max="32" value={kpi.labelFontSize ?? 13} onChange={(e) => updateKpi({ labelFontSize: Number(e.target.value) })} /></label>
+              <label>Decimals<input type="number" min="0" max="6" value={kpi.decimals ?? 2} onChange={(e) => updateKpi({ decimals: Number(e.target.value) })} /></label>
+              <label>Align<select value={kpi.align || 'left'} onChange={(e) => updateKpi({ align: e.target.value })}><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select></label>
+              <label>Prefix<input value={kpi.prefix || ''} onChange={(e) => updateKpi({ prefix: e.target.value })} maxLength={24} /></label>
+              <label>Suffix<input value={kpi.suffix || ''} onChange={(e) => updateKpi({ suffix: e.target.value })} maxLength={24} /></label>
+              <label className="analytics-inline-check"><input type="checkbox" checked={kpi.compact === true} onChange={(e) => updateKpi({ compact: e.target.checked })} /> Compact number</label>
+            </div>
+          </section>
+        )}
+
+        {(type === 'TABLE' || type === 'MATRIX') && (
+          <section className="analytics-style-section">
+            <h4>Table</h4>
+            <div className="analytics-builder-fields">
+              <label>Density<select value={table.density || 'comfortable'} onChange={(e) => updateTable({ density: e.target.value })}><option value="compact">Compact</option><option value="comfortable">Comfortable</option><option value="spacious">Spacious</option></select></label>
+              <label className="analytics-inline-check"><input type="checkbox" checked={table.stickyHeader !== false} onChange={(e) => updateTable({ stickyHeader: e.target.checked })} /> Sticky header</label>
+              <label className="analytics-inline-check"><input type="checkbox" checked={table.striped === true} onChange={(e) => updateTable({ striped: e.target.checked })} /> Striped rows</label>
+              <label className="analytics-inline-check"><input type="checkbox" checked={table.wrapText === true} onChange={(e) => updateTable({ wrapText: e.target.checked })} /> Wrap text</label>
+            </div>
+          </section>
+        )}
+
+        {['BAR','COLUMN','LINE','AREA','PIE','DONUT'].includes(type) && (
+          <section className="analytics-style-section">
+            <h4>Chart</h4>
+            <div className="analytics-builder-fields">
+              <label className="analytics-inline-check"><input type="checkbox" checked={chart.showLegend !== false} onChange={(e) => updateChart({ showLegend: e.target.checked })} /> Show legend</label>
+              <label className="analytics-inline-check"><input type="checkbox" checked={chart.showLabels === true} onChange={(e) => updateChart({ showLabels: e.target.checked })} /> Show labels</label>
+              <label className="analytics-inline-check"><input type="checkbox" checked={chart.showGrid !== false} onChange={(e) => updateChart({ showGrid: e.target.checked })} /> Show grid</label>
+              {['LINE','AREA'].includes(type) && <label className="analytics-inline-check"><input type="checkbox" checked={chart.smooth === true} onChange={(e) => updateChart({ smooth: e.target.checked })} /> Smooth line</label>}
+              {['LINE','AREA','BAR','COLUMN'].includes(type) && <label className="analytics-inline-check"><input type="checkbox" checked={chart.areaFill === true} onChange={(e) => updateChart({ areaFill: e.target.checked })} /> Area fill</label>}
+              {['BAR','COLUMN'].includes(type) && <label className="analytics-inline-check"><input type="checkbox" checked={chart.stacked === true} onChange={(e) => updateChart({ stacked: e.target.checked })} /> Stacked</label>}
+              <label>X label rotation<input type="number" min="0" max="90" value={chart.xLabelRotation ?? 0} onChange={(e) => updateChart({ xLabelRotation: Number(e.target.value) })} /></label>
+              <label>Palette (comma hex)<input value={(chart.palette || []).join(', ')} onChange={(e) => updateChart({ palette: e.target.value.split(',').map((v) => v.trim()).filter(Boolean) })} placeholder="#f27b2f, #2ea3f2, #10b981" /></label>
+            </div>
+          </section>
+        )}
+      </div>
+      <div className="app-modal-footer"><button type="button" className="btn-primary" onClick={onClose}>Done</button></div>
+    </Modal>
+  )
+}
+
 
 function AnalyticsBuilder({ loggedInUser }) {
   const { dashboardId } = useParams()
@@ -56,10 +140,14 @@ function AnalyticsBuilder({ loggedInUser }) {
   const [measureKey, setMeasureKey] = useState('')
   const [calculation, setCalculation] = useState(null)
   const [formulaDialogOpen, setFormulaDialogOpen] = useState(false)
-  const formulaInitial = useMemo(() => calculation ? { label: calculation.label, formula: calculation.formula } : null, [calculation])
   const [unit, setUnit] = useState('nsv')
-  const [slicerColumnKey, setSlicerColumnKey] = useState('')
+  const [slicerField, setSlicerField] = useState('')
+  const [slicerType, setSlicerType] = useState('SELECT')
+  const [slicerLabel, setSlicerLabel] = useState('')
+  const [slicerVisualIds, setSlicerVisualIds] = useState([])
+  const [styleVisualId, setStyleVisualId] = useState(null)
   const [loadError, setLoadError] = useState('')
+  const formulaInitial = useMemo(() => calculation ? { label: calculation.label, formula: calculation.formula } : null, [calculation])
 
   useEffect(() => {
     let cancelled = false
@@ -74,7 +162,7 @@ function AnalyticsBuilder({ loggedInUser }) {
           status: 'Active',
         })))
         const firstDataset = nextCatalog.datasets?.[0]?.id || ''
-        setDatasetId(firstDataset)
+        setDatasetId((current) => current || firstDataset)
       })
       .catch((error) => { if (!cancelled) setLoadError(error.message || 'Unable to load Analytics catalog.') })
     return () => { cancelled = true }
@@ -125,6 +213,25 @@ function AnalyticsBuilder({ loggedInUser }) {
       : [...current, field.column])
   }
 
+  const ensureColumnInVisual = (visual, field) => {
+    const query = visual.query || {}
+    const columns = [...(query.columns || [])]
+    const key = makeKey(field.column)
+    if (columns.some((col) => col.key === key)) return visual
+    const hasGrouping = (query.group_by || []).length > 0 || query.report_type === 'MATRIX' || query.matrix
+    columns.push({
+      key,
+      label: field.label || field.column,
+      kind: 'data',
+      source: { type: 'column', column: field.column },
+      data_type: field.data_type || 'text',
+      format: { decimals: 2 },
+      hidden: true,
+      ...(hasGrouping ? { aggregate: 'FIRST' } : {}),
+    })
+    return { ...visual, query: { ...query, columns } }
+  }
+
   const buildVisual = () => {
     const title = visualTitle.trim() || (isMaterialBalance ? 'Material Balance' : `${visualType} visual`)
     const id = `visual_${Date.now()}`
@@ -134,13 +241,14 @@ function AnalyticsBuilder({ loggedInUser }) {
     } else {
       const chosen = fields.filter((field) => selectedFields.includes(field.column))
       if (!chosen.length) throw new Error('Select at least one field for this visual.')
-      const toColumn = (field) => ({
+      const toColumn = (field, hidden = false) => ({
         key: makeKey(field.column),
         label: field.label || field.column,
         kind: 'data',
         source: { type: 'column', column: field.column },
         data_type: field.data_type || 'text',
         format: { decimals: 2 },
+        ...(hidden ? { hidden: true } : {}),
       })
       const calculatedSpec = calculation ? {
         key: calculation.key,
@@ -155,7 +263,7 @@ function AnalyticsBuilder({ loggedInUser }) {
         const selected = chosen.find((field) => field.column === measureKey) || chosen.find((field) => field.data_type === 'number')
         return selected ? toColumn(selected) : null
       }
-      let columns = chosen.map(toColumn)
+      let columns = chosen.map((f) => toColumn(f))
       let groupBy = []
       let matrix = undefined
       let configuredDimensionKey = null
@@ -165,7 +273,7 @@ function AnalyticsBuilder({ loggedInUser }) {
         if (!measure || (measure.data_type !== 'number' && measure.kind !== 'calculated')) throw new Error('Choose a numeric measure for a KPI visual.')
         configuredMeasureKey = measure.key
         columns = calculation && measure.key === calculatedSpec?.key
-          ? [...chosen.map(toColumn), calculatedSpec]
+          ? [...chosen.map((f) => toColumn(f)), calculatedSpec]
           : [measure]
         columns.forEach((column) => { if (column.data_type === 'number' || column.kind === 'calculated') { column.aggregate = 'SUM'; column.show_total = column.key === measure.key } })
       } else if (isChart) {
@@ -174,7 +282,7 @@ function AnalyticsBuilder({ loggedInUser }) {
         if (!dimension || !measure || (measure.data_type !== 'number' && measure.kind !== 'calculated')) throw new Error('Choose one category field and one numeric measure for this chart.')
         configuredDimensionKey = makeKey(dimension.column)
         configuredMeasureKey = measure.key
-        columns = chosen.map(toColumn)
+        columns = chosen.map((f) => toColumn(f))
         if (calculatedSpec && measure.key === calculatedSpec.key) columns.push(calculatedSpec)
         if (!columns.some((column) => column.key === makeKey(dimension.column))) columns.push(toColumn(dimension))
         columns.forEach((column) => {
@@ -190,7 +298,7 @@ function AnalyticsBuilder({ loggedInUser }) {
         const pivotColumn = toColumn(dimensions[1])
         configuredDimensionKey = rowColumn.key
         configuredMeasureKey = measure.key
-        columns = chosen.map(toColumn)
+        columns = chosen.map((f) => toColumn(f))
         if (calculatedSpec && measure.key === calculatedSpec.key) columns.push(calculatedSpec)
         if (!columns.some((column) => column.key === rowColumn.key)) columns.push(rowColumn)
         if (!columns.some((column) => column.key === pivotColumn.key)) columns.push(pivotColumn)
@@ -224,13 +332,13 @@ function AnalyticsBuilder({ loggedInUser }) {
         ...((visualType === 'KPI_CARD' || visualType === 'GAUGE') ? { metric_key: configuredMeasureKey } : {}),
       }
     }
-    const visual = { id, title, type: isMaterialBalance ? 'TABLE' : visualType, query }
-    const nextVisuals = [...definition.visuals, visual]
+    const size = defaultLayoutForType(isMaterialBalance ? 'TABLE' : visualType)
+    const visual = { id, title, type: isMaterialBalance ? 'TABLE' : visualType, query, style: {} }
     const nextDefinition = {
       ...definition,
       schema_version: 2,
-      visuals: nextVisuals,
-      layout: [...(definition.layout || []), { i: id, x: 0, y: (definition.layout || []).length * 5, w: 12, h: 5 }],
+      visuals: [...definition.visuals, visual],
+      layout: [...(definition.layout || []), { i: id, x: 0, y: Infinity, w: size.w, h: size.h, minW: 2, minH: 3 }],
     }
     setDefinition(nextDefinition)
     setVisualTitle('')
@@ -241,45 +349,67 @@ function AnalyticsBuilder({ loggedInUser }) {
     logUiAction('Analytics', 'Add Dashboard Visual', { dashboardId: dashboardId || null, visualId: id, type: visual.type })
   }
 
+
   const removeVisual = (id) => {
     setDefinition((current) => ({
       ...current,
       visuals: current.visuals.filter((item) => item.id !== id),
       layout: (current.layout || []).filter((item) => item.i !== id),
+      slicers: (current.slicers || []).map((s) => ({ ...s, visual_ids: (s.visual_ids || []).filter((vid) => vid !== id) })).filter((s) => (s.visual_ids || []).length > 0),
     }))
     setDraftResults((current) => { const next = { ...current }; delete next[id]; return next })
     logUiAction('Analytics', 'Remove Dashboard Visual', { visualId: id })
   }
 
+  const updateVisualStyle = (visualId, style) => {
+    setDefinition((current) => ({
+      ...current,
+      visuals: current.visuals.map((v) => v.id === visualId ? { ...v, style } : v),
+    }))
+  }
+
   const addSlicer = () => {
-    if (!slicerColumnKey) return
-    const [visualId, columnKey] = slicerColumnKey.split('::')
-    const visual = definition.visuals.find((item) => item.id === visualId)
-    const column = visual?.query?.columns?.find((item) => item.key === columnKey)
-    if (!visual || !column) return
-    const keyBase = `s_${makeKey(column.key)}`
+    if (!slicerField) return
+    const field = fields.find((item) => item.column === slicerField)
+    if (!field) return
+    const keyBase = `s_${makeKey(field.column)}`
     let key = keyBase
     let suffix = 2
     while ((definition.slicers || []).some((item) => item.key === key)) { key = `${keyBase}_${suffix}`; suffix += 1 }
+    const targetIds = slicerVisualIds.length ? slicerVisualIds : definition.visuals.map((v) => v.id)
+    const columnKey = makeKey(field.column)
+    const nextVisuals = definition.visuals.map((visual) => {
+      if (!targetIds.includes(visual.id)) return visual
+      if (visual.query?.source?.kind === 'material_balance') return visual
+      const hasColumn = (visual.query?.columns || []).some((col) => col.key === columnKey)
+      if (hasColumn) return visual
+      return ensureColumnInVisual(visual, field)
+    })
     setDefinition((current) => ({
       ...current,
-      slicers: [...(current.slicers || []), { id: `slicer_${Date.now()}`, key, label: column.label || column.key, type: 'SELECT', column_key: column.key, visual_ids: [visualId] }],
+      visuals: nextVisuals,
+      slicers: [...(current.slicers || []), {
+        id: `slicer_${Date.now()}`,
+        key,
+        label: slicerLabel.trim() || field.label || field.column,
+        type: slicerType,
+        column_key: columnKey,
+        field: columnKey,
+        visual_ids: targetIds,
+        config: { multi: slicerType === 'SELECT', allowAll: true },
+      }],
     }))
-    setSlicerColumnKey('')
-    logUiAction('Analytics', 'Add Dashboard Slicer', { visualId, columnKey: column.key })
+    setSlicerField('')
+    setSlicerLabel('')
+    setSlicerVisualIds([])
+    setSlicerType('SELECT')
+    logUiAction('Analytics', 'Add Dashboard Slicer', { columnKey, type: slicerType })
   }
 
   const removeSlicer = (id) => {
     setDefinition((current) => ({ ...current, slicers: (current.slicers || []).filter((item) => item.id !== id) }))
     logUiAction('Analytics', 'Remove Dashboard Slicer', { slicerId: id })
   }
-
-  const slicerChoices = definition.visuals.flatMap((visual) => (visual.query?.columns || []).map((column) => ({
-    id: `${visual.id}::${column.key}`,
-    label: `${column.label || column.key} — ${visual.title}`,
-    visualId: visual.id,
-    columnKey: column.key,
-  })))
 
   const runPreview = async (visual) => {
     setSaving(true)
@@ -325,11 +455,14 @@ function AnalyticsBuilder({ loggedInUser }) {
         ? await updateAnalyticsDefinition(dashboardId, payload())
         : await createAnalyticsDefinition(payload())
       setGrants(result.grants || [])
+      setIsPublished(Boolean(result.is_published))
+      setDefinition(result.definition || definition)
       logUiAction('Analytics', dashboardId ? 'Update Dashboard Definition' : 'Create Dashboard Definition', { dashboardId: result.id })
       toast.success('Analytics dashboard saved.')
       navigate(`/analytics/builder/${result.id}`, { replace: true })
     } catch (error) {
-      feedback.notifyError(error.message || 'Unable to save dashboard.')
+      const message = error.message || 'Unable to save dashboard.'
+      feedback.notifyError(message.includes('already exists') ? `${message} Open Analytics Home to find the existing draft/definition.` : message)
     } finally {
       setSaving(false)
     }
@@ -364,6 +497,7 @@ function AnalyticsBuilder({ loggedInUser }) {
     }
   }, [definition, feedback, locationCode, dashboardId])
 
+
   const activeLocations = locations
   const selectedDatasetColumns = useMemo(() => fields.filter((field) => selectedFields.includes(field.column)), [fields, selectedFields])
   const formulaColumns = useMemo(() => selectedDatasetColumns.map((field) => ({ key: makeKey(field.column), label: field.label || field.column })), [selectedDatasetColumns])
@@ -372,20 +506,38 @@ function AnalyticsBuilder({ loggedInUser }) {
     ...(calculation ? [{ key: calculation.key, label: `${calculation.label} (calculated)` }] : []),
   ], [selectedDatasetColumns, calculation])
   const dataSourceSelectItems = datasets.map((item) => ({ key: item.id, name: item.name }))
+
   const responsiveLayouts = useMemo(() => {
-    const base = definition.layout || []
-    const adapt = (columnCount) => base.map((item) => {
-      const w = Math.max(1, Math.min(Number(item.w) || columnCount, columnCount))
-      return { ...item, x: Math.max(0, Math.min(Number(item.x) || 0, columnCount - w)), w }
-    })
-    return { lg: adapt(12), md: adapt(10), sm: adapt(6), xs: adapt(2) }
-  }, [definition.layout])
-  const saveLayout = (layout) => {
-    const nextLayout = layout.map(({ i, x, y, w, h }) => ({ i, x, y, w, h }))
+    const base = Array.isArray(definition.layout) ? definition.layout : (definition.layout?.lg || [])
+    const ids = definition.visuals.map((v) => v.id)
+    const normalize = (items, cols) => {
+      const seen = new Set()
+      const out = []
+      for (const item of items || []) {
+        if (!item || !ids.includes(item.i) || seen.has(item.i)) continue
+        seen.add(item.i)
+        const w = Math.max(1, Math.min(Number(item.w) || cols, cols))
+        out.push({ ...item, w, x: Math.max(0, Math.min(Number(item.x) || 0, cols - w)), h: Math.max(2, Number(item.h) || 6), minW: 2, minH: 3 })
+      }
+      definition.visuals.forEach((visual, index) => {
+        if (seen.has(visual.id)) return
+        const size = defaultLayoutForType(visual.type)
+        out.push({ i: visual.id, x: 0, y: 1000 + index * 6, w: Math.min(size.w, cols), h: size.h, minW: 2, minH: 3 })
+      })
+      return out
+    }
+    return { lg: normalize(base, 12), md: normalize(base, 10), sm: normalize(base.map((i) => ({ ...i, x: 0, w: Math.min(6, i.w || 6) })), 6), xs: normalize(base.map((i) => ({ ...i, x: 0, w: 2 })), 2) }
+  }, [definition.layout, definition.visuals])
+
+  const saveLayout = (_currentLayout, allLayouts) => {
+    const source = (allLayouts && allLayouts.lg) || _currentLayout || []
+    const nextLayout = source.map(({ i, x, y, w, h, minW, minH }) => ({ i, x, y, w, h, minW: minW || 2, minH: minH || 3 }))
     setDefinition((current) => JSON.stringify(current.layout || []) === JSON.stringify(nextLayout)
       ? current
       : { ...current, layout: nextLayout })
   }
+
+  const styleVisual = definition.visuals.find((v) => v.id === styleVisualId) || null
 
   if (loading) return <div className="page-container"><p>Loading Analytics Studio…</p></div>
 
@@ -417,7 +569,7 @@ function AnalyticsBuilder({ loggedInUser }) {
       </section>
 
       <section className="analytics-builder-panel">
-        <div className="analytics-section-title"><div><h2>Add a visual</h2><p>Choose a governed source and select fields. Material Balance renders the current location template.</p></div></div>
+        <div className="analytics-section-title"><div><h2>Add a visual</h2><p>Choose a governed source and select fields. Drag visual headers to reposition and use resize handles to change size.</p></div></div>
         <div className="analytics-builder-fields analytics-visual-config">
           <label>Data source<select value={datasetId} onChange={(event) => { setDatasetId(event.target.value); setSelectedFields([]); setDimensionKey(''); setMeasureKey(''); setCalculation(null) }}>{dataSourceSelectItems.map((item) => <option key={item.key} value={item.key}>{item.name}</option>)}</select></label>
           {!isMaterialBalance && <label>Visual type<select value={visualType} onChange={(event) => setVisualType(event.target.value)}>{['TABLE', 'KPI_CARD', 'BAR', 'COLUMN', 'LINE', 'AREA', 'PIE', 'DONUT', 'MATRIX'].map((type) => <option key={type} value={type}>{type.replace('_', ' ')}</option>)}</select></label>}
@@ -454,13 +606,42 @@ function AnalyticsBuilder({ loggedInUser }) {
         </div>
       </section>
 
+
       <section className="analytics-builder-panel">
-        <div className="analytics-section-title"><div><h2>Dashboard slicers</h2><p>Add a text/select slicer bound to a field exposed by a visual.</p></div></div>
+        <div className="analytics-section-title"><div><h2>Dashboard slicers</h2><p>Add interactive filters. Slicers can use any dataset field and be applied to selected visuals; missing fields are added as hidden filter columns.</p></div></div>
         <div className="analytics-builder-fields analytics-visual-config">
-          <label>Bound field<select value={slicerColumnKey} onChange={(event) => setSlicerColumnKey(event.target.value)}><option value="">Choose a field</option>{slicerChoices.map((choice) => <option key={choice.id} value={`${choice.visualId}::${choice.columnKey}`}>{choice.label}</option>)}</select></label>
-          <div className="analytics-builder-actions"><button type="button" className="btn-secondary" onClick={addSlicer} disabled={!slicerColumnKey || (definition.slicers || []).length >= 6}>Add slicer</button></div>
+          <label>Slicer field
+            <select value={slicerField} onChange={(event) => { setSlicerField(event.target.value); const f = fields.find((x) => x.column === event.target.value); if (f && !slicerLabel) setSlicerLabel(f.label || f.column) }}>
+              <option value="">Choose a field</option>
+              {fields.map((field) => <option key={field.column} value={field.column}>{field.label || field.column} ({field.data_type})</option>)}
+            </select>
+          </label>
+          <label>Slicer type
+            <select value={slicerType} onChange={(event) => setSlicerType(event.target.value)}>
+              {SLICER_TYPES.map((type) => <option key={type} value={type}>{type.replace('_', ' ')}</option>)}
+            </select>
+          </label>
+          <label>Slicer label<input value={slicerLabel} onChange={(event) => setSlicerLabel(event.target.value)} placeholder="Label shown to users" /></label>
+          <label>Apply to visuals
+            <select multiple value={slicerVisualIds} onChange={(event) => setSlicerVisualIds(Array.from(event.target.selectedOptions).map((o) => o.value))} size={Math.min(6, Math.max(3, definition.visuals.length || 3))}>
+              {definition.visuals.map((visual) => <option key={visual.id} value={visual.id}>{visual.title}</option>)}
+            </select>
+            <small style={{ color: 'var(--text-muted)', fontWeight: 400 }}>Leave empty to target all visuals.</small>
+          </label>
+          <div className="analytics-builder-actions"><button type="button" className="btn-secondary" onClick={addSlicer} disabled={!slicerField || (definition.slicers || []).length >= 12}>Add slicer</button></div>
         </div>
-        {!!definition.slicers?.length && <div className="analytics-slicer-list">{definition.slicers.map((slicer) => <span key={slicer.id}>{slicer.label}<button type="button" className="btn-link" onClick={() => removeSlicer(slicer.id)}>Remove</button></span>)}</div>}
+        {!!definition.slicers?.length && (
+          <div className="analytics-slicer-list">
+            {definition.slicers.map((slicer) => (
+              <span key={slicer.id || slicer.key} className="analytics-slicer-chip">
+                <strong>{slicer.label}</strong>
+                <small>{slicer.type}</small>
+                <small>{(slicer.visual_ids || []).length ? `${slicer.visual_ids.length} visual(s)` : 'all visuals'}</small>
+                <button type="button" className="btn-link" onClick={() => removeSlicer(slicer.id)}>Remove</button>
+              </span>
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="analytics-builder-canvas" aria-label="Dashboard canvas">
@@ -470,7 +651,8 @@ function AnalyticsBuilder({ loggedInUser }) {
             layouts={responsiveLayouts}
             breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480 }}
             cols={{ lg: 12, md: 10, sm: 6, xs: 2 }}
-            rowHeight={48}
+            rowHeight={56}
+            margin={[16, 16]}
             onLayoutChange={saveLayout}
             isDraggable
             isResizable
@@ -482,6 +664,7 @@ function AnalyticsBuilder({ loggedInUser }) {
               <div className="analytics-builder-visual" key={visual.id}>
                 <div className="analytics-builder-visual-actions">
                   <span>{visual.type.replace('_', ' ')}</span>
+                  <button type="button" className="btn-secondary btn-sm" onClick={() => setStyleVisualId(visual.id)}>Customize</button>
                   <button type="button" className="btn-secondary btn-sm" onClick={() => runPreview(visual)} disabled={saving}>Preview</button>
                   <button type="button" className="btn-danger btn-sm" onClick={() => removeVisual(visual.id)} disabled={saving}>Remove</button>
                 </div>
@@ -491,6 +674,8 @@ function AnalyticsBuilder({ loggedInUser }) {
           </ResponsiveGridLayout>
         ) : <div className="analytics-empty-state">Add your first visual above to start designing the dashboard.</div>}
       </section>
+
+      <StyleEditor visual={styleVisual} onClose={() => setStyleVisualId(null)} onChange={(style) => styleVisual && updateVisualStyle(styleVisual.id, style)} />
       <FormulaBuilder
         open={formulaDialogOpen}
         initial={formulaInitial}

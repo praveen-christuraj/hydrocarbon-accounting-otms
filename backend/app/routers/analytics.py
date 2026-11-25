@@ -597,6 +597,207 @@ def run_batch(
             "slicer_state": payload.runtime_values, "results": result["results"], "applied_scope": {"scope_type": dashboard.scope_type, "location_code": dashboard.location_code}}
 
 
+@router.post("/my-dashboards/{dashboard_id}/slicer-values")
+def get_slicer_values(
+    dashboard_id: int,
+    payload: dict,
+    current_user: User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db),
+):
+    dashboard = _get_dashboard_or_404(db, dashboard_id)
+    _require_run_access(db, current_user, dashboard)
+    slicer_key = str(payload.get("slicer_key") or "").strip()
+    if not slicer_key:
+        raise HTTPException(status_code=400, detail="slicer_key is required.")
+    definition = dashboard.definition_json or {}
+    slicers = definition.get("slicers") or []
+    slicer = next((item for item in slicers if str(item.get("key")) == slicer_key), None)
+    if not slicer:
+        raise HTTPException(status_code=404, detail="Slicer not found.")
+    column_key = str(slicer.get("column_key") or slicer.get("field") or "")
+    if not column_key:
+        raise HTTPException(status_code=400, detail="Slicer is not bound to a field.")
+
+    # Build a minimal visual/query to fetch distinct values through the report engine.
+    target_visual = None
+    for visual in definition.get("visuals") or []:
+        if slicer.get("visual_ids") and visual.get("id") not in (slicer.get("visual_ids") or []):
+            continue
+        if any(str(col.get("key")) == column_key for col in ((visual.get("query") or {}).get("columns") or [])):
+            target_visual = visual
+            break
+    if target_visual is None:
+        for visual in definition.get("visuals") or []:
+            if not slicer.get("visual_ids") or visual.get("id") in (slicer.get("visual_ids") or []):
+                target_visual = visual
+                break
+    if target_visual is None:
+        raise HTTPException(status_code=400, detail="No visual available for this slicer.")
+
+    query = copy.deepcopy((target_visual.get("query") or {}))
+    source = query.get("source") or {}
+    if source.get("kind") == "material_balance":
+        raise HTTPException(status_code=400, detail="Distinct slicer values are not available for Material Balance visuals.")
+
+    # Ensure the column exists in query; add hidden if missing.
+    columns = list(query.get("columns") or [])
+    col = next((c for c in columns if str(c.get("key")) == column_key), None)
+    if not col:
+        col = {
+            "key": column_key,
+            "label": slicer.get("label") or column_key,
+            "kind": "data",
+            "source": {"type": "column", "column": column_key},
+            "data_type": str(slicer.get("data_type") or "text"),
+        }
+        columns.append(col)
+    distinct_query = {
+        "schema_version": 1,
+        "report_type": "TABULAR",
+        "source": source,
+        "date_basis": query.get("date_basis", "ACCOUNTING_DATE"),
+        "date_column": query.get("date_column"),
+        "columns": [{
+            "key": str(col.get("key")),
+            "label": col.get("label") or col.get("key"),
+            "kind": col.get("kind", "data"),
+            "source": col.get("source"),
+            "data_type": col.get("data_type", "text"),
+            "format": col.get("format") or {"decimals": 2},
+        }],
+        "filters": list(query.get("filters") or []),
+        "filter_logic": query.get("filter_logic", "AND"),
+        "runtime_filters": [],
+        "group_by": [{"key": str(col.get("key")), "bucket": "VALUE"}],
+        "sort": [{"key": str(col.get("key")), "direction": "ASC"}],
+        "options": {"show_totals": False, "page_size": 200},
+    }
+
+    params = {
+        "date_from": payload.get("date_from"),
+        "date_to": payload.get("date_to"),
+        "location_codes": payload.get("location_codes") or [],
+        "runtime_values": payload.get("runtime_values") or {},
+        "page_size": 200,
+    }
+    # Parse dates if strings
+    for key in ("date_from", "date_to"):
+        value = params.get(key)
+        if isinstance(value, str) and value.strip():
+            try:
+                params[key] = date.fromisoformat(value.strip())
+            except ValueError:
+                params[key] = None
+    # Apply dashboard scope rules
+    fake_req = AnalyticsBatchRunRequest(
+        date_from=params.get("date_from"),
+        date_to=params.get("date_to"),
+        location_codes=params.get("location_codes") or [],
+        runtime_values=params.get("runtime_values") or {},
+    )
+    params = _runner_params(db, current_user, dashboard, fake_req)
+    params["page_size"] = 200
+
+    try:
+        from app.services.report_engine import run_report
+        result = run_report(db, current_user, distinct_query, params)
+    except ReportDefinitionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    values = []
+    seen = set()
+    for row in result.get("rows") or []:
+        value = row.get(column_key)
+        if value is None or value == "":
+            continue
+        label = str(value)
+        marker = label.casefold()
+        if marker in seen:
+            continue
+        seen.add(marker)
+        values.append({"value": value, "label": label})
+        if len(values) >= 200:
+            break
+    return {"slicer_key": slicer_key, "values": values}
+
+
+@router.post("/definitions/{dashboard_id}/slicer-values")
+def get_definition_slicer_values(
+    dashboard_id: int,
+    payload: dict,
+    current_user: User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db),
+):
+    require_any_user_permission(current_user, BUILDER_PERMISSIONS, db)
+    dashboard = _get_dashboard_or_404(db, dashboard_id)
+    _require_builder_access(db, current_user, dashboard)
+    # Reuse the same logic by temporarily allowing access; simplest is to inline via calling internal logic.
+    # Build on definition directly.
+    definition = dashboard.definition_json or {}
+    slicer_key = str(payload.get("slicer_key") or "").strip()
+    slicer = next((item for item in (definition.get("slicers") or []) if str(item.get("key")) == slicer_key), None)
+    if not slicer:
+        raise HTTPException(status_code=404, detail="Slicer not found.")
+    column_key = str(slicer.get("column_key") or slicer.get("field") or "")
+    target_visual = None
+    for visual in definition.get("visuals") or []:
+        if slicer.get("visual_ids") and visual.get("id") not in (slicer.get("visual_ids") or []):
+            continue
+        if any(str(col.get("key")) == column_key for col in ((visual.get("query") or {}).get("columns") or [])):
+            target_visual = visual
+            break
+    if target_visual is None:
+        target_visual = next((v for v in (definition.get("visuals") or []) if not slicer.get("visual_ids") or v.get("id") in (slicer.get("visual_ids") or [])), None)
+    if target_visual is None:
+        raise HTTPException(status_code=400, detail="No visual available for this slicer.")
+    query = copy.deepcopy((target_visual.get("query") or {}))
+    source = query.get("source") or {}
+    if source.get("kind") == "material_balance":
+        return {"slicer_key": slicer_key, "values": []}
+    columns = list(query.get("columns") or [])
+    col = next((c for c in columns if str(c.get("key")) == column_key), None)
+    if not col:
+        col = {"key": column_key, "label": slicer.get("label") or column_key, "kind": "data", "source": {"type": "column", "column": column_key}, "data_type": str(slicer.get("data_type") or "text")}
+    distinct_query = {
+        "schema_version": 1, "report_type": "TABULAR", "source": source,
+        "date_basis": query.get("date_basis", "ACCOUNTING_DATE"), "date_column": query.get("date_column"),
+        "columns": [{"key": str(col.get("key")), "label": col.get("label") or col.get("key"), "kind": col.get("kind", "data"), "source": col.get("source"), "data_type": col.get("data_type", "text"), "format": col.get("format") or {"decimals": 2}}],
+        "filters": list(query.get("filters") or []), "filter_logic": query.get("filter_logic", "AND"),
+        "runtime_filters": [], "group_by": [{"key": str(col.get("key")), "bucket": "VALUE"}],
+        "sort": [{"key": str(col.get("key")), "direction": "ASC"}], "options": {"show_totals": False, "page_size": 200},
+    }
+    params = {"date_from": payload.get("date_from"), "date_to": payload.get("date_to"), "location_codes": payload.get("location_codes") or [], "runtime_values": payload.get("runtime_values") or {}, "page_size": 200}
+    for key in ("date_from", "date_to"):
+        value = params.get(key)
+        if isinstance(value, str) and value.strip():
+            try: params[key] = date.fromisoformat(value.strip())
+            except ValueError: params[key] = None
+    scope = get_user_report_location_codes(current_user, db)
+    requested = params.get("location_codes") or []
+    if scope is not None:
+        requested = [c for c in requested if normalize_location_code(c) in scope] or sorted(scope)
+        params["location_codes"] = requested
+    try:
+        from app.services.report_engine import run_report
+        result = run_report(db, current_user, distinct_query, params)
+    except ReportDefinitionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    values = []
+    seen = set()
+    for row in result.get("rows") or []:
+        value = row.get(column_key)
+        if value is None or value == "":
+            continue
+        marker = str(value).casefold()
+        if marker in seen:
+            continue
+        seen.add(marker)
+        values.append({"value": value, "label": str(value)})
+        if len(values) >= 200:
+            break
+    return {"slicer_key": slicer_key, "values": values}
+
+
 @router.post("/my-dashboards/{dashboard_id}/visual/{visual_id}/export")
 def export_visual(
     dashboard_id: int,
