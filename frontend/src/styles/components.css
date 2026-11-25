@@ -846,6 +846,13 @@ td button.btn-secondary.btn-secondary:hover:not(:disabled) {
   max-width: 1140px;
 }
 
+.app-modal-full {
+  max-width: min(96vw, 1680px);
+  width: min(96vw, 1680px);
+  height: min(92vh, 1200px);
+  max-height: 92vh;
+}
+
 .app-modal-header {
   display: flex;
   align-items: flex-start;
