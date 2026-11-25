@@ -1105,10 +1105,10 @@ export function buildStarterTemplates() {
               source: { kind: 'operation_tickets', operation_type_codes: [], template_ids: [], statuses: ['Approved'] },
               date_basis: 'ACCOUNTING_DATE',
               columns: [
-                { key: 'ticket_number', label: 'Ticket Number', kind: 'data', source: { type: 'column', column: 'ticket_number' }, data_type: 'text' },
+                { key: 'operation_ticket_number', label: 'Ticket Number', kind: 'data', source: { type: 'column', column: 'operation_ticket_number' }, data_type: 'text' },
                 { key: 'operation_type_code', label: 'Operation Type', kind: 'data', source: { type: 'column', column: 'operation_type_code' }, data_type: 'text' },
                 { key: 'origin_location_code', label: 'Origin Location', kind: 'data', source: { type: 'column', column: 'origin_location_code' }, data_type: 'text' },
-                { key: 'asset_code', label: 'Asset', kind: 'data', source: { type: 'column', column: 'asset_code' }, data_type: 'text' },
+                { key: 'primary_asset_code', label: 'Asset', kind: 'data', source: { type: 'column', column: 'primary_asset_code' }, data_type: 'text' },
                 { key: 'operation_date', label: 'Operation Date', kind: 'data', source: { type: 'column', column: 'operation_date' }, data_type: 'date' },
                 { key: 'status', label: 'Status', kind: 'data', source: { type: 'column', column: 'status' }, data_type: 'text' },
               ],
@@ -1122,7 +1122,7 @@ export function buildStarterTemplates() {
             explorer: {
               groupByKeys: ['operation_type_code'],
               splitByKeys: [],
-              measureSpecs: [{ key: 'ticket_number', aggregate: 'COUNT', label: 'Tickets' }],
+              measureSpecs: [{ key: 'operation_ticket_number', aggregate: 'COUNT', label: 'Tickets' }],
               sortSpecs: [],
               whereRules: [],
               allowViewSwitch: true,

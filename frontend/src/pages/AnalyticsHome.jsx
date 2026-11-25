@@ -20,19 +20,27 @@ import { logUiAction } from '../utils/actionLogger'
 import { buildStarterTemplates } from '../utils/analyticsEngine'
 import '../styles/analytics.css'
 
-function AnalyticsHome() {
+function AnalyticsHome({ loggedInUser }) {
   const navigate = useNavigate()
   const toast = useToast()
   const confirm = useConfirm()
   const pageSize = usePageSize()
-  const { hasAny } = usePermissions()
+  const { hasAny } = usePermissions(loggedInUser)
 
-  const canBuild = hasAny(['Create Analytics Dashboard', 'Update Analytics Dashboard'])
-  const canCreate = hasAny(['Create Analytics Dashboard'])
-  const canPublish = hasAny(['Publish Analytics Dashboard'])
-  const canDelete = hasAny(['Delete Analytics Dashboard'])
+  const canViewDashboards = hasAny(['View Analytics Dashboard'])
+  const canViewStudio = hasAny([
+    'View Analytics Definition',
+    'Create Analytics Definition',
+    'Edit Analytics Definition',
+    'Publish Analytics Definition',
+    'Delete Analytics Definition',
+  ])
+  const canCreate = hasAny(['Create Analytics Definition'])
+  const canEdit = hasAny(['Edit Analytics Definition'])
+  const canPublish = hasAny(['Publish Analytics Definition'])
+  const canDelete = hasAny(['Delete Analytics Definition'])
 
-  const [tab, setTab] = useState('dashboards')
+  const [tab, setTab] = useState(() => (canViewDashboards ? 'dashboards' : 'studio'))
   const [dashboards, setDashboards] = useState([])
   const [definitions, setDefinitions] = useState([])
   const [loading, setLoading] = useState(true)
@@ -46,8 +54,8 @@ function AnalyticsHome() {
     setError('')
     try {
       const [myList, defs] = await Promise.all([
-        getMyAnalyticsDashboards(),
-        canBuild || canPublish || canDelete ? getAnalyticsDefinitions().catch(() => []) : Promise.resolve([]),
+        canViewDashboards ? getMyAnalyticsDashboards() : Promise.resolve([]),
+        canViewStudio ? getAnalyticsDefinitions().catch(() => []) : Promise.resolve([]),
       ])
       setDashboards(Array.isArray(myList) ? myList : [])
       setDefinitions(Array.isArray(defs) ? defs : [])
@@ -56,13 +64,13 @@ function AnalyticsHome() {
     } finally {
       setLoading(false)
     }
-  }, [canBuild, canDelete, canPublish])
+  }, [canViewDashboards, canViewStudio])
 
   useEffect(() => {
     let active = true
     Promise.all([
-      getMyAnalyticsDashboards(),
-      canBuild || canPublish || canDelete ? getAnalyticsDefinitions().catch(() => []) : Promise.resolve([]),
+      canViewDashboards ? getMyAnalyticsDashboards() : Promise.resolve([]),
+      canViewStudio ? getAnalyticsDefinitions().catch(() => []) : Promise.resolve([]),
     ])
       .then(([myList, defs]) => {
         if (!active) return
@@ -77,22 +85,26 @@ function AnalyticsHome() {
         if (active) setLoading(false)
       })
     return () => { active = false }
-  }, [canBuild, canDelete, canPublish])
+  }, [canViewDashboards, canViewStudio])
 
   const activeRows = useMemo(
     () => (tab === 'studio' ? definitions : dashboards).map((item) => ({
       ...item,
+      dashboard_name: item.dashboard_name || item.name || `Dashboard #${item.id}`,
+      scope_type: item.scope_type || 'LOCATION',
       status_label: item.is_published ? 'Published' : 'Draft',
-      visual_count: Array.isArray(item.definition_json?.visuals) ? item.definition_json.visuals.length : 0,
+      visual_count: Number.isFinite(Number(item.visual_count))
+        ? Number(item.visual_count)
+        : (Array.isArray(item.definition?.visuals) ? item.definition.visuals.length : 0),
       updated_date: item.updated_at ? String(item.updated_at).slice(0, 10) : '',
     })),
     [dashboards, definitions, tab]
   )
 
   const filterColumns = useMemo(() => [
-    { key: 'name', label: 'Dashboard Name', type: 'text' },
+    { key: 'dashboard_name', label: 'Dashboard Name', type: 'text' },
     { key: 'description', label: 'Description', type: 'text' },
-    { key: 'visibility_scope', label: 'Visibility Scope', type: 'select', options: ['PRIVATE', 'ROLE', 'LOCATION', 'GLOBAL'] },
+    { key: 'scope_type', label: 'Scope', type: 'select', options: ['LOCATION', 'GLOBAL'] },
     { key: 'location_code', label: 'Location', type: 'text' },
     { key: 'status_label', label: 'Status', type: 'select', options: ['Published', 'Draft'] },
     { key: 'version', label: 'Version', type: 'number' },
@@ -112,12 +124,11 @@ function AnalyticsHome() {
   const togglePublish = async (item) => {
     try {
       await publishAnalyticsDefinition(item.id, !item.is_published)
-      logUiAction({
-        module: 'Analytics',
-        action: item.is_published ? 'Unpublish Dashboard' : 'Publish Dashboard',
-        entityType: 'AnalyticsDashboardDefinition',
-        entityId: String(item.id),
-      })
+      logUiAction(
+        'Analytics',
+        item.is_published ? 'Unpublish Dashboard' : 'Publish Dashboard',
+        { dashboardId: item.id, dashboardName: item.dashboard_name }
+      )
       toast.success(item.is_published ? 'Dashboard unpublished.' : 'Dashboard published.')
       await load()
     } catch (err) {
@@ -128,13 +139,12 @@ function AnalyticsHome() {
   const handleDuplicate = async (item) => {
     try {
       const cloned = await duplicateAnalyticsDefinition(item.id)
-      logUiAction({
-        module: 'Analytics',
-        action: 'Duplicate Dashboard',
-        entityType: 'AnalyticsDashboardDefinition',
-        entityId: String(cloned.id),
+      logUiAction('Analytics', 'Duplicate Dashboard', {
+        sourceDashboardId: item.id,
+        dashboardId: cloned.id,
+        dashboardName: cloned.dashboard_name,
       })
-      toast.success(`Duplicated as "${cloned.name}".`)
+      toast.success(`Duplicated as "${cloned.dashboard_name || 'Copy'}".`)
       await load()
     } catch (err) {
       toast.error(err.message || 'Unable to duplicate dashboard.')
@@ -144,19 +154,17 @@ function AnalyticsHome() {
   const removeDashboard = async (item) => {
     const ok = await confirm({
       title: 'Delete Analytics Dashboard',
-      message: `Are you sure you want to permanently delete "${item.name}"? Published links and version history for this dashboard will be removed.`,
+      message: `Are you sure you want to permanently delete "${item.dashboard_name}"? Published links and version history for this dashboard will be removed.`,
       confirmLabel: 'Delete Dashboard',
       cancelLabel: 'Cancel',
-      variant: 'danger',
+      tone: 'danger',
     })
     if (!ok) return
     try {
       await deleteAnalyticsDefinition(item.id)
-      logUiAction({
-        module: 'Analytics',
-        action: 'Delete Dashboard',
-        entityType: 'AnalyticsDashboardDefinition',
-        entityId: String(item.id),
+      logUiAction('Analytics', 'Delete Dashboard', {
+        dashboardId: item.id,
+        dashboardName: item.dashboard_name,
       })
       toast.success('Analytics dashboard deleted.')
       await load()
@@ -166,14 +174,14 @@ function AnalyticsHome() {
   }
 
   const exportColumns = useMemo(() => [
-    { key: 'name', header: 'Dashboard Name' },
-    { key: 'description', header: 'Description' },
-    { key: 'visibility_scope', header: 'Scope' },
-    { key: 'location_code', header: 'Location' },
-    { key: 'visual_count', header: 'Visuals' },
-    { key: 'version', header: 'Version' },
-    { key: 'status_label', header: 'Status' },
-    { key: 'updated_date', header: 'Last Updated' },
+    { key: 'dashboard_name', label: 'Dashboard Name' },
+    { key: 'description', label: 'Description' },
+    { key: 'scope_type', label: 'Scope' },
+    { key: 'location_code', label: 'Location' },
+    { key: 'visual_count', label: 'Visuals' },
+    { key: 'version', label: 'Version' },
+    { key: 'status_label', label: 'Status' },
+    { key: 'updated_date', label: 'Last Updated' },
   ], [])
 
   return (
@@ -191,7 +199,7 @@ function AnalyticsHome() {
             <Icon name="refresh" size={16} /> Refresh
           </button>
           {canCreate && (
-            <button type="button" className="btn-primary" onClick={() => navigate('/analytics/studio/new')}>
+            <button type="button" className="btn-primary" onClick={() => navigate('/analytics/builder')}>
               <Icon name="plus" size={16} /> New Dashboard
             </button>
           )}
@@ -216,7 +224,7 @@ function AnalyticsHome() {
                 key={tpl.id}
                 type="button"
                 className="analytics-blueprint-card"
-                onClick={() => navigate(`/analytics/studio/new?template=${encodeURIComponent(tpl.id)}`)}
+                onClick={() => navigate(`/analytics/builder?template=${encodeURIComponent(tpl.id)}`)}
               >
                 <div>
                   <strong>{tpl.name}</strong>
@@ -233,22 +241,24 @@ function AnalyticsHome() {
 
       <div className="analytics-toolbar-tabs">
         <div className="analytics-tabs" role="tablist" aria-label="Analytics views">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === 'dashboards'}
-            className={tab === 'dashboards' ? 'is-active' : ''}
-            onClick={() => setTab('dashboards')}
-          >
-            My Dashboards ({dashboards.length})
-          </button>
-          {(canBuild || canPublish || canDelete) && (
+          {canViewDashboards && (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'dashboards'}
+              className={tab === 'dashboards' ? 'is-active' : ''}
+              onClick={() => { setTab('dashboards'); setPage(1) }}
+            >
+              My Dashboards ({dashboards.length})
+            </button>
+          )}
+          {canViewStudio && (
             <button
               type="button"
               role="tab"
               aria-selected={tab === 'studio'}
               className={tab === 'studio' ? 'is-active' : ''}
-              onClick={() => setTab('studio')}
+              onClick={() => { setTab('studio'); setPage(1) }}
             >
               Studio Definitions ({definitions.length})
             </button>
@@ -263,7 +273,7 @@ function AnalyticsHome() {
           <ExportMenu
             label="Export Register"
             title={tab === 'studio' ? 'Analytics Studio Definitions' : 'Accessible Analytics Dashboards'}
-            filenameBase="analytics_dashboards_register"
+            fileName="analytics_dashboards_register"
             columns={exportColumns}
             rows={filters.filteredRows}
             disabled={!filters.filteredRows.length}
@@ -292,82 +302,90 @@ function AnalyticsHome() {
                   <td colSpan={8}>Loading analytics dashboards…</td>
                 </tr>
               )}
-              {!loading && paged.map((item) => (
-                <tr key={item.id}>
-                  <td>
-                    <div className="analytics-name-cell">
-                      <button
-                        type="button"
-                        className="analytics-title-link"
-                        onClick={() => navigate(`/analytics/view/${item.id}`)}
-                      >
-                        {item.name}
-                      </button>
-                      {item.description && <span>{item.description}</span>}
-                    </div>
-                  </td>
-                  <td>
-                    <span className="analytics-scope-pill">{item.visibility_scope}</span>
-                  </td>
-                  <td>{item.location_code || 'All Scoped'}</td>
-                  <td className="is-num">{item.visual_count}</td>
-                  <td className="is-num">v{item.version}</td>
-                  <td>
-                    <span className={`status-pill ${item.is_published ? 'status-approved' : 'status-draft'}`}>
-                      {item.is_published ? 'Published' : 'Draft'}
-                    </span>
-                  </td>
-                  <td>{item.updated_date || '—'}</td>
-                  <td>
-                    <div className="analytics-row-actions">
-                      <button
-                        type="button"
-                        className="btn-secondary btn-sm"
-                        onClick={() => navigate(`/analytics/view/${item.id}`)}
-                      >
-                        <Icon name="eye" size={14} /> Open
-                      </button>
-                      {canBuild && (
+              {!loading && paged.map((item) => {
+                const canOpenViewer = item.is_published && canViewDashboards
+                const hasEditAccess = item.my_access === 'OWNER' || item.my_access === 'EDIT'
+                return (
+                  <tr key={item.id}>
+                    <td>
+                      <div className="analytics-name-cell">
                         <button
                           type="button"
-                          className="btn-secondary btn-sm"
-                          onClick={() => navigate(`/analytics/studio/${item.id}`)}
+                          className="analytics-title-link"
+                          onClick={() => navigate(
+                            canOpenViewer ? `/analytics/view/${item.id}` : `/analytics/builder/${item.id}`
+                          )}
                         >
-                          <Icon name="edit" size={14} /> Studio
+                          {item.dashboard_name}
                         </button>
-                      )}
-                      {canCreate && (
-                        <button
-                          type="button"
-                          className="btn-secondary btn-sm"
-                          title="Duplicate as private copy"
-                          onClick={() => handleDuplicate(item)}
-                        >
-                          <Icon name="copy" size={14} /> Clone
-                        </button>
-                      )}
-                      {tab === 'studio' && canPublish && (
-                        <button
-                          type="button"
-                          className="btn-secondary btn-sm"
-                          onClick={() => togglePublish(item)}
-                        >
-                          {item.is_published ? 'Unpublish' : 'Publish'}
-                        </button>
-                      )}
-                      {tab === 'studio' && canDelete && (
-                        <button
-                          type="button"
-                          className="btn-danger btn-sm"
-                          onClick={() => removeDashboard(item)}
-                        >
-                          <Icon name="trash" size={14} /> Delete
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                        {item.description && <span>{item.description}</span>}
+                      </div>
+                    </td>
+                    <td>
+                      <span className="analytics-scope-pill">{item.scope_type}</span>
+                    </td>
+                    <td>{item.location_code || 'All Scoped'}</td>
+                    <td className="is-num">{item.visual_count}</td>
+                    <td className="is-num">v{item.version}</td>
+                    <td>
+                      <span className={`status-pill ${item.is_published ? 'status-approved' : 'status-draft'}`}>
+                        {item.is_published ? 'Published' : 'Draft'}
+                      </span>
+                    </td>
+                    <td>{item.updated_date || '—'}</td>
+                    <td>
+                      <div className="analytics-row-actions">
+                        {canOpenViewer && (
+                          <button
+                            type="button"
+                            className="btn-secondary btn-sm"
+                            onClick={() => navigate(`/analytics/view/${item.id}`)}
+                          >
+                            <Icon name="eye" size={14} /> Open
+                          </button>
+                        )}
+                        {canViewStudio && (canEdit || tab === 'studio') && (
+                          <button
+                            type="button"
+                            className="btn-secondary btn-sm"
+                            onClick={() => navigate(`/analytics/builder/${item.id}`)}
+                          >
+                            <Icon name="edit" size={14} /> Studio
+                          </button>
+                        )}
+                        {canCreate && tab === 'studio' && (
+                          <button
+                            type="button"
+                            className="btn-secondary btn-sm"
+                            title="Duplicate as private copy"
+                            onClick={() => handleDuplicate(item)}
+                          >
+                            <Icon name="copy" size={14} /> Clone
+                          </button>
+                        )}
+                        {tab === 'studio' && canPublish && hasEditAccess && (
+                          <button
+                            type="button"
+                            className="btn-secondary btn-sm"
+                            onClick={() => togglePublish(item)}
+                          >
+                            {item.is_published ? 'Unpublish' : 'Publish'}
+                          </button>
+                        )}
+                        {tab === 'studio' && canDelete && hasEditAccess && (
+                          <button
+                            type="button"
+                            className="btn-danger btn-sm"
+                            onClick={() => removeDashboard(item)}
+                          >
+                            <Icon name="trash" size={14} /> Delete
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
               {!loading && !paged.length && (
                 <tr>
                   <td colSpan={8}>

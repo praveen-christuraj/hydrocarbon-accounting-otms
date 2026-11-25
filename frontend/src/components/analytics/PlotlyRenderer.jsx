@@ -211,12 +211,13 @@ function PlotlyRenderer({
     if (type === 'HISTOGRAM') {
       const vals = rows.map((r) => Number(r?.[measureCol.key])).filter(Number.isFinite)
       if (!vals.length) return null
+      const resolvedBins = Number(plotlyStyle.bins ?? plotlyStyle.binCount)
       return {
         data: [
           {
             type: 'histogram',
             x: vals,
-            nbinsx: Number(plotlyStyle.binCount) > 0 ? Number(plotlyStyle.binCount) : undefined,
+            nbinsx: resolvedBins > 0 ? resolvedBins : undefined,
             name: measureCol.label || measureCol.key,
             marker: {
               color: palette[0],
@@ -426,6 +427,7 @@ function PlotlyRenderer({
     measureCol,
     numericCols,
     plotlyStyle.binCount,
+    plotlyStyle.bins,
     plotlyStyle.boxMean,
     plotlyStyle.showOutliers,
     plotlyStyle.trendline,

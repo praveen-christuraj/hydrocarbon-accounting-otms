@@ -3263,14 +3263,24 @@ class AnalyticsDashboardUpdate(AnalyticsDashboardCreate):
 class AnalyticsBatchRunRequest(BaseModel):
     date_from: Optional[date] = None
     date_to: Optional[date] = None
-    location_codes: list[str] = []
-    runtime_values: dict[str, Any] = {}
-    selection_filters: list[dict[str, Any]] = []
+    location_codes: list[str] = Field(default_factory=list)
+    runtime_values: dict[str, Any] = Field(default_factory=dict)
+    selection_filters: list[dict[str, Any]] = Field(default_factory=list)
     visual_ids: Optional[list[str]] = None
     format: str = "xlsx"
     page: int = 1
     page_size: int = 50
     search: Optional[str] = None
+
+    @field_validator("location_codes", "selection_filters", mode="before")
+    @classmethod
+    def _coerce_null_list(cls, value):
+        return [] if value is None else value
+
+    @field_validator("runtime_values", mode="before")
+    @classmethod
+    def _coerce_null_dict(cls, value):
+        return {} if value is None else value
 
 
 class ReportDefinitionCreate(BaseModel):

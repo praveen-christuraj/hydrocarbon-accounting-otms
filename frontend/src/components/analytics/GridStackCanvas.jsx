@@ -1,26 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import GridStackPkg from 'gridstack/dist/gridstack-all.js'
+import { GridStack } from 'gridstack'
 import 'gridstack/dist/gridstack.min.css'
 import { normalizeLayoutForGridStack } from '../../utils/analyticsEngine'
-
-const GridStack = GridStackPkg?.init ? GridStackPkg : (GridStackPkg?.GridStack || GridStackPkg?.default)
 
 /**
  * Production React + Portal wrapper around GridStack.js v14.
  *
  * - Keeps all visual children inside the single React tree via createPortal.
- * - Protects canonical 12-column layout coordinates from being overwritten when
- *   GridStack scales down on narrow/mobile viewports.
+ * - StrictMode-safe: cleanly unmounts GridStack wrappers and resets refs on teardown.
+ * - Preserves canonical 12-column editing in Studio (`preserveTwelveColumns`) while
+ *   supporting responsive 1/6/12 column scaling in Viewer mode without overwriting
+ *   canonical 12-column coordinates on narrow viewports.
  * - Supports external drag-to-grid from Studio's `.analytics-palette-drag-item` tiles.
  */
 function GridStackCanvas({
   visuals = [],
   layout = [],
   editable = false,
+  preserveTwelveColumns = false,
   floatMode = false,
   cellHeight = 64,
   margin = 14,
+  dragInTrigger = '',
   selectedId = null,
   onSelectVisual = null,
   onLayoutChange = null,
@@ -48,43 +50,43 @@ function GridStackCanvas({
     [canonicalLayout]
   )
 
-  // Initialize GridStack once on mount
+  // Initialize GridStack on mount (and cleanly re-init if preserveTwelveColumns changes)
   useEffect(() => {
     const container = containerRef.current
     if (!container || !GridStack?.init) return undefined
 
-    const grid = GridStack.init(
-      {
-        column: 12,
-        cellHeight,
-        margin: Math.round(margin / 2),
-        float: Boolean(floatMode),
-        staticGrid: !editable,
-        animate: false,
-        disableOneColumnMode: false,
-        handle: '.analytics-card-drag-handle',
-        acceptWidgets: editable ? '.analytics-palette-drag-item' : false,
-        resizable: {
-          handles: 'e, se, s, sw, w',
-        },
-        columnOpts: {
-          breakpointForWindow: false,
-          breakpoints: [
-            { w: 680, c: 1 },
-            { w: 960, c: 6 },
-            { w: 1200, c: 12 },
-          ],
-          layout: 'moveScale',
-        },
+    const options = {
+      column: 12,
+      cellHeight,
+      margin: Math.round(margin / 2),
+      float: Boolean(floatMode),
+      staticGrid: !editable,
+      animate: false,
+      handle: '.analytics-card-drag-handle',
+      acceptWidgets: editable && Boolean(latestOnExternalDrop.current) ? '.analytics-palette-drag-item' : false,
+      resizable: {
+        handles: 'e, se, s, sw, w',
       },
-      container
-    )
+    }
 
+    if (!preserveTwelveColumns) {
+      options.columnOpts = {
+        breakpointForWindow: false,
+        columnMax: 12,
+        breakpoints: [
+          { w: 600, c: 1 },
+          { w: 860, c: 6 },
+        ],
+        layout: 'moveScale',
+      }
+    }
+
+    const grid = GridStack.init(options, container)
     gridRef.current = grid
 
     const emitCanonicalSave = () => {
       if (suppressChangeRef.current || !latestOnLayoutChange.current) return
-      // Never overwrite saved 12-col layout if viewport temporarily collapsed to 1 or 6 columns!
+      // Never overwrite saved 12-col layout if viewport temporarily collapsed to 1 or 6 columns
       if (typeof grid.getColumn === 'function' && grid.getColumn() !== 12) return
       const nodes = grid.engine?.nodes || []
       if (!nodes.length) return
@@ -143,23 +145,38 @@ function GridStackCanvas({
       } catch {
         // Ignore teardown issues in headless DOM
       }
+      // Remove wrappers and clear refs so StrictMode remount starts from a clean container
+      for (const entry of itemElsRef.current.values()) {
+        try {
+          entry.wrapper.remove()
+        } catch {
+          // Ignore DOM removal errors
+        }
+      }
+      itemElsRef.current.clear()
       gridRef.current = null
+      setPortalTargets({})
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [preserveTwelveColumns])
 
-  // Setup external palette drag-in whenever editable changes
+  // Sync static/editable mode and external palette drag-in whenever editable or palette DOM changes
   useEffect(() => {
     const grid = gridRef.current
     if (!grid) return
     grid.setStatic(!editable)
-    if (editable && typeof GridStack?.setupDragIn === 'function') {
+    if (grid.opts) {
+      grid.opts.acceptWidgets = editable && Boolean(latestOnExternalDrop.current) ? '.analytics-palette-drag-item' : false
+    }
+    if (editable && latestOnExternalDrop.current && typeof GridStack?.setupDragIn === 'function') {
       const timer = window.setTimeout(() => {
         try {
-          GridStack.setupDragIn('.analytics-palette-drag-item', {
-            appendTo: 'body',
-            helper: 'clone',
-          })
+          if (document.querySelector('.analytics-palette-drag-item')) {
+            GridStack.setupDragIn('.analytics-palette-drag-item', {
+              appendTo: 'body',
+              helper: 'clone',
+            })
+          }
         } catch {
           // Ignore if no palette elements exist
         }
@@ -167,9 +184,9 @@ function GridStackCanvas({
       return () => window.clearTimeout(timer)
     }
     return undefined
-  }, [editable, visuals.length])
+  }, [editable, visuals.length, dragInTrigger])
 
-  // Sync float mode & cellHeight dynamically
+  // Sync float mode, cellHeight & margin dynamically
   useEffect(() => {
     const grid = gridRef.current
     if (!grid) return
@@ -179,7 +196,10 @@ function GridStackCanvas({
     if (typeof grid.cellHeight === 'function') {
       grid.cellHeight(cellHeight)
     }
-  }, [floatMode, cellHeight])
+    if (typeof grid.margin === 'function') {
+      grid.margin(Math.round(margin / 2))
+    }
+  }, [floatMode, cellHeight, margin])
 
   // Sync widgets & coordinates with GridStack DOM elements
   useEffect(() => {
@@ -209,7 +229,7 @@ function GridStackCanvas({
         const id = String(visual.id)
         const spec = layoutById.get(id) || { x: 0, y: 0, w: 6, h: 6, minW: 4, minH: 4 }
         let entry = itemElsRef.current.get(id)
-        if (!entry) {
+        if (!entry || !container.contains(entry.wrapper)) {
           const wrapper = document.createElement('div')
           wrapper.className = 'grid-stack-item analytics-gs-item'
           wrapper.setAttribute('gs-id', id)
@@ -257,7 +277,7 @@ function GridStackCanvas({
       if (entry?.content) nextTargets[id] = entry.content
     }
     setPortalTargets(nextTargets)
-  }, [visuals, layoutById, editable, selectedId])
+  }, [visuals, layoutById, editable, selectedId, preserveTwelveColumns])
 
   return (
     <div

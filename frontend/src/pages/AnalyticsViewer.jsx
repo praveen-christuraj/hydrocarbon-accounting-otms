@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import AlertMessage from '../components/common/AlertMessage'
 import ExportMenu from '../components/common/ExportMenu'
@@ -17,7 +17,6 @@ import usePermissions from '../hooks/usePermissions'
 import {
   exportAnalyticsVisual,
   exportAnalyticsWorkbook,
-  getAnalyticsLookups,
   getAnalyticsSlicerValues,
   getAnalyticsVisualRecords,
   getMyAnalyticsDashboard,
@@ -31,15 +30,15 @@ function getSessionLayoutKey(dashboardId) {
   return `otms_analytics_layout_v2_${dashboardId}`
 }
 
-function AnalyticsViewer() {
-  const { id } = useParams()
+function AnalyticsViewer({ loggedInUser }) {
+  const { dashboardId } = useParams()
   const navigate = useNavigate()
   const toast = useToast()
-  const { profile } = useCompanyPrintProfile()
+  const profile = useCompanyPrintProfile()
   const { requestPrint } = usePrintDialog()
-  const { hasAny } = usePermissions()
+  const { hasAny } = usePermissions(loggedInUser)
 
-  const canEdit = hasAny(['Update Analytics Dashboard'])
+  const canEditDefinition = hasAny(['Edit Analytics Definition'])
   const canExport = hasAny(['Export Analytics Dashboard'])
 
   const [dashboard, setDashboard] = useState(null)
@@ -60,6 +59,8 @@ function AnalyticsViewer() {
   const [runtimeValues, setRuntimeValues] = useState({})
   const [slicerOptions, setSlicerOptions] = useState({})
   const [selectionFilters, setSelectionFilters] = useState([])
+  const selectionFiltersRef = useRef([])
+  useEffect(() => { selectionFiltersRef.current = selectionFilters }, [selectionFilters])
 
   // Session GridStack Arrange Mode
   const [arrangeMode, setArrangeMode] = useState(false)
@@ -77,21 +78,22 @@ function AnalyticsViewer() {
     return { from: dateFrom || null, to: dateTo || null }
   }, [dateFrom, dateTo, singleDate])
 
-  const buildRunnerPayload = useCallback((overrides = {}) => ({
-    date_from: overrides.date_from !== undefined ? overrides.date_from : effectiveDateWindow.from,
-    date_to: overrides.date_to !== undefined ? overrides.date_to : effectiveDateWindow.to,
-    location_codes: (overrides.location_codes ?? selectedLocations).length
-      ? (overrides.location_codes ?? selectedLocations)
-      : null,
-    runtime_values: overrides.runtime_values ?? runtimeValues,
-    selection_filters: overrides.selection_filters ?? selectionFilters,
-  }), [effectiveDateWindow.from, effectiveDateWindow.to, runtimeValues, selectedLocations, selectionFilters])
+  const buildRunnerPayload = useCallback((overrides = {}) => {
+    const locs = overrides.location_codes !== undefined ? overrides.location_codes : selectedLocations
+    return {
+      date_from: overrides.date_from !== undefined ? overrides.date_from : effectiveDateWindow.from,
+      date_to: overrides.date_to !== undefined ? overrides.date_to : effectiveDateWindow.to,
+      location_codes: Array.isArray(locs) ? locs : [],
+      runtime_values: overrides.runtime_values ?? runtimeValues,
+      selection_filters: overrides.selection_filters ?? selectionFiltersRef.current,
+    }
+  }, [effectiveDateWindow.from, effectiveDateWindow.to, runtimeValues, selectedLocations])
 
-  const runBatch = useCallback(async (dashboardId, payload) => {
+  const runBatch = useCallback(async (targetId, payload) => {
     setRunning(true)
     setError('')
     try {
-      const response = await runAnalyticsDashboard(dashboardId, payload)
+      const response = await runAnalyticsDashboard(targetId, payload)
       setResults(response?.results || {})
       const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
       setLastExecutedAt(nowStr)
@@ -102,27 +104,54 @@ function AnalyticsViewer() {
     }
   }, [])
 
-  // Load dashboard definition, lookups, slicer options, and auto-execute queries immediately
+  const fetchSlicerOptions = useCallback(async (targetId, defSlicers, locationCodes = []) => {
+    const selectSlicers = (defSlicers || []).filter((s) => String(s.type || 'SELECT').toUpperCase() === 'SELECT')
+    if (!selectSlicers.length) return {}
+    const entries = await Promise.all(
+      selectSlicers.map(async (slicer) => {
+        const sKey = slicer.key || slicer.id
+        try {
+          const res = await getAnalyticsSlicerValues(targetId, {
+            slicer_key: sKey,
+            location_codes: Array.isArray(locationCodes) ? locationCodes : [],
+          })
+          return [sKey, res?.values || []]
+        } catch {
+          return [sKey, []]
+        }
+      })
+    )
+    return Object.fromEntries(entries)
+  }, [])
+
+  // Load dashboard definition, slicer options, and auto-execute queries immediately
   useEffect(() => {
+    if (!dashboardId) {
+      setLoading(false)
+      setError('Invalid analytics dashboard link.')
+      return undefined
+    }
     let active = true
     const loadDashboard = async () => {
       setLoading(true)
       setError('')
       try {
-        const [item, lookupData] = await Promise.all([
-          getMyAnalyticsDashboard(id),
-          getAnalyticsLookups().catch(() => ({ locations: [] })),
-        ])
+        const item = await getMyAnalyticsDashboard(dashboardId)
         if (!active) return
         setDashboard(item)
 
-        const locs = Array.isArray(lookupData?.locations) && lookupData.locations.length
-          ? lookupData.locations
-          : (Array.isArray(item.available_locations) ? item.available_locations : [])
+        const locs = Array.isArray(item.available_locations) ? item.available_locations : []
         setAvailableLocations(locs)
 
         const initLocations = item.location_code ? [item.location_code] : []
         setSelectedLocations(initLocations)
+        setSelectionFilters([])
+        selectionFiltersRef.current = []
+        setRuntimeValues({})
+        setDateFrom('')
+        setDateTo('')
+        setSingleDate('')
+        setActivePreset('')
 
         // Restore optional browser-session custom arrangement if valid
         try {
@@ -131,41 +160,30 @@ function AnalyticsViewer() {
             const parsed = JSON.parse(savedStr)
             if (Array.isArray(parsed) && parsed.length) {
               setSessionLayout(parsed)
+            } else {
+              setSessionLayout(null)
             }
+          } else {
+            setSessionLayout(null)
           }
         } catch {
-          // Ignore storage error
+          setSessionLayout(null)
         }
 
         // Auto-execute initial batch run immediately
         const initialPayload = {
           date_from: null,
           date_to: null,
-          location_codes: initLocations.length ? initLocations : null,
+          location_codes: initLocations,
           runtime_values: {},
           selection_filters: [],
         }
         runBatch(item.id, initialPayload)
 
         // Load distinct options for SELECT slicers in parallel
-        const slicers = item.definition_json?.slicers || []
-        const selectSlicers = slicers.filter((s) => String(s.type || 'SELECT').toUpperCase() === 'SELECT')
-        if (selectSlicers.length) {
-          const entries = await Promise.all(
-            selectSlicers.map(async (slicer) => {
-              try {
-                const res = await getAnalyticsSlicerValues(item.id, {
-                  slicer_id: slicer.id,
-                  location_codes: initLocations.length ? initLocations : null,
-                })
-                return [slicer.id, res?.values || []]
-              } catch {
-                return [slicer.id, []]
-              }
-            })
-          )
-          if (active) setSlicerOptions(Object.fromEntries(entries))
-        }
+        const defObj = item.definition || item.definition_json || {}
+        const opts = await fetchSlicerOptions(item.id, defObj.slicers || [], initLocations)
+        if (active) setSlicerOptions(opts)
       } catch (err) {
         if (active) setError(err.message || 'Unable to load analytics dashboard.')
       } finally {
@@ -174,57 +192,66 @@ function AnalyticsViewer() {
     }
     loadDashboard()
     return () => { active = false }
-  }, [id, runBatch])
+  }, [dashboardId, fetchSlicerOptions, runBatch])
 
-  const visuals = useMemo(
-    () => dashboard?.definition_json?.visuals || [],
+  const definition = useMemo(
+    () => dashboard?.definition || dashboard?.definition_json || {},
     [dashboard]
   )
-  const slicers = useMemo(
-    () => dashboard?.definition_json?.slicers || [],
-    [dashboard]
-  )
+  const visuals = useMemo(() => definition.visuals || [], [definition])
+  const slicers = useMemo(() => definition.slicers || [], [definition])
 
   const activeLayout = useMemo(
-    () => normalizeLayoutForGridStack(sessionLayout || dashboard?.definition_json?.layout || [], visuals),
-    [dashboard?.definition_json?.layout, sessionLayout, visuals]
+    () => normalizeLayoutForGridStack(sessionLayout || definition.layout || [], visuals),
+    [definition.layout, sessionLayout, visuals]
   )
 
+  const dashboardName = dashboard?.dashboard_name || dashboard?.name || 'Analytics Dashboard'
+  const scopeLabel = dashboard?.scope_type || 'LOCATION'
+  const canEdit = canEditDefinition && (dashboard?.my_access === 'OWNER' || dashboard?.my_access === 'EDIT')
+
   const handleToggleCrossFilter = useCallback((sourceVisualId, filterItem) => {
-    setSelectionFilters((prev) => {
-      const exists = prev.some(
-        (sf) => sf.column_key === filterItem.column_key && String(sf.value) === String(filterItem.value)
-      )
-      const next = exists
-        ? prev.filter((sf) => !(sf.column_key === filterItem.column_key && String(sf.value) === String(filterItem.value)))
-        : [
-          ...prev.filter((sf) => sf.column_key !== filterItem.column_key),
-          {
-            source_visual_id: sourceVisualId,
-            column_key: filterItem.column_key,
-            operator: 'eq',
-            value: filterItem.value,
-            label: filterItem.label || `${filterItem.column_key}: ${filterItem.value}`,
-          },
-        ]
-      if (dashboard?.id) {
-        runBatch(dashboard.id, buildRunnerPayload({ selection_filters: next }))
-      }
-      return next
-    })
+    const prev = selectionFiltersRef.current
+    const exists = prev.some(
+      (sf) => sf.column_key === filterItem.column_key && String(sf.value) === String(filterItem.value)
+    )
+    const next = exists
+      ? prev.filter((sf) => !(sf.column_key === filterItem.column_key && String(sf.value) === String(filterItem.value)))
+      : [
+        ...prev.filter((sf) => sf.column_key !== filterItem.column_key),
+        {
+          source_visual_id: sourceVisualId,
+          column_key: filterItem.column_key,
+          operator: 'eq',
+          value: filterItem.value,
+          label: filterItem.label || `${filterItem.column_key}: ${filterItem.value}`,
+        },
+      ]
+    selectionFiltersRef.current = next
+    setSelectionFilters(next)
+    if (dashboard?.id) {
+      runBatch(dashboard.id, buildRunnerPayload({ selection_filters: next }))
+    }
   }, [buildRunnerPayload, dashboard, runBatch])
 
   const handleRemoveSelectionFilter = useCallback((targetSf) => {
-    setSelectionFilters((prev) => {
-      const next = prev.filter(
-        (sf) => !(sf.column_key === targetSf.column_key && String(sf.value) === String(targetSf.value))
-      )
-      if (dashboard?.id) {
-        runBatch(dashboard.id, buildRunnerPayload({ selection_filters: next }))
-      }
-      return next
-    })
+    const prev = selectionFiltersRef.current
+    const next = prev.filter(
+      (sf) => !(sf.column_key === targetSf.column_key && String(sf.value) === String(targetSf.value))
+    )
+    selectionFiltersRef.current = next
+    setSelectionFilters(next)
+    if (dashboard?.id) {
+      runBatch(dashboard.id, buildRunnerPayload({ selection_filters: next }))
+    }
   }, [buildRunnerPayload, dashboard, runBatch])
+
+  const handleLocationsChange = (nextLocations) => {
+    setSelectedLocations(nextLocations)
+    if (dashboard?.id && slicers.some((s) => String(s.type || 'SELECT').toUpperCase() === 'SELECT')) {
+      fetchSlicerOptions(dashboard.id, slicers, nextLocations).then((opts) => setSlicerOptions(opts))
+    }
+  }
 
   const handleClearAllFilters = () => {
     const defaultLocs = dashboard?.location_code ? [dashboard.location_code] : []
@@ -234,15 +261,19 @@ function AnalyticsViewer() {
     setActivePreset('')
     setSelectedLocations(defaultLocs)
     setRuntimeValues({})
+    selectionFiltersRef.current = []
     setSelectionFilters([])
     if (dashboard?.id) {
       runBatch(dashboard.id, {
         date_from: null,
         date_to: null,
-        location_codes: defaultLocs.length ? defaultLocs : null,
+        location_codes: defaultLocs,
         runtime_values: {},
         selection_filters: [],
       })
+      if (slicers.some((s) => String(s.type || 'SELECT').toUpperCase() === 'SELECT')) {
+        fetchSlicerOptions(dashboard.id, slicers, defaultLocs).then((opts) => setSlicerOptions(opts))
+      }
     }
   }
 
@@ -254,11 +285,10 @@ function AnalyticsViewer() {
     try {
       const data = await getAnalyticsVisualRecords(dashboard.id, visual.id, buildRunnerPayload())
       setRecordsPayload(data)
-      logUiAction({
-        module: 'Analytics',
-        action: 'Inspect Visual Underlying Records',
-        entityType: 'AnalyticsDashboardDefinition',
-        entityId: `${dashboard.id}:${visual.id}`,
+      logUiAction('Analytics', 'Inspect Visual Underlying Records', {
+        dashboardId: dashboard.id,
+        visualId: visual.id,
+        visualTitle: visual.title,
       })
     } catch (err) {
       toast.error(err.message || 'Unable to load underlying source records.')
@@ -282,11 +312,9 @@ function AnalyticsViewer() {
     setExportingWorkbook(true)
     try {
       await exportAnalyticsWorkbook(dashboard.id, buildRunnerPayload())
-      logUiAction({
-        module: 'Analytics',
-        action: 'Export Dashboard Workbook',
-        entityType: 'AnalyticsDashboardDefinition',
-        entityId: String(dashboard.id),
+      logUiAction('Analytics', 'Export Dashboard Workbook', {
+        dashboardId: dashboard.id,
+        dashboardName,
       })
       toast.success('Exported multi-sheet Analytics Excel workbook.')
     } catch (err) {
@@ -341,7 +369,7 @@ function AnalyticsViewer() {
         <CompanyPrintHeader
           profile={profile}
           defaultSubtitle={[
-            dashboard.name,
+            dashboardName,
             dashboard.location_code ? `Location: ${dashboard.location_code}` : 'All Scoped Locations',
             effectiveDateWindow.from || effectiveDateWindow.to
               ? `Period: ${effectiveDateWindow.from || 'Start'} to ${effectiveDateWindow.to || 'Latest'}`
@@ -353,9 +381,9 @@ function AnalyticsViewer() {
       <div className="page-header analytics-header no-print">
         <div>
           <p className="eyebrow">
-            Analytics Dashboard · {dashboard.visibility_scope} · v{dashboard.version}
+            Analytics Dashboard · {scopeLabel} · v{dashboard.version}
           </p>
-          <h1>{dashboard.name}</h1>
+          <h1>{dashboardName}</h1>
           {dashboard.description && <p className="page-subtitle">{dashboard.description}</p>}
         </div>
 
@@ -394,7 +422,7 @@ function AnalyticsViewer() {
           <button
             type="button"
             className="btn-secondary"
-            onClick={() => requestPrint()}
+            onClick={() => requestPrint({ module: 'Analytics', reportName: dashboardName })}
           >
             <Icon name="print" size={15} /> Print
           </button>
@@ -403,7 +431,7 @@ function AnalyticsViewer() {
             <button
               type="button"
               className="btn-secondary"
-              onClick={() => navigate(`/analytics/studio/${dashboard.id}`)}
+              onClick={() => navigate(`/analytics/builder/${dashboard.id}`)}
             >
               <Icon name="edit" size={15} /> Edit in Studio
             </button>
@@ -448,7 +476,7 @@ function AnalyticsViewer() {
           }}
           availableLocations={availableLocations}
           selectedLocations={selectedLocations}
-          onLocationsChange={setSelectedLocations}
+          onLocationsChange={handleLocationsChange}
           slicers={slicers}
           slicerOptions={slicerOptions}
           runtimeValues={runtimeValues}
@@ -469,7 +497,7 @@ function AnalyticsViewer() {
           <Icon name="barChart" size={28} />
           <h3>No visuals configured on this dashboard</h3>
           {canEdit && (
-            <button type="button" className="btn-primary" onClick={() => navigate(`/analytics/studio/${dashboard.id}`)}>
+            <button type="button" className="btn-primary" onClick={() => navigate(`/analytics/builder/${dashboard.id}`)}>
               Configure Visuals in Studio
             </button>
           )}
@@ -479,9 +507,9 @@ function AnalyticsViewer() {
           visuals={visuals}
           layout={activeLayout}
           editable={arrangeMode}
-          floatMode={Boolean(dashboard?.definition_json?.canvas?.floatMode)}
-          cellHeight={Number(dashboard?.definition_json?.canvas?.cellHeight) || 64}
-          margin={Number(dashboard?.definition_json?.canvas?.margin) || 14}
+          floatMode={Boolean(definition.canvas?.floatMode)}
+          cellHeight={Number(definition.canvas?.cellHeight) || 64}
+          margin={Number(definition.canvas?.margin) || 14}
           onLayoutChange={arrangeMode ? handleSessionLayoutChange : null}
           renderVisual={(visual, layoutItem) => {
             const activeSelForOthers = selectionFilters.find((sf) => sf.source_visual_id === visual.id) || selectionFilters[0] || null
@@ -509,7 +537,7 @@ function AnalyticsViewer() {
 
       {/* Underlying Source Records Modal */}
       <Modal
-        isOpen={Boolean(recordsModalVisual)}
+        open={Boolean(recordsModalVisual)}
         onClose={() => {
           setRecordsModalVisual(null)
           setRecordsPayload(null)
@@ -523,8 +551,8 @@ function AnalyticsViewer() {
                 <ExportMenu
                   label="Export Records"
                   title={`${recordsModalVisual?.title || 'Visual'} — Underlying Records`}
-                  filenameBase="analytics_underlying_records"
-                  columns={(recordsPayload.columns || []).map((c) => ({ key: c.key, header: c.label || c.key }))}
+                  fileName="analytics_underlying_records"
+                  columns={(recordsPayload.columns || []).map((c) => ({ key: c.key, label: c.label || c.key }))}
                   rows={recordsPayload.rows}
                 />
               )}
@@ -532,7 +560,7 @@ function AnalyticsViewer() {
                 <button
                   type="button"
                   className="btn-secondary btn-sm"
-                  onClick={() => navigate('/reports/tank-ledger')}
+                  onClick={() => navigate('/tank-stock-ledger')}
                 >
                   Open Tank Stock Ledger <Icon name="externalLink" size={13} />
                 </button>
@@ -541,7 +569,7 @@ function AnalyticsViewer() {
                 <button
                   type="button"
                   className="btn-secondary btn-sm"
-                  onClick={() => navigate('/transactions')}
+                  onClick={() => navigate('/operation-transactions')}
                 >
                   Open Transactions Register <Icon name="externalLink" size={13} />
                 </button>

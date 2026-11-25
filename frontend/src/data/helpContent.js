@@ -405,6 +405,39 @@ export const helpContent = {
       'Cells that could not be calculated (for example a division by zero) show blank with a ⚠ marker and are counted in the warnings above the table.',
     ],
   },
+  '/analytics': {
+    title: 'Analytics Workspace Help',
+    description:
+      'Analytics Workspace lists published interactive dashboards shared with you, along with Studio definitions and quick-start terminal blueprints for authorized designers.',
+    points: [
+      'My Dashboards shows published dashboards you can run within your assigned reporting location scope.',
+      'Studio Definitions lets designers open drafts or published dashboards in Analytics Studio, duplicate them, publish/unpublish, or remove them.',
+      'Quick-Start Terminal Blueprints launch pre-configured GridStack, Shore Tank, ECharts, Plotly, and Perspective Pivot dashboards directly in Studio.',
+      'Every dashboard query enforces your exact RBAC permissions and location scope on the server.',
+    ],
+  },
+  '/analytics/builder': {
+    title: 'Analytics Studio Help',
+    description:
+      'Analytics Studio lets you design 12-column drag-and-resize dashboards with KPI cards, Shore Tank stock visuals, Perspective Pivot Grids, Apache ECharts, Plotly statistical charts, and global slicers.',
+    points: [
+      'Drag or click any visual tile in the left Visuals palette to place it on the 12-column canvas; drag card handles and edges to reposition or resize.',
+      'Use Data Fields to switch between Featured Terminal Datasets (Tank Stock Ledger, Operation Tickets, Tank Snapshot, Material Balance) or any Reportable Database Table, toggle columns, and add calculated formulas (fx).',
+      'Configure Scope & Access Grants (LOCATION or GLOBAL scope plus Role, User, or Location View/Edit grants) and review or revert snapshots via Version History.',
+      'Click Run Preview to test queries against a preview date range before saving or publishing.',
+    ],
+  },
+  '/analytics/view': {
+    title: 'Analytics Dashboard Viewer Help',
+    description:
+      'Run interactive published dashboards with global date/location slicers, custom field slicers, click-to-cross-filter interactions, underlying source record drill-through, print profiles, and Excel/CSV exports.',
+    points: [
+      'Use the top Slicer Bar to filter by Date Range, Single Date, Quick Presets (Today, 7D, 30D, MTD, YTD), Locations, or designer-defined custom slicers, then click Apply.',
+      'Click any bar, slice, or shore tank to cross-filter sibling visuals; click again or remove the active cross-filter chip to clear.',
+      'Use each visual’s toolbar to inspect underlying source records, switch view types at runtime, expand full screen, or export CSV/XLSX.',
+      'Arrange Layout lets you temporarily reposition cards in your browser session without changing the published blueprint.',
+    ],
+  },
   '/stock-anomaly-analytics': {
     title: 'Stock Anomaly Analytics Help',
     description:
