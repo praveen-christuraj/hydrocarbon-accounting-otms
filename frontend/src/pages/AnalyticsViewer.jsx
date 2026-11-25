@@ -37,10 +37,10 @@ function AnalyticsViewer() {
   const toast = useToast()
   const { profile } = useCompanyPrintProfile()
   const { requestPrint } = usePrintDialog()
-  const { hasAnyPermission } = usePermissions()
+  const { hasAny } = usePermissions()
 
-  const canEdit = hasAnyPermission(['Update Analytics Dashboard'])
-  const canExport = hasAnyPermission(['Export Analytics Dashboard'])
+  const canEdit = hasAny(['Update Analytics Dashboard'])
+  const canExport = hasAny(['Export Analytics Dashboard'])
 
   const [dashboard, setDashboard] = useState(null)
   const [availableLocations, setAvailableLocations] = useState([])

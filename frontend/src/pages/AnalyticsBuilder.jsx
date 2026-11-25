@@ -180,8 +180,8 @@ function AnalyticsBuilder() {
   const navigate = useNavigate()
   const toast = useToast()
   const confirm = useConfirm()
-  const { hasAnyPermission } = usePermissions()
-  const canPublish = hasAnyPermission(['Publish Analytics Dashboard'])
+  const { hasAny } = usePermissions()
+  const canPublish = hasAny(['Publish Analytics Dashboard'])
 
   const starterTemplates = useMemo(() => buildStarterTemplates(), [])
 

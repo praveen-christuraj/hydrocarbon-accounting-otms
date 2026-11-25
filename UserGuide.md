@@ -78,7 +78,7 @@ This builds three containers:
 
 | Service | Container | Port | Description |
 |---------|-----------|------|-------------|
-| **postgres** | hydrocarbon-postgres | 5432 | PostgreSQL 16 database |
+| **postgres** | hydrocarbon-postgres | 5433 (host) → 5432 (container) | PostgreSQL 16 database |
 | **backend** | hydrocarbon-backend | 8000 | FastAPI REST API |
 | **frontend** | hydrocarbon-frontend | 5173 | React + Vite dev server |
 
@@ -92,7 +92,7 @@ Expected output:
 
 ```
 NAME                    STATUS          PORTS
-hydrocarbon-postgres    running (healthy)  127.0.0.1:5432->5432/tcp
+hydrocarbon-postgres    running (healthy)  127.0.0.1:5433->5432/tcp
 hydrocarbon-backend     running            0.0.0.0:8000->8000/tcp
 hydrocarbon-frontend    running            0.0.0.0:5173->5173/tcp
 ```
@@ -211,10 +211,10 @@ docker compose up --build -d backend
 ### Port already in use
 
 ```
-Error: Bind for 0.0.0.0:5432 failed: port is already allocated
+Error: port 5433 is already allocated
 ```
 
-**Fix:** Stop the conflicting service or change the port mapping in `docker-compose.yaml`.
+**Fix:** Stop the conflicting service or change the host port mapping in `docker-compose.yaml`. Keep the container port at `5432`.
 
 ### Backend fails to start
 
@@ -300,7 +300,7 @@ docker compose exec postgres psql -U hydrocarbon -d hydrocarbon_db
 
 # Using external client (e.g., pgAdmin, DBeaver)
 Host: 127.0.0.1
-Port: 5432
+Port: 5433
 Database: hydrocarbon_db
 User: hydrocarbon
 Password: hydrocarbon123

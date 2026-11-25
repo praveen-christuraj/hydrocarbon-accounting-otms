@@ -25,12 +25,12 @@ function AnalyticsHome() {
   const toast = useToast()
   const confirm = useConfirm()
   const pageSize = usePageSize()
-  const { hasAnyPermission } = usePermissions()
+  const { hasAny } = usePermissions()
 
-  const canBuild = hasAnyPermission(['Create Analytics Dashboard', 'Update Analytics Dashboard'])
-  const canCreate = hasAnyPermission(['Create Analytics Dashboard'])
-  const canPublish = hasAnyPermission(['Publish Analytics Dashboard'])
-  const canDelete = hasAnyPermission(['Delete Analytics Dashboard'])
+  const canBuild = hasAny(['Create Analytics Dashboard', 'Update Analytics Dashboard'])
+  const canCreate = hasAny(['Create Analytics Dashboard'])
+  const canPublish = hasAny(['Publish Analytics Dashboard'])
+  const canDelete = hasAny(['Delete Analytics Dashboard'])
 
   const [tab, setTab] = useState('dashboards')
   const [dashboards, setDashboards] = useState([])
