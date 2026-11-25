@@ -14,6 +14,11 @@ from datetime import date, datetime
 
 from sqlalchemy import func
 
+from app.services.report_catalog import (
+    LEDGER_VIRTUAL_FIELDS,
+    TICKET_VIRTUAL_FIELDS,
+    allowed_columns as catalog_allowed_columns,
+)
 from app.services.report_engine import (
     FILTER_OPERATORS,
     ReportDefinitionError,
@@ -199,7 +204,7 @@ def _normalize_style(style):
             "palette": [c for c in (_safe_color(item) for item in (chart.get("palette") or [])) if c][:12] if isinstance(chart.get("palette"), list) else [],
             "showLegend": _as_bool(chart.get("showLegend"), True),
             "legendPosition": legend_pos,
-            "showLabels": _as_bool(chart.get("showLabels"), False),
+            "showLabels": _as_bool(chart.get("showLabels"), False) if "showLabels" in chart else None,
             "showGrid": _as_bool(chart.get("showGrid"), True),
             "smooth": _as_bool(chart.get("smooth"), False),
             "areaFill": _as_bool(chart.get("areaFill"), False),
@@ -437,16 +442,94 @@ def _normalize_slicer(slicer, valid_visual_ids):
     }
 
 
+TRACKING_STATUS_KINDS = {"tracking_status", "barge_tracking_status", "shuttle_tracking_status", "fso_tracking_status", "tanker_tracking_status"}
+
+
 def _is_special_source(visual: dict) -> bool:
     vtype = str(visual.get("type") or "").upper()
     if vtype == "TEXT":
         return True
     source_kind = (((visual.get("query") or {}).get("source") or {}).get("kind") or "")
-    if source_kind in {"material_balance", "tank_snapshot"}:
+    if source_kind in {"material_balance", "tank_snapshot"} | TRACKING_STATUS_KINDS:
         return True
     if vtype == "TANK_VISUAL" and not ((visual.get("query") or {}).get("columns")):
         return True
     return False
+
+
+def _virtual_fields_for_source(kind: str) -> dict[str, dict]:
+    if kind == "operation_tickets":
+        return {item["field"]: item for item in TICKET_VIRTUAL_FIELDS}
+    if kind == "tank_stock_ledger":
+        return {item["field"]: item for item in LEDGER_VIRTUAL_FIELDS}
+    return {}
+
+
+def _table_name_for_source(source: dict | None) -> str | None:
+    src = source if isinstance(source, dict) else {}
+    kind = str(src.get("kind") or "operation_tickets")
+    if kind == "table":
+        return src.get("table")
+    if kind == "operation_tickets":
+        return "operation_transactions"
+    if kind == "tank_stock_ledger":
+        return "tank_stock_ledger"
+    return None
+
+
+def _resolve_missing_slicer_column(query: dict, column_key: str, slicer: dict) -> dict | None:
+    """Build a hidden data column definition for a slicer-bound DB/source field.
+
+    Allows slicers to be added from selected DB columns even when the field is
+    not displayed in the visual. Only allow-listed catalog/virtual fields are
+    resolvable; unknown/sensitive columns return None and fail validation.
+    """
+    source = query.get("source") if isinstance(query.get("source"), dict) else {}
+    kind = str(source.get("kind") or "operation_tickets")
+    table_name = _table_name_for_source(source)
+    table_columns = catalog_allowed_columns(table_name) if table_name else {}
+
+    # 1) Regular DB column on the source table
+    if column_key in table_columns:
+        meta = table_columns[column_key] or {}
+        return {
+            "key": column_key,
+            "label": slicer.get("label") or meta.get("label") or column_key,
+            "kind": "data",
+            "source": {"type": "column", "column": column_key},
+            "data_type": meta.get("data_type", "text"),
+            "aggregate": None,
+            "hidden": True,
+        }
+
+    # 2) Virtual field for the source kind
+    virtuals = _virtual_fields_for_source(kind)
+    if column_key in virtuals:
+        meta = virtuals[column_key] or {}
+        return {
+            "key": column_key,
+            "label": slicer.get("label") or meta.get("label") or column_key,
+            "kind": "data",
+            "source": {"type": "virtual", "field": column_key},
+            "data_type": meta.get("data_type", "text"),
+            "aggregate": None,
+            "hidden": True,
+        }
+
+    # 3) Ticket field (operation_tickets only) - key matches field_code convention
+    if kind == "operation_tickets" and re.match(r"^[A-Za-z0-9_]+$", column_key):
+        # Only inject if it looks like a field code the user explicitly picked;
+        # report_engine will validate against catalog/discovered fields.
+        return {
+            "key": re.sub(r"[^a-z0-9_]", "_", column_key.lower()).strip("_") or column_key.lower(),
+            "label": slicer.get("label") or column_key,
+            "kind": "data",
+            "source": {"type": "ticket_field", "field_code": column_key},
+            "data_type": str(slicer.get("data_type") or "text"),
+            "aggregate": None,
+            "hidden": True,
+        }
+    return None
 
 
 def report_definition_for_visual(visual: dict, slicers: list[dict] | None = None) -> dict:
@@ -491,15 +574,50 @@ def report_definition_for_visual(visual: dict, slicers: list[dict] | None = None
         runtime_key = str(slicer.get("key") or "")
         if not key or not runtime_key:
             continue
-        if key in available_keys and not any(item.get("key") == runtime_key for item in query["runtime_filters"]):
+        target_key = key
+        if target_key not in available_keys:
+            injected = _resolve_missing_slicer_column(query, target_key, slicer)
+            if injected and injected.get("key") not in available_keys:
+                # Ensure the injected key is valid for report engine
+                injected_key = str(injected.get("key") or "")
+                if re.match(r"^[a-z][a-z0-9_]*$", injected_key):
+                    columns.append(injected)
+                    available_keys.add(injected_key)
+                    target_key = injected_key
+        if target_key in available_keys and not any(item.get("key") == runtime_key for item in query["runtime_filters"]):
             query["runtime_filters"].append({
                 "key": runtime_key,
                 "label": slicer.get("label") or runtime_key,
                 "type": runtime_type,
-                "column_key": key,
+                "column_key": target_key,
                 "required": _as_bool(slicer.get("required"), False),
                 **({"default": slicer.get("default")} if slicer.get("default") not in (None, "", []) else {}),
             })
+
+    def _ensure_column(key: str, fallback_label: str | None = None):
+        if not key or key in available_keys:
+            return key
+        injected = _resolve_missing_slicer_column(query, key, {"label": fallback_label or key})
+        if injected and injected.get("key") not in available_keys:
+            injected_key = str(injected.get("key") or "")
+            if re.match(r"^[a-z][a-z0-9_]*$", injected_key):
+                columns.append(injected)
+                available_keys.add(injected_key)
+                return injected_key
+        return key
+
+    for flt in query.get("filters") or []:
+        if isinstance(flt, dict) and flt.get("column_key"):
+            _ensure_column(str(flt["column_key"]))
+    for rf in query.get("runtime_filters") or []:
+        if isinstance(rf, dict) and rf.get("column_key"):
+            _ensure_column(str(rf["column_key"]), rf.get("label"))
+    for gb in query.get("group_by") or []:
+        if isinstance(gb, dict) and gb.get("key"):
+            _ensure_column(str(gb["key"]))
+    for srt in query.get("sort") or []:
+        if isinstance(srt, dict) and srt.get("key"):
+            _ensure_column(str(srt["key"]))
     return query
 
 
@@ -575,6 +693,16 @@ def validate_analytics_definition(definition: dict) -> dict:
             visual["query"] = visual_query
             continue
 
+        if visual_source.get("kind") in TRACKING_STATUS_KINDS:
+            visual_query["source"] = {"kind": str(visual_source.get("kind") or "tracking_status")}
+            # Optional module filter: BARGE, SHUTTLE, FSO, TANKER, or ALL
+            module_filter = str(visual_query.get("tracking_module") or "ALL").upper().strip() or "ALL"
+            if module_filter not in {"ALL", "BARGE", "SHUTTLE", "FSO", "TANKER"}:
+                module_filter = "ALL"
+            visual_query["tracking_module"] = module_filter
+            visual["query"] = visual_query
+            continue
+
         if not isinstance(visual_query.get("columns"), list):
             raise ReportDefinitionError(f"Visual '{visual.get('title') or visual_id}' query columns must be a list.")
         visual["query"] = visual_query
@@ -620,6 +748,12 @@ def validate_analytics_definition(definition: dict) -> dict:
         "current_stock", "capacity", "ullage", "fill_pct", "accounting_date",
         "stock_nsv_bbl", "stock_gsv_bbl", "stock_lt", "stock_mt",
     )
+    tracking_status_cols = (
+        "tracking_module", "tracking_ref", "asset_code", "asset_name", "location_code",
+        "from_location_code", "to_location_code", "current_status", "voyage_status",
+        "last_event_type", "last_event_at", "ticket_number", "product_name",
+        "quantity_gsv_bbl", "quantity_nsv_bbl", "remarks",
+    )
     exposed = {}
     for visual in visuals:
         if not isinstance(visual, dict):
@@ -629,6 +763,10 @@ def validate_analytics_definition(definition: dict) -> dict:
         vtype = str(visual.get("type") or "").upper()
         if source_kind == "tank_snapshot" or (vtype == "TANK_VISUAL" and not ((visual.get("query") or {}).get("columns"))):
             for ckey in tank_snapshot_cols:
+                exposed[(vid, ckey)] = {"key": ckey}
+            continue
+        if source_kind in TRACKING_STATUS_KINDS:
+            for ckey in tracking_status_cols:
                 exposed[(vid, ckey)] = {"key": ckey}
             continue
         for column in ((visual.get("query") or {}).get("columns") or []):
@@ -650,10 +788,22 @@ def validate_analytics_definition(definition: dict) -> dict:
         column_key = str(slicer.get("column_key") or "")
         bound = any((vid, column_key) in exposed for vid in targets)
         if not bound:
-            raise ReportDefinitionError(
-                f"Slicer '{slicer.get('label') or slicer.get('key')}' references field '{column_key}' that is not present in its targeted visuals. "
-                "Add that field to the visual (or recreate the slicer) so it can be filtered."
-            )
+            # Allow slicers bound to selected DB/source columns not currently displayed.
+            resolvable = False
+            for vid in targets:
+                visual = next((v for v in visuals if str(v.get("id")) == str(vid)), None)
+                if not visual or _is_special_source(visual):
+                    continue
+                q = visual.get("query") if isinstance(visual.get("query"), dict) else {}
+                injected = _resolve_missing_slicer_column(q, column_key, slicer)
+                if injected:
+                    resolvable = True
+                    break
+            if not resolvable:
+                raise ReportDefinitionError(
+                    f"Slicer '{slicer.get('label') or slicer.get('key')}' references field '{column_key}' that is not available for its targeted visuals. "
+                    "Choose a column from the selected data source or add it to the visual."
+                )
 
     candidate["layout"] = _normalize_layout(candidate.get("layout"), visuals)
     return candidate
@@ -754,6 +904,76 @@ def _row_matches_tank_filters(row: dict, visual: dict, slicers: list[dict] | Non
                 if str(cell or "").strip().casefold() != str(val).strip().casefold():
                     return False
     return True
+
+
+def _snapshot_row_matches_fixed_filters(row: dict, visual: dict) -> bool:
+    query = visual.get("query") if isinstance(visual.get("query"), dict) else {}
+    filters = query.get("filters") or []
+    if not isinstance(filters, list) or not filters:
+        return True
+    logic = str(query.get("filter_logic") or "AND").upper()
+    results = []
+    for flt in filters:
+        if not isinstance(flt, dict):
+            continue
+        key = str(flt.get("column_key") or "").strip()
+        op = str(flt.get("operator") or "eq").lower()
+        if not key:
+            continue
+        cell = row.get(key)
+        val = flt.get("value")
+        val2 = flt.get("value2")
+        if op == "is_blank":
+            results.append(cell is None or str(cell).strip() == "")
+            continue
+        if op == "is_not_blank":
+            results.append(not (cell is None or str(cell).strip() == ""))
+            continue
+        if val is None or val == "" or val == []:
+            continue
+        cell_str = "" if cell is None else str(cell)
+        cell_norm = cell_str.strip().casefold()
+        if op in {"eq", "ne"}:
+            match = cell_norm == str(val).strip().casefold()
+            results.append(match if op == "eq" else not match)
+        elif op in {"contains", "not_contains"}:
+            match = str(val).strip().casefold() in cell_norm
+            results.append(match if op == "contains" else not match)
+        elif op == "starts_with":
+            results.append(cell_norm.startswith(str(val).strip().casefold()))
+        elif op == "ends_with":
+            results.append(cell_norm.endswith(str(val).strip().casefold()))
+        elif op in {"in", "not_in"}:
+            expected = val if isinstance(val, list) else [s.strip() for s in str(val).split(",")]
+            expected_norm = {str(item).strip().casefold() for item in expected if str(item).strip() != ""}
+            match = cell_norm in expected_norm
+            results.append(match if op == "in" else not match)
+        elif op == "between":
+            if cell is None or val in (None, "") or val2 in (None, ""):
+                results.append(False)
+                continue
+            try:
+                cnum = float(cell)
+                results.append(float(val) <= cnum <= float(val2))
+            except (TypeError, ValueError):
+                cstr = str(cell)
+                results.append(str(val) <= cstr <= str(val2))
+        else:
+            try:
+                cnum = float(cell)
+                vnum = float(val)
+                cmp = (cnum > vnum) - (cnum < vnum)
+                op_map = {"gt": cmp > 0, "gte": cmp >= 0, "lt": cmp < 0, "lte": cmp <= 0}
+                results.append(op_map.get(op, cell_norm == str(val).strip().casefold()))
+            except (TypeError, ValueError):
+                cstr = str(cell)
+                vstr = str(val)
+                cmp = (cstr > vstr) - (cstr < vstr)
+                op_map = {"gt": cmp > 0, "gte": cmp >= 0, "lt": cmp < 0, "lte": cmp <= 0}
+                results.append(op_map.get(op, cell_norm == str(val).strip().casefold()))
+    if not results:
+        return True
+    return any(results) if logic == "OR" else all(results)
 
 
 def _run_tank_snapshot_visual(db, user, visual: dict, params: dict, slicers: list[dict] | None = None, ignore_source_match: bool = True) -> dict:
@@ -921,6 +1141,8 @@ def _run_tank_snapshot_visual(db, user, visual: dict, params: dict, slicers: lis
         }
         if not _row_matches_tank_filters(row_obj, visual, slicers, params, ignore_source_match=ignore_source_match):
             continue
+        if not _snapshot_row_matches_fixed_filters(row_obj, visual):
+            continue
         total_stock += stock_val
         total_cap += cap
         rows.append(row_obj)
@@ -1009,6 +1231,7 @@ def _run_material_balance_visual(db, visual: dict, params: dict) -> dict:
         }
         row.update(item.get("values") or {})
         rows.append(row)
+    rows = [row for row in rows if _snapshot_row_matches_fixed_filters(row, visual)]
     warnings = []
     if coverage["unmapped_operations"]:
         warnings.append(
@@ -1018,6 +1241,239 @@ def _run_material_balance_visual(db, visual: dict, params: dict) -> dict:
         "columns": output_columns, "rows": rows, "totals": {},
         "meta": {"warnings": warnings, "total_rows": len(rows), "date_basis_label": "Accounting Date",
                  "material_balance_template": template.template_name, "unmapped_ledger_rows_count": coverage["unmapped_ledger_rows_count"]},
+    }
+
+
+def _tracking_status_columns() -> list[dict]:
+    return [
+        {"key": "tracking_module", "label": "Tracking Module", "data_type": "text"},
+        {"key": "tracking_ref", "label": "Tracking Ref / Convoy", "data_type": "text"},
+        {"key": "asset_code", "label": "Asset Code", "data_type": "text"},
+        {"key": "asset_name", "label": "Asset Name", "data_type": "text"},
+        {"key": "location_code", "label": "Location", "data_type": "text"},
+        {"key": "from_location_code", "label": "From Location", "data_type": "text"},
+        {"key": "to_location_code", "label": "To Location", "data_type": "text"},
+        {"key": "current_status", "label": "Current Status", "data_type": "text"},
+        {"key": "voyage_status", "label": "Voyage Status", "data_type": "text"},
+        {"key": "last_event_type", "label": "Last Event Type", "data_type": "text"},
+        {"key": "last_event_at", "label": "Last Event Date/Time", "data_type": "datetime"},
+        {"key": "ticket_number", "label": "Last Ticket Number", "data_type": "text"},
+        {"key": "product_name", "label": "Product", "data_type": "text"},
+        {"key": "quantity_gsv_bbl", "label": "Last Qty GSV (BBL)", "data_type": "number", "format": {"decimals": 2}},
+        {"key": "quantity_nsv_bbl", "label": "Last Qty NSV (BBL)", "data_type": "number", "format": {"decimals": 2}},
+        {"key": "remarks", "label": "Remarks / Status Detail", "data_type": "text"},
+    ]
+
+
+def _norm_tracking_status(value) -> str:
+    return str(value or "").strip().upper()
+
+
+def _derive_barge_status(trip_status: str, last_event_type: str) -> str:
+    trip_norm = _norm_tracking_status(trip_status)
+    evt = _norm_tracking_status(last_event_type)
+    if trip_norm == "CLOSED":
+        return "CLOSED"
+    if not evt:
+        return "OPEN" if trip_norm == "OPEN" else (trip_norm or "UNKNOWN")
+    if "UNLOAD" in evt or "DISCHARGE" in evt:
+        return "UNLOADED"
+    if "STS_OUT" in evt:
+        return "IN_TRANSIT"
+    if "STS_IN" in evt or "LOAD" in evt or "RECEIPT" in evt or "TOP_UP" in evt or "TOPUP" in evt:
+        return "LOADED"
+    return evt.replace("_", " ")
+
+
+def _scope_allows_location(scope, location_code) -> bool:
+    if scope is None:
+        return True
+    if not location_code:
+        return False
+    return _norm_tracking_status(location_code).lower() in scope
+
+
+def _run_tracking_status_visual(db, user, visual: dict, params: dict, slicers: list[dict] | None = None, ignore_source_match: bool = True) -> dict:
+    from app.dependencies.permissions import get_user_report_location_codes, normalize_location_code
+    from app.models import Asset, FSOVoyage, OperationTransaction, ShuttleVoyage, TankerReceiptAcknowledgement, Trip, TripEvent
+
+    scope = get_user_report_location_codes(user, db)
+    query = visual.get("query") if isinstance(visual.get("query"), dict) else {}
+    module_filter = str(query.get("tracking_module") or "ALL").upper().strip() or "ALL"
+    if module_filter not in {"ALL", "BARGE", "SHUTTLE", "FSO", "TANKER"}:
+        module_filter = "ALL"
+
+    rows: list[dict] = []
+    warnings: list[str] = []
+
+    # ---- Barge / Trip tracking ----
+    if module_filter in {"ALL", "BARGE"}:
+        trips = db.query(Trip).order_by(Trip.updated_at.desc(), Trip.id.desc()).limit(500).all()
+        trip_ids = [t.id for t in trips]
+        events_by_trip: dict[int, list[TripEvent]] = {tid: [] for tid in trip_ids}
+        if trip_ids:
+            events = (
+                db.query(TripEvent)
+                .filter(TripEvent.trip_id.in_(trip_ids))
+                .order_by(TripEvent.trip_id.asc(), TripEvent.sequence_no.asc(), TripEvent.event_datetime.asc(), TripEvent.id.asc())
+                .all()
+            )
+            for evt in events:
+                events_by_trip.setdefault(evt.trip_id, []).append(evt)
+
+        tx_ids = sorted({evt.operation_transaction_id for evts in events_by_trip.values() for evt in evts if evt.operation_transaction_id})
+        tx_by_id: dict[int, OperationTransaction] = {}
+        if tx_ids:
+            for tx in db.query(OperationTransaction).filter(OperationTransaction.id.in_(tx_ids)).all():
+                tx_by_id[tx.id] = tx
+
+        asset_codes = sorted({(t.primary_barge_asset_code or "").strip() for t in trips if (t.primary_barge_asset_code or "").strip()})
+        asset_codes.update({(evt.asset_code or "").strip() for evts in events_by_trip.values() for evt in evts if (evt.asset_code or "").strip()})
+        asset_name_by_code: dict[str, str] = {}
+        if asset_codes:
+            for asset in db.query(Asset).filter(Asset.asset_code.in_(list(asset_codes))).all():
+                asset_name_by_code[str(asset.asset_code)] = asset.asset_name or asset.asset_code
+
+        for trip in trips:
+            trip_events = events_by_trip.get(trip.id, [])
+            last_evt = trip_events[-1] if trip_events else None
+            last_tx = tx_by_id.get(last_evt.operation_transaction_id) if last_evt and last_evt.operation_transaction_id else None
+            event_locations = [normalize_location_code(evt.location_code) for evt in trip_events if evt.location_code]
+            tx_locations = []
+            for evt in trip_events:
+                tx = tx_by_id.get(evt.operation_transaction_id)
+                if tx:
+                    for attr in ("origin_location_code", "destination_location_code", "sender_location_code", "receiver_location_code", "location_code"):
+                        val = normalize_location_code(getattr(tx, attr, None))
+                        if val:
+                            tx_locations.append(val)
+            scope_locations = [loc for loc in (event_locations + tx_locations) if loc]
+            if scope is not None and not any(loc in scope for loc in scope_locations):
+                continue
+
+            asset_code = (last_evt.asset_code if last_evt and last_evt.asset_code else trip.primary_barge_asset_code) or ""
+            from_loc = normalize_location_code(getattr(last_tx, "sender_location_code", None) or getattr(last_tx, "origin_location_code", None) or (trip_events[0].location_code if trip_events else None)) or ""
+            to_loc = normalize_location_code(getattr(last_tx, "receiver_location_code", None) or getattr(last_tx, "destination_location_code", None) or (last_evt.location_code if last_evt else None)) or ""
+            status = _derive_barge_status(trip.status, last_evt.event_type if last_evt else "")
+            rows.append({
+                "tracking_module": "BARGE",
+                "tracking_ref": trip.convoy_number or "",
+                "asset_code": asset_code,
+                "asset_name": asset_name_by_code.get(asset_code, asset_code),
+                "location_code": normalize_location_code(last_evt.location_code if last_evt and last_evt.location_code else (to_loc or from_loc)) or "",
+                "from_location_code": from_loc,
+                "to_location_code": to_loc,
+                "current_status": status,
+                "voyage_status": str(trip.status or "").upper(),
+                "last_event_type": str(last_evt.event_type or "") if last_evt else "",
+                "last_event_at": last_evt.event_datetime.isoformat() if last_evt and last_evt.event_datetime else (trip.updated_at.isoformat() if trip.updated_at else None),
+                "ticket_number": getattr(last_tx, "ticket_number", None) or "",
+                "product_name": getattr(last_tx, "product_name", None) or "",
+                "quantity_gsv_bbl": float(getattr(last_tx, "movement_gsv_bbl", 0) or 0) if last_tx else 0.0,
+                "quantity_nsv_bbl": float(getattr(last_tx, "movement_nsv_bbl", 0) or 0) if last_tx else 0.0,
+                "remarks": trip.remarks or (last_evt.remarks if last_evt else "") or "",
+            })
+
+    # ---- Shuttle voyages ----
+    if module_filter in {"ALL", "SHUTTLE"}:
+        shuttle_q = db.query(ShuttleVoyage).order_by(ShuttleVoyage.updated_at.desc(), ShuttleVoyage.id.desc()).limit(500)
+        for sv in shuttle_q.all():
+            loc = normalize_location_code(sv.location_code)
+            if scope is not None and loc not in scope:
+                continue
+            rows.append({
+                "tracking_module": "SHUTTLE",
+                "tracking_ref": sv.shuttle_number or "",
+                "asset_code": sv.shuttle_asset_code or "",
+                "asset_name": sv.shuttle_asset_code or "",
+                "location_code": loc or "",
+                "from_location_code": "",
+                "to_location_code": loc or "",
+                "current_status": "CLOSED" if _norm_tracking_status(sv.status) == "CLOSED" else "OPEN",
+                "voyage_status": str(sv.status or "").upper(),
+                "last_event_type": "SHUTTLE_VOYAGE",
+                "last_event_at": sv.updated_at.isoformat() if sv.updated_at else (sv.created_at.isoformat() if sv.created_at else None),
+                "ticket_number": "",
+                "product_name": "",
+                "quantity_gsv_bbl": 0.0,
+                "quantity_nsv_bbl": 0.0,
+                "remarks": sv.closure_remarks or sv.remarks or "",
+            })
+
+    # ---- FSO voyages ----
+    if module_filter in {"ALL", "FSO"}:
+        fso_q = db.query(FSOVoyage).order_by(FSOVoyage.updated_at.desc(), FSOVoyage.id.desc()).limit(500)
+        for fv in fso_q.all():
+            loc = normalize_location_code(fv.location_code)
+            if scope is not None and loc not in scope:
+                continue
+            rows.append({
+                "tracking_module": "FSO",
+                "tracking_ref": fv.shuttle_number or "",
+                "asset_code": fv.fso_asset_code or "",
+                "asset_name": fv.fso_asset_code or "",
+                "location_code": loc or "",
+                "from_location_code": "",
+                "to_location_code": loc or "",
+                "current_status": "CLOSED" if _norm_tracking_status(fv.status) == "CLOSED" else "OPEN",
+                "voyage_status": str(fv.status or "").upper(),
+                "last_event_type": "FSO_VOYAGE",
+                "last_event_at": fv.updated_at.isoformat() if fv.updated_at else (fv.created_at.isoformat() if fv.created_at else None),
+                "ticket_number": "",
+                "product_name": "",
+                "quantity_gsv_bbl": 0.0,
+                "quantity_nsv_bbl": 0.0,
+                "remarks": fv.closure_remarks or fv.remarks or "",
+            })
+
+    # ---- Tanker receipt acknowledgements ----
+    if module_filter in {"ALL", "TANKER"}:
+        tanker_q = db.query(TankerReceiptAcknowledgement).order_by(TankerReceiptAcknowledgement.acknowledged_at.desc(), TankerReceiptAcknowledgement.id.desc()).limit(500)
+        sender_ids = []
+        tanker_rows = tanker_q.all()
+        for tr in tanker_rows:
+            if tr.sender_transaction_id:
+                sender_ids.append(tr.sender_transaction_id)
+        sender_tx_by_id = {}
+        if sender_ids:
+            for tx in db.query(OperationTransaction).filter(OperationTransaction.id.in_(sorted(set(sender_ids)))).all():
+                sender_tx_by_id[tx.id] = tx
+        for tr in tanker_rows:
+            receiver_loc = normalize_location_code(tr.receiver_location_code)
+            sender_tx = sender_tx_by_id.get(tr.sender_transaction_id)
+            sender_loc = normalize_location_code(getattr(sender_tx, "sender_location_code", None) or getattr(sender_tx, "origin_location_code", None))
+            dest_loc = normalize_location_code(getattr(sender_tx, "receiver_location_code", None) or getattr(sender_tx, "destination_location_code", None))
+            scoped = [loc for loc in [receiver_loc, sender_loc, dest_loc] if loc]
+            if scope is not None and not any(loc in scope for loc in scoped):
+                continue
+            rows.append({
+                "tracking_module": "TANKER",
+                "tracking_ref": tr.convoy_number or "",
+                "asset_code": tr.tanker_asset_code or tr.prime_mover_asset_code or "",
+                "asset_name": tr.tanker_asset_code or tr.prime_mover_asset_code or "",
+                "location_code": receiver_loc or dest_loc or sender_loc or "",
+                "from_location_code": sender_loc or "",
+                "to_location_code": receiver_loc or dest_loc or "",
+                "current_status": "ACKNOWLEDGED",
+                "voyage_status": "RECEIVED",
+                "last_event_type": "TANKER_RECEIPT_ACKNOWLEDGED",
+                "last_event_at": tr.acknowledged_at.isoformat() if tr.acknowledged_at else None,
+                "ticket_number": getattr(sender_tx, "ticket_number", "") if sender_tx else "",
+                "product_name": getattr(sender_tx, "product_name", "") if sender_tx else "",
+                "quantity_gsv_bbl": float(getattr(sender_tx, "movement_gsv_bbl", 0) or 0) if sender_tx else 0.0,
+                "quantity_nsv_bbl": float(getattr(sender_tx, "movement_nsv_bbl", 0) or 0) if sender_tx else 0.0,
+                "remarks": f"Acknowledged by {tr.acknowledged_by}" if tr.acknowledged_by else "",
+            })
+
+    # Apply fixed visual filters / slicers / cross-filters like other special sources
+    filtered_rows = [r for r in rows if _row_matches_tank_filters(r, visual, slicers, params, ignore_source_match=ignore_source_match) and _snapshot_row_matches_fixed_filters(r, visual)]
+    warnings.append("Tracking status is derived from the latest available tracking records in scope. Validate critical operational decisions against the source tracking module.")
+
+    return {
+        "columns": _tracking_status_columns(),
+        "rows": filtered_rows[:1000],
+        "totals": {},
+        "meta": {"warnings": warnings, "total_rows": len(filtered_rows)},
     }
 
 
@@ -1137,6 +1593,9 @@ def run_visual(db, user, visual: dict, definition: dict, params: dict) -> dict:
         require_any_user_permission(user, ["View Analytics Dashboard", "View Tank Stock Ledger", "View Analytics Definition"], db)
         return _run_tank_snapshot_visual(db, user, visual, params, slicers=definition.get("slicers") or [], ignore_source_match=True)
 
+    if source.get("kind") in TRACKING_STATUS_KINDS:
+        return _run_tracking_status_visual(db, user, visual, params, slicers=definition.get("slicers") or [], ignore_source_match=True)
+
     report_definition = report_definition_for_visual(visual, definition.get("slicers") or [])
     report_definition["report_type"] = "MATRIX" if vtype == "MATRIX" and report_definition.get("matrix") else "TABULAR"
     report_definition, effective_params = _inject_selection_filters(
@@ -1158,6 +1617,8 @@ def run_visual_records(db, user, visual: dict, definition: dict, params: dict) -
         from app.dependencies.permissions import require_any_user_permission
         require_any_user_permission(user, ["View Analytics Dashboard", "View Tank Stock Ledger", "View Analytics Definition"], db)
         res = _run_tank_snapshot_visual(db, user, visual, params, slicers=definition.get("slicers") or [], ignore_source_match=False)
+    elif source.get("kind") in TRACKING_STATUS_KINDS:
+        res = _run_tracking_status_visual(db, user, visual, params, slicers=definition.get("slicers") or [], ignore_source_match=False)
     else:
         res = None
     if res is not None:

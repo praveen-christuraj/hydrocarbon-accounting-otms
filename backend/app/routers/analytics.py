@@ -36,7 +36,9 @@ from app.schemas import (
 )
 from app.services.analytics_engine import (
     ReportDefinitionError,
+    TRACKING_STATUS_KINDS,
     _run_tank_snapshot_visual,
+    _run_tracking_status_visual,
     export_dashboard_workbook_bytes,
     run_dashboard,
     run_visual,
@@ -44,7 +46,12 @@ from app.services.analytics_engine import (
     validate_analytics_definition,
 )
 from app.services.audit_service import create_audit_log
-from app.services.report_catalog import build_catalog
+from app.services.report_catalog import (
+    LEDGER_VIRTUAL_FIELDS,
+    TICKET_VIRTUAL_FIELDS,
+    allowed_columns as catalog_allowed_columns,
+    build_catalog,
+)
 from app.services.report_engine import export_csv_bytes, export_xlsx_bytes
 from app.services.report_formula import validate_formula
 from app.utils.helpers import get_current_user_display_name
@@ -345,6 +352,33 @@ def get_analytics_catalog(
             {"column": "tank_asset_code", "label": "Tank", "data_type": "text"},
             {"column": "product_name", "label": "Product", "data_type": "text"},
             {"column": "values", "label": "Template-defined columns", "data_type": "number", "is_dynamic": True},
+        ],
+        "virtual_fields": [], "supports_template_fields": False,
+        "supports_payload_json": False, "default_date_basis": "ACCOUNTING_DATE",
+    })
+    catalog["datasets"].append({
+        "id": "tracking_status",
+        "kind": "tracking_status",
+        "name": "Vessel & Barge Tracking Status — live movement status",
+        "description": "Live tracking status for barge, shuttle, FSO and tanker movements across locations, including current loaded/unloaded/in-transit status, last event, voyage state and ticket reference.",
+        "icon": "mapPin",
+        "columns": [
+            {"column": "tracking_module", "label": "Tracking Module", "data_type": "text"},
+            {"column": "tracking_ref", "label": "Tracking Ref / Convoy", "data_type": "text"},
+            {"column": "asset_code", "label": "Asset Code", "data_type": "text"},
+            {"column": "asset_name", "label": "Asset Name", "data_type": "text"},
+            {"column": "location_code", "label": "Location", "data_type": "text", "is_location": True},
+            {"column": "from_location_code", "label": "From Location", "data_type": "text", "is_location": True},
+            {"column": "to_location_code", "label": "To Location", "data_type": "text", "is_location": True},
+            {"column": "current_status", "label": "Current Status", "data_type": "text"},
+            {"column": "voyage_status", "label": "Voyage Status", "data_type": "text"},
+            {"column": "last_event_type", "label": "Last Event Type", "data_type": "text"},
+            {"column": "last_event_at", "label": "Last Event Date/Time", "data_type": "datetime", "is_date": True},
+            {"column": "ticket_number", "label": "Last Ticket Number", "data_type": "text"},
+            {"column": "product_name", "label": "Product", "data_type": "text"},
+            {"column": "quantity_gsv_bbl", "label": "Last Qty GSV (BBL)", "data_type": "number"},
+            {"column": "quantity_nsv_bbl", "label": "Last Qty NSV (BBL)", "data_type": "number"},
+            {"column": "remarks", "label": "Remarks / Status Detail", "data_type": "text"},
         ],
         "virtual_fields": [], "supports_template_fields": False,
         "supports_payload_json": False, "default_date_basis": "ACCOUNTING_DATE",
@@ -688,6 +722,8 @@ def _resolve_slicer_values(
     if target_visual is None:
         target_visual = next((v for v in targeted_visuals if (((v.get("query") or {}).get("source") or {}).get("kind") or "") == "tank_snapshot"), None)
     if target_visual is None:
+        target_visual = next((v for v in targeted_visuals if (((v.get("query") or {}).get("source") or {}).get("kind") or "") in TRACKING_STATUS_KINDS), None)
+    if target_visual is None:
         target_visual = targeted_visuals[0] if targeted_visuals else None
     if target_visual is None:
         raise HTTPException(status_code=400, detail="No visual available for this slicer.")
@@ -735,17 +771,22 @@ def _resolve_slicer_values(
         str(target_visual.get("type") or "").upper() == "TANK_VISUAL" and not (query.get("columns"))
     ):
         result = _run_tank_snapshot_visual(db, current_user, target_visual, params)
+    elif source.get("kind") in TRACKING_STATUS_KINDS:
+        result = _run_tracking_status_visual(db, current_user, target_visual, params)
     else:
         columns = list(query.get("columns") or [])
         col = next((c for c in columns if str(c.get("key")) == column_key), None)
         if not col:
-            col = {
-                "key": column_key,
-                "label": slicer.get("label") or column_key,
-                "kind": "data",
-                "source": {"type": "column", "column": column_key},
-                "data_type": str(slicer.get("data_type") or "text"),
-            }
+            source_kind = str(source.get("kind") or "operation_tickets")
+            table_name = source.get("table") if source_kind == "table" else ("operation_transactions" if source_kind == "operation_tickets" else ("tank_stock_ledger" if source_kind == "tank_stock_ledger" else None))
+            table_cols = catalog_allowed_columns(table_name) if table_name else {}
+            virtuals = {f["field"]: f for f in (TICKET_VIRTUAL_FIELDS if source_kind == "operation_tickets" else (LEDGER_VIRTUAL_FIELDS if source_kind == "tank_stock_ledger" else []))}
+            if column_key in virtuals:
+                meta = virtuals[column_key]
+                col = {"key": column_key, "label": slicer.get("label") or meta.get("label") or column_key, "kind": "data", "source": {"type": "virtual", "field": column_key}, "data_type": meta.get("data_type", "text")}
+            else:
+                meta = table_cols.get(column_key) or {}
+                col = {"key": column_key, "label": slicer.get("label") or meta.get("label") or column_key, "kind": "data", "source": {"type": "column", "column": column_key}, "data_type": meta.get("data_type") or str(slicer.get("data_type") or "text")}
         distinct_query = {
             "schema_version": 1,
             "report_type": "TABULAR",
