@@ -23,6 +23,7 @@
     "test:operation-entry-bulk": "node scripts/test-operation-entry-bulk-import.mjs",
     "test:shortcuts": "node scripts/test-keyboard-shortcuts.mjs",
     "test:report-date-grouping": "node scripts/test-report-date-grouping.mjs",
+    "test:analytics": "node scripts/test-analytics-overhaul.mjs",
     "test:auth-refresh": "node scripts/test-auth-refresh-race.mjs",
     "check:api-base-url": "node scripts/check-api-base-url.mjs",
     "check:csp-parity": "node scripts/check-csp-parity.mjs"
@@ -32,8 +33,10 @@
     "echarts": "^6.1.0",
     "echarts-for-react": "^3.0.6",
     "exceljs": "^4.4.0",
+    "gridstack": "^14.1.1",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.8",
+    "plotly.js-dist-min": "^4.3.0",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-grid-layout": "^1.5.3",

@@ -1,233 +1,517 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import ReactECharts from 'echarts-for-react'
 import AlertMessage from '../common/AlertMessage'
+import ExportMenu from '../common/ExportMenu'
+import Icon from '../common/Icon'
 import Modal from '../common/Modal'
-import PaginationControls, { paginateRows, usePageSize } from '../common/PaginationControls'
+import EChartsRenderer from './EChartsRenderer'
+import PerspectiveGrid from './PerspectiveGrid'
+import PlotlyRenderer from './PlotlyRenderer'
+import TankVisualRenderer from './TankVisualRenderer'
+import {
+  ECHARTS_VISUAL_TYPES,
+  PERSPECTIVE_VISUAL_TYPES,
+  PLOTLY_VISUAL_TYPES,
+  RUNTIME_SWITCHABLE_TYPES,
+  formatMetricValue,
+  getVisualMeta,
+} from '../../utils/analyticsEngine'
 
-const EMPTY_ARRAY = []
+function KpiCardRenderer({ visual, columns = [], rows = [], totals = {}, onInspectRecords }) {
+  const kpiStyle = useMemo(() => visual?.style?.kpi || {}, [visual?.style?.kpi])
+  const metricKey = visual?.query?.metric_key || visual?.query?.measure_key || columns.find((c) => c.data_type === 'number')?.key || columns[0]?.key
+  const metricColumn = columns.find((c) => c.key === metricKey) || columns[0]
 
-const formatValue = (value, column, style) => {
-  if (value === null || value === undefined || value === '') return '—'
-  if (column?.data_type === 'number' || typeof value === 'number') {
-    const decimals = Number(style?.decimals ?? column?.format?.decimals ?? 2)
-    const num = Number(value)
-    if (!Number.isFinite(num)) return '—'
-    if (style?.compact) {
-      return new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: Math.max(0, decimals) }).format(num)
+  const headlineValue = useMemo(() => {
+    if (metricColumn && Object.prototype.hasOwnProperty.call(totals || {}, metricColumn.key)) {
+      return totals[metricColumn.key]
     }
-    return num.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: decimals })
-  }
-  return String(value)
-}
+    if (rows.length === 1 && metricColumn) {
+      return rows[0]?.[metricColumn.key]
+    }
+    if (rows.length > 1 && metricColumn?.data_type === 'number') {
+      return rows.reduce((acc, r) => acc + (Number(r?.[metricColumn.key]) || 0), 0)
+    }
+    return rows[0]?.[metricColumn?.key] ?? 0
+  }, [metricColumn, rows, totals])
 
-const sum = (rows, key) => rows.reduce((total, row) => total + (Number(row?.[key]) || 0), 0)
+  const seriesPoints = useMemo(() => {
+    if (!metricColumn || rows.length < 2) return []
+    return rows
+      .slice(-24)
+      .map((r) => Number(r?.[metricColumn.key]))
+      .filter((n) => Number.isFinite(n))
+  }, [metricColumn, rows])
 
-function useContainerSize(ref) {
-  const [size, setSize] = useState({ width: 0, height: 0 })
-  useEffect(() => {
-    const node = ref.current
-    if (!node || typeof ResizeObserver === 'undefined') return undefined
-    const observer = new ResizeObserver((entries) => {
-      const entry = entries[0]
-      if (!entry) return
-      const { width, height } = entry.contentRect
-      setSize((current) => (Math.abs(current.width - width) < 2 && Math.abs(current.height - height) < 2 ? current : { width, height }))
-    })
-    observer.observe(node)
-    return () => observer.disconnect()
-  }, [ref])
-  return size
-}
+  const numHeadline = Number(headlineValue)
+  const targetVal = kpiStyle.targetValue != null && kpiStyle.targetValue !== '' ? Number(kpiStyle.targetValue) : null
 
-function VisualBody({ visual, result, expanded, chartHeight }) {
-  const allColumns = result?.columns || EMPTY_ARRAY
-  const hiddenKeys = useMemo(() => new Set((visual?.query?.columns || []).filter((col) => col?.hidden).map((col) => col.key)), [visual])
-  const columns = useMemo(() => allColumns.filter((col) => !hiddenKeys.has(col.key)), [allColumns, hiddenKeys])
-  const rows = result?.rows || EMPTY_ARRAY
-  const [page, setPage] = useState(1)
-  const pageSize = usePageSize()
-  useEffect(() => { setPage(1) }, [visual?.id, result?.meta?.total_rows, rows.length])
-  const visibleRows = paginateRows(rows, page, pageSize)
-  const numericColumn = columns.find((column) => column.data_type === 'number')
-  const metricKey = visual?.query?.metric_key || visual?.query?.measure_key || numericColumn?.key
-  const metricColumn = columns.find((column) => column.key === metricKey) || numericColumn
-  const dimensionKey = visual?.query?.dimension_key || columns.find((column) => column.key !== metricColumn?.key)?.key
-  const style = visual?.style || {}
-  const kpiStyle = style.kpi || {}
-  const tableStyle = style.table || {}
-  const chartStyle = style.chart || {}
+  const deltaInfo = useMemo(() => {
+    if (targetVal !== null && Number.isFinite(targetVal) && Math.abs(targetVal) > 1e-9 && Number.isFinite(numHeadline)) {
+      const pct = ((numHeadline - targetVal) / Math.abs(targetVal)) * 100
+      return {
+        pct,
+        label: `vs target ${formatMetricValue(targetVal, metricColumn, kpiStyle)}`,
+      }
+    }
+    if (seriesPoints.length >= 2) {
+      const first = seriesPoints[0]
+      const last = seriesPoints[seriesPoints.length - 1]
+      if (Math.abs(first) > 1e-9) {
+        const pct = ((last - first) / Math.abs(first)) * 100
+        return { pct, label: 'period trend' }
+      }
+    }
+    return null
+  }, [kpiStyle, metricColumn, numHeadline, seriesPoints, targetVal])
 
-  const chartOption = useMemo(() => {
-    const css = getComputedStyle(document.documentElement)
-    const textColor = css.getPropertyValue('--text').trim() || 'currentColor'
-    const muted = css.getPropertyValue('--text-muted').trim() || textColor
-    const primary = css.getPropertyValue('--primary').trim() || 'var(--primary)'
-    const palette = Array.isArray(chartStyle.palette) && chartStyle.palette.length ? chartStyle.palette : [primary, '#2ea3f2', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6']
-    const labelByKey = new Map(columns.map((column) => [column.key, column.label || column.key]))
-    const type = String(visual?.type || '').toUpperCase()
-    const category = rows.map((row) => String(row?.[dimensionKey] ?? '—'))
-    const values = rows.map((row) => Number(row?.[metricColumn?.key]) || 0)
-    const rotate = chartStyle.xLabelRotation != null ? Number(chartStyle.xLabelRotation) : (category.length > 8 ? 25 : 0)
-    const common = {
+  const progressPct = targetVal && targetVal > 0 && Number.isFinite(numHeadline)
+    ? Math.max(0, Math.min(100, (numHeadline / targetVal) * 100))
+    : null
+
+  const sparkOption = useMemo(() => {
+    if (kpiStyle.showSparkline === false || seriesPoints.length < 2) return null
+    const isUp = seriesPoints[seriesPoints.length - 1] >= seriesPoints[0]
+    const lineCol = isUp ? '#2f63b3' : '#b36b00'
+    return {
       animation: false,
-      color: palette,
-      tooltip: { trigger: 'axis' },
-      legend: chartStyle.showLegend === false ? { show: false } : { top: 0, textStyle: { color: muted } },
-      grid: { left: 54, right: 20, top: chartStyle.showLegend === false ? 24 : 44, bottom: 58, containLabel: true },
-      xAxis: { type: 'category', data: category, axisLabel: { color: muted, rotate } },
-      yAxis: { type: 'value', axisLabel: { color: muted }, splitLine: { show: chartStyle.showGrid !== false, lineStyle: { color: 'var(--divider)' } } },
+      grid: { left: 2, right: 2, top: 4, bottom: 2 },
+      xAxis: { type: 'category', show: false, data: seriesPoints.map((_, i) => i) },
+      yAxis: { type: 'value', show: false, min: 'dataMin', max: 'dataMax' },
       series: [{
-        name: labelByKey.get(metricColumn?.key) || 'Value',
-        type: 'bar',
-        data: values,
-        barMaxWidth: 44,
-        label: { show: chartStyle.showLabels === true, position: 'top', color: textColor },
+        type: 'line',
+        data: seriesPoints,
+        smooth: true,
+        showSymbol: false,
+        lineStyle: { width: 2, color: lineCol },
+        areaStyle: { color: lineCol, opacity: 0.14 },
       }],
-      textStyle: { color: textColor, fontFamily: 'Inter, sans-serif' },
     }
-    if (type === 'LINE' || type === 'AREA') {
-      common.series[0].type = 'line'
-      common.series[0].smooth = chartStyle.smooth === true
-      common.series[0].showSymbol = true
-      if (type === 'AREA' || chartStyle.areaFill) common.series[0].areaStyle = { opacity: 0.2 }
-      if (chartStyle.stacked) common.series[0].stack = 'total'
-    }
-    if (type === 'BAR' || type === 'COLUMN') {
-      common.series[0].type = 'bar'
-      if (chartStyle.stacked) common.series[0].stack = 'total'
-    }
-    if (type === 'COLUMN') {
-      // ECharts column is bar with vertical categories - keep default vertical bars
-    }
-    if (type === 'PIE' || type === 'DONUT') {
-      common.tooltip = { trigger: 'item' }
-      common.grid = undefined
-      common.xAxis = undefined
-      common.yAxis = undefined
-      common.legend = chartStyle.showLegend === false ? { show: false } : { orient: 'vertical', right: 8, top: 'middle', textStyle: { color: muted } }
-      common.series = [{
-        name: labelByKey.get(metricColumn?.key) || 'Value',
-        type: 'pie',
-        radius: type === 'DONUT' ? ['42%', '72%'] : '72%',
-        center: ['38%', '50%'],
-        data: rows.map((row, index) => ({ name: category[index], value: values[index] })),
-        label: { color: textColor, show: chartStyle.showLabels !== false },
-      }]
-    }
-    return common
-  }, [columns, dimensionKey, metricColumn, rows, visual?.type, chartStyle])
+  }, [kpiStyle.showSparkline, seriesPoints])
 
-  const type = String(visual?.type || '').toUpperCase()
+  const formattedHeadline = formatMetricValue(headlineValue, metricColumn, kpiStyle)
 
-  if (type === 'TEXT') {
-    return <p className="analytics-text-visual">{visual.text || 'Add dashboard notes in the builder.'}</p>
-  }
-  if (type === 'TANK_VISUAL') {
-    return <AlertMessage tone="info" compact message="Tank visual is reserved for a future analytics release." />
-  }
-  if (type === 'TABLE' || type === 'MATRIX') {
-    const density = tableStyle.density || 'comfortable'
-    return (
-      <>
-        <div className={`analytics-table-scroll ${expanded ? 'is-expanded' : ''} density-${density} ${tableStyle.striped ? 'is-striped' : ''} ${tableStyle.wrapText ? 'wrap-text' : ''}`}>
-          <table className="analytics-result-table">
-            <thead><tr>{columns.map((column) => <th scope="col" key={column.key} className={tableStyle.stickyHeader === false ? '' : 'is-sticky'}>{column.label || column.key}</th>)}</tr></thead>
-            <tbody>
-              {visibleRows.map((row, index) => (
-                <tr key={`${row.id ?? row.accounting_date ?? 'row'}-${index}`}>
-                  {columns.map((column) => <td key={column.key}>{formatValue(row[column.key], column)}</td>)}
-                </tr>
-              ))}
-              {!visibleRows.length && <tr><td colSpan={Math.max(columns.length, 1)}>No rows matched the selected filters.</td></tr>}
-            </tbody>
-          </table>
+  return (
+    <div
+      className={`analytics-kpi-card ${onInspectRecords ? 'is-clickable' : ''}`}
+      onClick={() => onInspectRecords && onInspectRecords(visual)}
+    >
+      <div className="analytics-kpi-top">
+        <div className="analytics-kpi-value" title={String(formattedHeadline)}>
+          {formattedHeadline}
         </div>
-        <PaginationControls currentPage={page} totalRows={rows.length} onPageChange={setPage} />
-      </>
-    )
-  }
-  if (type === 'KPI_CARD' || type === 'GAUGE') {
-    const value = result?.totals?.[metricColumn?.key] ?? sum(rows, metricColumn?.key)
-    const decimals = kpiStyle.decimals != null ? Number(kpiStyle.decimals) : (Number(metricColumn?.format?.decimals ?? 2))
-    const display = formatValue(value, metricColumn, { compact: kpiStyle.compact, decimals })
-    return (
-      <div className={`analytics-kpi-value align-${kpiStyle.align || 'left'}`} style={{ minHeight: expanded ? 220 : 150 }}>
-        <strong style={{ color: kpiStyle.valueColor || undefined, fontSize: kpiStyle.valueFontSize ? `${kpiStyle.valueFontSize}px` : undefined }}>
-          {kpiStyle.prefix || ''}{display}{kpiStyle.suffix || ''}
-        </strong>
-        <span style={{ color: kpiStyle.labelColor || undefined, fontSize: kpiStyle.labelFontSize ? `${kpiStyle.labelFontSize}px` : undefined }}>
-          {metricColumn?.label || visual?.query?.metric_label || 'Value'}
-        </span>
+        {deltaInfo && Number.isFinite(deltaInfo.pct) && (
+          <span className={`analytics-kpi-delta ${deltaInfo.pct >= 0 ? 'is-pos' : 'is-neg'}`}>
+            {deltaInfo.pct >= 0 ? '▲' : '▼'} {Math.abs(deltaInfo.pct).toFixed(1)}%
+            <small>{deltaInfo.label}</small>
+          </span>
+        )}
       </div>
-    )
-  }
-  if (metricColumn && dimensionKey && rows.length) {
-    return <ReactECharts option={chartOption} notMerge lazyUpdate style={{ minHeight: expanded ? 420 : 260, height: chartHeight || (expanded ? '60vh' : 320) }} opts={{ renderer: 'canvas' }} />
-  }
-  return <AlertMessage tone="info" compact message="Choose a category and numeric measure in the visual definition to render this chart." />
+
+      <div className="analytics-kpi-subrow">
+        <span className="analytics-kpi-caption">
+          {kpiStyle.comparisonLabel || metricColumn?.label || 'Aggregated Metric'}
+        </span>
+        {rows.length > 0 && (
+          <span className="analytics-kpi-sample">{rows.length.toLocaleString()} {rows.length === 1 ? 'group' : 'groups'}</span>
+        )}
+      </div>
+
+      {progressPct !== null && (
+        <div className="analytics-kpi-progress" title={`${progressPct.toFixed(1)}% of target`}>
+          <div className="analytics-kpi-progress-bar" style={{ width: `${progressPct}%` }} />
+        </div>
+      )}
+
+      {sparkOption && (
+        <div className="analytics-kpi-sparkline" aria-hidden="true">
+          <ReactECharts
+            option={sparkOption}
+            notMerge
+            lazyUpdate
+            style={{ width: '100%', height: 42 }}
+            opts={{ renderer: 'canvas' }}
+          />
+        </div>
+      )}
+    </div>
+  )
 }
 
-function AnalyticsVisual({ visual, result, onExport, busy, expanded = false, expandable = true, expandedControls = null }) {
-  const [isExpanded, setIsExpanded] = useState(false)
+function AnalyticsVisual({
+  visual,
+  result,
+  loading = false,
+  editable = false,
+  isLocked = false,
+  activeSelection = null,
+  onCrossFilter = null,
+  onInspectRecords = null,
+  onExport = null,
+  onEditVisual = null,
+  onDuplicateVisual = null,
+  onDeleteVisual = null,
+  onToggleLock = null,
+  onExplorerChange = null,
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const [viewOverridesByKey, setViewOverridesByKey] = useState({})
+  const [shelfTogglesByKey, setShelfTogglesByKey] = useState({})
   const bodyRef = useRef(null)
-  const { height: bodyHeight } = useContainerSize(bodyRef)
-  const warnings = result?.meta?.warnings || []
-  const type = String(visual?.type || '').toUpperCase()
-  const style = visual?.style || {}
-  const canExpand = expandable && !expanded && type !== 'TEXT' && type !== 'TANK_VISUAL'
-  const chartHeight = !expanded && bodyHeight > 120 ? Math.max(220, bodyHeight - 8) : undefined
+  const [bodyRect, setBodyRect] = useState({ width: 640, height: 280 })
 
-  const card = (
-    <article className={`analytics-visual-card ${expanded ? 'is-expanded' : ''}`} style={{ background: style.cardBackground || undefined, borderColor: style.cardBorder === false ? 'transparent' : undefined }}>
-      <header className="analytics-visual-head">
-        <div className="analytics-visual-title-wrap">
-          <h3 style={{ color: style.titleColor || undefined }}>{visual?.title || 'Untitled visual'}</h3>
-          {visual?.description && <p>{visual.description}</p>}
-        </div>
-        <div className="analytics-visual-head-actions">
-          {canExpand && <button type="button" className="btn-secondary btn-sm" onClick={() => setIsExpanded(true)} aria-haspopup="dialog" aria-label={`Expand ${visual?.title || 'visual'}`}>Expand</button>}
-          {onExport && type !== 'TEXT' && type !== 'TANK_VISUAL' && (
-            <div className="analytics-export-actions">
-              <button type="button" className="btn-secondary btn-sm" onClick={() => onExport('xlsx')} disabled={busy}>Excel</button>
-              <button type="button" className="btn-secondary btn-sm" onClick={() => onExport('csv')} disabled={busy}>CSV</button>
-            </div>
-          )}
-        </div>
-      </header>
-      {warnings.map((warning, index) => <AlertMessage key={`warning-${index}`} tone="warning" compact message={warning} />)}
-      <div className={`analytics-visual-body ${expanded ? 'is-expanded' : ''}`} ref={bodyRef}>
-        <VisualBody visual={visual} result={result} expanded={expanded} chartHeight={chartHeight} />
-      </div>
-    </article>
+  const savedType = String(visual?.type || 'TABLE').toUpperCase()
+  const visualStateKey = `${visual?.id || 'vis'}:${savedType}`
+  const viewOverride = viewOverridesByKey[visualStateKey] || ''
+  const shelfOpen = shelfTogglesByKey[visualStateKey] !== undefined
+    ? shelfTogglesByKey[visualStateKey]
+    : Boolean(visual?.explorer?.showShelfByDefault)
+  const effectiveType = (viewOverride || savedType).toUpperCase()
+  const visualMeta = getVisualMeta(effectiveType)
+
+  const setViewOverride = (val) => {
+    setViewOverridesByKey((prev) => ({ ...prev, [visualStateKey]: val }))
+  }
+  const setShelfOpen = (updater) => {
+    const nextVal = typeof updater === 'function' ? updater(shelfOpen) : Boolean(updater)
+    setShelfTogglesByKey((prev) => ({ ...prev, [visualStateKey]: nextVal }))
+  }
+
+  useEffect(() => {
+    const el = bodyRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return undefined
+    const updateSize = () => {
+      if (!bodyRef.current) return
+      setBodyRect({
+        width: Math.max(180, Math.floor(bodyRef.current.clientWidth)),
+        height: Math.max(120, Math.floor(bodyRef.current.clientHeight)),
+      })
+    }
+    updateSize()
+    const observer = new ResizeObserver(updateSize)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [result, loading, effectiveType, shelfOpen])
+
+  const columns = useMemo(
+    () => (result?.columns || []).filter((c) => !c.hidden),
+    [result]
   )
+  const allColumns = useMemo(
+    () => result?.columns || [],
+    [result]
+  )
+  const rows = useMemo(() => result?.rows || [], [result])
+  const totals = useMemo(() => result?.totals || {}, [result])
+
+  const isPerspective = PERSPECTIVE_VISUAL_TYPES.has(effectiveType)
+  const isECharts = ECHARTS_VISUAL_TYPES.has(effectiveType)
+  const isPlotly = PLOTLY_VISUAL_TYPES.has(effectiveType)
+  const canSwitchRuntimeView = savedType !== 'TEXT' && savedType !== 'KPI_CARD' && visual?.explorer?.allowViewSwitch !== false
+
+  const renderContent = (isModal = false) => {
+    if (effectiveType === 'TEXT') {
+      return (
+        <div className="analytics-text-visual">
+          {visual?.text || visual?.description || 'Add narrative commentary or operating notes in Studio.'}
+        </div>
+      )
+    }
+
+    if (loading && !result) {
+      return <div className="analytics-visual-loading">Executing query…</div>
+    }
+    if (result?.error) {
+      return <AlertMessage tone="error" compact message={result.error} />
+    }
+    if (!result) {
+      return <div className="analytics-visual-loading">Waiting for query execution…</div>
+    }
+
+    if (effectiveType === 'KPI_CARD') {
+      return (
+        <KpiCardRenderer
+          visual={visual}
+          columns={allColumns.length ? allColumns : columns}
+          rows={rows}
+          totals={totals}
+          onInspectRecords={onInspectRecords}
+        />
+      )
+    }
+
+    if (effectiveType === 'TANK_VISUAL') {
+      return (
+        <TankVisualRenderer
+          visual={visual}
+          rows={rows}
+          totals={totals}
+          activeSelection={activeSelection}
+          onCrossFilter={visual?.interactions?.crossFilter !== false ? onCrossFilter : null}
+        />
+      )
+    }
+
+    if (isPerspective) {
+      return (
+        <PerspectiveGrid
+          visual={visual}
+          columns={columns}
+          rows={rows}
+          totals={totals}
+          expanded={isModal}
+          shelfOpen={isModal ? true : shelfOpen}
+          activeSelection={activeSelection}
+          onCrossFilter={visual?.interactions?.crossFilter !== false ? onCrossFilter : null}
+          onExplorerChange={onExplorerChange}
+          containerWidth={isModal ? 1100 : bodyRect.width}
+        />
+      )
+    }
+
+    if (isPlotly) {
+      return (
+        <PlotlyRenderer
+          visual={visual}
+          effectiveType={effectiveType}
+          columns={allColumns.length ? allColumns : columns}
+          rows={rows}
+          totals={totals}
+          expanded={isModal}
+          chartHeight={isModal ? 480 : Math.max(190, bodyRect.height - 14)}
+          onCrossFilter={visual?.interactions?.crossFilter !== false ? onCrossFilter : null}
+        />
+      )
+    }
+
+    if (isECharts) {
+      return (
+        <EChartsRenderer
+          visual={visual}
+          effectiveType={effectiveType}
+          columns={allColumns.length ? allColumns : columns}
+          rows={rows}
+          totals={totals}
+          expanded={isModal}
+          chartHeight={isModal ? 480 : Math.max(190, bodyRect.height - 14)}
+          activeSelection={activeSelection}
+          onCrossFilter={visual?.interactions?.crossFilter !== false ? onCrossFilter : null}
+        />
+      )
+    }
+
+    return null
+  }
 
   return (
     <>
-      {card}
-      {isExpanded && (
-        <Modal
-          open
-          title={visual?.title || 'Visual'}
-          description={visual?.description || undefined}
-          onClose={() => setIsExpanded(false)}
-          size="full"
-          className="analytics-expand-modal"
-        >
-          <div className="analytics-expand-layout">
-            {expandedControls ? <div className="analytics-expand-controls">{expandedControls}</div> : null}
-            <div className="analytics-expand-visual">
-              <AnalyticsVisual
-                visual={visual}
-                result={result}
-                onExport={onExport}
-                busy={busy}
-                expanded
-                expandable={false}
-              />
+      <article className={`analytics-visual-card type-${effectiveType.toLowerCase()} ${loading ? 'is-refreshing' : ''}`}>
+        <header className="analytics-visual-header">
+          <div className="analytics-visual-title-wrap">
+            {editable && !isLocked && (
+              <span
+                className="analytics-card-drag-handle"
+                title="Drag to reposition visual"
+                aria-label="Drag handle"
+              >
+                <Icon name="grid" size={14} />
+              </span>
+            )}
+            <div className="analytics-visual-title-texts">
+              <h4 title={visual?.title || visualMeta.label}>
+                {visual?.title || visualMeta.label}
+              </h4>
+              {visual?.subtitle && (
+                <small className="analytics-visual-subtitle" title={visual.subtitle}>
+                  {visual.subtitle}
+                </small>
+              )}
             </div>
           </div>
-        </Modal>
-      )}
+
+          <div
+            className="analytics-visual-actions"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            {isPerspective && (
+              <button
+                type="button"
+                className={`analytics-icon-btn ${shelfOpen ? 'is-active' : ''}`}
+                title={shelfOpen ? 'Hide Perspective Pivot & Filter Shelf' : 'Open Perspective Pivot & Filter Shelf'}
+                aria-label="Toggle Perspective Pivot Shelf"
+                onClick={() => setShelfOpen((s) => !s)}
+              >
+                <Icon name="sliders" size={14} />
+              </button>
+            )}
+
+            {canSwitchRuntimeView && bodyRect.width >= 340 && (
+              <select
+                className="analytics-runtime-view-select"
+                aria-label={`Switch display type for ${visual?.title || 'visual'}`}
+                value={effectiveType}
+                onChange={(e) => {
+                  const val = e.target.value
+                  setViewOverride(val === savedType ? '' : val)
+                }}
+              >
+                {!RUNTIME_SWITCHABLE_TYPES.some((rt) => rt.type === savedType) && (
+                  <option value={savedType}>{visualMeta.shortLabel}</option>
+                )}
+                {RUNTIME_SWITCHABLE_TYPES.map((rt) => (
+                  <option key={rt.type} value={rt.type}>{rt.label}</option>
+                ))}
+              </select>
+            )}
+
+            {onInspectRecords && savedType !== 'TEXT' && (
+              <button
+                type="button"
+                className="analytics-icon-btn"
+                title="Inspect underlying source records"
+                aria-label={`Inspect records for ${visual?.title || 'visual'}`}
+                onClick={() => onInspectRecords(visual)}
+              >
+                <Icon name="database" size={14} />
+              </button>
+            )}
+
+            {editable && onToggleLock && (
+              <button
+                type="button"
+                className={`analytics-icon-btn ${isLocked ? 'is-active' : ''}`}
+                title={isLocked ? 'Unlock position & size' : 'Lock position & size'}
+                aria-label={isLocked ? 'Unlock visual' : 'Lock visual'}
+                onClick={() => onToggleLock(visual.id)}
+              >
+                <Icon name="lock" size={14} />
+              </button>
+            )}
+
+            {editable && onEditVisual && (
+              <button
+                type="button"
+                className="analytics-icon-btn"
+                title="Configure visual in inspector"
+                aria-label={`Edit ${visual?.title || 'visual'}`}
+                onClick={() => onEditVisual(visual.id)}
+              >
+                <Icon name="settings" size={14} />
+              </button>
+            )}
+
+            {editable && onDuplicateVisual && (
+              <button
+                type="button"
+                className="analytics-icon-btn"
+                title="Duplicate visual"
+                aria-label={`Duplicate ${visual?.title || 'visual'}`}
+                onClick={() => onDuplicateVisual(visual.id)}
+              >
+                <Icon name="copy" size={14} />
+              </button>
+            )}
+
+            {editable && onDeleteVisual && (
+              <button
+                type="button"
+                className="analytics-icon-btn is-danger"
+                title="Remove visual"
+                aria-label={`Remove ${visual?.title || 'visual'}`}
+                onClick={() => onDeleteVisual(visual.id)}
+              >
+                <Icon name="trash" size={14} />
+              </button>
+            )}
+
+            {!editable && onExport && savedType !== 'TEXT' && bodyRect.width >= 380 && (
+              <ExportMenu
+                compact
+                label="Export"
+                title={visual?.title || 'Analytics Visual'}
+                filenameBase={(visual?.title || 'analytics_visual').toLowerCase().replace(/[^a-z0-9]+/g, '_')}
+                columns={columns.map((c) => ({ key: c.key, header: c.label || c.key }))}
+                rows={rows}
+                disabled={!rows.length}
+              />
+            )}
+
+            {savedType !== 'TEXT' && (
+              <button
+                type="button"
+                className="analytics-icon-btn"
+                title="Expand full screen"
+                aria-label={`Expand ${visual?.title || 'visual'}`}
+                onClick={() => setExpanded(true)}
+              >
+                <Icon name="externalLink" size={14} />
+              </button>
+            )}
+          </div>
+        </header>
+
+        <div ref={bodyRef} className="analytics-visual-body">
+          {renderContent(false)}
+        </div>
+      </article>
+
+      <Modal
+        isOpen={expanded}
+        onClose={() => setExpanded(false)}
+        title={visual?.title || visualMeta.label}
+        size="xl"
+        footer={(
+          <div className="analytics-modal-footer-bar">
+            <div className="analytics-modal-footer-left">
+              {canSwitchRuntimeView && (
+                <label className="analytics-inline-field">
+                  <span>View As</span>
+                  <select
+                    value={effectiveType}
+                    onChange={(e) => setViewOverride(e.target.value === savedType ? '' : e.target.value)}
+                  >
+                    {!RUNTIME_SWITCHABLE_TYPES.some((rt) => rt.type === savedType) && (
+                      <option value={savedType}>{visualMeta.label}</option>
+                    )}
+                    {RUNTIME_SWITCHABLE_TYPES.map((rt) => (
+                      <option key={rt.type} value={rt.type}>{rt.label}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {onExport && (
+                <>
+                  <button type="button" className="btn-secondary btn-sm" onClick={() => onExport(visual, 'xlsx')}>
+                    <Icon name="fileSpreadsheet" size={14} /> Server XLSX
+                  </button>
+                  <button type="button" className="btn-secondary btn-sm" onClick={() => onExport(visual, 'csv')}>
+                    <Icon name="fileText" size={14} /> Server CSV
+                  </button>
+                </>
+              )}
+              {onInspectRecords && (
+                <button
+                  type="button"
+                  className="btn-secondary btn-sm"
+                  onClick={() => {
+                    setExpanded(false)
+                    onInspectRecords(visual)
+                  }}
+                >
+                  <Icon name="database" size={14} /> Underlying Records
+                </button>
+              )}
+            </div>
+            <button type="button" className="btn-primary" onClick={() => setExpanded(false)}>
+              Close
+            </button>
+          </div>
+        )}
+      >
+        <div className="analytics-expanded-modal-body">
+          {renderContent(true)}
+        </div>
+      </Modal>
     </>
   )
 }

@@ -36,8 +36,10 @@ from app.schemas import (
 )
 from app.services.analytics_engine import (
     ReportDefinitionError,
+    export_dashboard_workbook_bytes,
     run_dashboard,
     run_visual,
+    run_visual_records,
     validate_analytics_definition,
 )
 from app.services.audit_service import create_audit_log
@@ -247,7 +249,9 @@ def _runner_params(db, user, dashboard, request):
         "date_from": request.date_from,
         "date_to": request.date_to,
         "runtime_values": values,
+        "selection_filters": list(getattr(request, "selection_filters", None) or []),
         "location_codes": list(request.location_codes or []),
+        "search": getattr(request, "search", None),
         "page_size": 500,
     }
     if dashboard.scope_type == "LOCATION":
@@ -308,6 +312,27 @@ def get_analytics_catalog(
         for location in location_rows
         if visible_scope is None or normalize_location_code(location.location_code) in visible_scope
     ]
+    catalog["is_admin"] = is_admin_user(current_user, db)
+    catalog["datasets"].append({
+        "id": "tank_snapshot",
+        "kind": "tank_snapshot",
+        "name": "Shore Tank Capacity & Stock Snapshot — live ledger + calibration",
+        "description": "Live closing stock, active strapping capacity, ullage and fill % across active shore tanks in scope.",
+        "icon": "droplet",
+        "columns": [
+            {"column": "tank_asset_code", "label": "Tank Code", "data_type": "text"},
+            {"column": "tank_asset_name", "label": "Tank Name", "data_type": "text"},
+            {"column": "location_code", "label": "Location", "data_type": "text", "is_location": True},
+            {"column": "product_name", "label": "Product", "data_type": "text"},
+            {"column": "current_stock", "label": "Current Stock", "data_type": "number"},
+            {"column": "capacity", "label": "Max Capacity", "data_type": "number"},
+            {"column": "ullage", "label": "Available Ullage", "data_type": "number"},
+            {"column": "fill_pct", "label": "Fill %", "data_type": "number"},
+            {"column": "accounting_date", "label": "Last Accounting Date", "data_type": "date", "is_date": True},
+        ],
+        "virtual_fields": [], "supports_template_fields": False,
+        "supports_payload_json": False, "default_date_basis": "ACCOUNTING_DATE",
+    })
     catalog["datasets"].append({
         "id": "material_balance",
         "kind": "material_balance",
@@ -324,6 +349,27 @@ def get_analytics_catalog(
         "supports_payload_json": False, "default_date_basis": "ACCOUNTING_DATE",
     })
     return catalog
+
+
+@router.get("/lookups")
+def get_analytics_lookups(
+    current_user: User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db),
+):
+    require_any_user_permission(current_user, BUILDER_PERMISSIONS, db)
+    visible_scope = get_user_report_location_codes(current_user, db)
+    users = db.query(User).order_by(User.full_name.asc(), User.username.asc()).limit(500).all()
+    roles = db.query(Role).order_by(Role.role_name.asc()).all()
+    locations = db.query(Location).filter(Location.status == "Active").order_by(Location.location_name.asc()).all()
+    return {
+        "users": [{"id": u.id, "username": u.username, "full_name": u.full_name} for u in users],
+        "roles": [{"id": r.id, "role_name": r.role_name} for r in roles],
+        "locations": [
+            {"location_code": loc.location_code, "location_name": loc.location_name}
+            for loc in locations
+            if visible_scope is None or normalize_location_code(loc.location_code) in visible_scope
+        ],
+    }
 
 
 @router.get("/definitions")
@@ -828,3 +874,143 @@ def export_visual(
     media = "text/csv" if fmt == "csv" else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     ext = fmt
     return StreamingResponse(iter([content]), media_type=media, headers={"Content-Disposition": f'attachment; filename="{filename}.{ext}"'})
+
+
+@router.post("/definitions/{dashboard_id}/duplicate")
+def duplicate_definition(
+    dashboard_id: int,
+    current_user: User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db),
+):
+    require_user_permission(current_user, "Create Analytics Definition", db)
+    source = _get_dashboard_or_404(db, dashboard_id)
+    _require_builder_access(db, current_user, source, "VIEW")
+    scope_type = source.scope_type
+    location_code = source.location_code
+    if scope_type == "GLOBAL" and not is_admin_user(current_user, db):
+        scope = get_user_report_location_codes(current_user, db)
+        if scope:
+            scope_type = "LOCATION"
+            location_code = sorted(scope)[0].upper()
+    base_name = f"{source.dashboard_name} (Copy)"[:185]
+    candidate_name = base_name
+    suffix = 2
+    while True:
+        try:
+            _ensure_unique_name(db, candidate_name, scope_type, location_code)
+            break
+        except HTTPException:
+            candidate_name = f"{base_name} {suffix}"
+            suffix += 1
+    normalized = validate_analytics_definition(copy.deepcopy(source.definition_json or {}))
+    clone = AnalyticsDashboardDefinition(
+        dashboard_code=_slug_code(db, candidate_name),
+        dashboard_name=candidate_name,
+        description=source.description,
+        scope_type=scope_type,
+        location_code=location_code,
+        definition_json=normalized,
+        visibility="PRIVATE",
+        is_published="No",
+        status="Active",
+        version=1,
+        owner_user_id=current_user.id,
+        created_by=get_current_user_display_name(current_user),
+        updated_by=get_current_user_display_name(current_user),
+    )
+    db.add(clone)
+    db.flush()
+    default_grants = [{"grant_type": "LOCATION", "user_id": None, "role_id": None, "location_code": location_code, "access_level": "VIEW"}] if location_code else []
+    _replace_grants(db, current_user, clone.id, default_grants)
+    _save_version(db, current_user, clone, f"Duplicated from #{source.id}")
+    _audit(db, current_user, "Duplicate Analytics Dashboard", clone, {"source_dashboard_id": source.id})
+    db.commit()
+    db.refresh(clone)
+    return _serialize(db, current_user, clone)
+
+
+@router.post("/definitions/{dashboard_id}/revert")
+def revert_definition(
+    dashboard_id: int,
+    payload: dict,
+    current_user: User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db),
+):
+    require_user_permission(current_user, "Edit Analytics Definition", db)
+    dashboard = _get_dashboard_or_404(db, dashboard_id)
+    _require_builder_access(db, current_user, dashboard, "EDIT")
+    version_id = payload.get("version_id")
+    version_number = payload.get("version_number")
+    query = db.query(AnalyticsDashboardVersion).filter(AnalyticsDashboardVersion.dashboard_id == dashboard_id)
+    if version_id is not None:
+        target = query.filter(AnalyticsDashboardVersion.id == int(version_id)).first()
+    elif version_number is not None:
+        target = query.filter(AnalyticsDashboardVersion.version_number == int(version_number)).first()
+    else:
+        raise HTTPException(status_code=400, detail="Choose a version to restore.")
+    if not target:
+        raise HTTPException(status_code=404, detail="Dashboard version snapshot not found.")
+    try:
+        restored = validate_analytics_definition(copy.deepcopy(target.definition_json or {}))
+    except ReportDefinitionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    dashboard.definition_json = restored
+    dashboard.version += 1
+    dashboard.updated_at = datetime.now()
+    dashboard.updated_by = get_current_user_display_name(current_user)
+    _save_version(db, current_user, dashboard, f"Restored from version {target.version_number}")
+    _audit(db, current_user, "Revert Analytics Dashboard", dashboard, {"restored_version": target.version_number})
+    db.commit()
+    db.refresh(dashboard)
+    return _serialize(db, current_user, dashboard)
+
+
+@router.post("/my-dashboards/{dashboard_id}/visual/{visual_id}/records")
+def get_visual_underlying_records(
+    dashboard_id: int,
+    visual_id: str,
+    payload: AnalyticsBatchRunRequest,
+    current_user: User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db),
+):
+    dashboard = _get_dashboard_or_404(db, dashboard_id)
+    _require_run_access(db, current_user, dashboard)
+    visual = next((item for item in (dashboard.definition_json or {}).get("visuals", []) if item.get("id") == visual_id), None)
+    if not visual:
+        raise HTTPException(status_code=404, detail="Dashboard visual not found")
+    params = _runner_params(db, current_user, dashboard, payload)
+    try:
+        result = run_visual_records(db, current_user, visual, dashboard.definition_json or {}, params)
+    except ReportDefinitionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _audit(db, current_user, "Inspect Analytics Visual Records", dashboard, {"visual_id": visual_id})
+    db.commit()
+    return result
+
+
+@router.post("/my-dashboards/{dashboard_id}/export-workbook")
+def export_dashboard_workbook(
+    dashboard_id: int,
+    payload: AnalyticsBatchRunRequest,
+    current_user: User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db),
+):
+    require_user_permission(current_user, "Export Analytics Dashboard", db)
+    dashboard = _get_dashboard_or_404(db, dashboard_id)
+    _require_run_access(db, current_user, dashboard)
+    params = _runner_params(db, current_user, dashboard, payload)
+    params["for_export"] = True
+    definition = dashboard.definition_json or {}
+    try:
+        batch = run_dashboard(db, current_user, definition, params)
+    except ReportDefinitionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    content = export_dashboard_workbook_bytes(batch.get("results") or {}, definition.get("visuals") or [], dashboard.dashboard_name)
+    filename = re.sub(r"[^A-Za-z0-9_-]+", "_", f"{dashboard.dashboard_name}_Workbook").strip("_") or "analytics_dashboard"
+    _audit(db, current_user, "Export Analytics Dashboard Workbook", dashboard, {"format": "xlsx"})
+    db.commit()
+    return StreamingResponse(
+        iter([content]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}.xlsx"'},
+    )
