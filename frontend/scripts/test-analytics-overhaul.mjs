@@ -7,6 +7,7 @@
  */
 import assert from 'node:assert/strict'
 import {
+  BLUEPRINT_CATEGORIES,
   VISUAL_CATALOG,
   buildStarterTemplates,
   computeDatePreset,
@@ -87,15 +88,29 @@ const preset30d = computeDatePreset('30D')
 assert.ok(preset30d.from && preset30d.to && preset30d.from <= preset30d.to)
 console.log('PASS  evaluateConditionalRules & computeDatePreset verified')
 
-// 4. Verify Starter Blueprints produce valid v2 schemas
+// 4. Verify Starter Blueprints produce valid v2 schemas across all categories
 const templates = buildStarterTemplates()
-assert.ok(templates.length >= 2)
+assert.equal(templates.length, 9, `Expected 9 domain blueprints, got ${templates.length}`)
+const seenIds = new Set()
+const seenCategories = new Set()
 for (const tpl of templates) {
+  assert.ok(tpl.id && !seenIds.has(tpl.id), `Duplicate or missing blueprint id: ${tpl.id}`)
+  seenIds.add(tpl.id)
+  assert.ok(BLUEPRINT_CATEGORIES.includes(tpl.category), `Invalid blueprint category: ${tpl.category}`)
+  seenCategories.add(tpl.category)
   const def = tpl.buildDefinition()
   assert.equal(def.schema_version, 2)
-  assert.ok(def.visuals.length >= 4)
+  assert.ok(def.visuals.length >= 4, `Blueprint ${tpl.id} should have >=4 visuals`)
+  const visualIds = new Set(def.visuals.map((v) => v.id))
+  for (const slicer of def.slicers || []) {
+    assert.ok(slicer.key && slicer.column_key, `Slicer in ${tpl.id} missing key/column_key`)
+    for (const vid of slicer.visual_ids || []) {
+      assert.ok(visualIds.has(vid), `Slicer ${slicer.key} in ${tpl.id} targets unknown visual ${vid}`)
+    }
+  }
   const norm = normalizeLayoutForGridStack(def.layout, def.visuals)
   assert.equal(norm.length, def.visuals.length)
 }
-console.log('PASS  Starter Terminal Blueprints generate valid 12-col definitions')
+assert.equal(seenCategories.size, BLUEPRINT_CATEGORIES.length, 'Every blueprint category should have at least one blueprint')
+console.log(`PASS  All ${templates.length} categorized Terminal Blueprints generate valid 12-col definitions`)
 console.log('==== ALL ANALYTICS ENGINE & LAYOUT CHECKS PASSED ====')

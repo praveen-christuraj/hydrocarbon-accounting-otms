@@ -12,7 +12,8 @@ import io
 import re
 from datetime import date, datetime
 
-from sqlalchemy import func
+from fastapi import HTTPException
+from sqlalchemy import func, or_
 
 from app.services.report_catalog import (
     LEDGER_VIRTUAL_FIELDS,
@@ -445,6 +446,41 @@ def _normalize_slicer(slicer, valid_visual_ids):
 TRACKING_STATUS_KINDS = {"tracking_status", "barge_tracking_status", "shuttle_tracking_status", "fso_tracking_status", "tanker_tracking_status"}
 
 
+_TANK_SNAPSHOT_COLS = frozenset({
+    "tank_asset_code", "tank_asset_name", "asset_type_code", "location_code", "product_name",
+    "current_stock", "capacity", "ullage", "fill_pct", "accounting_date",
+    "stock_nsv_bbl", "stock_gsv_bbl", "stock_lt", "stock_mt",
+})
+
+_TRACKING_STATUS_COLS = frozenset({
+    "tracking_module", "tracking_ref", "asset_code", "asset_name", "location_code",
+    "from_location_code", "to_location_code", "current_status", "voyage_status",
+    "last_event_type", "last_event_at", "ticket_number", "product_name",
+    "quantity_gsv_bbl", "quantity_nsv_bbl", "movement_count", "remarks",
+})
+
+_TANK_VISUAL_COMPATIBLE_KEYS = frozenset({
+    "tank_asset_code", "asset_code", "tank",
+    "current_stock", "stock_nsv_bbl", "stock_gsv_bbl", "stock_lt", "stock_mt",
+})
+
+
+def _is_tank_snapshot_visual(visual: dict) -> bool:
+    vtype = str(visual.get("type") or "").upper()
+    query = visual.get("query") if isinstance(visual.get("query"), dict) else {}
+    source_kind = ((query.get("source") or {}).get("kind") or "")
+    if source_kind == "tank_snapshot":
+        return True
+    if vtype == "TANK_VISUAL":
+        cols = query.get("columns") or []
+        if not cols:
+            return True
+        col_keys = {str(c.get("key") or "") for c in cols if isinstance(c, dict)}
+        if not (col_keys & _TANK_VISUAL_COMPATIBLE_KEYS):
+            return True
+    return False
+
+
 def _is_special_source(visual: dict) -> bool:
     vtype = str(visual.get("type") or "").upper()
     if vtype == "TEXT":
@@ -452,7 +488,7 @@ def _is_special_source(visual: dict) -> bool:
     source_kind = (((visual.get("query") or {}).get("source") or {}).get("kind") or "")
     if source_kind in {"material_balance", "tank_snapshot"} | TRACKING_STATUS_KINDS:
         return True
-    if vtype == "TANK_VISUAL" and not ((visual.get("query") or {}).get("columns")):
+    if _is_tank_snapshot_visual(visual):
         return True
     return False
 
@@ -477,17 +513,31 @@ def _table_name_for_source(source: dict | None) -> str | None:
     return None
 
 
-def _resolve_missing_slicer_column(query: dict, column_key: str, slicer: dict) -> dict | None:
-    """Build a hidden data column definition for a slicer-bound DB/source field.
+def _resolve_missing_slicer_column(
+    query: dict,
+    column_key: str,
+    slicer: dict,
+    *,
+    allow_ticket_field: bool = False,
+) -> dict | None:
+    """Build a hidden data column definition for a slicer/filter-bound DB field.
 
-    Allows slicers to be added from selected DB columns even when the field is
-    not displayed in the visual. Only allow-listed catalog/virtual fields are
-    resolvable; unknown/sensitive columns return None and fail validation.
+    Allows slicers and fixed filters to reference selected DB columns even when
+    the field is not displayed in the visual. Only allow-listed catalog/virtual
+    fields are resolvable; unknown/sensitive columns return None.
+    When the visual is grouped (`group_by` non-empty), the hidden column gets
+    `aggregate: "FIRST"` so report_engine grouped validation passes cleanly while
+    filters/slicers still apply pre-aggregation.
     """
     source = query.get("source") if isinstance(query.get("source"), dict) else {}
     kind = str(source.get("kind") or "operation_tickets")
     table_name = _table_name_for_source(source)
     table_columns = catalog_allowed_columns(table_name) if table_name else {}
+    group_keys = {
+        str(gb.get("key") if isinstance(gb, dict) else gb)
+        for gb in (query.get("group_by") or [])
+    }
+    hidden_agg = "FIRST" if (group_keys and column_key not in group_keys) else None
 
     # 1) Regular DB column on the source table
     if column_key in table_columns:
@@ -498,7 +548,7 @@ def _resolve_missing_slicer_column(query: dict, column_key: str, slicer: dict) -
             "kind": "data",
             "source": {"type": "column", "column": column_key},
             "data_type": meta.get("data_type", "text"),
-            "aggregate": None,
+            "aggregate": hidden_agg,
             "hidden": True,
         }
 
@@ -512,21 +562,22 @@ def _resolve_missing_slicer_column(query: dict, column_key: str, slicer: dict) -
             "kind": "data",
             "source": {"type": "virtual", "field": column_key},
             "data_type": meta.get("data_type", "text"),
-            "aggregate": None,
+            "aggregate": hidden_agg,
             "hidden": True,
         }
 
-    # 3) Ticket field (operation_tickets only) - key matches field_code convention
-    if kind == "operation_tickets" and re.match(r"^[A-Za-z0-9_]+$", column_key):
-        # Only inject if it looks like a field code the user explicitly picked;
-        # report_engine will validate against catalog/discovered fields.
+    # 3) Ticket field (operation_tickets only) - only when explicitly allowed
+    # so cross-dataset slicers (e.g. tank_asset_code / fill_pct) do not inject
+    # nonexistent ticket_field specs into operation_tickets visuals.
+    if allow_ticket_field and kind == "operation_tickets" and re.match(r"^[A-Za-z0-9_]+$", column_key):
+        safe_key = re.sub(r"[^a-z0-9_]", "_", column_key.lower()).strip("_") or column_key.lower()
         return {
-            "key": re.sub(r"[^a-z0-9_]", "_", column_key.lower()).strip("_") or column_key.lower(),
+            "key": safe_key,
             "label": slicer.get("label") or column_key,
             "kind": "data",
             "source": {"type": "ticket_field", "field_code": column_key},
             "data_type": str(slicer.get("data_type") or "text"),
-            "aggregate": None,
+            "aggregate": "FIRST" if (group_keys and safe_key not in group_keys) else None,
             "hidden": True,
         }
     return None
@@ -554,12 +605,33 @@ def report_definition_for_visual(visual: dict, slicers: list[dict] | None = None
     for extra_key in (
         "dimension_key", "secondary_dimension_key", "measure_key", "metric_key",
         "metric_label", "measure_keys", "secondary_measure_keys", "size_key",
-        "unit",
+        "unit", "asset_type_codes", "tracking_module",
     ):
         query.pop(extra_key, None)
 
     columns = query.get("columns") or []
     available_keys = {str(column.get("key")) for column in columns if isinstance(column, dict)}
+    group_keys = {
+        str(gb.get("key") if isinstance(gb, dict) else gb)
+        for gb in (query.get("group_by") or [])
+    }
+    # Auto-heal previously saved hidden columns missing aggregate on grouped visuals
+    if group_keys and query.get("report_type") != "MATRIX":
+        for column in columns:
+            if (
+                isinstance(column, dict)
+                and _as_bool(column.get("hidden"), False)
+                and str(column.get("key") or "") not in group_keys
+                and not column.get("aggregate")
+            ):
+                column["aggregate"] = "FIRST"
+
+    non_ticket_known_cols = (
+        _TANK_SNAPSHOT_COLS
+        | _TRACKING_STATUS_COLS
+        | set(catalog_allowed_columns("tank_stock_ledger").keys())
+    )
+    ticket_cols = set(catalog_allowed_columns("operation_transactions").keys()) | set(_virtual_fields_for_source("operation_tickets").keys())
 
     for slicer in slicers or []:
         if not isinstance(slicer, dict):
@@ -576,7 +648,10 @@ def report_definition_for_visual(visual: dict, slicers: list[dict] | None = None
             continue
         target_key = key
         if target_key not in available_keys:
-            injected = _resolve_missing_slicer_column(query, target_key, slicer)
+            # Allow ticket_field injection only if the column isn't obviously a
+            # ledger/tank/tracking column belonging to another visual on the board.
+            allow_tf = key not in (non_ticket_known_cols - ticket_cols)
+            injected = _resolve_missing_slicer_column(query, target_key, slicer, allow_ticket_field=allow_tf)
             if injected and injected.get("key") not in available_keys:
                 # Ensure the injected key is valid for report engine
                 injected_key = str(injected.get("key") or "")
@@ -594,34 +669,41 @@ def report_definition_for_visual(visual: dict, slicers: list[dict] | None = None
                 **({"default": slicer.get("default")} if slicer.get("default") not in (None, "", []) else {}),
             })
 
-    def _ensure_column(key: str, fallback_label: str | None = None):
+    def _ensure_column(key: str, fallback_label: str | None = None, *, allow_ticket_field: bool = True):
         if not key or key in available_keys:
             return key
-        injected = _resolve_missing_slicer_column(query, key, {"label": fallback_label or key})
+        injected = _resolve_missing_slicer_column(
+            query,
+            key,
+            {"label": fallback_label or key},
+            allow_ticket_field=allow_ticket_field,
+        )
         if injected and injected.get("key") not in available_keys:
             injected_key = str(injected.get("key") or "")
             if re.match(r"^[a-z][a-z0-9_]*$", injected_key):
                 columns.append(injected)
                 available_keys.add(injected_key)
                 return injected_key
+        elif injected and injected.get("key") in available_keys:
+            return str(injected.get("key"))
         return key
 
     for flt in query.get("filters") or []:
         if isinstance(flt, dict) and flt.get("column_key"):
-            _ensure_column(str(flt["column_key"]))
+            flt["column_key"] = _ensure_column(str(flt["column_key"]))
     for rf in query.get("runtime_filters") or []:
         if isinstance(rf, dict) and rf.get("column_key"):
-            _ensure_column(str(rf["column_key"]), rf.get("label"))
+            rf["column_key"] = _ensure_column(str(rf["column_key"]), rf.get("label"))
     for gb in query.get("group_by") or []:
         if isinstance(gb, dict) and gb.get("key"):
-            _ensure_column(str(gb["key"]))
+            gb["key"] = _ensure_column(str(gb["key"]))
     for srt in query.get("sort") or []:
         if isinstance(srt, dict) and srt.get("key"):
-            _ensure_column(str(srt["key"]))
+            srt["key"] = _ensure_column(str(srt["key"]))
     return query
 
 
-def validate_analytics_definition(definition: dict) -> dict:
+def validate_analytics_definition(definition: dict, *, strict_visuals: bool = True) -> dict:
     if not isinstance(definition, dict):
         raise ReportDefinitionError("Dashboard design must be an object.")
     candidate = copy.deepcopy(definition)
@@ -674,21 +756,40 @@ def validate_analytics_definition(definition: dict) -> dict:
         if not isinstance(visual_source, dict):
             raise ReportDefinitionError(f"Visual '{visual.get('title') or visual_id}' source must be an object.")
 
-        if visual_source.get("kind") == "material_balance":
-            if visual_type not in {"TABLE", "PIVOT_GRID", "MATRIX"}:
-                raise ReportDefinitionError("Material Balance visuals are supported as interactive tables or pivot grids.")
-            unit = str(visual_query.get("unit") or "nsv").lower()
-            if unit not in {"gsv", "nsv", "lt", "mt"}:
-                raise ReportDefinitionError("Material Balance unit must be GSV, NSV, LT or MT.")
-            visual_query["unit"] = unit
-            visual["query"] = visual_query
-            continue
-
-        if visual_source.get("kind") == "tank_snapshot" or (visual_type == "TANK_VISUAL" and not visual_query.get("columns")):
+        if _is_tank_snapshot_visual(visual):
             unit = str(visual_query.get("unit") or "nsv").lower()
             if unit not in {"gsv", "nsv", "lt", "mt"}:
                 unit = "nsv"
-            visual_query["source"] = {"kind": "tank_snapshot"}
+            raw_types = visual_query.get("asset_type_codes")
+            if isinstance(raw_types, str):
+                cleaned_types = [item.strip() for item in raw_types.split(",") if item.strip()]
+            elif isinstance(raw_types, list):
+                cleaned_types = [str(item).strip() for item in raw_types if str(item or "").strip()]
+            else:
+                cleaned_types = []
+            loc_override = str(visual_source.get("location_code") or visual_query.get("location_code") or "").strip().upper() or None
+            next_query = {
+                "source": {"kind": "tank_snapshot", **({"location_code": loc_override} if loc_override else {})},
+                "unit": unit,
+                "filters": visual_query.get("filters") if isinstance(visual_query.get("filters"), list) else [],
+                "filter_logic": str(visual_query.get("filter_logic") or "AND").upper(),
+            }
+            for meta_key in ("dimension_key", "secondary_dimension_key", "measure_key", "metric_key", "measure_keys"):
+                if visual_query.get(meta_key) is not None:
+                    next_query[meta_key] = visual_query[meta_key]
+            if cleaned_types:
+                next_query["asset_type_codes"] = cleaned_types
+            visual["query"] = next_query
+            continue
+
+        if visual_source.get("kind") == "material_balance":
+            if visual_type not in {"TABLE", "PIVOT_GRID", "MATRIX"}:
+                if strict_visuals:
+                    raise ReportDefinitionError("Material Balance visuals are supported as interactive tables or pivot grids.")
+                visual["type"] = "PIVOT_GRID"
+            unit = str(visual_query.get("unit") or "nsv").lower()
+            if unit not in {"gsv", "nsv", "lt", "mt"}:
+                raise ReportDefinitionError("Material Balance unit must be GSV, NSV, LT or MT.")
             visual_query["unit"] = unit
             visual["query"] = visual_query
             continue
@@ -704,7 +805,9 @@ def validate_analytics_definition(definition: dict) -> dict:
             continue
 
         if not isinstance(visual_query.get("columns"), list):
-            raise ReportDefinitionError(f"Visual '{visual.get('title') or visual_id}' query columns must be a list.")
+            if strict_visuals:
+                raise ReportDefinitionError(f"Visual '{visual.get('title') or visual_id}' query columns must be a list.")
+            visual_query["columns"] = []
         visual["query"] = visual_query
 
     slicers_raw = candidate.get("slicers") or []
@@ -724,49 +827,40 @@ def validate_analytics_definition(definition: dict) -> dict:
         slicer_keys.add(key)
         column_key = normalized.get("column_key")
         if not column_key:
-            raise ReportDefinitionError(f"Slicer '{normalized.get('label') or key}' must be bound to a field.")
+            if strict_visuals:
+                raise ReportDefinitionError(f"Slicer '{normalized.get('label') or key}' must be bound to a field.")
+            continue
         if not normalized.get("visual_ids"):
             normalized["visual_ids"] = []
         normalized_slicers.append(normalized)
     candidate["slicers"] = normalized_slicers
 
-    for visual in visuals:
-        if _is_special_source(visual):
-            continue
-        query = report_definition_for_visual(visual, normalized_slicers)
-        if visual.get("type") == "MATRIX" and query.get("matrix"):
-            query["report_type"] = "MATRIX"
-        else:
-            query["report_type"] = "TABULAR"
-        try:
-            validate_definition(query)
-        except ReportDefinitionError as exc:
-            raise ReportDefinitionError(f"Visual '{visual.get('title') or visual.get('id')}': {exc}") from exc
+    if strict_visuals:
+        for visual in visuals:
+            if _is_special_source(visual):
+                continue
+            query = report_definition_for_visual(visual, normalized_slicers)
+            if visual.get("type") == "MATRIX" and query.get("matrix"):
+                query["report_type"] = "MATRIX"
+            else:
+                query["report_type"] = "TABULAR"
+            try:
+                validate_definition(query)
+            except ReportDefinitionError as exc:
+                raise ReportDefinitionError(f"Visual '{visual.get('title') or visual.get('id')}': {exc}") from exc
 
-    tank_snapshot_cols = (
-        "tank_asset_code", "tank_asset_name", "location_code", "product_name",
-        "current_stock", "capacity", "ullage", "fill_pct", "accounting_date",
-        "stock_nsv_bbl", "stock_gsv_bbl", "stock_lt", "stock_mt",
-    )
-    tracking_status_cols = (
-        "tracking_module", "tracking_ref", "asset_code", "asset_name", "location_code",
-        "from_location_code", "to_location_code", "current_status", "voyage_status",
-        "last_event_type", "last_event_at", "ticket_number", "product_name",
-        "quantity_gsv_bbl", "quantity_nsv_bbl", "remarks",
-    )
     exposed = {}
     for visual in visuals:
         if not isinstance(visual, dict):
             continue
         vid = str(visual.get("id"))
         source_kind = (((visual.get("query") or {}).get("source") or {}).get("kind") or "")
-        vtype = str(visual.get("type") or "").upper()
-        if source_kind == "tank_snapshot" or (vtype == "TANK_VISUAL" and not ((visual.get("query") or {}).get("columns"))):
-            for ckey in tank_snapshot_cols:
+        if _is_tank_snapshot_visual(visual):
+            for ckey in _TANK_SNAPSHOT_COLS:
                 exposed[(vid, ckey)] = {"key": ckey}
             continue
         if source_kind in TRACKING_STATUS_KINDS:
-            for ckey in tracking_status_cols:
+            for ckey in _TRACKING_STATUS_COLS:
                 exposed[(vid, ckey)] = {"key": ckey}
             continue
         for column in ((visual.get("query") or {}).get("columns") or []):
@@ -795,11 +889,11 @@ def validate_analytics_definition(definition: dict) -> dict:
                 if not visual or _is_special_source(visual):
                     continue
                 q = visual.get("query") if isinstance(visual.get("query"), dict) else {}
-                injected = _resolve_missing_slicer_column(q, column_key, slicer)
+                injected = _resolve_missing_slicer_column(q, column_key, slicer, allow_ticket_field=True)
                 if injected:
                     resolvable = True
                     break
-            if not resolvable:
+            if not resolvable and strict_visuals:
                 raise ReportDefinitionError(
                     f"Slicer '{slicer.get('label') or slicer.get('key')}' references field '{column_key}' that is not available for its targeted visuals. "
                     "Choose a column from the selected data source or add it to the visual."
@@ -980,37 +1074,59 @@ def _run_tank_snapshot_visual(db, user, visual: dict, params: dict, slicers: lis
     from app.dependencies.permissions import get_user_report_location_codes, normalize_location_code
     from app.models import (
         Asset,
+        AssetAssignment,
         AssetCalibrationData,
         AssetCalibrationTable,
+        AssetType,
         CalibrationTemplateColumn,
         TankStockLedger,
     )
     from app.routers.tank_stock_ledger import (
         get_ledger_operation_datetime,
+        get_stock_snapshot_values,
         hydrate_ledger_rows_from_payload,
     )
+    from app.services.asset_family import resolve_asset_type_family
 
+    def _norm_code(val) -> str:
+        return str(val or "").strip().casefold()
+
+    def _safe_float(val) -> float:
+        if val is None or val == "":
+            return 0.0
+        try:
+            if isinstance(val, str):
+                val = val.replace(",", "").strip()
+                if not val:
+                    return 0.0
+            return float(val)
+        except (TypeError, ValueError):
+            return 0.0
+
+    query_cfg = visual.get("query") if isinstance(visual.get("query"), dict) else {}
+    source_cfg = query_cfg.get("source") if isinstance(query_cfg.get("source"), dict) else {}
     scope = get_user_report_location_codes(user, db)
-    requested_codes = [normalize_location_code(c) for c in (params.get("location_codes") or []) if c]
+
+    visual_loc = normalize_location_code(source_cfg.get("location_code") or query_cfg.get("location_code"))
+    if visual_loc:
+        requested_codes = [visual_loc]
+    else:
+        requested_codes = [normalize_location_code(c) for c in (params.get("location_codes") or []) if c]
+
     if scope is not None:
         allowed_codes = [c for c in requested_codes if c in scope] if requested_codes else sorted(scope)
     else:
         allowed_codes = requested_codes
 
-    aq = db.query(Asset).filter(Asset.status == "Active")
-    if allowed_codes:
-        aq = aq.filter(func.lower(func.trim(Asset.location_code)).in_(allowed_codes))
-    elif scope is not None:
-        return {"columns": [], "rows": [], "totals": {}, "meta": {"warnings": [], "total_rows": 0}}
-
-    assets = aq.order_by(Asset.location_code.asc(), Asset.asset_code.asc()).limit(200).all()
-    unit = str((visual.get("query") or {}).get("unit") or "nsv").lower()
+    unit = str(query_cfg.get("unit") or "nsv").lower()
+    if unit not in {"nsv", "gsv", "lt", "mt"}:
+        unit = "nsv"
     unit_label = {"nsv": "NSV (BBL)", "gsv": "GSV (BBL)", "lt": "Long Tons (LT)", "mt": "Metric Tons (MT)"}.get(unit, "NSV (BBL)")
-    stock_attr = {"nsv": "stock_nsv_bbl", "gsv": "stock_gsv_bbl", "lt": "stock_lt", "mt": "stock_mt"}.get(unit, "stock_nsv_bbl")
 
     output_columns = [
         {"key": "tank_asset_code", "label": "Tank Code", "data_type": "text"},
         {"key": "tank_asset_name", "label": "Tank Name", "data_type": "text"},
+        {"key": "asset_type_code", "label": "Asset Type", "data_type": "text"},
         {"key": "location_code", "label": "Location", "data_type": "text"},
         {"key": "product_name", "label": "Product", "data_type": "text"},
         {"key": "current_stock", "label": f"Current Stock ({unit.upper()})", "data_type": "number", "format": {"decimals": 2}},
@@ -1019,77 +1135,185 @@ def _run_tank_snapshot_visual(db, user, visual: dict, params: dict, slicers: lis
         {"key": "fill_pct", "label": "Fill %", "data_type": "number", "format": {"decimals": 1}},
         {"key": "accounting_date", "label": "Last Accounting Date", "data_type": "date"},
     ]
-    if not assets:
+
+    if scope is not None and not allowed_codes:
         return {"columns": output_columns, "rows": [], "totals": {}, "meta": {"warnings": [], "total_rows": 0, "unit": unit_label}}
 
-    asset_codes = [a.asset_code for a in assets]
-    lq = db.query(TankStockLedger).filter(
-        TankStockLedger.status == "Active",
-        TankStockLedger.tank_asset_code.in_(asset_codes),
-    )
+    # Explicit optional asset type filter configured on the visual
+    raw_type_filter = query_cfg.get("asset_type_codes")
+    if isinstance(raw_type_filter, str):
+        explicit_types = {_norm_code(t) for t in raw_type_filter.split(",") if t.strip()}
+    elif isinstance(raw_type_filter, list):
+        explicit_types = {_norm_code(t) for t in raw_type_filter if str(t or "").strip()}
+    else:
+        explicit_types = set()
+
+    # 1. Query active TankStockLedger rows in scope first so every tank with stock
+    #    history is guaranteed to be discovered regardless of total fleet size.
+    lq = db.query(TankStockLedger).filter(TankStockLedger.status == "Active")
     if allowed_codes:
         lq = lq.filter(func.lower(func.trim(TankStockLedger.location_code)).in_(allowed_codes))
+    raw_ledger_rows = lq.all()
+    all_ledger_norm_codes = {_norm_code(r.tank_asset_code) for r in raw_ledger_rows if _norm_code(r.tank_asset_code)}
 
-    hydrated = hydrate_ledger_rows_from_payload(db, lq.all())
+    hydrated = hydrate_ledger_rows_from_payload(db, raw_ledger_rows) if raw_ledger_rows else []
     date_to_raw = params.get("date_to")
     as_of_date = None
-    if isinstance(date_to_raw, date):
+    if isinstance(date_to_raw, date) and not isinstance(date_to_raw, datetime):
         as_of_date = date_to_raw
+    elif isinstance(date_to_raw, datetime):
+        as_of_date = date_to_raw.date()
     elif isinstance(date_to_raw, str) and date_to_raw.strip():
         try:
-            as_of_date = date.fromisoformat(date_to_raw.strip())
+            as_of_date = date.fromisoformat(date_to_raw.strip()[:10])
         except ValueError:
             as_of_date = None
     if as_of_date:
         hydrated = [r for r in hydrated if r.accounting_date is not None and r.accounting_date <= as_of_date]
 
-    latest_key: dict[str, tuple] = {}
-    latest_row: dict[str, TankStockLedger] = {}
+    # Track latest ledger row per (location, tank) so identically-named tanks in
+    # different terminals stay separate in GLOBAL dashboards.
+    latest_key: dict[tuple[str, str], tuple] = {}
+    latest_row: dict[tuple[str, str], TankStockLedger] = {}
+    latest_by_code_fallback: dict[str, tuple[tuple, TankStockLedger]] = {}
     for row in hydrated:
-        sort_key = (get_ledger_operation_datetime(row) or datetime.min, row.id)
-        prev = latest_key.get(row.tank_asset_code)
+        ncode = _norm_code(row.tank_asset_code)
+        nloc = _norm_code(row.location_code)
+        if not ncode:
+            continue
+        sort_key = (
+            row.accounting_date or date.min,
+            get_ledger_operation_datetime(row) or datetime.min,
+            row.id,
+        )
+        pair_key = (nloc, ncode)
+        prev = latest_key.get(pair_key)
         if prev is None or sort_key >= prev:
-            latest_key[row.tank_asset_code] = sort_key
-            latest_row[row.tank_asset_code] = row
+            latest_key[pair_key] = sort_key
+            latest_row[pair_key] = row
+        prev_fb = latest_by_code_fallback.get(ncode)
+        if prev_fb is None or sort_key >= prev_fb[0]:
+            latest_by_code_fallback[ncode] = (sort_key, row)
 
-    def _safe_float(val):
-        try:
-            return float(val) if val is not None else 0.0
-        except (TypeError, ValueError):
-            return 0.0
+    # 2. Discover active assets in scope (by location_code, active assignment, or ledger presence)
+    assigned_loc_by_code: dict[str, str] = {}
+    if allowed_codes:
+        assign_rows = (
+            db.query(AssetAssignment.asset_code, AssetAssignment.assignment_location_code)
+            .filter(
+                AssetAssignment.status == "Active",
+                func.lower(func.trim(AssetAssignment.assignment_location_code)).in_(allowed_codes),
+            )
+            .all()
+        )
+        for acode, aloc in assign_rows:
+            nc = _norm_code(acode)
+            if nc and nc not in assigned_loc_by_code:
+                assigned_loc_by_code[nc] = str(aloc or "").strip()
 
-    # Batch-load active calibration capacities for all candidate tanks (avoids N+1 queries)
-    cap_by_asset: dict[str, float] = {}
+    aq = db.query(Asset).filter(Asset.status == "Active")
+    if allowed_codes:
+        extra_codes = set(assigned_loc_by_code.keys()) | all_ledger_norm_codes
+        loc_cond = func.lower(func.trim(Asset.location_code)).in_(allowed_codes)
+        if extra_codes:
+            aq = aq.filter(or_(loc_cond, func.lower(func.trim(Asset.asset_code)).in_(list(extra_codes))))
+        else:
+            aq = aq.filter(loc_cond)
+
+    candidate_assets = aq.order_by(Asset.location_code.asc(), Asset.asset_code.asc()).all()
+
+    asset_types = db.query(AssetType).all()
+    type_text_by_norm: dict[str, str] = {
+        _norm_code(at.asset_type_code): f"{at.asset_type_code or ''} {at.asset_type_name or ''} {at.description or ''}".casefold()
+        for at in asset_types
+    }
+    non_tank_keywords = (
+        "flowmeter", "flow meter", "meter", "prime mover", "primemover",
+        "pump", "truck", "trailer", "vehicle", "barge", "yade",
+        "tanker", "shuttle", "fso", "fpso", "vessel", "ship",
+    )
+
+    def _is_shore_tank_asset(asset: Asset) -> bool:
+        atype_norm = _norm_code(asset.asset_type_code)
+        if explicit_types:
+            return atype_norm in explicit_types
+        if _norm_code(asset.asset_code) in all_ledger_norm_codes:
+            return True
+        if resolve_asset_type_family(db, asset.asset_type_code) is not None:
+            return False
+        type_text = type_text_by_norm.get(atype_norm, f"{asset.asset_type_code or ''}".casefold())
+        if any(kw in type_text for kw in non_tank_keywords):
+            return False
+        if "tank" in type_text or "stk" in atype_norm or "silo" in type_text:
+            return True
+        return False
+
+    shore_assets = [a for a in candidate_assets if _is_shore_tank_asset(a)]
+    # Fallback: if an installation uses custom non-"tank" asset type codes with
+    # active calibration tables and no ledger rows yet, include non-mobile assets
+    if not shore_assets and not explicit_types:
+        shore_assets = [
+            a for a in candidate_assets
+            if resolve_asset_type_family(db, a.asset_type_code) is None
+            and not any(kw in type_text_by_norm.get(_norm_code(a.asset_type_code), "") for kw in non_tank_keywords)
+        ]
+
+    # Include any tank with ledger entries that was missing from active Asset master
+    matched_asset_norms = {_norm_code(a.asset_code) for a in shore_assets}
+    fallback_ledger_entries: list[TankStockLedger] = []
+    if not explicit_types:
+        for (_, ncode), lrow in latest_row.items():
+            if ncode not in matched_asset_norms:
+                fallback_ledger_entries.append(lrow)
+
+    all_norm_codes = list({_norm_code(a.asset_code) for a in shore_assets} | {_norm_code(r.tank_asset_code) for r in fallback_ledger_entries})
+    if not all_norm_codes:
+        return {"columns": output_columns, "rows": [], "totals": {}, "meta": {"warnings": [], "total_rows": 0, "unit": unit_label}}
+
+    # 3. Batch-load active calibration capacities case-insensitively (avoids N+1 queries)
+    cap_by_norm: dict[str, float] = {}
     cal_tables = (
         db.query(AssetCalibrationTable)
-        .filter(AssetCalibrationTable.asset_code.in_(asset_codes), AssetCalibrationTable.status == "Active")
+        .filter(
+            func.lower(func.trim(AssetCalibrationTable.asset_code)).in_(all_norm_codes),
+            AssetCalibrationTable.status == "Active",
+        )
         .order_by(AssetCalibrationTable.id.desc())
         .all()
     )
     if cal_tables:
         template_ids = list({tbl.template_id for tbl in cal_tables if tbl.template_id is not None})
-        out_key_by_template: dict[int, str] = {}
+        out_cols_by_template: dict[int, list[CalibrationTemplateColumn]] = {}
         if template_ids:
             out_cols = (
                 db.query(CalibrationTemplateColumn)
                 .filter(
                     CalibrationTemplateColumn.template_id.in_(template_ids),
-                    CalibrationTemplateColumn.interpolation_role == "Output",
+                    func.lower(func.trim(CalibrationTemplateColumn.interpolation_role)) == "output",
                 )
                 .order_by(CalibrationTemplateColumn.sort_order.asc(), CalibrationTemplateColumn.id.asc())
                 .all()
             )
             for col in out_cols:
-                if col.template_id not in out_key_by_template:
-                    cname = str(col.column_name or "").strip()
-                    if cname:
-                        out_key_by_template[col.template_id] = cname
+                out_cols_by_template.setdefault(col.template_id, []).append(col)
+
+        out_key_by_template: dict[int, str] = {}
+        for tid, cols in out_cols_by_template.items():
+            # Prefer a BBL output column when multiple output columns exist
+            chosen = next(
+                (c for c in cols if "bbl" in f"{c.column_name or ''} {c.unit or ''}".casefold()),
+                cols[0],
+            )
+            cname = str(chosen.column_name or "").strip()
+            if cname:
+                out_key_by_template[tid] = cname
 
         relevant_tables = [tbl for tbl in cal_tables if tbl.template_id in out_key_by_template]
         table_ids = [tbl.id for tbl in relevant_tables]
         max_by_table: dict[int, float] = {}
         if table_ids:
-            out_key_by_table = {tbl.id: out_key_by_template[tbl.template_id] for tbl in relevant_tables}
+            out_key_norm_by_table = {tbl.id: out_key_by_template[tbl.template_id].casefold() for tbl in relevant_tables}
+            out_key_exact_by_table = {tbl.id: out_key_by_template[tbl.template_id] for tbl in relevant_tables}
             cal_rows = (
                 db.query(AssetCalibrationData.calibration_table_id, AssetCalibrationData.row_data)
                 .filter(AssetCalibrationData.calibration_table_id.in_(table_ids))
@@ -1098,59 +1322,116 @@ def _run_tank_snapshot_visual(db, user, visual: dict, params: dict, slicers: lis
             for tbl_id, row_data in cal_rows:
                 if not isinstance(row_data, dict):
                     continue
-                val = _safe_float(row_data.get(out_key_by_table[tbl_id]))
+                exact_k = out_key_exact_by_table[tbl_id]
+                raw_v = row_data.get(exact_k)
+                if raw_v is None:
+                    norm_k = out_key_norm_by_table[tbl_id]
+                    for rk, rv in row_data.items():
+                        if str(rk or "").strip().casefold() == norm_k:
+                            raw_v = rv
+                            break
+                val = _safe_float(raw_v)
                 if val > max_by_table.get(tbl_id, 0.0):
                     max_by_table[tbl_id] = val
         for tbl in relevant_tables:
-            if tbl.asset_code not in cap_by_asset:
+            nc = _norm_code(tbl.asset_code)
+            if nc and nc not in cap_by_norm:
                 max_v = max_by_table.get(tbl.id, 0.0)
                 if max_v > 0:
-                    cap_by_asset[tbl.asset_code] = max_v
+                    cap_by_norm[nc] = max_v
 
-    rows = []
-    total_stock = 0.0
-    total_cap = 0.0
-    for asset in assets:
-        ledger = latest_row.get(asset.asset_code)
-        cap = cap_by_asset.get(asset.asset_code, 0.0)
-        if ledger is None and cap <= 0:
-            continue
-        stock_val = _safe_float(getattr(ledger, stock_attr, 0.0)) if ledger else 0.0
-        nsv_val = _safe_float(getattr(ledger, "stock_nsv_bbl", 0.0)) if ledger else 0.0
-        gsv_val = _safe_float(getattr(ledger, "stock_gsv_bbl", 0.0)) if ledger else 0.0
-        lt_val = _safe_float(getattr(ledger, "stock_lt", 0.0)) if ledger else 0.0
-        mt_val = _safe_float(getattr(ledger, "stock_mt", 0.0)) if ledger else 0.0
-        ullage = max(0.0, cap - stock_val) if cap > 0 else 0.0
-        fill_pct = round(min(100.0, max(0.0, (stock_val / cap) * 100.0)), 2) if cap > 0 else 0.0
-        row_obj = {
-            "tank_asset_code": asset.asset_code,
-            "tank_asset_name": asset.asset_name or asset.asset_code,
-            "location_code": asset.location_code,
+    def _build_tank_row(code: str, name: str, asset_type_code: str, loc_code: str, ledger: TankStockLedger | None, cap: float) -> dict:
+        snap = get_stock_snapshot_values(ledger) if ledger else {"gsv": 0.0, "nsv": 0.0, "lt": 0.0, "mt": 0.0}
+        nsv_val = snap["nsv"]
+        gsv_val = snap["gsv"]
+        lt_val = snap["lt"]
+        mt_val = snap["mt"]
+        stock_val = {"nsv": nsv_val, "gsv": gsv_val, "lt": lt_val, "mt": mt_val}.get(unit, nsv_val)
+        ullage = round(max(0.0, cap - stock_val), 3) if cap > 0 else None
+        fill_pct = round(min(100.0, max(0.0, (stock_val / cap) * 100.0)), 2) if cap > 0 else None
+        return {
+            "tank_asset_code": code,
+            "tank_asset_name": name or code,
+            "asset_type_code": asset_type_code or "",
+            "location_code": loc_code or "",
             "product_name": (ledger.product_name if ledger and ledger.product_name else "Unassigned"),
             "current_stock": round(stock_val, 3),
             "stock_nsv_bbl": round(nsv_val, 3),
             "stock_gsv_bbl": round(gsv_val, 3),
             "stock_lt": round(lt_val, 3),
             "stock_mt": round(mt_val, 3),
-            "capacity": round(cap, 3),
-            "capacity_nsv_bbl": round(cap, 3),
-            "capacity_gsv_bbl": round(cap, 3),
-            "ullage": round(ullage, 3),
+            "capacity": round(cap, 3) if cap > 0 else 0.0,
+            "capacity_nsv_bbl": round(cap, 3) if cap > 0 else 0.0,
+            "capacity_gsv_bbl": round(cap, 3) if cap > 0 else 0.0,
+            "ullage": ullage,
             "fill_pct": fill_pct,
             "accounting_date": str(ledger.accounting_date) if ledger and ledger.accounting_date else None,
         }
+
+    rows = []
+    total_stock = 0.0
+    total_cap = 0.0
+    seen_pairs: set[tuple[str, str]] = set()
+
+    for asset in shore_assets:
+        nc = _norm_code(asset.asset_code)
+        eff_loc = asset.location_code or assigned_loc_by_code.get(nc) or ""
+        nloc = _norm_code(eff_loc)
+        ledger = latest_row.get((nloc, nc))
+        if ledger is None and (not allowed_codes or nloc in allowed_codes):
+            fb = latest_by_code_fallback.get(nc)
+            if fb and (not allowed_codes or _norm_code(fb[1].location_code) in allowed_codes):
+                ledger = fb[1]
+                if not eff_loc:
+                    eff_loc = ledger.location_code or ""
+                    nloc = _norm_code(eff_loc)
+        cap = cap_by_norm.get(nc, 0.0)
+        if ledger is None and cap <= 0:
+            continue
+        pair = (nloc, nc)
+        if pair in seen_pairs:
+            continue
+        seen_pairs.add(pair)
+        row_obj = _build_tank_row(asset.asset_code, asset.asset_name or asset.asset_code, asset.asset_type_code or "", eff_loc, ledger, cap)
         if not _row_matches_tank_filters(row_obj, visual, slicers, params, ignore_source_match=ignore_source_match):
             continue
         if not _snapshot_row_matches_fixed_filters(row_obj, visual):
             continue
-        total_stock += stock_val
+        total_stock += row_obj["current_stock"]
         total_cap += cap
         rows.append(row_obj)
+
+    for lrow in fallback_ledger_entries:
+        nc = _norm_code(lrow.tank_asset_code)
+        nloc = _norm_code(lrow.location_code)
+        pair = (nloc, nc)
+        if pair in seen_pairs:
+            continue
+        seen_pairs.add(pair)
+        cap = cap_by_norm.get(nc, 0.0)
+        row_obj = _build_tank_row(
+            lrow.tank_asset_code,
+            lrow.tank_asset_name or lrow.tank_asset_code,
+            "",
+            lrow.location_code or "",
+            lrow,
+            cap,
+        )
+        if not _row_matches_tank_filters(row_obj, visual, slicers, params, ignore_source_match=ignore_source_match):
+            continue
+        if not _snapshot_row_matches_fixed_filters(row_obj, visual):
+            continue
+        total_stock += row_obj["current_stock"]
+        total_cap += cap
+        rows.append(row_obj)
+
+    rows.sort(key=lambda r: (str(r.get("location_code") or "").casefold(), str(r.get("tank_asset_code") or "").casefold()))
+    rows = rows[:500]
 
     totals = {
         "current_stock": round(total_stock, 3),
         "capacity": round(total_cap, 3),
-        "ullage": round(max(0.0, total_cap - total_stock), 3),
+        "ullage": round(max(0.0, total_cap - total_stock), 3) if total_cap > 0 else 0.0,
         "fill_pct": round((total_stock / total_cap) * 100.0, 2) if total_cap > 0 else 0.0,
     }
     return {
@@ -1261,6 +1542,7 @@ def _tracking_status_columns() -> list[dict]:
         {"key": "product_name", "label": "Product", "data_type": "text"},
         {"key": "quantity_gsv_bbl", "label": "Last Qty GSV (BBL)", "data_type": "number", "format": {"decimals": 2}},
         {"key": "quantity_nsv_bbl", "label": "Last Qty NSV (BBL)", "data_type": "number", "format": {"decimals": 2}},
+        {"key": "movement_count", "label": "Movements", "data_type": "number", "format": {"decimals": 0}},
         {"key": "remarks", "label": "Remarks / Status Detail", "data_type": "text"},
     ]
 
@@ -1295,9 +1577,31 @@ def _scope_allows_location(scope, location_code) -> bool:
 
 def _run_tracking_status_visual(db, user, visual: dict, params: dict, slicers: list[dict] | None = None, ignore_source_match: bool = True) -> dict:
     from app.dependencies.permissions import get_user_report_location_codes, normalize_location_code
-    from app.models import Asset, FSOVoyage, OperationTransaction, ShuttleVoyage, TankerReceiptAcknowledgement, Trip, TripEvent
+    from app.models import (
+        Asset,
+        FSOVoyage,
+        MovementMappingItem,
+        OperationTransaction,
+        ShuttleVoyage,
+        TankerReceiptAcknowledgement,
+        Trip,
+        TripEvent,
+    )
 
     scope = get_user_report_location_codes(user, db)
+    requested_codes = {normalize_location_code(c) for c in (params.get("location_codes") or []) if c}
+    if scope is not None:
+        allowed_locations = (requested_codes & scope) if requested_codes else set(scope)
+    else:
+        allowed_locations = requested_codes if requested_codes else None
+
+    def _loc_permitted(candidates: list[str]) -> bool:
+        if allowed_locations is None:
+            return True
+        if not allowed_locations:
+            return False
+        return any(loc in allowed_locations for loc in candidates if loc)
+
     query = visual.get("query") if isinstance(visual.get("query"), dict) else {}
     module_filter = str(query.get("tracking_module") or "ALL").upper().strip() or "ALL"
     if module_filter not in {"ALL", "BARGE", "SHUTTLE", "FSO", "TANKER"}:
@@ -1305,6 +1609,27 @@ def _run_tracking_status_visual(db, user, visual: dict, params: dict, slicers: l
 
     rows: list[dict] = []
     warnings: list[str] = []
+
+    def _tx_quantities_by_id(tx_ids_list: list[int]) -> dict[int, tuple[float, float]]:
+        if not tx_ids_list:
+            return {}
+        out: dict[int, tuple[float, float]] = {}
+        items = (
+            db.query(
+                MovementMappingItem.transaction_id,
+                MovementMappingItem.gsv_bbl,
+                MovementMappingItem.nsv_bbl,
+                MovementMappingItem.qty_bbl,
+            )
+            .filter(MovementMappingItem.transaction_id.in_(tx_ids_list))
+            .all()
+        )
+        for tid, gsv, nsv, qty in items:
+            if tid not in out:
+                gsv_f = float(gsv if gsv is not None else (qty or 0.0))
+                nsv_f = float(nsv if nsv is not None else (qty or 0.0))
+                out[tid] = (gsv_f, nsv_f)
+        return out
 
     # ---- Barge / Trip tracking ----
     if module_filter in {"ALL", "BARGE"}:
@@ -1326,12 +1651,13 @@ def _run_tracking_status_visual(db, user, visual: dict, params: dict, slicers: l
         if tx_ids:
             for tx in db.query(OperationTransaction).filter(OperationTransaction.id.in_(tx_ids)).all():
                 tx_by_id[tx.id] = tx
+        qty_by_tx = _tx_quantities_by_id(tx_ids)
 
-        asset_codes = sorted({(t.primary_barge_asset_code or "").strip() for t in trips if (t.primary_barge_asset_code or "").strip()})
-        asset_codes.update({(evt.asset_code or "").strip() for evts in events_by_trip.values() for evt in evts if (evt.asset_code or "").strip()})
+        asset_code_set = {(t.primary_barge_asset_code or "").strip() for t in trips if (t.primary_barge_asset_code or "").strip()}
+        asset_code_set.update({(evt.asset_code or "").strip() for evts in events_by_trip.values() for evt in evts if (evt.asset_code or "").strip()})
         asset_name_by_code: dict[str, str] = {}
-        if asset_codes:
-            for asset in db.query(Asset).filter(Asset.asset_code.in_(list(asset_codes))).all():
+        if asset_code_set:
+            for asset in db.query(Asset).filter(Asset.asset_code.in_(sorted(asset_code_set))).all():
                 asset_name_by_code[str(asset.asset_code)] = asset.asset_name or asset.asset_code
 
         for trip in trips:
@@ -1343,34 +1669,37 @@ def _run_tracking_status_visual(db, user, visual: dict, params: dict, slicers: l
             for evt in trip_events:
                 tx = tx_by_id.get(evt.operation_transaction_id)
                 if tx:
-                    for attr in ("origin_location_code", "destination_location_code", "sender_location_code", "receiver_location_code", "location_code"):
+                    for attr in ("origin_location_code", "destination_location_code", "sender_location_code", "receiver_location_code"):
                         val = normalize_location_code(getattr(tx, attr, None))
                         if val:
                             tx_locations.append(val)
             scope_locations = [loc for loc in (event_locations + tx_locations) if loc]
-            if scope is not None and not any(loc in scope for loc in scope_locations):
+            if not _loc_permitted(scope_locations):
                 continue
 
             asset_code = (last_evt.asset_code if last_evt and last_evt.asset_code else trip.primary_barge_asset_code) or ""
-            from_loc = normalize_location_code(getattr(last_tx, "sender_location_code", None) or getattr(last_tx, "origin_location_code", None) or (trip_events[0].location_code if trip_events else None)) or ""
-            to_loc = normalize_location_code(getattr(last_tx, "receiver_location_code", None) or getattr(last_tx, "destination_location_code", None) or (last_evt.location_code if last_evt else None)) or ""
+            from_loc = (getattr(last_tx, "sender_location_code", None) or getattr(last_tx, "origin_location_code", None) or (trip_events[0].location_code if trip_events else None) or "")
+            to_loc = (getattr(last_tx, "receiver_location_code", None) or getattr(last_tx, "destination_location_code", None) or (last_evt.location_code if last_evt else None) or "")
+            display_loc = (last_evt.location_code if last_evt and last_evt.location_code else (to_loc or from_loc)) or ""
             status = _derive_barge_status(trip.status, last_evt.event_type if last_evt else "")
+            gsv_val, nsv_val = qty_by_tx.get(last_tx.id, (0.0, 0.0)) if last_tx else (0.0, 0.0)
             rows.append({
                 "tracking_module": "BARGE",
                 "tracking_ref": trip.convoy_number or "",
                 "asset_code": asset_code,
                 "asset_name": asset_name_by_code.get(asset_code, asset_code),
-                "location_code": normalize_location_code(last_evt.location_code if last_evt and last_evt.location_code else (to_loc or from_loc)) or "",
-                "from_location_code": from_loc,
-                "to_location_code": to_loc,
+                "location_code": str(display_loc).strip().upper(),
+                "from_location_code": str(from_loc).strip().upper(),
+                "to_location_code": str(to_loc).strip().upper(),
                 "current_status": status,
                 "voyage_status": str(trip.status or "").upper(),
                 "last_event_type": str(last_evt.event_type or "") if last_evt else "",
                 "last_event_at": last_evt.event_datetime.isoformat() if last_evt and last_evt.event_datetime else (trip.updated_at.isoformat() if trip.updated_at else None),
-                "ticket_number": getattr(last_tx, "ticket_number", None) or "",
+                "ticket_number": getattr(last_tx, "operation_ticket_number", None) or getattr(last_tx, "operation_number", None) or "",
                 "product_name": getattr(last_tx, "product_name", None) or "",
-                "quantity_gsv_bbl": float(getattr(last_tx, "movement_gsv_bbl", 0) or 0) if last_tx else 0.0,
-                "quantity_nsv_bbl": float(getattr(last_tx, "movement_nsv_bbl", 0) or 0) if last_tx else 0.0,
+                "quantity_gsv_bbl": round(gsv_val, 3),
+                "quantity_nsv_bbl": round(nsv_val, 3),
+                "movement_count": 1,
                 "remarks": trip.remarks or (last_evt.remarks if last_evt else "") or "",
             })
 
@@ -1378,17 +1707,18 @@ def _run_tracking_status_visual(db, user, visual: dict, params: dict, slicers: l
     if module_filter in {"ALL", "SHUTTLE"}:
         shuttle_q = db.query(ShuttleVoyage).order_by(ShuttleVoyage.updated_at.desc(), ShuttleVoyage.id.desc()).limit(500)
         for sv in shuttle_q.all():
-            loc = normalize_location_code(sv.location_code)
-            if scope is not None and loc not in scope:
+            loc_norm = normalize_location_code(sv.location_code)
+            if not _loc_permitted([loc_norm]):
                 continue
+            loc_disp = str(sv.location_code or "").strip().upper()
             rows.append({
                 "tracking_module": "SHUTTLE",
                 "tracking_ref": sv.shuttle_number or "",
                 "asset_code": sv.shuttle_asset_code or "",
                 "asset_name": sv.shuttle_asset_code or "",
-                "location_code": loc or "",
+                "location_code": loc_disp,
                 "from_location_code": "",
-                "to_location_code": loc or "",
+                "to_location_code": loc_disp,
                 "current_status": "CLOSED" if _norm_tracking_status(sv.status) == "CLOSED" else "OPEN",
                 "voyage_status": str(sv.status or "").upper(),
                 "last_event_type": "SHUTTLE_VOYAGE",
@@ -1397,6 +1727,7 @@ def _run_tracking_status_visual(db, user, visual: dict, params: dict, slicers: l
                 "product_name": "",
                 "quantity_gsv_bbl": 0.0,
                 "quantity_nsv_bbl": 0.0,
+                "movement_count": 1,
                 "remarks": sv.closure_remarks or sv.remarks or "",
             })
 
@@ -1404,17 +1735,18 @@ def _run_tracking_status_visual(db, user, visual: dict, params: dict, slicers: l
     if module_filter in {"ALL", "FSO"}:
         fso_q = db.query(FSOVoyage).order_by(FSOVoyage.updated_at.desc(), FSOVoyage.id.desc()).limit(500)
         for fv in fso_q.all():
-            loc = normalize_location_code(fv.location_code)
-            if scope is not None and loc not in scope:
+            loc_norm = normalize_location_code(fv.location_code)
+            if not _loc_permitted([loc_norm]):
                 continue
+            loc_disp = str(fv.location_code or "").strip().upper()
             rows.append({
                 "tracking_module": "FSO",
                 "tracking_ref": fv.shuttle_number or "",
                 "asset_code": fv.fso_asset_code or "",
                 "asset_name": fv.fso_asset_code or "",
-                "location_code": loc or "",
+                "location_code": loc_disp,
                 "from_location_code": "",
-                "to_location_code": loc or "",
+                "to_location_code": loc_disp,
                 "current_status": "CLOSED" if _norm_tracking_status(fv.status) == "CLOSED" else "OPEN",
                 "voyage_status": str(fv.status or "").upper(),
                 "last_event_type": "FSO_VOYAGE",
@@ -1423,56 +1755,70 @@ def _run_tracking_status_visual(db, user, visual: dict, params: dict, slicers: l
                 "product_name": "",
                 "quantity_gsv_bbl": 0.0,
                 "quantity_nsv_bbl": 0.0,
+                "movement_count": 1,
                 "remarks": fv.closure_remarks or fv.remarks or "",
             })
 
     # ---- Tanker receipt acknowledgements ----
     if module_filter in {"ALL", "TANKER"}:
         tanker_q = db.query(TankerReceiptAcknowledgement).order_by(TankerReceiptAcknowledgement.acknowledged_at.desc(), TankerReceiptAcknowledgement.id.desc()).limit(500)
-        sender_ids = []
         tanker_rows = tanker_q.all()
-        for tr in tanker_rows:
-            if tr.sender_transaction_id:
-                sender_ids.append(tr.sender_transaction_id)
+        sender_ids = sorted({tr.sender_transaction_id for tr in tanker_rows if tr.sender_transaction_id})
         sender_tx_by_id = {}
         if sender_ids:
-            for tx in db.query(OperationTransaction).filter(OperationTransaction.id.in_(sorted(set(sender_ids)))).all():
+            for tx in db.query(OperationTransaction).filter(OperationTransaction.id.in_(sender_ids)).all():
                 sender_tx_by_id[tx.id] = tx
+        tanker_qty_by_tx = _tx_quantities_by_id(sender_ids)
         for tr in tanker_rows:
             receiver_loc = normalize_location_code(tr.receiver_location_code)
             sender_tx = sender_tx_by_id.get(tr.sender_transaction_id)
             sender_loc = normalize_location_code(getattr(sender_tx, "sender_location_code", None) or getattr(sender_tx, "origin_location_code", None))
             dest_loc = normalize_location_code(getattr(sender_tx, "receiver_location_code", None) or getattr(sender_tx, "destination_location_code", None))
             scoped = [loc for loc in [receiver_loc, sender_loc, dest_loc] if loc]
-            if scope is not None and not any(loc in scope for loc in scoped):
+            if not _loc_permitted(scoped):
                 continue
+            disp_sender = str(getattr(sender_tx, "sender_location_code", None) or getattr(sender_tx, "origin_location_code", None) or "").strip().upper()
+            disp_receiver = str(tr.receiver_location_code or getattr(sender_tx, "receiver_location_code", None) or getattr(sender_tx, "destination_location_code", None) or "").strip().upper()
+            gsv_val, nsv_val = tanker_qty_by_tx.get(sender_tx.id, (0.0, 0.0)) if sender_tx else (0.0, 0.0)
             rows.append({
                 "tracking_module": "TANKER",
                 "tracking_ref": tr.convoy_number or "",
                 "asset_code": tr.tanker_asset_code or tr.prime_mover_asset_code or "",
                 "asset_name": tr.tanker_asset_code or tr.prime_mover_asset_code or "",
-                "location_code": receiver_loc or dest_loc or sender_loc or "",
-                "from_location_code": sender_loc or "",
-                "to_location_code": receiver_loc or dest_loc or "",
+                "location_code": disp_receiver or disp_sender,
+                "from_location_code": disp_sender,
+                "to_location_code": disp_receiver,
                 "current_status": "ACKNOWLEDGED",
                 "voyage_status": "RECEIVED",
                 "last_event_type": "TANKER_RECEIPT_ACKNOWLEDGED",
                 "last_event_at": tr.acknowledged_at.isoformat() if tr.acknowledged_at else None,
-                "ticket_number": getattr(sender_tx, "ticket_number", "") if sender_tx else "",
-                "product_name": getattr(sender_tx, "product_name", "") if sender_tx else "",
-                "quantity_gsv_bbl": float(getattr(sender_tx, "movement_gsv_bbl", 0) or 0) if sender_tx else 0.0,
-                "quantity_nsv_bbl": float(getattr(sender_tx, "movement_nsv_bbl", 0) or 0) if sender_tx else 0.0,
+                "ticket_number": (getattr(sender_tx, "operation_ticket_number", None) or getattr(sender_tx, "operation_number", None) or "") if sender_tx else "",
+                "product_name": (getattr(sender_tx, "product_name", None) or "") if sender_tx else "",
+                "quantity_gsv_bbl": round(gsv_val, 3),
+                "quantity_nsv_bbl": round(nsv_val, 3),
+                "movement_count": 1,
                 "remarks": f"Acknowledged by {tr.acknowledged_by}" if tr.acknowledged_by else "",
             })
 
     # Apply fixed visual filters / slicers / cross-filters like other special sources
-    filtered_rows = [r for r in rows if _row_matches_tank_filters(r, visual, slicers, params, ignore_source_match=ignore_source_match) and _snapshot_row_matches_fixed_filters(r, visual)]
+    filtered_rows = [
+        r for r in rows
+        if _row_matches_tank_filters(r, visual, slicers, params, ignore_source_match=ignore_source_match)
+        and _snapshot_row_matches_fixed_filters(r, visual)
+    ]
     warnings.append("Tracking status is derived from the latest available tracking records in scope. Validate critical operational decisions against the source tracking module.")
+
+    total_gsv = round(sum(float(r.get("quantity_gsv_bbl") or 0.0) for r in filtered_rows), 3)
+    total_nsv = round(sum(float(r.get("quantity_nsv_bbl") or 0.0) for r in filtered_rows), 3)
 
     return {
         "columns": _tracking_status_columns(),
         "rows": filtered_rows[:1000],
-        "totals": {},
+        "totals": {
+            "movement_count": len(filtered_rows),
+            "quantity_gsv_bbl": total_gsv,
+            "quantity_nsv_bbl": total_nsv,
+        },
         "meta": {"warnings": warnings, "total_rows": len(filtered_rows)},
     }
 
@@ -1584,14 +1930,14 @@ def run_visual(db, user, visual: dict, definition: dict, params: dict) -> dict:
     vtype = str(visual.get("type") or "").upper()
     if vtype == "TEXT":
         return {"columns": [], "rows": [], "totals": {}, "meta": {"warnings": [], "total_rows": 0}}
+    if _is_tank_snapshot_visual(visual):
+        from app.dependencies.permissions import require_any_user_permission
+        require_any_user_permission(user, ["View Analytics Dashboard", "View Tank Stock Ledger", "View Analytics Definition"], db)
+        return _run_tank_snapshot_visual(db, user, visual, params, slicers=definition.get("slicers") or [], ignore_source_match=True)
     if source.get("kind") == "material_balance":
         from app.dependencies.permissions import require_user_permission
         require_user_permission(user, "View Material Balance Report", db)
         return _strip_hidden_columns(_run_material_balance_visual(db, visual, params), visual)
-    if source.get("kind") == "tank_snapshot" or (vtype == "TANK_VISUAL" and not ((visual.get("query") or {}).get("columns"))):
-        from app.dependencies.permissions import require_any_user_permission
-        require_any_user_permission(user, ["View Analytics Dashboard", "View Tank Stock Ledger", "View Analytics Definition"], db)
-        return _run_tank_snapshot_visual(db, user, visual, params, slicers=definition.get("slicers") or [], ignore_source_match=True)
 
     if source.get("kind") in TRACKING_STATUS_KINDS:
         return _run_tracking_status_visual(db, user, visual, params, slicers=definition.get("slicers") or [], ignore_source_match=True)
@@ -1611,12 +1957,12 @@ def run_visual_records(db, user, visual: dict, definition: dict, params: dict) -
     vtype = str(visual.get("type") or "").upper()
     if vtype == "TEXT":
         return {"columns": [], "rows": [], "totals": {}, "meta": {"warnings": [], "total_rows": 0}}
-    if source.get("kind") == "material_balance":
-        res = run_visual(db, user, visual, definition, params)
-    elif source.get("kind") == "tank_snapshot" or (vtype == "TANK_VISUAL" and not ((visual.get("query") or {}).get("columns"))):
+    if _is_tank_snapshot_visual(visual):
         from app.dependencies.permissions import require_any_user_permission
         require_any_user_permission(user, ["View Analytics Dashboard", "View Tank Stock Ledger", "View Analytics Definition"], db)
         res = _run_tank_snapshot_visual(db, user, visual, params, slicers=definition.get("slicers") or [], ignore_source_match=False)
+    elif source.get("kind") == "material_balance":
+        res = run_visual(db, user, visual, definition, params)
     elif source.get("kind") in TRACKING_STATUS_KINDS:
         res = _run_tracking_status_visual(db, user, visual, params, slicers=definition.get("slicers") or [], ignore_source_match=False)
     else:
@@ -1656,8 +2002,16 @@ def run_visual_records(db, user, visual: dict, definition: dict, params: dict) -
     return result
 
 
-def run_dashboard(db, user, definition: dict, params: dict | None = None, visual_ids: list[str] | None = None) -> dict:
-    normalized = validate_analytics_definition(definition)
+def run_dashboard(
+    db,
+    user,
+    definition: dict,
+    params: dict | None = None,
+    visual_ids: list[str] | None = None,
+    *,
+    isolate_errors: bool = False,
+) -> dict:
+    normalized = validate_analytics_definition(definition, strict_visuals=not isolate_errors)
     if visual_ids is not None and (not isinstance(visual_ids, list) or any(not isinstance(item, str) for item in visual_ids)):
         raise ReportDefinitionError("Visual ids must be provided as a list of visual keys.")
     known_ids = {visual.get("id") for visual in normalized["visuals"]}
@@ -1675,9 +2029,31 @@ def run_dashboard(db, user, definition: dict, params: dict | None = None, visual
         if query.get("date_basis") == "NONE":
             visual_params.pop("date_from", None)
             visual_params.pop("date_to", None)
-        result = run_visual(db, user, visual, normalized, visual_params)
-        result.get("meta", {}).pop("_export_rows", None)
-        results[visual["id"]] = result
+        if isolate_errors:
+            try:
+                result = run_visual(db, user, visual, normalized, visual_params)
+                result.get("meta", {}).pop("_export_rows", None)
+                results[visual["id"]] = result
+            except ReportDefinitionError as exc:
+                results[visual["id"]] = {
+                    "columns": [],
+                    "rows": [],
+                    "totals": {},
+                    "error": str(exc),
+                    "meta": {"warnings": [], "total_rows": 0},
+                }
+            except HTTPException as exc:
+                results[visual["id"]] = {
+                    "columns": [],
+                    "rows": [],
+                    "totals": {},
+                    "error": str(exc.detail or "Unable to execute this visual."),
+                    "meta": {"warnings": [], "total_rows": 0},
+                }
+        else:
+            result = run_visual(db, user, visual, normalized, visual_params)
+            result.get("meta", {}).pop("_export_rows", None)
+            results[visual["id"]] = result
     return {"results": results}
 
 
