@@ -10,7 +10,7 @@ from __future__ import annotations
 import copy
 import io
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from fastapi import HTTPException
 from sqlalchemy import func, or_
@@ -181,6 +181,7 @@ def _normalize_style(style):
             "compact": _as_bool(kpi.get("compact"), False),
             "decimals": _clamp_int(kpi.get("decimals"), 0, 6, 2) if kpi.get("decimals") is not None else None,
             "showSparkline": _as_bool(kpi.get("showSparkline"), True),
+            "showDelta": _as_bool(kpi.get("showDelta"), True),
             "comparisonKey": str(kpi.get("comparisonKey") or "")[:80] or None,
             "targetValue": _clamp_float(kpi.get("targetValue"), -1e15, 1e15, None),
             "minValue": _clamp_float(kpi.get("minValue"), -1e15, 1e15, 0.0),
@@ -459,26 +460,19 @@ _TRACKING_STATUS_COLS = frozenset({
     "quantity_gsv_bbl", "quantity_nsv_bbl", "movement_count", "remarks",
 })
 
-_TANK_VISUAL_COMPATIBLE_KEYS = frozenset({
-    "tank_asset_code", "asset_code", "tank",
-    "current_stock", "stock_nsv_bbl", "stock_gsv_bbl", "stock_lt", "stock_mt",
-})
-
-
 def _is_tank_snapshot_visual(visual: dict) -> bool:
+    """Tank visuals are identified by their declared source or visual type.
+
+    The source kind is authoritative: a ``tank_snapshot`` source can be used by
+    KPI cards, charts and tables as well as the dedicated tank-farm renderer.
+    Keeping the old column-key heuristic meant a TANK_VISUAL with a normal
+    column definition was sent to report_engine with an unsupported
+    ``tank_snapshot`` source instead of the governed snapshot query.
+    """
     vtype = str(visual.get("type") or "").upper()
     query = visual.get("query") if isinstance(visual.get("query"), dict) else {}
-    source_kind = ((query.get("source") or {}).get("kind") or "")
-    if source_kind == "tank_snapshot":
-        return True
-    if vtype == "TANK_VISUAL":
-        cols = query.get("columns") or []
-        if not cols:
-            return True
-        col_keys = {str(c.get("key") or "") for c in cols if isinstance(c, dict)}
-        if not (col_keys & _TANK_VISUAL_COMPATIBLE_KEYS):
-            return True
-    return False
+    source_kind = str(((query.get("source") or {}).get("kind") or ""))
+    return source_kind == "tank_snapshot" or vtype == "TANK_VISUAL"
 
 
 def _is_special_source(visual: dict) -> bool:
@@ -510,6 +504,99 @@ def _table_name_for_source(source: dict | None) -> str | None:
         return "operation_transactions"
     if kind == "tank_stock_ledger":
         return "tank_stock_ledger"
+    return None
+
+
+def visual_execution_params(visual: dict, params: dict | None = None) -> dict:
+    """Params for a visual, honouring its explicit date-basis contract.
+
+    ``run_dashboard`` used to apply this rule inline while the drill-down and
+    export paths did not, so master-data visuals (``date_basis: NONE``) showed
+    rows on screen and returned none when their source records were inspected.
+    Every execution path must go through this helper.
+    """
+    effective = dict(params or {})
+    query = visual.get("query") if isinstance(visual, dict) and isinstance(visual.get("query"), dict) else {}
+    if str(query.get("date_basis") or "").upper() == "NONE":
+        effective.pop("date_from", None)
+        effective.pop("date_to", None)
+    return effective
+
+
+def _resolve_visual_location_scope(visual: dict, params: dict | None = None) -> tuple[list[str], str | None]:
+    """Intersect a visual's fixed location with the runner/slicer scope.
+
+    A design-time location narrows the dashboard scope; it must never replace
+    it. Returns the effective normalised codes and an optional warning when
+    the two scopes are disjoint.
+    """
+    from app.dependencies.permissions import normalize_location_code
+
+    query = visual.get("query") if isinstance(visual, dict) and isinstance(visual.get("query"), dict) else {}
+    source = query.get("source") if isinstance(query.get("source"), dict) else {}
+    runner_codes = {
+        code
+        for code in (normalize_location_code(c) for c in ((params or {}).get("location_codes") or []))
+        if code
+    }
+    fixed = normalize_location_code(source.get("location_code") or query.get("location_code"))
+    if fixed:
+        if runner_codes and fixed not in runner_codes:
+            return [], f"Visual location {str(fixed).upper()} is outside the dashboard/slicer scope."
+        return [fixed], None
+    return sorted(runner_codes), None
+
+
+def _bucket_boundaries(value, bucket: str) -> tuple[str, str] | None:
+    """Return inclusive range boundaries for a grouped date value.
+
+    Cross-filter values come from grouped results (DAY/MONTH/QUARTER/YEAR),
+    while underlying records hold raw date columns. An ``eq`` on the raw
+    column can never match a grouped label, so the filter is converted into a
+    between rule before it reaches report_engine.
+    """
+    if bucket in (None, "", "VALUE"):
+        return None
+    if isinstance(value, datetime):
+        parsed = value.date()
+    elif isinstance(value, date):
+        parsed = value
+    else:
+        text = str(value or "").strip()
+        try:
+            parsed = date.fromisoformat(text[:10]) if re.match(r"^\d{4}-\d{2}-\d{2}", text) else None
+        except ValueError:
+            parsed = None
+        if parsed is None:
+            match = re.match(r"^(\d{4})-(\d{2})(?:-Q(\d))?$", text)
+            if match:
+                year, month, quarter = int(match.group(1)), int(match.group(2)), match.group(3)
+                if quarter:
+                    start_month = (int(quarter) - 1) * 3 + 1
+                    parsed = date(year, start_month, 1)
+                else:
+                    parsed = date(year, month, 1)
+    if parsed is None:
+        return None
+    if bucket == "DAY":
+        return parsed.isoformat(), parsed.isoformat()
+    if bucket == "WEEK":
+        start = parsed - timedelta(days=parsed.weekday())
+        return start.isoformat(), (start + timedelta(days=6)).isoformat()
+    if bucket == "MONTH":
+        start = parsed.replace(day=1)
+        end = (start.replace(year=start.year + 1, month=1) if start.month == 12
+               else start.replace(month=start.month + 1)) - timedelta(days=1)
+        return start.isoformat(), end.isoformat()
+    if bucket == "QUARTER":
+        start_month = ((parsed.month - 1) // 3) * 3 + 1
+        start = parsed.replace(month=start_month, day=1)
+        end_month = start_month + 2
+        end = (start.replace(year=start.year + 1, month=1) if end_month == 12
+               else start.replace(month=end_month + 1)) - timedelta(days=1)
+        return start.isoformat(), end.isoformat()
+    if bucket == "YEAR":
+        return f"{parsed.year:04d}-01-01", f"{parsed.year:04d}-12-31"
     return None
 
 
@@ -771,6 +858,8 @@ def validate_analytics_definition(definition: dict, *, strict_visuals: bool = Tr
             next_query = {
                 "source": {"kind": "tank_snapshot", **({"location_code": loc_override} if loc_override else {})},
                 "unit": unit,
+                # Tank levels are a live snapshot, not a dated transaction report.
+                "date_basis": "NONE",
                 "filters": visual_query.get("filters") if isinstance(visual_query.get("filters"), list) else [],
                 "filter_logic": str(visual_query.get("filter_logic") or "AND").upper(),
             }
@@ -1104,19 +1193,23 @@ def _run_tank_snapshot_visual(db, user, visual: dict, params: dict, slicers: lis
             return 0.0
 
     query_cfg = visual.get("query") if isinstance(visual.get("query"), dict) else {}
-    source_cfg = query_cfg.get("source") if isinstance(query_cfg.get("source"), dict) else {}
     scope = get_user_report_location_codes(user, db)
+    warnings: list[str] = []
+    filter_breakdown: dict[str, int] = {}
 
-    visual_loc = normalize_location_code(source_cfg.get("location_code") or query_cfg.get("location_code"))
-    if visual_loc:
-        requested_codes = [visual_loc]
-    else:
-        requested_codes = [normalize_location_code(c) for c in (params.get("location_codes") or []) if c]
-
-    if scope is not None:
+    # A design-time location narrows the dashboard/slicer scope; it never
+    # replaces it. _runner_params() has already enforced dashboard scope.
+    requested_codes, scope_warning = _resolve_visual_location_scope(visual, params)
+    if scope_warning:
+        warnings.append(scope_warning)
+    if scope_warning:
+        allowed_codes = []
+    elif scope is not None:
         allowed_codes = [c for c in requested_codes if c in scope] if requested_codes else sorted(scope)
     else:
         allowed_codes = requested_codes
+    if requested_codes and not allowed_codes:
+        warnings.append("The visual location is outside your reporting scope.")
 
     unit = str(query_cfg.get("unit") or "nsv").lower()
     if unit not in {"nsv", "gsv", "lt", "mt"}:
@@ -1136,8 +1229,19 @@ def _run_tank_snapshot_visual(db, user, visual: dict, params: dict, slicers: lis
         {"key": "accounting_date", "label": "Last Accounting Date", "data_type": "date"},
     ]
 
-    if scope is not None and not allowed_codes:
-        return {"columns": output_columns, "rows": [], "totals": {}, "meta": {"warnings": [], "total_rows": 0, "unit": unit_label}}
+    if not allowed_codes:
+        return {
+            "columns": output_columns,
+            "rows": [],
+            "totals": {},
+            "meta": {
+                "warnings": warnings or ["No location is in scope for this tank visual."],
+                "total_rows": 0,
+                "unit": unit_label,
+                "scope": [],
+                "filter_breakdown": {"candidates": 0},
+            },
+        }
 
     # Explicit optional asset type filter configured on the visual
     raw_type_filter = query_cfg.get("asset_type_codes")
@@ -1155,6 +1259,16 @@ def _run_tank_snapshot_visual(db, user, visual: dict, params: dict, slicers: lis
         lq = lq.filter(func.lower(func.trim(TankStockLedger.location_code)).in_(allowed_codes))
     raw_ledger_rows = lq.all()
     all_ledger_norm_codes = {_norm_code(r.tank_asset_code) for r in raw_ledger_rows if _norm_code(r.tank_asset_code)}
+    # Calibration is stock/capacity evidence too. Load the codes before asset
+    # classification so a custom tank type with an active strapping table is
+    # never discarded by a keyword/family whitelist.
+    calibrated_codes = {
+        _norm_code(code)
+        for (code,) in db.query(AssetCalibrationTable.asset_code)
+        .filter(AssetCalibrationTable.status == "Active")
+        .all()
+        if _norm_code(code)
+    }
 
     hydrated = hydrate_ledger_rows_from_payload(db, raw_ledger_rows) if raw_ledger_rows else []
     date_to_raw = params.get("date_to")
@@ -1213,7 +1327,7 @@ def _run_tank_snapshot_visual(db, user, visual: dict, params: dict, slicers: lis
 
     aq = db.query(Asset).filter(Asset.status == "Active")
     if allowed_codes:
-        extra_codes = set(assigned_loc_by_code.keys()) | all_ledger_norm_codes
+        extra_codes = set(assigned_loc_by_code.keys()) | all_ledger_norm_codes | calibrated_codes
         loc_cond = func.lower(func.trim(Asset.location_code)).in_(allowed_codes)
         if extra_codes:
             aq = aq.filter(or_(loc_cond, func.lower(func.trim(Asset.asset_code)).in_(list(extra_codes))))
@@ -1234,41 +1348,62 @@ def _run_tank_snapshot_visual(db, user, visual: dict, params: dict, slicers: lis
     )
 
     def _is_shore_tank_asset(asset: Asset) -> bool:
+        """Evidence-first classification of an asset as a shore tank.
+
+        Ledger history or an active calibration table is decisive evidence,
+        regardless of how the installation named its asset type. Only assets
+        with no such evidence are judged by type text/family. The visual's
+        ``asset_type_codes`` selection is applied later as a row-level filter,
+        so choosing a type can never suppress stock/calibration discovery.
+        """
+        acode = _norm_code(asset.asset_code)
         atype_norm = _norm_code(asset.asset_type_code)
+        if acode in all_ledger_norm_codes or acode in calibrated_codes:
+            return True
         if explicit_types:
-            return atype_norm in explicit_types
-        if _norm_code(asset.asset_code) in all_ledger_norm_codes:
+            # Keep every candidate until the row-level type predicate runs.
             return True
         if resolve_asset_type_family(db, asset.asset_type_code) is not None:
             return False
         type_text = type_text_by_norm.get(atype_norm, f"{asset.asset_type_code or ''}".casefold())
         if any(kw in type_text for kw in non_tank_keywords):
             return False
-        if "tank" in type_text or "stk" in atype_norm or "silo" in type_text:
-            return True
-        return False
+        return "tank" in type_text or "stk" in atype_norm or "silo" in type_text
 
     shore_assets = [a for a in candidate_assets if _is_shore_tank_asset(a)]
-    # Fallback: if an installation uses custom non-"tank" asset type codes with
-    # active calibration tables and no ledger rows yet, include non-mobile assets
-    if not shore_assets and not explicit_types:
-        shore_assets = [
-            a for a in candidate_assets
-            if resolve_asset_type_family(db, a.asset_type_code) is None
-            and not any(kw in type_text_by_norm.get(_norm_code(a.asset_type_code), "") for kw in non_tank_keywords)
-        ]
+    evidence_count = len({_norm_code(a.asset_code) for a in shore_assets} & (all_ledger_norm_codes | calibrated_codes))
 
     # Include any tank with ledger entries that was missing from active Asset master
     matched_asset_norms = {_norm_code(a.asset_code) for a in shore_assets}
     fallback_ledger_entries: list[TankStockLedger] = []
-    if not explicit_types:
-        for (_, ncode), lrow in latest_row.items():
-            if ncode not in matched_asset_norms:
-                fallback_ledger_entries.append(lrow)
+    for (_, ncode), lrow in latest_row.items():
+        if ncode not in matched_asset_norms:
+            fallback_ledger_entries.append(lrow)
+            evidence_count += 1
 
     all_norm_codes = list({_norm_code(a.asset_code) for a in shore_assets} | {_norm_code(r.tank_asset_code) for r in fallback_ledger_entries})
+    filter_breakdown = {
+        "candidates": len(candidate_assets) + len(fallback_ledger_entries),
+        "with_stock_evidence": evidence_count,
+        "after_type_filter": 0,
+        "after_slicer_filters": 0,
+        "after_fixed_filters": 0,
+        "shown": 0,
+    }
     if not all_norm_codes:
-        return {"columns": output_columns, "rows": [], "totals": {}, "meta": {"warnings": [], "total_rows": 0, "unit": unit_label}}
+        warnings.append("No active shore tanks were found in the selected location scope.")
+        return {
+            "columns": output_columns,
+            "rows": [],
+            "totals": {},
+            "meta": {
+                "warnings": warnings,
+                "total_rows": 0,
+                "unit": unit_label,
+                "scope": [str(code).upper() for code in allowed_codes],
+                "filter_breakdown": filter_breakdown,
+            },
+        }
 
     # 3. Batch-load active calibration capacities case-insensitively (avoids N+1 queries)
     cap_by_norm: dict[str, float] = {}
@@ -1375,8 +1510,19 @@ def _run_tank_snapshot_visual(db, user, visual: dict, params: dict, slicers: lis
 
     for asset in shore_assets:
         nc = _norm_code(asset.asset_code)
-        eff_loc = asset.location_code or assigned_loc_by_code.get(nc) or ""
+        asset_loc = str(asset.location_code or "").strip()
+        assigned_loc = assigned_loc_by_code.get(nc, "")
+        asset_loc_norm = _norm_code(asset_loc)
+        assigned_loc_norm = _norm_code(assigned_loc)
+        # Prefer an in-scope assignment when the master location is outside the
+        # runner scope; never surface a tank from another location.
+        if allowed_codes and asset_loc_norm not in allowed_codes and assigned_loc_norm in allowed_codes:
+            eff_loc = assigned_loc
+        else:
+            eff_loc = asset_loc or assigned_loc
         nloc = _norm_code(eff_loc)
+        if allowed_codes and nloc not in allowed_codes:
+            continue
         ledger = latest_row.get((nloc, nc))
         if ledger is None and (not allowed_codes or nloc in allowed_codes):
             fb = latest_by_code_fallback.get(nc)
@@ -1393,10 +1539,15 @@ def _run_tank_snapshot_visual(db, user, visual: dict, params: dict, slicers: lis
             continue
         seen_pairs.add(pair)
         row_obj = _build_tank_row(asset.asset_code, asset.asset_name or asset.asset_code, asset.asset_type_code or "", eff_loc, ledger, cap)
+        if explicit_types and _norm_code(row_obj["asset_type_code"]) not in explicit_types:
+            continue
+        filter_breakdown["after_type_filter"] += 1
         if not _row_matches_tank_filters(row_obj, visual, slicers, params, ignore_source_match=ignore_source_match):
             continue
+        filter_breakdown["after_slicer_filters"] += 1
         if not _snapshot_row_matches_fixed_filters(row_obj, visual):
             continue
+        filter_breakdown["after_fixed_filters"] += 1
         total_stock += row_obj["current_stock"]
         total_cap += cap
         rows.append(row_obj)
@@ -1417,16 +1568,34 @@ def _run_tank_snapshot_visual(db, user, visual: dict, params: dict, slicers: lis
             lrow,
             cap,
         )
+        if explicit_types and _norm_code(row_obj["asset_type_code"]) not in explicit_types:
+            continue
+        filter_breakdown["after_type_filter"] += 1
         if not _row_matches_tank_filters(row_obj, visual, slicers, params, ignore_source_match=ignore_source_match):
             continue
+        filter_breakdown["after_slicer_filters"] += 1
         if not _snapshot_row_matches_fixed_filters(row_obj, visual):
             continue
+        filter_breakdown["after_fixed_filters"] += 1
         total_stock += row_obj["current_stock"]
         total_cap += cap
         rows.append(row_obj)
 
     rows.sort(key=lambda r: (str(r.get("location_code") or "").casefold(), str(r.get("tank_asset_code") or "").casefold()))
+    filter_breakdown["shown"] = len(rows[:500])
     rows = rows[:500]
+
+    if not rows:
+        if explicit_types and filter_breakdown.get("after_type_filter", 0) == 0:
+            warnings.append(
+                f"Tank asset-type filter removed all {filter_breakdown.get('candidates', 0)} candidate tank(s)."
+            )
+        if filter_breakdown.get("after_slicer_filters", 0) < filter_breakdown.get("after_type_filter", 0):
+            warnings.append("Dashboard slicers or cross-filters removed the remaining tank(s).")
+        if filter_breakdown.get("after_fixed_filters", 0) < filter_breakdown.get("after_slicer_filters", 0):
+            warnings.append("This visual's fixed filters removed the remaining tank(s).")
+        if not warnings:
+            warnings.append("No active shore tanks matched the selected location and filter criteria.")
 
     totals = {
         "current_stock": round(total_stock, 3),
@@ -1438,7 +1607,13 @@ def _run_tank_snapshot_visual(db, user, visual: dict, params: dict, slicers: lis
         "columns": output_columns,
         "rows": rows,
         "totals": totals,
-        "meta": {"warnings": [], "total_rows": len(rows), "unit": unit_label},
+        "meta": {
+            "warnings": warnings,
+            "total_rows": len(rows),
+            "unit": unit_label,
+            "scope": [str(code).upper() for code in allowed_codes],
+            "filter_breakdown": filter_breakdown,
+        },
     }
 
 
@@ -1456,11 +1631,26 @@ def _run_material_balance_visual(db, visual: dict, params: dict) -> dict:
     )
 
     source = (visual.get("query") or {}).get("source") or {}
-    location_codes = params.get("location_codes") or []
     source_location = source.get("location_code")
-    if source_location and location_codes and str(source_location).casefold() not in {str(code).casefold() for code in location_codes}:
-        raise ReportDefinitionError("The Material Balance visual location is outside the dashboard runner's selected scope.")
-    location_code = source_location or (location_codes[0] if len(location_codes) == 1 else None)
+    # A fixed visual location narrows the dashboard scope; it cannot widen it.
+    effective_codes, scope_warning = _resolve_visual_location_scope(visual, params)
+    if scope_warning:
+        return {
+            "columns": [],
+            "rows": [],
+            "totals": {},
+            "meta": {"warnings": [scope_warning], "total_rows": 0},
+        }
+    if source_location:
+        location_code = source_location
+    elif len(effective_codes) == 1:
+        raw_codes = [code for code in (params.get("location_codes") or []) if code]
+        location_code = next(
+            (code for code in raw_codes if str(code).strip().casefold() == effective_codes[0]),
+            effective_codes[0],
+        )
+    else:
+        location_code = None
     if not location_code:
         raise ReportDefinitionError("Choose exactly one location for a Material Balance visual.")
     if not params.get("date_from") or not params.get("date_to"):
@@ -1880,9 +2070,31 @@ def _inject_selection_filters(
         val = sel.get("value")
         if val is None or val == "" or val == []:
             continue
-        rule = {"column_key": col_key, "operator": op, "value": val}
-        if op == "between" and sel.get("value2") is not None:
-            rule["value2"] = sel.get("value2")
+        # A click on a grouped chart/table carries the grouped label, not the
+        # raw source value. Convert DAY/MONTH/QUARTER/YEAR labels into a range
+        # so the drill-through still finds the underlying rows.
+        bucket = next(
+            (
+                str(gb.get("bucket") or "VALUE").upper()
+                for gb in (report_definition.get("group_by") or [])
+                if isinstance(gb, dict) and str(gb.get("key") or "") == col_key
+            ),
+            "VALUE",
+        )
+        rule_value, rule_value2 = val, None
+        if op == "eq":
+            boundaries = _bucket_boundaries(val, bucket)
+            if boundaries:
+                op, rule_value, rule_value2 = "between", boundaries[0], boundaries[1]
+        elif op == "in" and bucket not in ("VALUE", "", None):
+            values = val if isinstance(val, list) else [val]
+            if len(values) == 1:
+                boundaries = _bucket_boundaries(values[0], bucket)
+                if boundaries:
+                    op, rule_value, rule_value2 = "between", boundaries[0], boundaries[1]
+        rule = {"column_key": col_key, "operator": op, "value": rule_value}
+        if op == "between" and (rule_value2 is not None or sel.get("value2") is not None):
+            rule["value2"] = rule_value2 if rule_value2 is not None else sel.get("value2")
         extra_filters.append(rule)
 
     if not extra_filters:
@@ -1930,6 +2142,7 @@ def run_visual(db, user, visual: dict, definition: dict, params: dict) -> dict:
     vtype = str(visual.get("type") or "").upper()
     if vtype == "TEXT":
         return {"columns": [], "rows": [], "totals": {}, "meta": {"warnings": [], "total_rows": 0}}
+    params = visual_execution_params(visual, params)
     if _is_tank_snapshot_visual(visual):
         from app.dependencies.permissions import require_any_user_permission
         require_any_user_permission(user, ["View Analytics Dashboard", "View Tank Stock Ledger", "View Analytics Definition"], db)
@@ -1957,6 +2170,21 @@ def run_visual_records(db, user, visual: dict, definition: dict, params: dict) -
     vtype = str(visual.get("type") or "").upper()
     if vtype == "TEXT":
         return {"columns": [], "rows": [], "totals": {}, "meta": {"warnings": [], "total_rows": 0}}
+    # Use the same date-basis contract as the dashboard batch runner.
+    params = visual_execution_params(visual, params)
+
+    def _record_meta(result: dict) -> dict:
+        meta = result.setdefault("meta", {})
+        applied = []
+        for sel in params.get("selection_filters") or []:
+            if isinstance(sel, dict) and sel.get("column_key") and sel.get("value") not in (None, "", []):
+                applied.append(str(sel.get("label") or f"{sel['column_key']}: {sel['value']}"))
+        for key, value in (params.get("runtime_values") or {}).items():
+            if value not in (None, "", []):
+                applied.append(str(key))
+        meta["applied_filters"] = applied
+        return result
+
     if _is_tank_snapshot_visual(visual):
         from app.dependencies.permissions import require_any_user_permission
         require_any_user_permission(user, ["View Analytics Dashboard", "View Tank Stock Ledger", "View Analytics Definition"], db)
@@ -1974,21 +2202,22 @@ def run_visual_records(db, user, visual: dict, definition: dict, params: dict) -
             rows = [r for r in rows if any(search_q in str(v).casefold() for v in r.values() if v is not None)]
         res["rows"] = rows[:1000]
         res.setdefault("meta", {})["total_rows"] = len(rows)
-        return res
+        return _record_meta(res)
 
     report_definition = report_definition_for_visual(visual, definition.get("slicers") or [])
     report_definition["report_type"] = "TABULAR"
-    report_definition["group_by"] = []
     report_definition.pop("matrix", None)
     for col in report_definition.get("columns") or []:
         if isinstance(col, dict):
             col.pop("aggregate", None)
             col["hidden"] = False
     report_definition["options"] = {"show_totals": True, "page_size": 500}
-    # For underlying records, ALSO apply selection filters even if clicked on the same visual!
+    # Inject cross-filters while the group_by bucket information is still
+    # available, then flatten the query to raw source rows.
     report_definition, run_params = _inject_selection_filters(
         report_definition, visual, params.get("selection_filters"), params=params, ignore_source_match=False
     )
+    report_definition["group_by"] = []
     run_params["page_size"] = 500
     result = run_report(db, user, report_definition, run_params)
     search_q = str(params.get("search") or "").strip().casefold()
@@ -1999,7 +2228,7 @@ def run_visual_records(db, user, visual: dict, definition: dict, params: dict) -
         ]
         result["rows"] = filtered
         result.setdefault("meta", {})["total_rows"] = len(filtered)
-    return result
+    return _record_meta(result)
 
 
 def run_dashboard(
@@ -2022,13 +2251,9 @@ def run_dashboard(
     for visual in normalized["visuals"]:
         if selected and visual["id"] not in selected:
             continue
-        visual_params = dict(params or {})
+        visual_params = visual_execution_params(visual, params)
         visual_params["runtime_values"] = dict((params or {}).get("runtime_values") or {})
         visual_params["selection_filters"] = list((params or {}).get("selection_filters") or [])
-        query = visual.get("query") or {}
-        if query.get("date_basis") == "NONE":
-            visual_params.pop("date_from", None)
-            visual_params.pop("date_to", None)
         if isolate_errors:
             try:
                 result = run_visual(db, user, visual, normalized, visual_params)

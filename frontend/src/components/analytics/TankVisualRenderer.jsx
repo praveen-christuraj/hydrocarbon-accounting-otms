@@ -16,6 +16,7 @@ function normalizeUnit(value) {
 function TankVisualRenderer({
   visual,
   rows = [],
+  meta = {},
   activeSelection = null,
   onCrossFilter = null,
 }) {
@@ -88,13 +89,11 @@ function TankVisualRenderer({
   }, [rows, unit, unitMeta.isVolume])
 
   if (!tanks.length) {
-    return (
-      <AlertMessage
-        tone="info"
-        compact
-        message="No active shore tanks matched the selected location and filter criteria."
-      />
-    )
+    const warnings = (Array.isArray(meta?.warnings) ? meta.warnings : []).filter(Boolean)
+    const message = warnings.length
+      ? warnings.join(' ')
+      : 'No active shore tanks matched the selected location and filter criteria.'
+    return <AlertMessage tone="info" compact message={message} />
   }
 
   const totalStock = tanks.reduce((acc, t) => acc + (Number(t.stock) || 0), 0)

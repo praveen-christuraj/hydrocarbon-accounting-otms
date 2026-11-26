@@ -47,6 +47,7 @@ function KpiCardRenderer({ visual, columns = [], rows = [], totals = {}, onInspe
   const targetVal = kpiStyle.targetValue != null && kpiStyle.targetValue !== '' ? Number(kpiStyle.targetValue) : null
 
   const deltaInfo = useMemo(() => {
+    if (kpiStyle.showDelta === false) return null
     if (targetVal !== null && Number.isFinite(targetVal) && Math.abs(targetVal) > 1e-9 && Number.isFinite(numHeadline)) {
       const pct = ((numHeadline - targetVal) / Math.abs(targetVal)) * 100
       return {
@@ -153,6 +154,7 @@ function AnalyticsVisual({
   onDeleteVisual = null,
   onToggleLock = null,
   onExplorerChange = null,
+  printMode = false,
 }) {
   const [expanded, setExpanded] = useState(false)
   const [viewOverridesByKey, setViewOverridesByKey] = useState({})
@@ -246,6 +248,7 @@ function AnalyticsVisual({
           visual={visual}
           rows={rows}
           totals={totals}
+          meta={result?.meta || {}}
           activeSelection={activeSelection}
           onCrossFilter={visual?.interactions?.crossFilter !== false ? onCrossFilter : null}
         />
@@ -259,8 +262,8 @@ function AnalyticsVisual({
           columns={columns}
           rows={rows}
           totals={totals}
-          expanded={isModal}
-          shelfOpen={isModal ? true : shelfOpen}
+          expanded={isModal || printMode}
+          shelfOpen={printMode ? false : (isModal ? true : shelfOpen)}
           activeSelection={activeSelection}
           onCrossFilter={visual?.interactions?.crossFilter !== false ? onCrossFilter : null}
           onExplorerChange={onExplorerChange}

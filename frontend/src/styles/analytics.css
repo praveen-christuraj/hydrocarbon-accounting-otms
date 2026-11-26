@@ -1899,3 +1899,123 @@
     break-inside: avoid;
   }
 }
+
+/* Fixed-location slicer and pending-filter feedback */
+.analytics-slicer-locked-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px dashed var(--border-strong, #b8c4d6);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface-2, #f5f7fb);
+  color: var(--text-secondary, #526074);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: not-allowed;
+}
+
+.analytics-pending-filters-hint {
+  color: #8a5a00;
+  background: #fff6dd;
+  border: 1px solid #e5c26b;
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.analytics-records-applied-filters {
+  margin: 0 0 8px;
+  padding: 6px 9px;
+  border-radius: 6px;
+  background: var(--surface-2, #f5f7fb);
+  color: var(--text-muted, #667085);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* --------------------------------------------------------------------------
+   Analytics dashboard print surface
+   --------------------------------------------------------------------------
+   The global stylesheet hides everything except .printable-report in print.
+   The viewer therefore keeps ONE report wrapper (header + visuals + footer).
+   On screen it is parked off-canvas at a fixed width so print charts can size
+   before window.print(); in print it becomes the page itself.
+   -------------------------------------------------------------------------- */
+.analytics-page .analytics-print-report {
+  display: block;
+  position: fixed;
+  left: -12000px;
+  top: 0;
+  width: 1120px;
+  z-index: -1;
+  pointer-events: none;
+}
+
+.analytics-print-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-auto-rows: var(--print-row-height, 64px);
+  gap: var(--print-grid-gap, 7px);
+  width: 100%;
+}
+
+.analytics-print-item {
+  min-width: 0;
+  min-height: 0;
+}
+
+@media print {
+  .analytics-viewer-page > *:not(.analytics-print-report) {
+    display: none !important;
+  }
+
+  .analytics-page .analytics-print-report {
+    display: block !important;
+    position: static !important;
+    left: auto !important;
+    top: auto !important;
+    width: 100% !important;
+    z-index: auto !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .analytics-print-grid {
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+
+  .analytics-print-item {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .analytics-print-item .analytics-visual-card,
+  .analytics-print-item .analytics-visual-card *,
+  .analytics-print-item .analytics-tank-farm * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .analytics-print-item .analytics-visual-card {
+    border: 1px solid #b8c4d6 !important;
+    border-radius: 4px !important;
+    box-shadow: none !important;
+    overflow: hidden;
+  }
+
+  .analytics-print-item .analytics-visual-header {
+    padding: 3px 6px !important;
+    background: #f2f2f2 !important;
+  }
+
+  .analytics-print-item table {
+    font-size: 8.5px !important;
+  }
+}

@@ -134,6 +134,9 @@ function SlicerBar({
   availableLocations = [],
   selectedLocations = [],
   onLocationsChange,
+  locationLocked = false,
+  fixedLocationCode = '',
+  pendingFilters = false,
   slicers = [],
   slicerOptions = {},
   runtimeValues = {},
@@ -204,8 +207,16 @@ function SlicerBar({
           />
         </div>
 
-        {/* 3. Scoped Location multi-select */}
-        {availableLocations.length > 0 && (
+        {/* 3. Scoped Location multi-select (locked when fixed at design time) */}
+        {locationLocked ? (
+          <div className="analytics-slicer-popover-field" title="Location is fixed in this dashboard's scope">
+            <span className="analytics-slicer-field-label">Location (fixed)</span>
+            <div className="analytics-slicer-locked-chip">
+              <Icon name="lock" size={13} />
+              <span>{fixedLocationCode || selectedLocations[0] || 'Dashboard scope'}</span>
+            </div>
+          </div>
+        ) : availableLocations.length > 0 ? (
           <MultiSelectPopover
             label="Locations"
             icon="mapPin"
@@ -218,7 +229,7 @@ function SlicerBar({
             selected={selectedLocations}
             onChange={onLocationsChange}
           />
-        )}
+        ) : null}
 
         {/* 4. Custom Dashboard Slicers */}
         {slicers.map((slicer) => {
@@ -332,8 +343,13 @@ function SlicerBar({
       </div>
 
       {/* Active cross-filter chip strip + execution timestamp */}
-      {(selectionFilters.length > 0 || lastExecutedAt) && (
+      {(selectionFilters.length > 0 || lastExecutedAt || pendingFilters) && (
         <div className="analytics-slicer-status-strip">
+          {pendingFilters && (
+            <span className="analytics-pending-filters-hint" title="Inspect, export and print use the last applied filters">
+              Filters changed — click Apply &amp; Refresh
+            </span>
+          )}
           <div className="analytics-crossfilter-chips">
             {selectionFilters.length > 0 && (
               <span className="analytics-crossfilter-title">
