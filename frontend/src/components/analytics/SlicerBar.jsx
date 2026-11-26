@@ -7,6 +7,8 @@ function MultiSelectPopover({
   options = [],
   selected = [],
   onChange,
+  onOpen = null,
+  loading = false,
   placeholder = 'All',
   icon = 'filter',
 }) {
@@ -56,7 +58,13 @@ function MultiSelectPopover({
         type="button"
         className={`analytics-slicer-trigger ${selectedSet.size > 0 ? 'has-selection' : ''}`}
         aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => {
+          setOpen((prev) => {
+            const next = !prev
+            if (next && onOpen) onOpen()
+            return next
+          })
+        }}
       >
         <Icon name={icon} size={14} />
         <span className="analytics-slicer-trigger-text">{summaryText}</span>
@@ -94,18 +102,24 @@ function MultiSelectPopover({
             </div>
           </div>
           <div className="analytics-slicer-options-list">
-            {filtered.map((opt) => (
-              <label key={opt.value} className="analytics-slicer-option-row">
-                <input
-                  type="checkbox"
-                  checked={selectedSet.has(opt.value)}
-                  onChange={() => toggleVal(opt.value)}
-                />
-                <span>{opt.label}</span>
-              </label>
-            ))}
-            {!filtered.length && (
-              <div className="analytics-slicer-empty">No matching values</div>
+            {loading && !filtered.length ? (
+              <div className="analytics-slicer-empty">Loading values…</div>
+            ) : (
+              <>
+                {filtered.map((opt) => (
+                  <label key={opt.value} className="analytics-slicer-option-row">
+                    <input
+                      type="checkbox"
+                      checked={selectedSet.has(opt.value)}
+                      onChange={() => toggleVal(opt.value)}
+                    />
+                    <span>{opt.label}</span>
+                  </label>
+                ))}
+                {!filtered.length && (
+                  <div className="analytics-slicer-empty">No matching values</div>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -115,6 +129,7 @@ function MultiSelectPopover({
 }
 
 const DATE_PRESETS = [
+  { key: 'PREV_DAY', label: 'Prev Day' },
   { key: '7D', label: '7D' },
   { key: '30D', label: '30D' },
   { key: 'MTD', label: 'MTD' },
@@ -137,8 +152,11 @@ function SlicerBar({
   locationLocked = false,
   fixedLocationCode = '',
   pendingFilters = false,
+  hasQueried = true,
   slicers = [],
   slicerOptions = {},
+  slicerLoading = {},
+  onSlicerOpen = null,
   runtimeValues = {},
   onRuntimeValueChange,
   selectionFilters = [],
@@ -244,6 +262,8 @@ function SlicerBar({
                 icon="filter"
                 placeholder={slicer.config?.placeholder || 'All'}
                 options={slicerOptions[sKey] || slicerOptions[slicer.id] || []}
+                loading={Boolean(slicerLoading[sKey] || slicerLoading[slicer.id])}
+                onOpen={() => onSlicerOpen && onSlicerOpen(slicer)}
                 selected={Array.isArray(val) ? val : (val ? [val] : [])}
                 onChange={(nextList) => onRuntimeValueChange(sKey, nextList)}
               />
@@ -343,13 +363,17 @@ function SlicerBar({
       </div>
 
       {/* Active cross-filter chip strip + execution timestamp */}
-      {(selectionFilters.length > 0 || lastExecutedAt || pendingFilters) && (
+      {(selectionFilters.length > 0 || lastExecutedAt || pendingFilters || (!hasQueried && !running)) && (
         <div className="analytics-slicer-status-strip">
-          {pendingFilters && (
+          {!hasQueried && !running ? (
+            <span className="analytics-pending-filters-hint">
+              Select filters or slicers above and click Apply &amp; Refresh to load data
+            </span>
+          ) : pendingFilters ? (
             <span className="analytics-pending-filters-hint" title="Inspect, export and print use the last applied filters">
               Filters changed — click Apply &amp; Refresh
             </span>
-          )}
+          ) : null}
           <div className="analytics-crossfilter-chips">
             {selectionFilters.length > 0 && (
               <span className="analytics-crossfilter-title">

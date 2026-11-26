@@ -23,6 +23,8 @@ import { discoverAnalyticsJsonPaths, getAnalyticsOperationFields } from '../../a
  *  - disabled: true for TEXT / engine datasets
  *  - onAddColumns(columns): receives report columns with a payload source spec
  */
+const operationFieldsCache = new Map()
+
 function AnalyticsJsonPanel({
   sourceKind,
   table,
@@ -42,29 +44,57 @@ function AnalyticsJsonPanel({
   const [pickerOpen, setPickerOpen] = useState(false)
 
   const isTickets = sourceKind === 'operation_tickets'
-  const payloadColumns = useMemo(() => (jsonColumns || []).filter(Boolean), [jsonColumns])
+  const payloadColumnsKey = (jsonColumns || []).filter(Boolean).join(',')
+  const payloadColumns = useMemo(
+    () => (payloadColumnsKey ? payloadColumnsKey.split(',') : []),
+    [payloadColumnsKey]
+  )
+  const operationTypeCodesKey = useMemo(
+    () => (Array.isArray(operationTypeCodes) ? operationTypeCodes : [])
+      .map((code) => String(code || '').trim())
+      .filter(Boolean)
+      .sort()
+      .join(','),
+    [operationTypeCodes]
+  )
 
   // Ticket answer / payload field list (same endpoint Report Builder uses).
+  // Keyed by stable string + cached so unrelated Studio re-renders never re-scan DB.
   useEffect(() => {
     if (disabled || !isTickets) {
       setSavedFields([])
       setTemplates([])
       return undefined
     }
+    const cached = operationFieldsCache.get(operationTypeCodesKey)
+    if (cached) {
+      setSavedFields(cached.savedFields)
+      setTemplates(cached.templates)
+      setFieldsError('')
+      setLoadingFields(false)
+      return undefined
+    }
     let cancelled = false
     setLoadingFields(true)
     setFieldsError('')
-    getAnalyticsOperationFields(operationTypeCodes)
+    const codes = operationTypeCodesKey ? operationTypeCodesKey.split(',') : []
+    getAnalyticsOperationFields(codes)
       .then((data) => {
         if (cancelled) return
         const payloads = (data?.saved_fields || []).filter((field) => field.is_payload)
-        setSavedFields(payloads.length ? payloads : (data?.saved_fields || []))
-        setTemplates(data?.templates || [])
+        const nextSaved = payloads.length ? payloads : (data?.saved_fields || [])
+        const nextTemplates = data?.templates || []
+        operationFieldsCache.set(operationTypeCodesKey, {
+          savedFields: nextSaved,
+          templates: nextTemplates,
+        })
+        setSavedFields(nextSaved)
+        setTemplates(nextTemplates)
       })
       .catch((err) => { if (!cancelled) setFieldsError(err.message || 'Unable to load ticket payload fields.') })
       .finally(() => { if (!cancelled) setLoadingFields(false) })
     return () => { cancelled = true }
-  }, [disabled, isTickets, operationTypeCodes])
+  }, [disabled, isTickets, operationTypeCodesKey])
 
   // Default to the first JSON column of a ledger/table source.
   useEffect(() => {

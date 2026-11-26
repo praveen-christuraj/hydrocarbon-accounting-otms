@@ -357,18 +357,36 @@ export function formatMetricValue(value, column, style = {}) {
   return String(value)
 }
 
+export function formatLocalIsoDate(d) {
+  const year = d.getFullYear()
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+export function getPreviousDayIso(referenceDate = new Date()) {
+  const prev = new Date(
+    referenceDate.getFullYear(),
+    referenceDate.getMonth(),
+    referenceDate.getDate() - 1
+  )
+  return formatLocalIsoDate(prev)
+}
+
 export function computeDatePreset(presetKey) {
   const now = new Date()
-  const toIso = (d) => d.toISOString().slice(0, 10)
+  const toIso = formatLocalIsoDate
   const end = toIso(now)
+  if (presetKey === 'PREV_DAY') {
+    const prev = getPreviousDayIso(now)
+    return { from: prev, to: prev }
+  }
   if (presetKey === '7D') {
-    const d = new Date(now)
-    d.setDate(d.getDate() - 6)
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6)
     return { from: toIso(d), to: end }
   }
   if (presetKey === '30D') {
-    const d = new Date(now)
-    d.setDate(d.getDate() - 29)
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29)
     return { from: toIso(d), to: end }
   }
   if (presetKey === 'MTD') {

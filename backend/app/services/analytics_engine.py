@@ -1425,25 +1425,6 @@ def _run_tank_snapshot_visual(db, user, visual: dict, params: dict, slicers: lis
     else:
         explicit_types = set()
 
-    # 1. Query active TankStockLedger rows in scope first so every tank with stock
-    #    history is guaranteed to be discovered regardless of total fleet size.
-    lq = db.query(TankStockLedger).filter(TankStockLedger.status == "Active")
-    if allowed_codes:
-        lq = lq.filter(func.lower(func.trim(TankStockLedger.location_code)).in_(allowed_codes))
-    raw_ledger_rows = lq.all()
-    all_ledger_norm_codes = {_norm_code(r.tank_asset_code) for r in raw_ledger_rows if _norm_code(r.tank_asset_code)}
-    # Calibration is stock/capacity evidence too. Load the codes before asset
-    # classification so a custom tank type with an active strapping table is
-    # never discarded by a keyword/family whitelist.
-    calibrated_codes = {
-        _norm_code(code)
-        for (code,) in db.query(AssetCalibrationTable.asset_code)
-        .filter(AssetCalibrationTable.status == "Active")
-        .all()
-        if _norm_code(code)
-    }
-
-    hydrated = hydrate_ledger_rows_from_payload(db, raw_ledger_rows) if raw_ledger_rows else []
     # Tank levels are a live snapshot. `date_basis: NONE` is the contract that
     # means "ignore the runner date window" (see visual_execution_params), yet
     # this function used to apply `date_to` as an as-of cutoff regardless, so a
@@ -1464,6 +1445,72 @@ def _run_tank_snapshot_visual(db, user, visual: dict, params: dict, slicers: lis
                 as_of_date = date.fromisoformat(date_to_raw.strip()[:10])
             except ValueError:
                 as_of_date = None
+
+    # 1. Discover tanks with active ledger history via a lightweight DISTINCT
+    #    query, then fetch only the most recent few ledger rows per (location, tank)
+    #    instead of loading and hydrating the entire historical ledger table.
+    ledger_code_q = (
+        db.query(TankStockLedger.tank_asset_code)
+        .filter(TankStockLedger.status == "Active")
+    )
+    if allowed_codes:
+        ledger_code_q = ledger_code_q.filter(
+            func.lower(func.trim(TankStockLedger.location_code)).in_(allowed_codes)
+        )
+    all_ledger_norm_codes = {
+        _norm_code(code)
+        for (code,) in ledger_code_q.distinct().all()
+        if _norm_code(code)
+    }
+
+    rn_col = func.row_number().over(
+        partition_by=(
+            func.lower(func.trim(TankStockLedger.location_code)),
+            func.lower(func.trim(TankStockLedger.tank_asset_code)),
+        ),
+        order_by=(
+            func.coalesce(TankStockLedger.accounting_date, date(1900, 1, 1)).desc(),
+            func.coalesce(TankStockLedger.operation_date, date(1900, 1, 1)).desc(),
+            TankStockLedger.id.desc(),
+        ),
+    ).label("rn")
+    ranked_q = db.query(TankStockLedger.id.label("ledger_id"), rn_col).filter(
+        TankStockLedger.status == "Active"
+    )
+    if allowed_codes:
+        ranked_q = ranked_q.filter(
+            func.lower(func.trim(TankStockLedger.location_code)).in_(allowed_codes)
+        )
+    if as_of_date is not None:
+        # Leave a 2-day buffer so payload/accounting-day cutoff shifts never drop
+        # a boundary row before hydration computes the final accounting_date.
+        ranked_q = ranked_q.filter(
+            or_(
+                TankStockLedger.accounting_date.is_(None),
+                TankStockLedger.accounting_date <= as_of_date + timedelta(days=2),
+            )
+        )
+    ranked_sq = ranked_q.subquery()
+    raw_ledger_rows = (
+        db.query(TankStockLedger)
+        .join(ranked_sq, TankStockLedger.id == ranked_sq.c.ledger_id)
+        .filter(ranked_sq.c.rn <= 8)
+        .all()
+    )
+
+    # Calibration is stock/capacity evidence too. Load the codes before asset
+    # classification so a custom tank type with an active strapping table is
+    # never discarded by a keyword/family whitelist.
+    calibrated_codes = {
+        _norm_code(code)
+        for (code,) in db.query(AssetCalibrationTable.asset_code)
+        .filter(AssetCalibrationTable.status == "Active")
+        .distinct()
+        .all()
+        if _norm_code(code)
+    }
+
+    hydrated = hydrate_ledger_rows_from_payload(db, raw_ledger_rows) if raw_ledger_rows else []
     if as_of_date:
         hydrated = [r for r in hydrated if r.accounting_date is not None and r.accounting_date <= as_of_date]
 
@@ -1630,15 +1677,41 @@ def _run_tank_snapshot_visual(db, user, visual: dict, params: dict, slicers: lis
             if cname:
                 out_key_by_template[tid] = cname
 
-        relevant_tables = [tbl for tbl in cal_tables if tbl.template_id in out_key_by_template]
+        # Keep only the newest active calibration table per tank asset
+        seen_cal_assets: set[str] = set()
+        relevant_tables = []
+        for tbl in cal_tables:
+            nc = _norm_code(tbl.asset_code)
+            if tbl.template_id in out_key_by_template and nc and nc not in seen_cal_assets:
+                seen_cal_assets.add(nc)
+                relevant_tables.append(tbl)
         table_ids = [tbl.id for tbl in relevant_tables]
         max_by_table: dict[int, float] = {}
         if table_ids:
             out_key_norm_by_table = {tbl.id: out_key_by_template[tbl.template_id].casefold() for tbl in relevant_tables}
             out_key_exact_by_table = {tbl.id: out_key_by_template[tbl.template_id] for tbl in relevant_tables}
+            # Strapping tables can contain thousands of millimeter rows per tank.
+            # Read only the boundary rows (top/bottom few row_numbers) per table
+            # using the indexed (calibration_table_id, row_number) key.
+            bounds_sq = (
+                db.query(
+                    AssetCalibrationData.calibration_table_id.label("tbl_id"),
+                    func.min(AssetCalibrationData.row_number).label("min_rn"),
+                    func.max(AssetCalibrationData.row_number).label("max_rn"),
+                )
+                .filter(AssetCalibrationData.calibration_table_id.in_(table_ids))
+                .group_by(AssetCalibrationData.calibration_table_id)
+                .subquery()
+            )
             cal_rows = (
                 db.query(AssetCalibrationData.calibration_table_id, AssetCalibrationData.row_data)
-                .filter(AssetCalibrationData.calibration_table_id.in_(table_ids))
+                .join(bounds_sq, AssetCalibrationData.calibration_table_id == bounds_sq.c.tbl_id)
+                .filter(
+                    or_(
+                        AssetCalibrationData.row_number >= bounds_sq.c.max_rn - 4,
+                        AssetCalibrationData.row_number <= bounds_sq.c.min_rn + 2,
+                    )
+                )
                 .all()
             )
             for tbl_id, row_data in cal_rows:

@@ -654,6 +654,24 @@ def _load_ticket_rows(db, user, definition, params, plan, warnings):
             func.upper(OperationTransaction.receiver_location_code).in_(upper_codes),
         ))
 
+    date_basis = definition.get("date_basis") or "ACCOUNTING_DATE"
+    date_from_param, date_to_param = params.get("date_from"), params.get("date_to")
+    if date_from_param or date_to_param:
+        sql_date_col = None
+        if date_basis == "OPERATION_DATE":
+            sql_date_col = OperationTransaction.operation_date
+        elif date_basis == "CREATED_AT":
+            sql_date_col = OperationTransaction.created_at
+        elif date_basis == "COLUMN":
+            col_name = definition.get("date_column") or "operation_date"
+            if col_name in OperationTransaction.__table__.c:
+                sql_date_col = getattr(OperationTransaction, col_name, None)
+        if sql_date_col is not None:
+            if date_from_param:
+                query = query.filter(func.date(sql_date_col) >= date_from_param)
+            if date_to_param:
+                query = query.filter(func.date(sql_date_col) <= date_to_param)
+
     transactions = (
         query.order_by(OperationTransaction.operation_date, OperationTransaction.id)
         .limit(SCAN_CAP + 1)
@@ -832,11 +850,10 @@ def _load_table_rows(db, user, definition, params, plan, warnings, table_name):
     runtime_status = [str(v) for v in _as_list(_builtin_runtime(definition, params, "status"))]
     if runtime_status and "status" in columns_meta:
         stmt = stmt.where(table.c["status"].in_(runtime_status))
-    if date_column and params.get("date_from") and params.get("date_to"):
-        stmt = stmt.where(
-            func.date(table.c[date_column]) >= params["date_from"],
-            func.date(table.c[date_column]) <= params["date_to"],
-        )
+    if date_column and params.get("date_from"):
+        stmt = stmt.where(func.date(table.c[date_column]) >= params["date_from"])
+    if date_column and params.get("date_to"):
+        stmt = stmt.where(func.date(table.c[date_column]) <= params["date_to"])
     if "id" in table.c:
         stmt = stmt.order_by(table.c["id"])
     stmt = stmt.limit(SCAN_CAP + 1)
