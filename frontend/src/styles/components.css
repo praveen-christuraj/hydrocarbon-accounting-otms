@@ -5041,3 +5041,12 @@ td.preset-result-error {
 .export-transaction-table tbody tr.row-selected {
   background: var(--primary-soft);
 }
+
+/* ---------------------------------------------------------------------------
+ * Stale-backend banner (see src/api/backendBuild.js). One line, above the page,
+ * never inside a card, so it reads as an environment problem rather than a
+ * data problem.
+ * ------------------------------------------------------------------------- */
+.stale-backend-notice {
+  margin: 0 0 12px;
+}

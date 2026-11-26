@@ -30,8 +30,17 @@ export const runAnalyticsPreview = (definition, params = {}, visualIds = null) =
     params,
     ...(Array.isArray(visualIds) ? { visual_ids: visualIds } : {}),
   })
+export const getAnalyticsPreviewVisualRecords = (definition, visualId, params = {}) =>
+  apiPost(`/analytics/run-preview/visual/${encodeURIComponent(visualId)}/records`, { definition, params })
 export const runAnalyticsDashboard = (id, params = {}) =>
   apiPost(`/analytics/my-dashboards/${id}/run-batch`, params)
+export const getAnalyticsOperationFields = (operationTypeCodes = []) => {
+  const codes = (Array.isArray(operationTypeCodes) ? operationTypeCodes : [operationTypeCodes])
+    .map((code) => String(code || '').trim())
+    .filter(Boolean)
+  return apiGet(`/analytics/operation-fields${codes.length ? `?operation_type_codes=${encodeURIComponent(codes.join(','))}` : ''}`)
+}
+export const discoverAnalyticsJsonPaths = (payload = {}) => apiPost('/analytics/json-paths', payload)
 export const getAnalyticsSlicerValues = (id, payload = {}) =>
   apiPost(`/analytics/my-dashboards/${id}/slicer-values`, payload)
 export const getAnalyticsDefinitionSlicerValues = (id, payload = {}) =>

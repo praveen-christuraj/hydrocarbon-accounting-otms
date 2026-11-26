@@ -171,6 +171,13 @@ function AnalyticsVisual({
   const effectiveType = (viewOverride || savedType).toUpperCase()
   const visualMeta = getVisualMeta(effectiveType)
 
+  const rowCount = Array.isArray(result?.rows) ? result.rows.length : null
+  const totalRows = result?.meta?.total_rows != null ? Number(result.meta.total_rows) : null
+  const warnings = [
+    ...(Array.isArray(result?.meta?.warnings) ? result.meta.warnings : []),
+    ...(result?.error ? [String(result.error)] : []),
+  ].filter(Boolean)
+
   const setViewOverride = (val) => {
     setViewOverridesByKey((prev) => ({ ...prev, [visualStateKey]: val }))
   }
@@ -455,6 +462,26 @@ function AnalyticsVisual({
         <div ref={bodyRef} className="analytics-visual-body">
           {renderContent(false)}
         </div>
+
+        {/* Footer: row count + engine warnings, so a visual that renders "empty"
+            says how many rows it actually received and why (parity with the
+            Report Builder result footer). */}
+        {(rowCount !== null || warnings.length > 0) && (
+          <footer className="analytics-visual-footer" title={warnings.join(' ')}>
+            {rowCount !== null && (
+              <span className="analytics-visual-rowcount">
+                {rowCount === 0 ? 'No rows' : `${rowCount}${rowCount >= 500 ? '+' : ''} row${rowCount === 1 ? '' : 's'}`}
+                {totalRows != null && totalRows !== rowCount ? ` of ${totalRows}` : ''}
+              </span>
+            )}
+            {warnings.length > 0 && (
+              <span className="analytics-visual-warning" title={warnings.join(' ')}>
+                <Icon name="alertTriangle" size={12} /> {warnings[0]}
+                {warnings.length > 1 ? ` (+${warnings.length - 1} more)` : ''}
+              </span>
+            )}
+          </footer>
+        )}
       </article>
 
       <Modal

@@ -52,6 +52,9 @@ function AnalyticsViewer({ loggedInUser }) {
   const [lastExecutedAt, setLastExecutedAt] = useState('')
   const [appliedPayload, setAppliedPayload] = useState(null)
   const appliedRunnerPayloadRef = useRef(null)
+  // "Did the user pick locations?" — survives the server clamping an ALL request
+  // to every granted code, so the toolbar label stays honest.
+  const locationIntentRef = useRef('ALL')
   const [printMode, setPrintMode] = useState(false)
 
   // Separate Date Range vs Single Date + Locations + Slicers + Cross-Filters
@@ -82,16 +85,27 @@ function AnalyticsViewer({ loggedInUser }) {
     return { from: dateFrom || null, to: dateTo || null }
   }, [dateFrom, dateTo, singleDate])
 
+  // A GLOBAL dashboard with no explicit selection means "every location in my
+  // reporting scope" — say so explicitly rather than sending an empty list that
+  // the backend has to guess about (the tank engine used to guess "nothing").
+  const dashboardScopeMode = useCallback((locs) => (
+    Array.isArray(locs) && locs.length ? 'SELECTED' : 'ALL'
+  ), [])
+
   const buildRunnerPayload = useCallback((overrides = {}) => {
     const locs = overrides.location_codes !== undefined ? overrides.location_codes : selectedLocations
+    const codes = Array.isArray(locs) ? locs : []
+    if (codes.length) locationIntentRef.current = 'SELECTED'
+    else if (overrides.location_codes !== undefined) locationIntentRef.current = 'ALL'
     return {
       date_from: overrides.date_from !== undefined ? overrides.date_from : effectiveDateWindow.from,
       date_to: overrides.date_to !== undefined ? overrides.date_to : effectiveDateWindow.to,
-      location_codes: Array.isArray(locs) ? locs : [],
+      location_codes: codes,
+      scope_mode: overrides.scope_mode || dashboardScopeMode(codes),
       runtime_values: overrides.runtime_values ?? runtimeValues,
       selection_filters: overrides.selection_filters ?? selectionFiltersRef.current,
     }
-  }, [effectiveDateWindow.from, effectiveDateWindow.to, runtimeValues, selectedLocations])
+  }, [effectiveDateWindow.from, effectiveDateWindow.to, runtimeValues, selectedLocations, dashboardScopeMode])
 
   const runBatch = useCallback(async (targetId, payload) => {
     setRunning(true)
@@ -104,6 +118,9 @@ function AnalyticsViewer({ loggedInUser }) {
       const applied = {
         ...payload,
         location_codes: Array.isArray(payload.location_codes) ? [...payload.location_codes] : [],
+        // Keep the intent captured when this payload was built; scope clamping in
+        // the API (and the drill-through payload) never changes what was asked for.
+        scope_mode: payload.scope_mode || locationIntentRef.current,
         runtime_values: { ...(payload.runtime_values || {}) },
         selection_filters: Array.isArray(payload.selection_filters)
           ? payload.selection_filters.map((item) => ({ ...item }))
@@ -130,6 +147,7 @@ function AnalyticsViewer({ loggedInUser }) {
           const res = await getAnalyticsSlicerValues(targetId, {
             slicer_key: sKey,
             location_codes: Array.isArray(locationCodes) ? locationCodes : [],
+            scope_mode: Array.isArray(locationCodes) && locationCodes.length ? 'SELECTED' : 'ALL',
           })
           return [sKey, res?.values || []]
         } catch {
@@ -160,6 +178,7 @@ function AnalyticsViewer({ loggedInUser }) {
         setAvailableLocations(locs)
 
         const initLocations = item.location_code ? [item.location_code] : []
+        locationIntentRef.current = initLocations.length ? 'SELECTED' : 'ALL'
         setSelectedLocations(initLocations)
         setSelectionFilters([])
         selectionFiltersRef.current = []
@@ -193,6 +212,7 @@ function AnalyticsViewer({ loggedInUser }) {
           date_from: null,
           date_to: null,
           location_codes: initLocations,
+          scope_mode: initLocations.length ? 'SELECTED' : 'ALL',
           runtime_values: {},
           selection_filters: [],
         }
@@ -243,9 +263,12 @@ function AnalyticsViewer({ loggedInUser }) {
   const appliedLocationLabel = useMemo(() => {
     if (locationLocked && dashboard?.location_code) return `Location: ${dashboard.location_code}`
     const codes = appliedPayload?.location_codes || []
-    return codes.length
-      ? `Location${codes.length > 1 ? 's' : ''}: ${codes.slice(0, 3).join(', ')}${codes.length > 3 ? ` +${codes.length - 3}` : ''}`
-      : 'All Scoped Locations'
+    // An empty selection is an explicit "whole reporting scope" request
+    // (scope_mode: ALL), never "nothing selected". A restricted user's scope is
+    // clamped server-side, so trust the intent captured with the payload.
+    if (String(appliedPayload?.scope_mode || '').toUpperCase() === 'ALL') return 'All Locations in Your Scope'
+    if (!codes.length) return 'All Locations in Your Scope'
+    return `Location${codes.length > 1 ? 's' : ''}: ${codes.slice(0, 3).join(', ')}${codes.length > 3 ? ` +${codes.length - 3}` : ''}`
   }, [appliedPayload, dashboard?.location_code, locationLocked])
 
   const getRunnerPayload = useCallback(
@@ -291,14 +314,17 @@ function AnalyticsViewer({ loggedInUser }) {
 
   const handleLocationsChange = (nextLocations) => {
     if (locationLocked) return
-    setSelectedLocations(nextLocations)
+    const codes = Array.isArray(nextLocations) ? nextLocations : []
+    locationIntentRef.current = codes.length ? 'SELECTED' : 'ALL'
+    setSelectedLocations(codes)
     if (dashboard?.id && slicers.some((s) => String(s.type || 'SELECT').toUpperCase() === 'SELECT')) {
-      fetchSlicerOptions(dashboard.id, slicers, nextLocations).then((opts) => setSlicerOptions(opts))
+      fetchSlicerOptions(dashboard.id, slicers, codes).then((opts) => setSlicerOptions(opts))
     }
   }
 
   const handleClearAllFilters = () => {
     const defaultLocs = dashboard?.location_code ? [dashboard.location_code] : []
+    locationIntentRef.current = defaultLocs.length ? 'SELECTED' : 'ALL'
     setDateFrom('')
     setDateTo('')
     setSingleDate('')
@@ -312,6 +338,7 @@ function AnalyticsViewer({ loggedInUser }) {
         date_from: null,
         date_to: null,
         location_codes: defaultLocs,
+        scope_mode: defaultLocs.length ? 'SELECTED' : 'ALL',
         runtime_values: {},
         selection_filters: [],
       })

@@ -93,7 +93,32 @@ function TankVisualRenderer({
     const message = warnings.length
       ? warnings.join(' ')
       : 'No active shore tanks matched the selected location and filter criteria.'
-    return <AlertMessage tone="info" compact message={message} />
+    // Show the effective scope and the engine's filter funnel so an empty tank
+    // farm is diagnosable from the dashboard itself, without server logs.
+    const scopeCodes = Array.isArray(meta?.scope) ? meta.scope.filter(Boolean) : []
+    const scopeLabel = meta?.scope_mode === 'ALL' || !scopeCodes.length
+      ? 'all locations in your reporting scope'
+      : scopeCodes.join(', ')
+    const breakdown = meta?.filter_breakdown && typeof meta.filter_breakdown === 'object'
+      ? meta.filter_breakdown
+      : null
+    return (
+      <div className="analytics-tank-empty">
+        <AlertMessage tone="info" compact message={message} />
+        <p className="analytics-tank-empty-meta">
+          <span>Scope: {scopeLabel}</span>
+          {breakdown && (
+            <span>
+              Candidates {Number(breakdown.candidates) || 0}
+              {' · '}with stock/calibration {Number(breakdown.with_stock_evidence) || 0}
+              {' · '}after type {Number(breakdown.after_type_filter) || 0}
+              {' · '}after slicers {Number(breakdown.after_slicer_filters) || 0}
+              {' · '}after fixed filters {Number(breakdown.after_fixed_filters) || 0}
+            </span>
+          )}
+        </p>
+      </div>
+    )
   }
 
   const totalStock = tanks.reduce((acc, t) => acc + (Number(t.stock) || 0), 0)

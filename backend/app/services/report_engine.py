@@ -108,6 +108,32 @@ PATH_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_@*\- ]+$|^\[\]$|^[A-Za-z0-9_\- ]+\[\]
 REPORT_TYPES = {"TABULAR", "MATRIX"}
 SOURCE_KINDS = {"operation_tickets", "tank_stock_ledger", "table"}
 DATE_BASES = {"PAYLOAD_OPERATION_DATE", "ACCOUNTING_DATE", "OPERATION_DATE", "CREATED_AT", "COLUMN", "NONE"}
+# Names an older UI offered (or a typo) that must keep working. ``OPERATIONAL_DATE``
+# was selectable in Analytics Studio while the engine only understood
+# ``OPERATION_DATE``, so the choice survived preview (non-strict) and then failed
+# the save with "Unknown date basis 'OPERATIONAL_DATE'" — a 400 the user could
+# not trace back to a dropdown. Aliases are normalised on every validation.
+
+DATE_BASIS_ALIASES = {
+    "OPERATIONAL_DATE": "OPERATION_DATE",
+    "OPERATION_DATETIME": "OPERATION_DATE",
+    "TICKET_DATE": "OPERATION_DATE",
+    "GAUGING_DATE": "PAYLOAD_OPERATION_DATE",
+    "PAYLOAD_DATE": "PAYLOAD_OPERATION_DATE",
+    "ACCOUNTING_DAY": "ACCOUNTING_DATE",
+    "CREATED_DATE": "CREATED_AT",
+    "CREATED": "CREATED_AT",
+    "NO_DATE": "NONE",
+    "NONE_DATE": "NONE",
+}
+
+
+def normalize_date_basis(value) -> str:
+    """Map legacy/alias date-basis names onto a supported basis."""
+    text = str(value or "ACCOUNTING_DATE").strip().upper()
+    return DATE_BASIS_ALIASES.get(text, text)
+
+
 AGGREGATES = {"SUM", "AVG", "COUNT", "MIN", "MAX", "PRODUCT", "FIRST", "LAST"}
 BUCKETS = {"VALUE", "DAY", "WEEK", "MONTH", "QUARTER", "YEAR"}
 FILTER_OPERATORS = {
@@ -290,9 +316,12 @@ def validate_definition(definition) -> dict:
     table_name = _source_table_for(definition)
     table_columns = allowed_columns(table_name) if table_name else {}
 
-    date_basis = str(definition.get("date_basis") or "ACCOUNTING_DATE").upper()
+    date_basis = normalize_date_basis(definition.get("date_basis"))
     if date_basis not in DATE_BASES:
-        errors.append(f"Unknown date basis '{date_basis}'.")
+        errors.append(
+            f"Unknown date basis '{date_basis}'. Choose one of "
+            f"{', '.join(sorted(DATE_BASES))}."
+        )
     if date_basis == "COLUMN" and definition.get("date_column") not in table_columns:
         errors.append("Choose a valid date column for the date filter.")
     definition["date_basis"] = date_basis

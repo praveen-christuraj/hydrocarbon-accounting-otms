@@ -110,6 +110,47 @@ Rules:
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
 
+## Recent Changes (2026-11-26) - Analytics Studio: tank visuals, Studio 400s, JSON/payload parity
+
+**Owner request:** fix (a) misleading `404`s from an older backend, (b) tank visuals
+that stay empty on GLOBAL dashboards and when a preview date range is set,
+(c) Studio-only `400`s, (d) missing JSON/payload splitting parity with Report
+Builder, (e) parity polish. Plan: `ANALYTICS_STUDIO_TANK_JSON_FIX_PLAN.md`.
+
+- **Diagnosability (no behaviour change for a correct setup):** `frontend/vite.config.js`
+  now refuses to start when `VITE_API_BASE_URL` is a relative `/api` path and no proxy
+  target is configured; `frontend/scripts/mock-api.mjs` returns real `404 {detail}` for
+  unimplemented paths (it used to answer `200` for everything) and serves the full
+  `/analytics/*` surface; `/health` reports `version`, `git_sha`, `built_at` and boolean
+  `routes` flags, probed once per session by `frontend/src/api/backendBuild.js` (banner
+  via `StaleBackendNotice`, plus a nudge on any analytics `404`).
+- **Tank engine (`analytics_engine._run_tank_snapshot_visual`):** an empty location
+  selection now means "whole reporting scope" for unrestricted users (was `[]` → early
+  return "No location is in scope"), matching `report_engine._requested_locations`;
+  restricted users keep `sorted(scope)` and the fixed-visual intersection. `date_to` is
+  applied as a stock cut-off only when the visual opts in (`query.as_of_date`), because
+  tank visuals are `date_basis: NONE` live snapshots. `meta` gained `scope_mode` and a
+  full `filter_breakdown`; `TankVisualRenderer` prints scope + funnel in the empty state.
+  `AnalyticsViewer`/`AnalyticsBuilder` send `scope_mode: ALL|SELECTED` explicitly.
+- **Studio 400 hardening:** `OPERATIONAL_DATE` (and other legacy names) are aliases
+  normalised in `report_engine.normalize_date_basis`; the Studio date-basis dropdown is
+  built from `DATE_BASIS_CHOICES` (no value the engine rejects); ids come from
+  `utils/analyticsDesign.makeAnalyticsId`, and `ensureUniqueDesignIds` /
+  `migrateLoadedDesign` repair duplicates on load and before save; `schema_version` 1
+  (and 2/3) load and re-save; validation errors name the visual/slicer, not just an index.
+- **JSON/payload parity:** `/analytics/json-paths`, `/analytics/operation-fields`,
+  catalog `formula_help`/`operator_help`/`date_bases`/`virtual_fields`, lookups
+  operation types/templates/statuses/products/assets; `report_catalog.sample_json_values`
+  is the single discovery helper for both builders. `_resolve_missing_slicer_column` now
+  resolves `payload_path`/`json_path` slicers (via `slicer.source`), so the same payload
+  column works as a column, filter, slicer and comparison rule. Studio gained the grouped
+  field explorer, `AnalyticsJsonPanel`, source-restriction editor, sort/hidden editors.
+- **Phase 5:** Studio drill-through (`POST /analytics/run-preview/visual/{id}/records`,
+  `run_preview_records`), visual footer with row counts + warnings, `export_visual`
+  normalises first. Docs updated in `ANALYTICS.md` and `REPORT_BUILDER.md`.
+- User instructed not to run pytest or GitHub checks; verification used throwaway sqlite
+  probes, the mock API on a scratch port and `esbuild` syntax checks only.
+
 ## Recent Changes (2026-11-24) - Material Balance Operation-Code Matching + Interactive Analytics Core
 
 ### Approved implementation scope

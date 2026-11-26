@@ -24,8 +24,12 @@ from app.models import (
     AnalyticsDashboardDefinition,
     AnalyticsDashboardGrant,
     AnalyticsDashboardVersion,
+    Asset,
     AssetType,
     Location,
+    OperationTemplate,
+    OperationTransaction,
+    OperationType,
     Role,
     User,
 )
@@ -46,6 +50,7 @@ from app.services.analytics_engine import (
     _run_tracking_status_visual,
     export_dashboard_workbook_bytes,
     run_dashboard,
+    run_preview_records,
     run_visual,
     run_visual_records,
     validate_analytics_definition,
@@ -57,9 +62,12 @@ from app.services.report_catalog import (
     TICKET_VIRTUAL_FIELDS,
     allowed_columns as catalog_allowed_columns,
     build_catalog,
+    discover_json_paths,
+    discover_operation_fields,
+    sample_json_values,
 )
-from app.services.report_engine import export_csv_bytes, export_xlsx_bytes
-from app.services.report_formula import validate_formula
+from app.services.report_engine import DATE_BASES, export_csv_bytes, export_xlsx_bytes
+from app.services.report_formula import FUNCTION_HELP, OPERATOR_HELP, validate_formula
 from app.utils.helpers import get_current_user_display_name
 
 router = APIRouter(prefix="/analytics", tags=["Analytics"])
@@ -267,6 +275,13 @@ def _runner_params(db, user, dashboard, request):
         "location_codes": list(request.location_codes or []),
         "search": getattr(request, "search", None),
         "page_size": 500,
+        # "ALL" = the caller deliberately asked for the whole reporting scope.
+        # Never converted into a location list here; consumers treat an empty
+        # location_codes + ALL as "no location filter".
+        "scope_mode": str(getattr(request, "scope_mode", "SELECTED") or "SELECTED").upper(),
+        # What the caller asked for, before scope clamping — lets the UI label
+        # "All Locations in Your Scope" instead of listing every granted code.
+        "requested_location_count": len([c for c in (request.location_codes or []) if str(c or "").strip()]),
     }
     if dashboard.scope_type == "LOCATION":
         params["location_codes"] = [dashboard.location_code]
@@ -327,6 +342,37 @@ def get_analytics_catalog(
         if visible_scope is None or normalize_location_code(location.location_code) in visible_scope
     ]
     catalog["is_admin"] = is_admin_user(current_user, db)
+    # Studio parity with Report Builder: the same formula/operator/date-basis
+    # help text, so the Studio never has to hard-code (and drift from) the engine.
+    catalog["formula_help"] = FUNCTION_HELP
+    catalog["operator_help"] = OPERATOR_HELP
+    catalog["date_bases"] = [
+        {"value": "ACCOUNTING_DATE", "label": "Accounting Date (location accounting day)", "help": "Recommended for stock accounting. Uses the ticket's own date/time with the Location Accounting Day Setting."},
+        {"value": "PAYLOAD_OPERATION_DATE", "label": "Operation / Gauging Date (from ticket answers)", "help": "The date typed inside the ticket, without the accounting-day shift."},
+        {"value": "OPERATION_DATE", "label": "Operation Date (ticket header)", "help": "The header operation date stored on the ticket."},
+        {"value": "CREATED_AT", "label": "Created Date", "help": "When the record was created in the system."},
+        {"value": "COLUMN", "label": "A date column I choose", "help": "Pick any date column of the selected table."},
+        {"value": "NONE", "label": "No date filtering", "help": "For master-data style visuals."},
+    ]
+    catalog["date_basis_values"] = sorted(DATE_BASES)
+    # Table-backed datasets expose the same payload/JSON split support the Report
+    # Builder advertises (build_catalog already lists virtual_fields for them);
+    # the Studio only needs to know which JSON column to sample.
+    for dataset in catalog.get("datasets", []):
+        kind = str(dataset.get("kind") or "")
+        if kind == "operation_tickets":
+            dataset["virtual_fields"] = TICKET_VIRTUAL_FIELDS
+            dataset["supports_payload_json"] = True
+            dataset["payload_source"] = {"field_code": "tank_gauging_payload"}
+        elif kind == "tank_stock_ledger":
+            dataset["virtual_fields"] = LEDGER_VIRTUAL_FIELDS
+            dataset["supports_payload_json"] = True
+            dataset.update({
+                "payload_source": {
+                    "json_column": "source_payload",
+                    "label": "Ticket answers stored with the ledger row",
+                },
+            })
     catalog["datasets"].append({
         "id": "tank_snapshot",
         "kind": "tank_snapshot",
@@ -405,6 +451,12 @@ def get_analytics_lookups(
     roles = db.query(Role).order_by(Role.role_name.asc()).all()
     locations = db.query(Location).filter(Location.status == "Active").order_by(Location.location_name.asc()).all()
     asset_types = db.query(AssetType).filter(AssetType.status == "Active").order_by(AssetType.asset_type_name.asc()).all()
+    # Same picker data the Report Builder offers (source restrictions, slicer
+    # values, "split JSON" source lists) so Studio can match its feature set.
+    statuses = [row[0] for row in db.query(OperationTransaction.status).distinct().all() if row[0]]
+    for standard in ("Draft", "Submitted", "Approved", "Rejected", "Cancelled"):
+        if standard not in statuses:
+            statuses.append(standard)
     return {
         "users": [{"id": u.id, "username": u.username, "full_name": u.full_name} for u in users],
         "roles": [{"id": r.id, "role_name": r.role_name} for r in roles],
@@ -417,7 +469,106 @@ def get_analytics_lookups(
             {"asset_type_code": at.asset_type_code, "asset_type_name": at.asset_type_name}
             for at in asset_types
         ],
+        "operation_types": [
+            {
+                "operation_type_code": row.operation_type_code,
+                "operation_type_name": row.operation_type_name,
+                "operation_category": row.operation_category,
+                "applicable_asset_type_code": row.applicable_asset_type_code,
+            }
+            for row in db.query(OperationType).filter(OperationType.status == "Active").order_by(OperationType.operation_type_name).all()
+        ],
+        "templates": [
+            {
+                "id": row.id,
+                "template_name": row.template_name,
+                "operation_type_code": row.operation_type_code,
+                "entry_layout_type": row.entry_layout_type,
+            }
+            for row in db.query(OperationTemplate).filter(OperationTemplate.status == "Active").order_by(OperationTemplate.template_name).all()
+        ],
+        "statuses": sorted(statuses),
+        "products": [
+            row[0] for row in db.query(OperationTransaction.product_name).distinct().limit(200).all() if row[0]
+        ],
+        "assets": [
+            {
+                "asset_code": row.asset_code,
+                "asset_name": row.asset_name,
+                "asset_type_code": row.asset_type_code,
+                "location_code": row.location_code,
+            }
+            for row in db.query(Asset)
+            .filter(Asset.status == "Active")
+            .order_by(Asset.asset_code)
+            .limit(2000)
+            .all()
+            if visible_scope is None
+            or row.location_code is None
+            or normalize_location_code(row.location_code) in visible_scope
+        ],
     }
+
+
+@router.get("/operation-fields")
+def get_analytics_operation_fields(
+    operation_type_codes: str = "",
+    current_user: User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db),
+):
+    """Template fields + saved ticket answer fields, for the Studio field explorer."""
+    require_any_user_permission(current_user, BUILDER_PERMISSIONS, db)
+    codes = [code.strip() for code in (operation_type_codes or "").split(",") if code.strip()]
+    return discover_operation_fields(db, codes or None)
+
+
+@router.post("/json-paths")
+def post_analytics_json_paths(
+    payload: dict,
+    current_user: User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db),
+):
+    """List every pickable path inside a sampled payload/JSON column.
+
+    Mirrors ``POST /report-builder/json-paths`` (same discovery helper) so a
+    payload column picked in Studio resolves and runs identically.
+    """
+    require_any_user_permission(current_user, BUILDER_PERMISSIONS, db)
+    source_kind = str(payload.get("source_kind") or "operation_tickets").strip()
+    if source_kind not in {"operation_tickets", "tank_stock_ledger", "table"}:
+        raise HTTPException(status_code=400, detail="Choose a data source to read the payload from.")
+    field_code = str(payload.get("field_code") or "").strip()
+    json_column = str(payload.get("json_column") or "").strip()
+    table = str(payload.get("table") or "").strip()
+    if source_kind == "operation_tickets" and not field_code:
+        raise HTTPException(status_code=400, detail="Choose which saved payload / answer to split into columns.")
+    if source_kind != "operation_tickets":
+        table_name = "tank_stock_ledger" if source_kind == "tank_stock_ledger" else table
+        columns_meta = catalog_allowed_columns(table_name)
+        if json_column not in columns_meta or not columns_meta[json_column].get("is_json"):
+            raise HTTPException(status_code=400, detail="Choose a JSON column to split into columns.")
+    try:
+        sample_size = max(1, min(200, int(payload.get("sample_size") or 100)))
+    except (TypeError, ValueError):
+        sample_size = 100
+    scope = get_user_report_location_codes(current_user, db)
+    codes = payload.get("operation_type_codes")
+    values = sample_json_values(
+        db,
+        source_kind=source_kind,
+        scope=scope,
+        table=table or None,
+        json_column=json_column or None,
+        field_code=field_code or None,
+        operation_type_codes=[str(code) for code in (codes if isinstance(codes, list) else []) if str(code or "").strip()],
+        sample_size=sample_size,
+    )
+    result = discover_json_paths(values, len(values))
+    result["source_kind"] = source_kind
+    result["field_code"] = field_code or None
+    result["json_column"] = json_column or None
+    result["table"] = table or None
+    return result
 
 
 @router.get("/definitions")
@@ -603,6 +754,9 @@ def run_preview(
     requested_locations = params.get("location_codes") or []
     if isinstance(requested_locations, str):
         requested_locations = [requested_locations]
+    # "ALL" is an explicit "whole reporting scope" request from the Studio, as
+    # opposed to an empty list that an older client may have sent by accident.
+    params["scope_mode"] = "ALL" if str(params.get("scope_mode") or "").upper() == "ALL" else "SELECTED"
     if scope is not None:
         outside = [code for code in requested_locations if normalize_location_code(code) not in scope]
         if outside:
@@ -635,6 +789,41 @@ def run_preview(
     except ReportDefinitionError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return result
+
+
+@router.post("/run-preview/visual/{visual_id}/records")
+def run_preview_visual_records(
+    visual_id: str,
+    payload: dict,
+    current_user: User = Depends(get_current_user_from_token),
+    db: Session = Depends(get_db),
+):
+    """Drill-through for an unsaved Studio preview (same rows as the Viewer)."""
+    require_any_user_permission(current_user, BUILDER_PERMISSIONS, db)
+    definition = payload.get("definition") or {}
+    params = dict(payload.get("params") or {})
+    scope = get_user_report_location_codes(current_user, db)
+    requested_locations = params.get("location_codes") or []
+    if isinstance(requested_locations, str):
+        requested_locations = [requested_locations]
+    params["scope_mode"] = "ALL" if str(params.get("scope_mode") or "").upper() == "ALL" else "SELECTED"
+    if scope is not None:
+        outside = [code for code in requested_locations if normalize_location_code(code) not in scope]
+        if outside:
+            raise HTTPException(status_code=403, detail="One or more selected locations are outside your reporting scope.")
+        if not requested_locations:
+            params["location_codes"] = sorted(scope)
+    for key in ("date_from", "date_to"):
+        value = params.get(key)
+        if isinstance(value, str) and value.strip():
+            try:
+                params[key] = date.fromisoformat(value.strip())
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=f"{key} must be an ISO date.") from exc
+    try:
+        return run_preview_records(db, current_user, definition, visual_id, params)
+    except ReportDefinitionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/my-dashboards")
@@ -787,6 +976,9 @@ def _resolve_slicer_values(
             "date_to": parsed_dates["date_to"],
             "location_codes": list(payload.get("location_codes") or []),
             "runtime_values": dict(payload.get("runtime_values") or {}),
+            # Mirrors _runner_params: an explicit ALL means "whole scope", so the
+            # option list is built from every scope location rather than none.
+            "scope_mode": "ALL" if str(payload.get("scope_mode") or "").upper() == "ALL" else "SELECTED",
         }
         scope = get_user_report_location_codes(current_user, db)
         if scope is not None:
@@ -917,13 +1109,21 @@ def export_visual(
     require_user_permission(current_user, "Export Analytics Dashboard", db)
     dashboard = _get_dashboard_or_404(db, dashboard_id)
     _require_run_access(db, current_user, dashboard)
-    visual = next((item for item in (dashboard.definition_json or {}).get("visuals", []) if item.get("id") == visual_id), None)
+    definition = dashboard.definition_json or {}
+    try:
+        # Match the batch/records paths: normalise the definition before
+        # selecting the visual so an older or partially saved definition
+        # exports the same rows the dashboard displays.
+        normalized = validate_analytics_definition(definition, strict_visuals=False)
+    except ReportDefinitionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    visual = next((item for item in normalized.get("visuals", []) if item.get("id") == visual_id), None)
     if not visual:
         raise HTTPException(status_code=404, detail="Dashboard visual not found")
     params = _runner_params(db, current_user, dashboard, payload)
     params["for_export"] = True
     try:
-        result = run_visual(db, current_user, visual, dashboard.definition_json or {}, params)
+        result = run_visual(db, current_user, visual, normalized, params)
     except ReportDefinitionError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     fmt = str(payload.format or "xlsx").lower()

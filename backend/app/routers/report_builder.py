@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from app.database import Base, get_db
+from app.database import get_db
 from app.dependencies.auth import get_current_user_from_token
 from app.dependencies.permissions import (
     get_user_location_codes,
@@ -34,7 +34,6 @@ from app.models import (
     Location,
     OperationTemplate,
     OperationTransaction,
-    OperationTransactionValue,
     OperationType,
     ReportAccessGrant,
     ReportDefinition,
@@ -57,6 +56,7 @@ from app.schemas import (
 from app.services.audit_service import create_audit_log
 from app.services.report_catalog import (
     allowed_columns,
+    sample_json_values,
     build_catalog,
     discover_json_paths,
     discover_operation_fields,
@@ -350,56 +350,26 @@ def post_json_paths(
     require_any_user_permission(current_user, BUILDER_ANY, db)
     sample_size = max(1, min(200, int(payload.sample_size or 100)))
     scope = get_user_report_location_codes(current_user, db)
-    values: list = []
-
-    if payload.source_kind == "operation_tickets":
-        field_code = str(payload.field_code or "").strip()
-        if not field_code:
-            raise HTTPException(status_code=400, detail="Choose which saved payload / answer to split into columns.")
-        query = (
-            db.query(OperationTransactionValue, OperationTransaction)
-            .join(OperationTransaction, OperationTransaction.id == OperationTransactionValue.transaction_id)
-            .filter(OperationTransactionValue.field_code == field_code)
-        )
-        codes = [c for c in (payload.operation_type_codes or []) if str(c or "").strip()]
-        if codes:
-            query = query.filter(OperationTransaction.operation_type_code.in_(codes))
-        rows = query.order_by(OperationTransactionValue.id.desc()).limit(sample_size * 3).all()
-        for value_row, tx in rows:
-            if scope is not None:
-                party = {
-                    normalize_location_code(code)
-                    for code in (tx.origin_location_code, tx.destination_location_code, tx.sender_location_code, tx.receiver_location_code)
-                    if code
-                }
-                if not (party & scope):
-                    continue
-            values.append(value_row.field_value)
-            if len(values) >= sample_size:
-                break
-    else:
+    if payload.source_kind == "operation_tickets" and not str(payload.field_code or "").strip():
+        raise HTTPException(status_code=400, detail="Choose which saved payload / answer to split into columns.")
+    if payload.source_kind != "operation_tickets":
         table_name = "tank_stock_ledger" if payload.source_kind == "tank_stock_ledger" else (payload.table or "")
         columns_meta = allowed_columns(table_name)
         json_column = payload.json_column or ""
         if json_column not in columns_meta or not columns_meta[json_column].get("is_json"):
             raise HTTPException(status_code=400, detail="Choose a JSON column to split into columns.")
-        table = Base.metadata.tables[table_name]
-        location_columns = [name for name, meta in columns_meta.items() if meta.get("is_location")]
-        from sqlalchemy import select
-
-        stmt = select(table.c[json_column], *[table.c[name] for name in location_columns])
-        if "id" in table.c:
-            stmt = stmt.order_by(table.c["id"].desc())
-        stmt = stmt.limit(sample_size * 3)
-        for mapping in db.execute(stmt).mappings().all():
-            if scope is not None and location_columns:
-                codes = {normalize_location_code(mapping.get(name)) for name in location_columns if mapping.get(name)}
-                if codes and not (codes & scope):
-                    continue
-            values.append(mapping.get(json_column))
-            if len(values) >= sample_size:
-                break
-
+    # Path discovery is shared with Analytics Studio so both pickers always
+    # offer the same fields for the same source.
+    values = sample_json_values(
+        db,
+        source_kind=payload.source_kind,
+        scope=scope,
+        table=payload.table,
+        json_column=payload.json_column,
+        field_code=payload.field_code,
+        operation_type_codes=list(payload.operation_type_codes or []),
+        sample_size=sample_size,
+    )
     result = discover_json_paths(values, len(values))
     result["field_code"] = payload.field_code
     result["json_column"] = payload.json_column

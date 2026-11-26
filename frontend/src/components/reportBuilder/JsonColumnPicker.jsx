@@ -11,9 +11,11 @@ import { discoverJsonPaths } from '../../api/reportBuilderApi'
  * "one row per item" columns.
  *
  * Props: open, title, request (JsonPathsRequest body), existingPaths (Set of
- * "ref::path"), onClose, onAdd(paths:[{path,label,data_type,is_wildcard}])
+ * "ref::path"), onClose, onAdd(paths:[{path,label,data_type,is_wildcard}]),
+ * discover (optional replacement for the Report Builder discovery call so the
+ * Analytics Studio can reuse the picker against /analytics/json-paths).
  */
-function JsonColumnPicker({ open, title, request, existingPaths, onClose, onAdd }) {
+function JsonColumnPicker({ open, title, request, existingPaths, onClose, onAdd, discover = discoverJsonPaths }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [result, setResult] = useState(null)
@@ -28,12 +30,12 @@ function JsonColumnPicker({ open, title, request, existingPaths, onClose, onAdd 
     setSelected(new Set())
     setSearch('')
   // eslint-disable-next-line react-hooks/set-state-in-effect
-    discoverJsonPaths(request)
+    discover(request)
       .then((data) => { if (!cancelled) setResult(data) })
       .catch((err) => { if (!cancelled) setError(err.message || 'Could not read the saved data.') })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [open, request])
+  }, [discover, open, request])
 
   const allPaths = useMemo(() => {
     if (!result) return []

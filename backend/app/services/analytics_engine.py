@@ -24,6 +24,7 @@ from app.services.report_engine import (
     FILTER_OPERATORS,
     ReportDefinitionError,
     _export_matrix_of,
+    normalize_date_basis,
     run_report,
     validate_definition,
 )
@@ -426,6 +427,18 @@ def _normalize_slicer(slicer, valid_visual_ids):
     else:
         normalized_visual_ids = list(valid_visual_ids)
     config = slicer.get("config") if isinstance(slicer.get("config"), dict) else {}
+    # A slicer bound to a split payload column keeps its column spec so the
+    # engine can inject the (possibly non-displayed) payload column and build the
+    # right option list — the same way fixed filters reference payload paths.
+    source_spec = slicer.get("source") if isinstance(slicer.get("source"), dict) else None
+    normalized_source = None
+    if source_spec and str(source_spec.get("type") or "") in {"payload_path", "json_path"} and source_spec.get("path"):
+        normalized_source = {
+            "type": str(source_spec.get("type")),
+            "path": str(source_spec.get("path")),
+            **({"field_code": str(source_spec.get("field_code"))} if source_spec.get("field_code") else {}),
+            **({"json_column": str(source_spec.get("json_column"))} if source_spec.get("json_column") else {}),
+        }
     return {
         "id": str(slicer.get("id") or key),
         "key": key,
@@ -434,6 +447,7 @@ def _normalize_slicer(slicer, valid_visual_ids):
         "column_key": column_key,
         "field": column_key,
         "visual_ids": normalized_visual_ids,
+        **({"source": normalized_source} if normalized_source else {}),
         "required": _as_bool(slicer.get("required"), False),
         "default": slicer.get("default"),
         "config": {
@@ -600,6 +614,37 @@ def _bucket_boundaries(value, bucket: str) -> tuple[str, str] | None:
     return None
 
 
+def make_safe_key(value: str) -> str:
+    """Mirror of the Studio's ``makeSafeKey`` (lowercase, non-word → ``_``)."""
+    text = re.sub(r"[^a-z0-9_]+", "_", str(value or "").strip().lower())
+    text = re.sub(r"_+", "_", text).strip("_")
+    if text and text[0].isdigit():
+        text = f"c_{text}"
+    return text
+
+
+def _payload_spec_allowed(kind: str, spec: dict) -> bool:
+    """Whether a ``payload_path``/``json_path`` column spec can run on ``kind``.
+
+    Kept in step with ``report_engine._validate_source_spec`` so the Studio's
+    slicers/filters are accepted exactly when execution would accept them.
+    """
+    path = str(spec.get("path") or "").strip()
+    if not path:
+        return False
+    spec_type = str(spec.get("type") or "")
+    if spec_type == "payload_path":
+        if kind == "operation_tickets":
+            return bool(re.match(r"^[A-Za-z0-9_]+$", str(spec.get("field_code") or "")))
+        if kind == "tank_stock_ledger":
+            meta = catalog_allowed_columns("tank_stock_ledger").get(str(spec.get("json_column") or ""))
+            return bool(meta and meta.get("is_json"))
+        return False
+    table_name = _table_name_for_source({"kind": kind})
+    meta = catalog_allowed_columns(table_name).get(str(spec.get("json_column") or "")) if table_name else None
+    return bool(meta and meta.get("is_json"))
+
+
 def _resolve_missing_slicer_column(
     query: dict,
     column_key: str,
@@ -653,6 +698,28 @@ def _resolve_missing_slicer_column(
             "hidden": True,
         }
 
+    # 2b) JSON / payload path on the visual's own source
+    #     The Studio lets a slicer or fixed filter target a split payload column
+    #     (``source: {type: "payload_path", path: "calculated.gsvBbl"}``). Without
+    #     this branch such a slicer was rejected with "references field ... that is
+    #     not available for its targeted visuals", even though the engine runs the
+    #     column happily. ``column_key`` is the column key the Studio derived from
+    #     the path (``makeSafeKey``), so accept both the bare key and a dotted path.
+    spec = slicer.get("source") if isinstance(slicer.get("source"), dict) else None
+    if spec and str(spec.get("type") or "") in {"payload_path", "json_path"}:
+        if _payload_spec_allowed(kind, spec):
+            key = make_safe_key(column_key) if column_key else ""
+            if key:
+                return {
+                    "key": key,
+                    "label": slicer.get("label") or spec.get("label") or key,
+                    "kind": "data",
+                    "source": dict(spec),
+                    "data_type": str(slicer.get("data_type") or spec.get("data_type") or "text"),
+                    "aggregate": "FIRST" if (group_keys and key not in group_keys) else None,
+                    "hidden": True,
+                }
+
     # 3) Ticket field (operation_tickets only) - only when explicitly allowed
     # so cross-dataset slicers (e.g. tank_asset_code / fill_pct) do not inject
     # nonexistent ticket_field specs into operation_tickets visuals.
@@ -670,9 +737,61 @@ def _resolve_missing_slicer_column(
     return None
 
 
+_STATUS_TOKENS = {"approved", "submitted", "draft", "rejected", "cancelled", "canceled", "posted", "pending", "inprogress"}
+
+
+def _looks_like_status(value) -> bool:
+    text = str(value or "").strip().casefold().replace("_", "").replace(" ", "")
+    return bool(text) and text in _STATUS_TOKENS
+
+
+def normalize_visual_status_filter(visual: dict) -> dict:
+    """Move a legacy status filter out of the visual ``query.filters`` list.
+
+    Analytics Studio stored a fixed ticket-status filter created before the
+    source-restriction editor existed as an ordinary filter row. Those rows were
+    also run through the "is this column displayed?" resolution, which could
+    drop or reject them. Status belongs to ``query.source.statuses`` — the same
+    place Report Builder keeps it — so migrate it there in place.
+    """
+    query = visual.get("query") if isinstance(visual, dict) else None
+    if not isinstance(query, dict):
+        return visual
+    source = query.get("source") if isinstance(query.get("source"), dict) else {}
+    if str(source.get("kind") or "") not in {"operation_tickets", ""}:
+        return visual
+    filters = query.get("filters")
+    if not isinstance(filters, list) or not filters:
+        return visual
+    kept, moved = [], []
+    for entry in filters:
+        if (isinstance(entry, dict)
+                and str(entry.get("column_key") or "").strip() == "status"
+                and str(entry.get("operator") or "eq") in {"eq", "in"}
+                and _looks_like_status(entry.get("value"))):
+            values = entry.get("value")
+            moved.extend(values if isinstance(values, list) else [values])
+        else:
+            kept.append(entry)
+    if not moved:
+        return visual
+    existing = [str(item) for item in (source.get("statuses") or []) if str(item or "").strip()]
+    if not existing:
+        source = {**source, "statuses": [str(item) for item in moved]}
+    next_query = {**query, "filters": kept, "source": source}
+    return {**visual, "query": next_query}
+
+
 def report_definition_for_visual(visual: dict, slicers: list[dict] | None = None) -> dict:
     query = copy.deepcopy(visual.get("query") or {})
     query.setdefault("schema_version", 1)
+    # Visuals persisted by the Studio before the schema was pinned may carry a
+    # newer/stray version; the report engine only understands 1. Pin it here so
+    # a dashboard saved by a future release still runs on this engine instead of
+    # failing with "Unsupported report definition version".
+    query["schema_version"] = 1
+    if "date_basis" in query:
+        query["date_basis"] = normalize_date_basis(query.get("date_basis"))
     query.setdefault("report_type", "MATRIX" if visual.get("type") == "MATRIX" and query.get("matrix") else "TABULAR")
     query.setdefault("source", {"kind": "operation_tickets"})
     query.setdefault("date_basis", "ACCOUNTING_DATE")
@@ -794,8 +913,21 @@ def validate_analytics_definition(definition: dict, *, strict_visuals: bool = Tr
     if not isinstance(definition, dict):
         raise ReportDefinitionError("Dashboard design must be an object.")
     candidate = copy.deepcopy(definition)
-    if candidate.get("schema_version", 2) not in {2, 3}:
-        raise ReportDefinitionError("Unsupported Analytics dashboard design version.")
+    # Accept every design version this engine has ever written and migrate it
+    # forward. A dashboard saved by an older release (``schema_version: 1``, or
+    # no version at all) must load and re-save, not fail with "Unsupported
+    # Analytics dashboard design version."
+    raw_version = candidate.get("schema_version", 2)
+    try:
+        version = int(raw_version)
+    except (TypeError, ValueError):
+        raise ReportDefinitionError(
+            f"Unsupported Analytics dashboard design version {raw_version!r}; expected 1, 2 or 3."
+        ) from None
+    if version not in {1, 2, 3}:
+        raise ReportDefinitionError(
+            f"Unsupported Analytics dashboard design version {version}. This build reads versions 1, 2 and 3."
+        )
     candidate["schema_version"] = 2
 
     canvas = candidate.get("canvas") if isinstance(candidate.get("canvas"), dict) else {}
@@ -818,7 +950,10 @@ def validate_analytics_definition(definition: dict, *, strict_visuals: bool = Tr
             raise ReportDefinitionError(f"Visual {index + 1} is not valid.")
         visual_id = str(visual.get("id") or "").strip()
         if not visual_id or visual_id in ids:
-            raise ReportDefinitionError(f"Visual {index + 1} needs a unique id.")
+            raise ReportDefinitionError(
+                f"Visual {index + 1} ('{visual.get('title') or 'Untitled visual'}') needs a unique id"
+                + (f"; '{visual_id}' is already used by another visual." if visual_id else ".")
+            )
         ids.add(visual_id)
         valid_ids.add(visual_id)
         visual_type = str(visual.get("type") or "").upper()
@@ -863,6 +998,11 @@ def validate_analytics_definition(definition: dict, *, strict_visuals: bool = Tr
                 "filters": visual_query.get("filters") if isinstance(visual_query.get("filters"), list) else [],
                 "filter_logic": str(visual_query.get("filter_logic") or "AND").upper(),
             }
+            # ``as_of_date`` is the explicit opt-in that restores the historic
+            # behaviour of honouring the runner's ``date_to`` as a stock
+            # cut-off; without it a tank visual is always a live snapshot.
+            if _as_bool(visual_query.get("as_of_date"), False):
+                next_query["as_of_date"] = True
             for meta_key in ("dimension_key", "secondary_dimension_key", "measure_key", "metric_key", "measure_keys"):
                 if visual_query.get(meta_key) is not None:
                     next_query[meta_key] = visual_query[meta_key]
@@ -898,6 +1038,12 @@ def validate_analytics_definition(definition: dict, *, strict_visuals: bool = Tr
                 raise ReportDefinitionError(f"Visual '{visual.get('title') or visual_id}' query columns must be a list.")
             visual_query["columns"] = []
         visual["query"] = visual_query
+        # Legacy Studio builds stored a ticket-status restriction as a filter row;
+        # move it to query.source.statuses so it is not resolved as a data column.
+        migrated = normalize_visual_status_filter(visual)
+        if migrated.get("query") is not visual_query:
+            visual["query"] = migrated["query"]
+            visual_query = visual["query"]
 
     slicers_raw = candidate.get("slicers") or []
     if not isinstance(slicers_raw, list) or len(slicers_raw) > MAX_SLICERS:
@@ -912,7 +1058,9 @@ def validate_analytics_definition(definition: dict, *, strict_visuals: bool = Tr
             raise ReportDefinitionError("Each dashboard slicer must be a valid object with a unique key.")
         key = normalized["key"]
         if key in slicer_keys:
-            raise ReportDefinitionError("Every slicer needs a unique key.")
+            raise ReportDefinitionError(
+                f"Slicer '{normalized.get('label') or key}' reuses the key '{key}'; every slicer needs a unique key."
+            )
         slicer_keys.add(key)
         column_key = normalized.get("column_key")
         if not column_key:
@@ -983,9 +1131,15 @@ def validate_analytics_definition(definition: dict, *, strict_visuals: bool = Tr
                     resolvable = True
                     break
             if not resolvable and strict_visuals:
+                target_titles = [
+                    str(v.get("title") or v.get("id"))
+                    for v in visuals
+                    if str(v.get("id")) in {str(t) for t in targets}
+                ]
                 raise ReportDefinitionError(
-                    f"Slicer '{slicer.get('label') or slicer.get('key')}' references field '{column_key}' that is not available for its targeted visuals. "
-                    "Choose a column from the selected data source or add it to the visual."
+                    f"Slicer '{slicer.get('label') or slicer.get('key')}' references field '{column_key}' that is not available for its targeted visuals"
+                    + (f" ({', '.join(target_titles[:4])}{'…' if len(target_titles) > 4 else ''})." if target_titles else ".")
+                    + " Choose a column from the selected data source or add it to the visual."
                 )
 
     candidate["layout"] = _normalize_layout(candidate.get("layout"), visuals)
@@ -1202,13 +1356,25 @@ def _run_tank_snapshot_visual(db, user, visual: dict, params: dict, slicers: lis
     requested_codes, scope_warning = _resolve_visual_location_scope(visual, params)
     if scope_warning:
         warnings.append(scope_warning)
+    unrestricted = False
     if scope_warning:
         allowed_codes = []
     elif scope is not None:
         allowed_codes = [c for c in requested_codes if c in scope] if requested_codes else sorted(scope)
-    else:
+    elif requested_codes:
         allowed_codes = requested_codes
-    if requested_codes and not allowed_codes:
+    else:
+        # Unrestricted user (admin / all-locations) with no explicit selection.
+        # Falling back to [] here made every GLOBAL dashboard — and every
+        # Studio preview without a dashboard location — render "No location is
+        # in scope" even though report_engine treats the same empty selection
+        # as "the whole reporting scope" (report_engine._requested_locations).
+        # Keep allowed_codes empty as the "no location filter" marker (all the
+        # queries below already skip the filter in that case) and remember that
+        # the empty list means "everything", not "nothing".
+        allowed_codes = []
+        unrestricted = True
+    if requested_codes and not allowed_codes and not unrestricted:
         warnings.append("The visual location is outside your reporting scope.")
 
     unit = str(query_cfg.get("unit") or "nsv").lower()
@@ -1229,7 +1395,7 @@ def _run_tank_snapshot_visual(db, user, visual: dict, params: dict, slicers: lis
         {"key": "accounting_date", "label": "Last Accounting Date", "data_type": "date"},
     ]
 
-    if not allowed_codes:
+    if not allowed_codes and not unrestricted:
         return {
             "columns": output_columns,
             "rows": [],
@@ -1239,7 +1405,14 @@ def _run_tank_snapshot_visual(db, user, visual: dict, params: dict, slicers: lis
                 "total_rows": 0,
                 "unit": unit_label,
                 "scope": [],
-                "filter_breakdown": {"candidates": 0},
+                "filter_breakdown": {
+                    "candidates": 0,
+                    "with_stock_evidence": 0,
+                    "after_type_filter": 0,
+                    "after_slicer_filters": 0,
+                    "after_fixed_filters": 0,
+                    "shown": 0,
+                },
             },
         }
 
@@ -1271,17 +1444,26 @@ def _run_tank_snapshot_visual(db, user, visual: dict, params: dict, slicers: lis
     }
 
     hydrated = hydrate_ledger_rows_from_payload(db, raw_ledger_rows) if raw_ledger_rows else []
+    # Tank levels are a live snapshot. `date_basis: NONE` is the contract that
+    # means "ignore the runner date window" (see visual_execution_params), yet
+    # this function used to apply `date_to` as an as-of cutoff regardless, so a
+    # Studio preview range or a viewer date range silently deleted the newest
+    # ledger rows and tanks vanished (no ledger and no calibration row ⇒ skip).
+    # Only treat `date_to` as an as-of date when the visual explicitly opts in.
+    date_basis = str(query_cfg.get("date_basis") or "").upper()
+    explicit_as_of = _as_bool(query_cfg.get("as_of_date"), False) or date_basis not in {"", "NONE"}
     date_to_raw = params.get("date_to")
     as_of_date = None
-    if isinstance(date_to_raw, date) and not isinstance(date_to_raw, datetime):
-        as_of_date = date_to_raw
-    elif isinstance(date_to_raw, datetime):
-        as_of_date = date_to_raw.date()
-    elif isinstance(date_to_raw, str) and date_to_raw.strip():
-        try:
-            as_of_date = date.fromisoformat(date_to_raw.strip()[:10])
-        except ValueError:
-            as_of_date = None
+    if explicit_as_of:
+        if isinstance(date_to_raw, date) and not isinstance(date_to_raw, datetime):
+            as_of_date = date_to_raw
+        elif isinstance(date_to_raw, datetime):
+            as_of_date = date_to_raw.date()
+        elif isinstance(date_to_raw, str) and date_to_raw.strip():
+            try:
+                as_of_date = date.fromisoformat(date_to_raw.strip()[:10])
+            except ValueError:
+                as_of_date = None
     if as_of_date:
         hydrated = [r for r in hydrated if r.accounting_date is not None and r.accounting_date <= as_of_date]
 
@@ -1391,7 +1573,11 @@ def _run_tank_snapshot_visual(db, user, visual: dict, params: dict, slicers: lis
         "shown": 0,
     }
     if not all_norm_codes:
-        warnings.append("No active shore tanks were found in the selected location scope.")
+        warnings.append(
+            "No active shore tanks were found in the selected location scope."
+            if not unrestricted
+            else "No active shore tanks with stock or calibration exist in any location."
+        )
         return {
             "columns": output_columns,
             "rows": [],
@@ -1400,7 +1586,8 @@ def _run_tank_snapshot_visual(db, user, visual: dict, params: dict, slicers: lis
                 "warnings": warnings,
                 "total_rows": 0,
                 "unit": unit_label,
-                "scope": [str(code).upper() for code in allowed_codes],
+                "scope": [str(code).upper() for code in allowed_codes] if not unrestricted else [],
+                "scope_mode": "ALL" if unrestricted else "SELECTED",
                 "filter_breakdown": filter_breakdown,
             },
         }
@@ -1611,7 +1798,8 @@ def _run_tank_snapshot_visual(db, user, visual: dict, params: dict, slicers: lis
             "warnings": warnings,
             "total_rows": len(rows),
             "unit": unit_label,
-            "scope": [str(code).upper() for code in allowed_codes],
+            "scope": [str(code).upper() for code in allowed_codes] if not unrestricted else [],
+            "scope_mode": "ALL" if unrestricted else "SELECTED",
             "filter_breakdown": filter_breakdown,
         },
     }
@@ -2155,6 +2343,7 @@ def run_visual(db, user, visual: dict, definition: dict, params: dict) -> dict:
     if source.get("kind") in TRACKING_STATUS_KINDS:
         return _run_tracking_status_visual(db, user, visual, params, slicers=definition.get("slicers") or [], ignore_source_match=True)
 
+    visual = normalize_visual_status_filter(visual)
     report_definition = report_definition_for_visual(visual, definition.get("slicers") or [])
     report_definition["report_type"] = "MATRIX" if vtype == "MATRIX" and report_definition.get("matrix") else "TABULAR"
     report_definition, effective_params = _inject_selection_filters(
@@ -2204,6 +2393,7 @@ def run_visual_records(db, user, visual: dict, definition: dict, params: dict) -
         res.setdefault("meta", {})["total_rows"] = len(rows)
         return _record_meta(res)
 
+    visual = normalize_visual_status_filter(visual)
     report_definition = report_definition_for_visual(visual, definition.get("slicers") or [])
     report_definition["report_type"] = "TABULAR"
     report_definition.pop("matrix", None)
@@ -2229,6 +2419,29 @@ def run_visual_records(db, user, visual: dict, definition: dict, params: dict) -
         result["rows"] = filtered
         result.setdefault("meta", {})["total_rows"] = len(filtered)
     return _record_meta(result)
+
+
+def run_preview_records(
+    db,
+    user,
+    definition: dict,
+    visual_id: str,
+    params: dict | None = None,
+) -> dict:
+    """Underlying rows for one visual of an UNSAVED Studio preview.
+
+    The Viewer drills through the saved dashboard
+    (``/my-dashboards/{id}/visual/{vid}/records``); Studio edits a definition
+    that has no id yet, so it needs the same drill-through against the in-memory
+    design. Same normalisation, same permissions and same runner as the batch.
+    """
+    if not isinstance(definition, dict):
+        raise ReportDefinitionError("Dashboard design must be an object.")
+    normalized = validate_analytics_definition(definition, strict_visuals=False)
+    visual = next((item for item in normalized.get("visuals", []) if str(item.get("id")) == str(visual_id)), None)
+    if visual is None:
+        raise ReportDefinitionError(f"Visual '{visual_id}' is not part of this dashboard design.")
+    return run_visual_records(db, user, visual, normalized, params or {})
 
 
 def run_dashboard(

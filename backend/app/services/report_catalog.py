@@ -400,6 +400,85 @@ def _collect_map_parents(value, prefix: str, out: set[str], depth: int = 0):
         _collect_map_parents(child, f"{prefix}.{key}" if prefix else str(key), out, depth + 1)
 
 
+def sample_json_values(
+    db: Session,
+    *,
+    source_kind: str,
+    scope: set[str] | None,
+    table: str | None = None,
+    json_column: str | None = None,
+    field_code: str | None = None,
+    operation_type_codes: list[str] | None = None,
+    sample_size: int = 100,
+) -> list:
+    """Sample stored JSON documents for the "split JSON into columns" picker.
+
+    Shared by Report Builder (``POST /report-builder/json-paths``) and Analytics
+    Studio (``POST /analytics/json-paths``) so both pickers discover exactly the
+    same paths for the same source. ``scope`` is the caller's report location
+    scope (``None`` = unrestricted); rows outside it are never sampled.
+    """
+    from app.dependencies.permissions import normalize_location_code
+    from app.models import OperationTransaction, OperationTransactionValue
+
+    size = max(1, min(200, int(sample_size or 100)))
+    values: list = []
+
+    if source_kind == "operation_tickets":
+        code = str(field_code or "").strip()
+        if not code:
+            return []
+        query = (
+            db.query(OperationTransactionValue, OperationTransaction)
+            .join(OperationTransaction, OperationTransaction.id == OperationTransactionValue.transaction_id)
+            .filter(OperationTransactionValue.field_code == code)
+        )
+        codes = [c for c in (operation_type_codes or []) if str(c or "").strip()]
+        if codes:
+            query = query.filter(OperationTransaction.operation_type_code.in_(codes))
+        for value_row, tx in query.order_by(OperationTransactionValue.id.desc()).limit(size * 3).all():
+            if scope is not None:
+                parties = {
+                    normalize_location_code(item)
+                    for item in (
+                        tx.origin_location_code, tx.destination_location_code,
+                        tx.sender_location_code, tx.receiver_location_code,
+                    )
+                    if item
+                }
+                if not (parties & scope):
+                    continue
+            values.append(value_row.field_value)
+            if len(values) >= size:
+                break
+        return values
+
+    table_name = "tank_stock_ledger" if source_kind == "tank_stock_ledger" else (table or "")
+    columns_meta = allowed_columns(table_name)
+    column = str(json_column or "")
+    if column not in columns_meta or not columns_meta[column].get("is_json"):
+        return []
+    table_obj = Base.metadata.tables[table_name]
+    location_columns = [name for name, meta in columns_meta.items() if meta.get("is_location")]
+    from sqlalchemy import select
+
+    stmt = select(table_obj.c[column], *[table_obj.c[name] for name in location_columns])
+    if "id" in table_obj.c:
+        stmt = stmt.order_by(table_obj.c["id"].desc())
+    stmt = stmt.limit(size * 3)
+    for mapping in db.execute(stmt).mappings().all():
+        if scope is not None and location_columns:
+            row_codes = {
+                normalize_location_code(mapping.get(name)) for name in location_columns if mapping.get(name)
+            }
+            if row_codes and not (row_codes & scope):
+                continue
+        values.append(mapping.get(column))
+        if len(values) >= size:
+            break
+    return values
+
+
 def discover_json_paths(values: list, sample_count: int) -> dict:
     """Aggregate flattened paths over sampled JSON values.
 

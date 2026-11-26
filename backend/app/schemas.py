@@ -3264,6 +3264,11 @@ class AnalyticsBatchRunRequest(BaseModel):
     date_from: Optional[date] = None
     date_to: Optional[date] = None
     location_codes: list[str] = Field(default_factory=list)
+    # "SELECTED" (default, back-compatible) or "ALL". An explicit ALL means the
+    # caller deliberately sent an empty/broad location selection ("whole
+    # reporting scope"); the API then never treats the empty list as "nothing
+    # is in scope". Older clients omit it and keep the previous behaviour.
+    scope_mode: str = "SELECTED"
     runtime_values: dict[str, Any] = Field(default_factory=dict)
     selection_filters: list[dict[str, Any]] = Field(default_factory=list)
     visual_ids: Optional[list[str]] = None
@@ -3271,6 +3276,12 @@ class AnalyticsBatchRunRequest(BaseModel):
     page: int = 1
     page_size: int = 50
     search: Optional[str] = None
+
+    @field_validator("scope_mode", mode="before")
+    @classmethod
+    def _normalise_scope_mode(cls, value):
+        text = str(value or "SELECTED").strip().upper()
+        return text if text in {"SELECTED", "ALL"} else "SELECTED"
 
     @field_validator("location_codes", "selection_filters", mode="before")
     @classmethod

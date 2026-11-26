@@ -2019,3 +2019,90 @@
     font-size: 8.5px !important;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * Tank farm empty state: message + effective scope + filter funnel so a blank
+ * tank visual explains itself (see TankVisualRenderer.jsx).
+ * ------------------------------------------------------------------------- */
+.analytics-tank-empty {
+  display: grid;
+  gap: 6px;
+}
+
+.analytics-tank-empty-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 0;
+  color: var(--text-muted, #64748b);
+  font-size: 0.78rem;
+}
+
+/* ---------------------------------------------------------------------------
+ * Field explorer sections + JSON / payload panel (Studio parity with the
+ * Report Builder explorer). See AnalyticsBuilder.jsx / AnalyticsJsonPanel.jsx.
+ * ------------------------------------------------------------------------- */
+.analytics-field-group {
+  margin-bottom: 10px;
+}
+
+.analytics-field-group-title {
+  margin: 0 0 4px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted, #64748b);
+}
+
+.analytics-json-panel {
+  border-top: 1px solid var(--border-subtle, #e2e8f0);
+  margin-top: 10px;
+  padding-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.analytics-json-panel label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.82rem;
+}
+
+/* ---------------------------------------------------------------------------
+ * Visual footer: row counts + engine warnings (AnalyticsVisual.jsx).
+ * ------------------------------------------------------------------------- */
+.analytics-visual-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 4px 10px 6px;
+  border-top: 1px solid var(--border-subtle, #e2e8f0);
+  font-size: 0.72rem;
+  color: var(--text-muted, #64748b);
+}
+
+.analytics-visual-warning {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--warning-text, #b45309);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.analytics-sort-editor {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.analytics-mini-check-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-bottom: 6px;
+}

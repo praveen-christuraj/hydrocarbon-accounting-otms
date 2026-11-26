@@ -51,6 +51,7 @@ import AnalyticsHome from './pages/AnalyticsHome'
 import AnalyticsBuilder from './pages/AnalyticsBuilder'
 import AnalyticsViewer from './pages/AnalyticsViewer'
 import AnalyticsErrorBoundary from './components/analytics/AnalyticsErrorBoundary'
+import StaleBackendNotice from './components/common/StaleBackendNotice'
 import AuditLog from './pages/AuditLog'
 import BargeSealMaster from './pages/BargeSealMaster'
 import BargeTracking from './pages/BargeTracking'
@@ -310,6 +311,8 @@ function AppContent({
   return (
     <AppShell loggedInUser={loggedInUser} onLogout={onLogout}>
       <PageHelp />
+      {/* One banner when the API build is older than this frontend. */}
+      <StaleBackendNotice />
 
         <Routes>
           <Route path="/" element={<Home hasPermission={hasPermission} />} />
