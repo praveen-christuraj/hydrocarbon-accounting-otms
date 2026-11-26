@@ -6,6 +6,7 @@ import {
   notifySessionExpired,
 } from './authToken'
 import { refreshAccessToken, waitForPendingTokenRefresh } from './authApi'
+import { reportPossibleStaleBackend } from './backendBuild'
 
 const configuredApiBaseUrl = String(import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/$/, '')
 export const API_BASE_URL = configuredApiBaseUrl || (import.meta.env.PROD ? '/api' : 'http://127.0.0.1:8000')
@@ -189,6 +190,14 @@ export const apiRequest = async (endpoint, options = {}, timeoutMs = REQUEST_TIM
         return tryRefreshAndRetry(endpoint, options, timeoutMs)
       }
       clearAccessToken()
+    }
+
+    // A 404 on a route this build ships almost always means the API process is
+    // older than the frontend (a stale Docker image, or uvicorn from another
+    // checkout). Confirm via /health and raise one banner instead of leaving
+    // the user with a wall of console 404s. Never blocks the request.
+    if (response.status === 404) {
+      reportPossibleStaleBackend(endpoint, API_BASE_URL).catch(() => {})
     }
 
     const retryAfterHeader = response.headers.get('retry-after') || ''

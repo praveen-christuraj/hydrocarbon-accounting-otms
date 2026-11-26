@@ -316,6 +316,22 @@ Reports` under *Reporting*).
 | POST | `/report-builder/my-reports/{id}/run` | Run a published report |
 | POST | `/report-builder/my-reports/{id}/export` | Download XLSX/CSV (full result) |
 
+**Shared with Analytics Studio.** Studio visuals are Report Builder
+definitions (`schema_version: 1`) embedded in a dashboard, so the two builders
+must not drift:
+
+* path discovery is one helper (`report_catalog.sample_json_values` +
+  `discover_json_paths`), served as `/report-builder/json-paths` **and**
+  `/analytics/json-paths`; the Studio reuses the same `JsonColumnPicker`.
+* `date_basis` aliases (`OPERATIONAL_DATE` → `OPERATION_DATE`,
+  `GAUGING_DATE` → `PAYLOAD_OPERATION_DATE`, …) are normalised by
+  `report_engine.normalize_date_basis`, so a stored definition can never be
+  rejected by a name the UI once offered.
+* a slicer bound to a split payload column is resolved by
+  `analytics_engine._resolve_missing_slicer_column` through the column's
+  `source` descriptor (`payload_path` / `json_path`), exactly like a fixed
+  filter on the same path.
+
 **Definition JSON (schema_version 1)** — `report_type`
 (`TABULAR|MATRIX`), `source` (`kind`, `table`, `operation_type_codes`,
 `template_ids`, `statuses`), `date_basis` (+`date_column`), `columns[]`

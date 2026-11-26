@@ -1104,6 +1104,643 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
+  /* --------------------------------------------------- analytics (mock) */
+  // Enough of the Analytics Studio + gallery surface for `npm run dev:mock`.
+  // The real engine lives in backend/app/services/analytics_engine.py; this
+  // mirror exists so the UI is usable without PostgreSQL and so a genuinely
+  // unimplemented endpoint answers 404 instead of pretending to succeed.
+  if (pathname.startsWith('/analytics') && !pathname.startsWith('/analytics/stock-anomalies')) {
+    const titleCase = (value) => String(value || '')
+      .replace(/_/g, ' ')
+      .replace(/\b[a-z]/g, (c) => c.toUpperCase())
+    const analyticsCol = (column, label, data_type = 'text') => ({
+      column, label: label || titleCase(column), data_type,
+      is_json: data_type === 'json',
+      is_location: column === 'location_code' || column.endsWith('_location_code'),
+      is_date: data_type === 'date' || data_type === 'datetime',
+      nullable: true,
+    })
+
+    const analyticsTicketCols = [
+      analyticsCol('operation_ticket_number', 'Operation Ticket Number'),
+      analyticsCol('operation_number', 'Operation Number'),
+      analyticsCol('operation_type_code', 'Operation Type Code'),
+      analyticsCol('operation_type_name', 'Operation Type Name'),
+      analyticsCol('origin_location_code', 'Origin Location Code'),
+      analyticsCol('destination_location_code', 'Destination Location Code'),
+      analyticsCol('primary_asset_code', 'Asset Code'),
+      analyticsCol('product_name', 'Product'),
+      analyticsCol('status', 'Status'),
+      analyticsCol('operation_date', 'Operation Date', 'date'),
+      analyticsCol('accounting_date', 'Accounting Date', 'date'),
+      analyticsCol('created_at', 'Created At', 'datetime'),
+      analyticsCol('created_by', 'Created By'),
+      analyticsCol('remarks', 'Remarks'),
+    ]
+    const analyticsLedgerCols = [
+      analyticsCol('location_code', 'Location Code'),
+      analyticsCol('tank_asset_code', 'Tank Code'),
+      analyticsCol('tank_asset_name', 'Tank Name'),
+      analyticsCol('product_name', 'Product'),
+      analyticsCol('tank_operation_code', 'Tank Operation Code'),
+      analyticsCol('tank_operation_label', 'Tank Operation Label'),
+      analyticsCol('tank_operation_category', 'Tank Operation Category'),
+      analyticsCol('opening_stock_nsv_bbl', 'Opening Stock NSV BBL', 'number'),
+      analyticsCol('movement_nsv_bbl', 'Movement NSV BBL', 'number'),
+      analyticsCol('movement_gsv_bbl', 'Movement GSV BBL', 'number'),
+      analyticsCol('closing_stock_nsv_bbl', 'Closing Stock NSV BBL', 'number'),
+      analyticsCol('stock_nsv_bbl', 'Closing Stock NSV BBL', 'number'),
+      analyticsCol('stock_gsv_bbl', 'Closing Stock GSV BBL', 'number'),
+      analyticsCol('accounting_date', 'Accounting Date', 'date'),
+      analyticsCol('source_payload', 'Ticket Answers Payload (JSON)', 'json'),
+    ]
+    const analyticsTicketVirtuals = [
+      { field: 'payload_operation_date', label: 'Operation / Gauging Date (from ticket answers)', data_type: 'date', group: 'Dates (from ticket answers)', help: '' },
+      { field: 'accounting_date', label: 'Accounting Date (location accounting day)', data_type: 'date', group: 'Dates (from ticket answers)', help: '' },
+      { field: 'operation_type_name', label: 'Operation Type Name', data_type: 'text', group: 'Names (looked up)', help: '' },
+      { field: 'operation_category', label: 'Operation Category (of the type)', data_type: 'text', group: 'Names (looked up)', help: '' },
+      { field: 'template_name', label: 'Entry Form (Template) Name', data_type: 'text', group: 'Names (looked up)', help: '' },
+      { field: 'origin_location_name', label: 'Origin Location Name', data_type: 'text', group: 'Names (looked up)', help: '' },
+      { field: 'destination_location_name', label: 'Destination Location Name', data_type: 'text', group: 'Names (looked up)', help: '' },
+      { field: 'primary_asset_name', label: 'Asset Name', data_type: 'text', group: 'Names (looked up)', help: '' },
+    ]
+    const analyticsTankCols = [
+      analyticsCol('tank_asset_code', 'Tank Code'),
+      analyticsCol('tank_asset_name', 'Tank Name'),
+      analyticsCol('asset_type_code', 'Asset Type'),
+      analyticsCol('location_code', 'Location'),
+      analyticsCol('product_name', 'Product'),
+      analyticsCol('current_stock', 'Current Stock', 'number'),
+      analyticsCol('capacity', 'Max Capacity', 'number'),
+      analyticsCol('ullage', 'Available Ullage', 'number'),
+      analyticsCol('fill_pct', 'Fill %', 'number'),
+      analyticsCol('accounting_date', 'Last Accounting Date', 'date'),
+    ]
+    const analyticsTrackingCols = [
+      analyticsCol('tracking_module', 'Tracking Module'),
+      analyticsCol('tracking_ref', 'Tracking Ref / Convoy'),
+      analyticsCol('asset_code', 'Asset Code'),
+      analyticsCol('asset_name', 'Asset Name'),
+      analyticsCol('location_code', 'Location'),
+      analyticsCol('current_status', 'Current Status'),
+      analyticsCol('voyage_status', 'Voyage Status'),
+      analyticsCol('last_event_type', 'Last Event Type'),
+      analyticsCol('last_event_at', 'Last Event Date/Time', 'datetime'),
+      analyticsCol('ticket_number', 'Last Ticket Number'),
+      analyticsCol('product_name', 'Product'),
+      analyticsCol('quantity_gsv_bbl', 'Last Qty GSV (BBL)', 'number'),
+      analyticsCol('quantity_nsv_bbl', 'Last Qty NSV (BBL)', 'number'),
+      analyticsCol('movement_count', 'Movements', 'number'),
+      analyticsCol('remarks', 'Remarks / Status Detail'),
+    ]
+    const analyticsPayloadNote = 'Engine dataset — rows are computed from the ledger and calibration masters, so payload/JSON splitting applies to Operation Tickets and Tank Stock Ledger.'
+
+    const analyticsDatasets = [
+      {
+        id: 'operation_tickets', kind: 'operation_tickets',
+        name: 'Operation Tickets — with all form answers & payloads split into columns',
+        description: 'Every ticket with its header, every answered field and every value inside its saved JSON payloads as separate columns.',
+        icon: 'clipboardList', columns: analyticsTicketCols,
+        virtual_fields: analyticsTicketVirtuals,
+        supports_template_fields: true, supports_payload_json: true,
+        payload_source: { field_code: 'tank_gauging_payload' },
+        default_date_basis: 'ACCOUNTING_DATE',
+      },
+      {
+        id: 'tank_stock_ledger', kind: 'tank_stock_ledger',
+        name: 'Tank Stock Ledger — movements, stock snapshots & running balances',
+        description: 'Approved-ticket stock ledger rows per tank with accounting dates. The ticket answers stored with each row can be split into columns.',
+        icon: 'database', columns: analyticsLedgerCols,
+        virtual_fields: [
+          { field: 'tank_asset_name_lookup', label: 'Tank Name (looked up)', data_type: 'text', group: 'Names (looked up)', help: '' },
+          { field: 'location_name_lookup', label: 'Location Name (looked up)', data_type: 'text', group: 'Names (looked up)', help: '' },
+        ],
+        supports_template_fields: false, supports_payload_json: true,
+        payload_source: { json_column: 'source_payload', label: 'Ticket answers stored with the ledger row' },
+        default_date_basis: 'ACCOUNTING_DATE',
+      },
+      {
+        id: 'tank_snapshot', kind: 'tank_snapshot',
+        name: 'Shore Tank Capacity & Stock Snapshot — live ledger + calibration',
+        description: 'Live closing stock, active strapping capacity, ullage and fill % across active shore tanks in scope.',
+        icon: 'droplet', columns: analyticsTankCols,
+        virtual_fields: [], supports_template_fields: false, supports_payload_json: false,
+        payload_note: analyticsPayloadNote, default_date_basis: 'ACCOUNTING_DATE',
+      },
+      {
+        id: 'material_balance', kind: 'material_balance',
+        name: 'Material Balance Report — active location template',
+        description: 'Reads the location\'s active Material Balance Template and continuity-aware Tank Stock Ledger.',
+        icon: 'database',
+        columns: [
+          analyticsCol('accounting_date', 'Accounting Date', 'date'),
+          analyticsCol('tank_asset_code', 'Tank'),
+          analyticsCol('product_name', 'Product'),
+          { column: 'values', label: 'Template-defined columns', data_type: 'number', is_dynamic: true },
+        ],
+        virtual_fields: [], supports_template_fields: false, supports_payload_json: false,
+        payload_note: analyticsPayloadNote, default_date_basis: 'ACCOUNTING_DATE',
+      },
+      {
+        id: 'tracking_status', kind: 'tracking_status',
+        name: 'Vessel & Barge Tracking Status — live movement status',
+        description: 'Live tracking status for barge, shuttle, FSO and tanker movements across locations.',
+        icon: 'mapPin', columns: analyticsTrackingCols,
+        virtual_fields: [], supports_template_fields: false, supports_payload_json: false,
+        payload_note: analyticsPayloadNote, default_date_basis: 'ACCOUNTING_DATE',
+      },
+    ]
+
+    const analyticsTables = [
+      {
+        table: 'locations', label: 'Locations', group: 'Masters — Locations & Assets',
+        columns: [analyticsCol('location_code', 'Location Code'), analyticsCol('location_name', 'Location Name'), analyticsCol('location_type', 'Location Type'), analyticsCol('status', 'Status')],
+        json_columns: [], location_columns: ['location_code'], date_columns: [], relationships: [],
+      },
+      {
+        table: 'assets', label: 'Assets', group: 'Masters — Locations & Assets',
+        columns: [analyticsCol('asset_code', 'Asset Code'), analyticsCol('asset_name', 'Asset Name'), analyticsCol('asset_type_code', 'Asset Type Code'), analyticsCol('location_code', 'Location Code'), analyticsCol('status', 'Status')],
+        json_columns: [], location_columns: ['location_code'], date_columns: [], relationships: [],
+      },
+      {
+        table: 'operation_transactions', label: 'Operation Transactions', group: 'Operations',
+        columns: analyticsTicketCols,
+        json_columns: [], location_columns: ['origin_location_code', 'destination_location_code'],
+        date_columns: ['operation_date', 'accounting_date', 'created_at'], relationships: [],
+      },
+    ]
+
+    const analyticsCatalog = () => ({
+      datasets: analyticsDatasets.map((ds) => ({ ...ds })),
+      tables: analyticsTables.map((tb) => ({ ...tb })),
+      locations: db.locations.map((l) => ({ location_code: l.location_code, location_name: l.location_name })),
+      is_admin: true,
+      formula_help: [
+        { name: 'SUM', syntax: 'SUM(a, b, …)', help: 'Adds the values.' },
+        { name: 'AVG', syntax: 'AVG(a, b, …)', help: 'Average of the values.' },
+        { name: 'IF', syntax: 'IF(condition, whenTrue, whenFalse)', help: 'Chooses one of two values.' },
+      ],
+      operator_help: [
+        { symbol: '+', help: 'Add' }, { symbol: '-', help: 'Subtract' },
+        { symbol: '*', help: 'Multiply' }, { symbol: '/', help: 'Divide' },
+      ],
+      date_bases: [
+        { value: 'ACCOUNTING_DATE', label: 'Accounting Date (location accounting day)', help: 'Recommended for stock accounting.' },
+        { value: 'PAYLOAD_OPERATION_DATE', label: 'Operation / Gauging Date (from ticket answers)', help: 'The date typed inside the ticket.' },
+        { value: 'OPERATION_DATE', label: 'Operation Date (ticket header)', help: 'The header operation date on the ticket.' },
+        { value: 'CREATED_AT', label: 'Created Date', help: 'When the record was created.' },
+        { value: 'COLUMN', label: 'A date column I choose', help: 'Pick any date column of the table.' },
+        { value: 'NONE', label: 'No date filtering', help: 'For master-data style visuals.' },
+      ],
+    })
+
+    const analyticsLookups = () => ({
+      users: db.users.map((u) => ({ id: u.id, username: u.username, full_name: u.full_name })),
+      roles: (db.roles || []).map((r) => ({ id: r.id, role_name: r.role_name })),
+      locations: db.locations.map((l) => ({ location_code: l.location_code, location_name: l.location_name })),
+      asset_types: db.asset_types.map((at) => ({ asset_type_code: at.asset_type_code, asset_type_name: at.asset_type_name })),
+      operation_types: (db.operation_types || []).map((o) => ({
+        operation_type_code: o.operation_type_code,
+        operation_type_name: o.operation_type_name,
+        operation_category: o.operation_category || '',
+        applicable_asset_type_code: o.applicable_asset_type_code || '',
+      })),
+      templates: (db.operation_templates || []).map((t) => ({
+        id: t.id, template_name: t.template_name,
+        operation_type_code: t.operation_type_code || '', entry_layout_type: t.entry_layout_type || '',
+      })),
+      statuses: ['Draft', 'Submitted', 'Approved', 'Rejected', 'Cancelled'],
+      products: ['Bonny Light'],
+    })
+
+    const analyticsOperationFields = () => ({
+      templates: [],
+      saved_fields: [
+        { field_code: 'tank_gauging_payload', field_name: 'Tank Gauging Payload', label: 'Tank Gauging Payload', data_type: 'json', unit: null, saved_count: 12, is_payload: true },
+        { field_code: 'tank_operation', field_name: 'Tank Operation', label: 'Tank Operation', data_type: 'text', unit: null, saved_count: 12, is_payload: false },
+        { field_code: 'gsv_bbl', field_name: 'GSV (BBL)', label: 'GSV (BBL)', data_type: 'number', unit: 'BBL', saved_count: 12, is_payload: false },
+        { field_code: 'nsv_bbl', field_name: 'NSV (BBL)', label: 'NSV (BBL)', data_type: 'number', unit: 'BBL', saved_count: 12, is_payload: false },
+      ],
+    })
+
+    const analyticsJsonPathResult = (body) => ({
+      sampled_rows: 5, rows_with_json: 5,
+      field_code: body.field_code || null,
+      json_column: body.json_column || null,
+      paths: [
+        { path: 'calculated.gsvBbl', label: 'Calculated › GSV BBL', short_label: 'GSV BBL', data_type: 'number', present_in: 5, examples: ['5200.5'], is_array_item: false },
+        { path: 'calculated.nsvBbl', label: 'Calculated › NSV BBL', short_label: 'NSV BBL', data_type: 'number', present_in: 5, examples: ['5178'], is_array_item: false },
+        { path: 'calculated.lt', label: 'Calculated › LT', short_label: 'LT', data_type: 'number', present_in: 5, examples: ['512.4'], is_array_item: false },
+        { path: 'calculated.mt', label: 'Calculated › MT', short_label: 'MT', data_type: 'number', present_in: 5, examples: ['520.1'], is_array_item: false },
+        { path: 'inputs.gaugingDate', label: 'Inputs › Gauging Date', short_label: 'Gauging Date', data_type: 'date', present_in: 5, examples: ['2026-10-10'], is_array_item: false },
+        { path: 'inputs.tankOperationLabel', label: 'Inputs › Tank Operation Label', short_label: 'Tank Operation Label', data_type: 'text', present_in: 5, examples: ['RECEIPT'], is_array_item: false },
+      ],
+      wildcard_paths: [
+        { path: 'tanks[].@key', label: 'Tanks › Item name / Tank ID', short_label: 'Item / Tank ID', data_type: 'text', present_in: 5, examples: ['TK-101'], is_array_item: true },
+        { path: 'tanks[].*', label: 'Tanks › Each item', short_label: 'Each item', data_type: 'text', present_in: 5, examples: ['{}'], is_array_item: true },
+      ],
+    })
+
+    const analyticsMockRows = (definition, body = {}) => {
+      const query = definition?.query || {}
+      const sourceKind = String((query.source || {}).kind || 'operation_tickets')
+      // Engine datasets (tank snapshot, tracking, material balance) are computed
+      // server-side and carry no designer columns. Return their governed column
+      // set so drill-through and tables render offline too.
+      const governedColumns = () => {
+        if (sourceKind === 'tank_snapshot') return analyticsTankCols
+        if (sourceKind === 'material_balance') return analyticsDatasets.find((ds) => ds.kind === 'material_balance').columns
+        if (sourceKind !== 'operation_tickets' && sourceKind !== 'tank_stock_ledger' && sourceKind !== 'table') return analyticsTrackingCols
+        return []
+      }
+      const rawColumns = (query.columns || []).filter((c) => !c.hidden)
+      const columns = (rawColumns.length
+        ? rawColumns
+        : governedColumns().map((col) => ({ key: col.column, label: col.label, source: { type: 'column', column: col.column }, data_type: col.data_type, aggregate: col.data_type === 'number' ? 'SUM' : 'FIRST', show_total: col.data_type === 'number', format: {} }))
+      ).map((c) => ({
+        key: c.key,
+        label: c.label,
+        kind: c.kind || 'data',
+        data_type: c.data_type || 'text',
+        format: c.format || {},
+        aggregate: c.aggregate || null,
+        show_total: Boolean(c.show_total),
+        formula: c.formula || null,
+        unit: c.unit || null,
+        hidden: false,
+      }))
+      const sample = (column, index) => {
+        const source = column.source || {}
+        const path = String(source.path || '')
+        if (column.data_type === 'number' || path.endsWith('Bbl') || path.endsWith('lt') || path.endsWith('mt')) {
+          return Math.round((1200 + index * 137 + path.length * 41) * 100) / 100
+        }
+        if (column.data_type === 'date' || path.toLowerCase().includes('date')) return `2026-10-${String(5 + index).padStart(2, '0')}`
+        const key = String(column.key || '')
+        if (key.includes('ticket')) return `TKT-100${index}`
+        if (key.includes('tank')) return `TK-10${(index % 3) + 1}`
+        if (key.includes('location') || source.column === 'location_code') return 'UTP'
+        if (key.includes('status')) return 'Approved'
+        if (key.includes('product')) return 'Bonny Light'
+        return `Value ${index + 1}`
+      }
+      let rows
+      if (sourceKind === 'tank_snapshot') {
+        const tanks = [
+          { tank_asset_code: 'TK-101', tank_asset_name: 'Tank 101', asset_type_code: 'TANK', location_code: 'UTP', product_name: 'Bonny Light', current_stock: 3210.5, capacity: 5200, ullage: 1989.5, fill_pct: 61.74, accounting_date: '2026-10-20' },
+          { tank_asset_code: 'TK-102', tank_asset_name: 'Tank 102', asset_type_code: 'TANK', location_code: 'UTP', product_name: 'Bonny Light', current_stock: 4780.25, capacity: 5000, ullage: 219.75, fill_pct: 95.61, accounting_date: '2026-10-20' },
+        ]
+        rows = tanks.map((tank) => ({ ...tank, stock_nsv_bbl: tank.current_stock, stock_gsv_bbl: tank.current_stock, stock_lt: 0, stock_mt: 0, capacity_nsv_bbl: tank.capacity, capacity_gsv_bbl: tank.capacity }))
+      } else if (sourceKind === 'tracking_status') {
+        rows = [{
+          tracking_module: 'BARGE', tracking_ref: 'CNV-OPEN-1', asset_code: 'BRG-001', asset_name: 'Barge Ada',
+          location_code: 'UTP', from_location_code: 'UTP', to_location_code: 'BNY', current_status: 'IN_TRANSIT',
+          voyage_status: 'OPEN', last_event_type: 'BARGE_LOADING', last_event_at: '2026-10-02T08:15:00',
+          ticket_number: 'TKT-0003', product_name: 'Bonny Light', quantity_gsv_bbl: 5200, quantity_nsv_bbl: 5178,
+          movement_count: 1, remarks: 'Mock tracking row',
+        }]
+      } else if (sourceKind === 'material_balance') {
+        rows = [{
+          accounting_date: '2026-10-20', tank_asset_code: 'TK-101', product_name: 'Bonny Light',
+          values: 3210.5, opening: 3100, production: 210, dispatch: 99.5, closing: 3210.5,
+        }]
+      } else {
+        rows = Array.from({ length: 8 }, (_, index) => {
+          const row = {}
+          const list = columns.length
+            ? columns
+            : [{ key: 'operation_ticket_number', label: 'Ticket', data_type: 'text', source: { type: 'column', column: 'operation_ticket_number' } }]
+          list.forEach((column) => {
+            row[column.key] = sample(column, index)
+          })
+          return row
+        })
+      }
+      const totals = {}
+      columns.filter((c) => c.show_total).forEach((c) => {
+        totals[c.key] = rows.reduce((sum, row) => sum + (Number(row[c.key]) || 0), 0)
+      })
+      const pageSize = Number(body.page_size) || 500
+      return {
+        columns,
+        rows: rows.slice(0, pageSize),
+        totals,
+        meta: {
+          total_rows: rows.length, scanned_rows: rows.length, filtered_rows: rows.length,
+          page: 1, page_size: pageSize, total_pages: 1,
+          warnings: ['Mock API: sample rows only. Run against the real backend for live data.'],
+          generated_at: now(), generated_in_ms: 2,
+          date_basis: query.date_basis || 'ACCOUNTING_DATE',
+          date_basis_label: query.date_basis === 'NONE' ? 'No date filtering' : 'Accounting Date',
+          source_kind: sourceKind, source_table: sourceKind === 'table' ? (query.source || {}).table : sourceKind,
+          report_type: query.report_type || 'TABULAR', grouped: Boolean((query.group_by || []).length),
+          scope: body.location_codes || [],
+          filter_breakdown: sourceKind === 'tank_snapshot'
+            ? { candidates: rows.length, with_stock_evidence: rows.length, after_type_filter: rows.length, after_slicer_filters: rows.length, after_fixed_filters: rows.length, shown: rows.length }
+            : undefined,
+        },
+      }
+    }
+
+    const analyticsVisuals = (definition) => (definition?.visuals || []).filter((v) => v && v.id)
+
+    const analyticsRunDefinition = (definition, params = {}, visualIds = null) => {
+      const wanted = Array.isArray(visualIds) && visualIds.length ? new Set(visualIds.map(String)) : null
+      const results = {}
+      analyticsVisuals(definition).forEach((visual) => {
+        if (wanted && !wanted.has(String(visual.id))) return
+        if (String(visual.type || '').toUpperCase() === 'TEXT') {
+          results[visual.id] = { columns: [], rows: [], totals: {}, meta: { warnings: [], total_rows: 0 } }
+          return
+        }
+        try {
+          results[visual.id] = analyticsMockRows(visual, params)
+        } catch (error) {
+          results[visual.id] = { columns: [], rows: [], totals: {}, error: String(error?.message || error), meta: { warnings: [], total_rows: 0 } }
+        }
+      })
+      return { results }
+    }
+
+    const blankVisual = (id, type, query = {}) => ({
+      id, title: `${titleCase(type)} visual`, type,
+      query: { schema_version: 1, report_type: 'TABULAR', source: { kind: 'tank_stock_ledger' }, date_basis: 'ACCOUNTING_DATE', columns: [], filters: [], filter_logic: 'AND', runtime_filters: [], group_by: [], sort: [], options: { show_totals: true, page_size: 200 }, ...query },
+      style: {}, explorer: {}, interactions: { crossFilter: true, drillThrough: { enabled: true, mode: 'RECORDS' } },
+    })
+
+    if (!db.analytics_dashboards) {
+      const seedVisuals = [
+        blankVisual('vis_mwxilfyg_x4e', 'TANK_VISUAL', { source: { kind: 'tank_snapshot' }, unit: 'nsv', filters: [], filter_logic: 'AND', date_basis: 'NONE' }),
+        blankVisual('vis_mock_kpi', 'KPI_CARD', {
+          columns: [
+            { key: 'tank_asset_code', label: 'Tank', kind: 'data', source: { type: 'column', column: 'tank_asset_code' }, data_type: 'text', aggregate: 'FIRST' },
+            { key: 'movement_nsv_bbl', label: 'Movement NSV (BBL)', kind: 'data', source: { type: 'column', column: 'movement_nsv_bbl' }, data_type: 'number', aggregate: 'SUM', show_total: true, format: { decimals: 2 } },
+          ],
+          group_by: [{ key: 'tank_asset_code', bucket: 'VALUE' }],
+          metric_key: 'movement_nsv_bbl', measure_key: 'movement_nsv_bbl', dimension_key: 'tank_asset_code',
+        }),
+      ]
+      db.analytics_dashboards = [{
+        id: 1, dashboard_code: 'mock-terminal-overview', dashboard_name: 'Mock Terminal Stock Overview',
+        description: 'Sample analytics dashboard served by the mock API.',
+        scope_type: 'LOCATION', location_code: 'UTP', visibility: 'PRIVATE',
+        is_published: true, status: 'Active', version: 1,
+        owner_user_id: 1, owner_name: 'System Administrator',
+        created_by: 'System Administrator', updated_by: 'System Administrator',
+        created_at: now(), updated_at: now(), my_access: 'OWNER',
+        definition: {
+          schema_version: 2, canvas: { floatMode: false, cellHeight: 64, margin: 14 },
+          slicers: [{ id: 'slicer_product', key: 's_product_name', label: 'Product', type: 'SELECT', column_key: 'product_name', field: 'product_name', visual_ids: ['vis_mwxilfyg_x4e', 'vis_mock_kpi'] }],
+          visuals: seedVisuals,
+          layout: [
+            { i: 'vis_mwxilfyg_x4e', x: 0, y: 0, w: 6, h: 6, minW: 4, minH: 5, locked: false },
+            { i: 'vis_mock_kpi', x: 6, y: 0, w: 3, h: 4, minW: 3, minH: 3, locked: false },
+          ],
+        },
+      }, {
+        id: 2, dashboard_code: 'mock-global-overview', dashboard_name: 'Mock Global Movements Overview',
+        description: 'Global sample dashboard (no fixed location).',
+        scope_type: 'GLOBAL', location_code: null, visibility: 'PRIVATE',
+        is_published: true, status: 'Active', version: 1,
+        owner_user_id: 1, owner_name: 'System Administrator',
+        created_by: 'System Administrator', updated_by: 'System Administrator',
+        created_at: now(), updated_at: now(), my_access: 'OWNER',
+        definition: {
+          schema_version: 2, canvas: { floatMode: false, cellHeight: 64, margin: 14 },
+          slicers: [],
+          visuals: [blankVisual('vis_mwxilfyg_x4e', 'TANK_VISUAL', { source: { kind: 'tank_snapshot' }, unit: 'nsv', filters: [], filter_logic: 'AND', date_basis: 'NONE' })],
+          layout: [{ i: 'vis_mwxilfyg_x4e', x: 0, y: 0, w: 6, h: 6, minW: 4, minH: 5, locked: false }],
+        },
+      }]
+    }
+
+    const analyticsSummary = (dash, includeDefinition = false) => {
+      const out = {
+        id: dash.id, dashboard_code: dash.dashboard_code, dashboard_name: dash.dashboard_name,
+        description: dash.description, scope_type: dash.scope_type, location_code: dash.location_code,
+        visibility: dash.visibility, is_published: Boolean(dash.is_published), status: dash.status,
+        version: dash.version, owner_user_id: dash.owner_user_id, owner_name: dash.owner_name,
+        created_by: dash.created_by, updated_by: dash.updated_by,
+        created_at: dash.created_at, updated_at: dash.updated_at,
+        my_access: dash.my_access || 'OWNER',
+        visual_count: (dash.definition?.visuals || []).length,
+      }
+      if (includeDefinition) {
+        out.definition = JSON.parse(JSON.stringify(dash.definition || {}))
+        out.grants = []
+      }
+      return out
+    }
+
+    const findDashboard = (identifier) => db.analytics_dashboards.find((dash) => (
+      String(dash.id) === String(identifier)
+      || String(dash.dashboard_code) === String(identifier)
+      || String(dash.dashboard_name) === String(identifier)
+    ))
+
+    if (pathname === '/analytics/catalog' && method === 'GET') {
+      sendJson(res, 200, analyticsCatalog())
+      return
+    }
+    if (pathname === '/analytics/lookups' && method === 'GET') {
+      sendJson(res, 200, analyticsLookups())
+      return
+    }
+    if (pathname === '/analytics/operation-fields' && method === 'GET') {
+      sendJson(res, 200, analyticsOperationFields())
+      return
+    }
+    if (pathname === '/analytics/json-paths' && method === 'POST') {
+      const body = await readBody(req)
+      sendJson(res, 200, analyticsJsonPathResult(body))
+      return
+    }
+    if (pathname === '/analytics/formula/validate' && method === 'POST') {
+      const body = await readBody(req)
+      const formula = String(body.formula || '').trim()
+      sendJson(res, 200, { valid: Boolean(formula), error: formula ? null : 'The formula is empty.', code: null, position: null, referenced_columns: [] })
+      return
+    }
+    if (pathname === '/analytics/run-preview' && method === 'POST') {
+      const body = await readBody(req)
+      const definition = body.definition || {}
+      if (!analyticsVisuals(definition).length) {
+        sendJson(res, 400, { detail: 'Add at least one visual to the dashboard.' })
+        return
+      }
+      sendJson(res, 200, analyticsRunDefinition(definition, body.params || {}, body.visual_ids))
+      return
+    }
+    const analyticsPreviewRecordsMatch = pathname.match(/^\/analytics\/run-preview\/visual\/([^/]+)\/records$/)
+    if (analyticsPreviewRecordsMatch && method === 'POST') {
+      const body = await readBody(req)
+      const visualId = decodeURIComponent(analyticsPreviewRecordsMatch[1])
+      const visual = analyticsVisuals(body.definition || {}).find((item) => String(item.id) === visualId)
+      if (!visual) {
+        sendJson(res, 404, { detail: "Visual '" + visualId + "' is not part of this dashboard design." })
+        return
+      }
+      const run = analyticsMockRows(visual, body.params || {})
+      sendJson(res, 200, {
+        columns: run.columns,
+        rows: run.rows,
+        totals: {},
+        meta: { ...run.meta, applied_filters: [], warnings: [...(run.meta.warnings || []), 'Mock API: drill-through returns sample rows.'] },
+      })
+      return
+    }
+    if (pathname === '/analytics/definitions' && method === 'GET') {
+      sendJson(res, 200, db.analytics_dashboards.map((dash) => analyticsSummary(dash)))
+      return
+    }
+    if (pathname === '/analytics/definitions' && method === 'POST') {
+      const body = await readBody(req)
+      const created = {
+        id: nextId(), dashboard_code: `mock-dashboard-${nextId()}`,
+        dashboard_name: body.dashboard_name, description: body.description || null,
+        scope_type: body.scope_type || 'LOCATION', location_code: body.location_code || null,
+        visibility: 'PRIVATE', is_published: Boolean(body.is_published), status: body.status || 'Active',
+        version: 1, owner_user_id: 1, owner_name: 'System Administrator',
+        created_by: 'System Administrator', updated_by: 'System Administrator',
+        created_at: now(), updated_at: now(), my_access: 'OWNER',
+        definition: body.definition || {},
+      }
+      db.analytics_dashboards.push(created)
+      sendJson(res, 200, analyticsSummary(created, true))
+      return
+    }
+    const analyticsDefinitionMatch = pathname.match(/^\/analytics\/definitions\/([^/]+)(\/(publish|versions|duplicate|revert|slicer-values))?$/)
+    if (analyticsDefinitionMatch) {
+      const dashboard = findDashboard(decodeURIComponent(analyticsDefinitionMatch[1]))
+      if (!dashboard) {
+        sendJson(res, 404, { detail: 'Dashboard not found' })
+        return
+      }
+      const action = analyticsDefinitionMatch[3]
+      if (method === 'GET' && !action) { sendJson(res, 200, analyticsSummary(dashboard, true)); return }
+      if (method === 'PUT' && !action) {
+        const body = await readBody(req)
+        Object.assign(dashboard, {
+          dashboard_name: body.dashboard_name ?? dashboard.dashboard_name,
+          description: body.description ?? dashboard.description,
+          scope_type: body.scope_type ?? dashboard.scope_type,
+          location_code: body.location_code ?? dashboard.location_code,
+          definition: body.definition ?? dashboard.definition,
+          is_published: Boolean(body.is_published),
+          status: body.status ?? dashboard.status,
+          version: (dashboard.version || 1) + 1,
+          updated_at: now(),
+        })
+        sendJson(res, 200, analyticsSummary(dashboard, true))
+        return
+      }
+      if (method === 'DELETE' && !action) {
+        db.analytics_dashboards = db.analytics_dashboards.filter((item) => item !== dashboard)
+        sendJson(res, 200, { message: 'Dashboard deleted successfully' })
+        return
+      }
+      if (action === 'publish' && method === 'POST') {
+        const body = await readBody(req)
+        dashboard.is_published = Boolean(body.published)
+        dashboard.version = (dashboard.version || 1) + 1
+        sendJson(res, 200, analyticsSummary(dashboard, true))
+        return
+      }
+      if (action === 'versions' && method === 'GET') {
+        sendJson(res, 200, [{
+          id: 1, version_number: dashboard.version, definition: dashboard.definition,
+          change_note: 'Mock snapshot', created_by: 'System Administrator', created_at: dashboard.updated_at,
+        }])
+        return
+      }
+      if (action === 'duplicate' && method === 'POST') {
+        const copy = { ...dashboard, id: nextId(), dashboard_code: `mock-dashboard-${nextId()}`, dashboard_name: `${dashboard.dashboard_name} (Copy)`, is_published: false, version: 1, definition: JSON.parse(JSON.stringify(dashboard.definition || {})), created_at: now(), updated_at: now() }
+        db.analytics_dashboards.push(copy)
+        sendJson(res, 200, analyticsSummary(copy, true))
+        return
+      }
+      if (action === 'revert' && method === 'POST') {
+        dashboard.version = (dashboard.version || 1) + 1
+        dashboard.updated_at = now()
+        sendJson(res, 200, analyticsSummary(dashboard, true))
+        return
+      }
+      if (action === 'slicer-values' && method === 'POST') {
+        sendJson(res, 200, { slicer_key: (await readBody(req)).slicer_key || '', values: ['Bonny Light', 'UTP', 'Approved'] })
+        return
+      }
+    }
+    if (pathname === '/analytics/my-dashboards' && method === 'GET') {
+      sendJson(res, 200, db.analytics_dashboards.filter((dash) => dash.is_published).map((dash) => analyticsSummary(dash)))
+      return
+    }
+    const analyticsDashMatch = pathname.match(/^\/analytics\/my-dashboards\/([^/]+)(?:\/(.+))?$/)
+    if (analyticsDashMatch) {
+      const dashboard = findDashboard(decodeURIComponent(analyticsDashMatch[1]))
+      if (!dashboard) {
+        sendJson(res, 404, { detail: 'Dashboard not found' })
+        return
+      }
+      const rest = analyticsDashMatch[2] || ''
+      if (!rest && method === 'GET') {
+        sendJson(res, 200, {
+          ...analyticsSummary(dashboard, true),
+          available_locations: db.locations.map((l) => ({ location_code: l.location_code, location_name: l.location_name })),
+        })
+        return
+      }
+      if (rest === 'run-batch' && method === 'POST') {
+        const body = await readBody(req)
+        const batch = analyticsRunDefinition(dashboard.definition, body, body.visual_ids)
+        sendJson(res, 200, {
+          dashboard: { id: dashboard.id, dashboard_name: dashboard.dashboard_name, version: dashboard.version },
+          slicer_state: body.runtime_values || {},
+          results: batch.results,
+          applied_scope: { scope_type: dashboard.scope_type, location_code: dashboard.location_code },
+        })
+        return
+      }
+      if (rest === 'slicer-values' && method === 'POST') {
+        sendJson(res, 200, { slicer_key: (await readBody(req)).slicer_key || '', values: ['Bonny Light', 'UTP', 'Approved'] })
+        return
+      }
+      const visualMatch = rest.match(/^visual\/([^/]+)\/(records|export)$/)
+      if (visualMatch) {
+        const visualId = decodeURIComponent(visualMatch[1])
+        const visual = (dashboard.definition?.visuals || []).find((item) => String(item.id) === visualId)
+        if (!visual) {
+          sendJson(res, 404, { detail: 'Dashboard visual not found' })
+          return
+        }
+        const body = await readBody(req)
+        if (visualMatch[2] === 'records' && method === 'POST') {
+          const run = analyticsMockRows(visual, body)
+          sendJson(res, 200, {
+            columns: run.columns,
+            rows: run.rows,
+            totals: {},
+            meta: { ...run.meta, applied_filters: [], warnings: [...(run.meta.warnings || []), 'Mock API: drill-through returns sample rows.'] },
+          })
+          return
+        }
+        if (visualMatch[2] === 'export' && method === 'POST') {
+          res.writeHead(200, { 'Content-Type': 'text/csv', 'Content-Disposition': `attachment; filename="mock-${visualId}.csv"`, 'Access-Control-Allow-Origin': '*' })
+          res.end('Ticket No,GSV (BBL),NSV (BBL)\nTKT-1000,5200,5178\n')
+          return
+        }
+      }
+      if (rest === 'export-workbook' && method === 'POST') {
+        await readBody(req)
+        res.writeHead(200, { 'Content-Type': 'text/csv', 'Content-Disposition': 'attachment; filename="mock-analytics-workbook.csv"', 'Access-Control-Allow-Origin': '*' })
+        res.end('Visual,Rows\nMock,8\n')
+        return
+      }
+    }
+
+    sendJson(res, 404, { detail: `Not implemented in the mock API: ${method} ${pathname}` })
+    return
+  }
+
   /* ------------------------------------------------ report builder (mock) */
   if (pathname.startsWith('/report-builder')) {
     const mockCols = (cols) => cols.map(([column, label, data_type = 'text', is_json = false]) => ({ column, label, data_type, is_json, is_location: column.endsWith('_location_code') || column === 'location_code', is_date: data_type === 'date' || data_type === 'datetime', nullable: true }))
@@ -1305,7 +1942,10 @@ const server = http.createServer(async (req, res) => {
   /* --------------------------------------------------- generic CRUD */
   const route = findRoute(pathname)
   if (!route) {
-    sendJson(res, 200, method === 'GET' ? [] : {})
+    // Answer honestly. Returning 200 [] / {} for an unimplemented path made
+    // the UI look healthy while every mutation silently vanished, and made a
+    // missing backend route indistinguishable from an empty result set.
+    sendJson(res, 404, { detail: `Not implemented in the mock API: ${method} ${pathname}` })
     return
   }
 
@@ -1459,7 +2099,7 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
-  sendJson(res, 200, {})
+  sendJson(res, 404, { detail: `Not implemented in the mock API: ${method} ${pathname}` })
 })
 
 server.listen(PORT, '127.0.0.1', () => {

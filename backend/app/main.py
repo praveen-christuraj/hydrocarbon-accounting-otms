@@ -352,9 +352,39 @@ def root():
     return {"message": "Hydrocarbon Accounting API is running"}
 
 
+# Reported by /health so a frontend can tell whether the backend serving it is
+# the code in this checkout. The Docker backend image is built once and reused
+# by `restart: unless-stopped`, so a stale image answers new routes with 404
+# while the (bind-mounted) frontend keeps sending them. The frontend compares
+# these flags after an unexpected 404 and shows one actionable banner instead
+# of a wall of console errors.
+_REQUIRED_ROUTE_GROUPS = {
+    # feature -> OpenAPI path template that must exist
+    "analytics": "/analytics/lookups",
+    "analytics_records": "/analytics/my-dashboards/{dashboard_id}/visual/{visual_id}/records",
+    "analytics_preview_records": "/analytics/run-preview/visual/{visual_id}/records",
+    "analytics_json_paths": "/analytics/json-paths",
+    "analytics_operation_fields": "/analytics/operation-fields",
+}
+
+
+def _registered_paths() -> set[str]:
+    return {getattr(route, "path", "") for route in app.routes}
+
+
+_REGISTERED_PATHS = _registered_paths()
+
+BUILD_INFO = {
+    "version": app.version,
+    "git_sha": (os.getenv("GIT_SHA") or os.getenv("SOURCE_VERSION") or "").strip() or None,
+    "built_at": (os.getenv("BUILD_TIME") or "").strip() or None,
+    "routes": {name: template in _REGISTERED_PATHS for name, template in _REQUIRED_ROUTE_GROUPS.items()},
+}
+
+
 @app.get("/health")
 def health_check():
-    return {"status": "ok"}
+    return {"status": "ok", **BUILD_INFO}
 
 
 @app.get("/db-test")

@@ -4,9 +4,12 @@ import AlertMessage from '../components/common/AlertMessage'
 import { useConfirm } from '../components/common/ConfirmProvider'
 import Icon from '../components/common/Icon'
 import Modal from '../components/common/Modal'
+import ExportMenu from '../components/common/ExportMenu'
 import { useToast } from '../components/common/Toast'
+import AnalyticsJsonPanel from '../components/analytics/AnalyticsJsonPanel'
 import AnalyticsVisual from '../components/analytics/AnalyticsVisual'
 import GridStackCanvas from '../components/analytics/GridStackCanvas'
+import PerspectiveGrid from '../components/analytics/PerspectiveGrid'
 import FormulaBuilder from '../components/reportBuilder/FormulaBuilder'
 import ComparisonConditionsEditor from '../components/reportBuilder/ComparisonConditionsEditor'
 import usePermissions from '../hooks/usePermissions'
@@ -15,6 +18,7 @@ import {
   getAnalyticsCatalog,
   getAnalyticsDefinition,
   getAnalyticsLookups,
+  getAnalyticsPreviewVisualRecords,
   getAnalyticsVersions,
   revertAnalyticsDefinition,
   runAnalyticsPreview,
@@ -36,6 +40,15 @@ import {
   makeSafeKey,
   normalizeLayoutForGridStack,
 } from '../utils/analyticsEngine'
+import {
+  DATE_BASIS_CHOICES,
+  canonicalDateBasis,
+  ensureUniqueDesignIds,
+  makeAnalyticsId,
+  migrateLoadedDesign,
+  normalizeSlicerForSave,
+  normalizeVisualForSave,
+} from '../utils/analyticsDesign'
 import '../styles/analytics.css'
 
 const REPORT_AGG_OPTIONS = ['SUM', 'AVG', 'COUNT', 'MIN', 'MAX', 'FIRST', 'LAST']
@@ -185,13 +198,17 @@ function buildQueryFromDataset(dataset, visualType, customTitle = '') {
   const firstMeasure = columns.find((c) => c.data_type === 'number')?.key || columns[columns.length - 1]?.key || ''
   const needsUnaggregatedDistribution = ['BOX_PLOT', 'VIOLIN_PLOT', 'HISTOGRAM', 'SCATTER', 'PIVOT_GRID', 'TABLE', 'CONTOUR_2D'].includes(type)
 
+  // New visuals default to no status restriction: hard-coding
+  // `statuses: ['Approved']` here silently hid draft/submitted tickets and was
+  // one of the "Studio cannot do what Report Builder can" gaps. The Source
+  // Restrictions editor in the inspector can narrow it per visual.
   const source = dataset?.kind === 'table' && dataset?.table
     ? { kind: 'table', table: dataset.table }
     : {
       kind: dataset?.kind || 'tank_stock_ledger',
       operation_type_codes: [],
       template_ids: [],
-      statuses: dataset?.kind === 'operation_tickets' ? ['Approved'] : [],
+      statuses: [],
     }
 
   const shortDsName = getDatasetDisplayName(dataset).split('—')[0].trim()
@@ -258,7 +275,10 @@ function AnalyticsBuilder({ loggedInUser }) {
   const starterTemplates = useMemo(() => buildStarterTemplates(), [])
 
   const [catalog, setCatalog] = useState({ is_admin: false, datasets: [], tables: [], locations: [] })
-  const [lookups, setLookups] = useState({ users: [], roles: [], locations: [], asset_types: [] })
+  const [lookups, setLookups] = useState({
+    users: [], roles: [], locations: [], asset_types: [],
+    operation_types: [], templates: [], statuses: [], products: [], assets: [],
+  })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [previewing, setPreviewing] = useState(false)
@@ -303,6 +323,11 @@ function AnalyticsBuilder({ loggedInUser }) {
   const [editingFormulaCol, setEditingFormulaCol] = useState(null)
   const [accessModalOpen, setAccessModalOpen] = useState(false)
   const [historyModalOpen, setHistoryModalOpen] = useState(false)
+  // Drill-through inside Studio (Viewer parity): the underlying rows of the
+  // previewed visual, read from the in-memory design.
+  const [recordsModalVisual, setRecordsModalVisual] = useState(null)
+  const [recordsLoading, setRecordsLoading] = useState(false)
+  const [recordsPayload, setRecordsPayload] = useState(null)
   const [versions, setVersions] = useState([])
   const [loadingVersions, setLoadingVersions] = useState(false)
 
@@ -349,6 +374,9 @@ function AnalyticsBuilder({ loggedInUser }) {
         date_from: fromDate || null,
         date_to: toDate || null,
         location_codes: loc ? [loc] : [],
+        // Studio preview of a GLOBAL dashboard means "everything I can see",
+        // not "nothing" — state that explicitly (see analytics_engine tank scope).
+        scope_mode: loc ? 'SELECTED' : 'ALL',
         runtime_values: {},
       })
       setPreviewResults(response?.results || {})
@@ -356,6 +384,30 @@ function AnalyticsBuilder({ loggedInUser }) {
       toast.error(err.message || 'Unable to execute studio preview.')
     } finally {
       setPreviewing(false)
+    }
+  }, [toast])
+
+  const handleInspectRecords = useCallback(async (visual) => {
+    if (!visual?.id) return
+    const design = definitionRef.current
+    if (!design?.visuals?.length) return
+    const loc = locationCodeRef.current
+    setRecordsModalVisual(visual)
+    setRecordsLoading(true)
+    setRecordsPayload(null)
+    try {
+      const data = await getAnalyticsPreviewVisualRecords(design, visual.id, {
+        date_from: previewDateFromRef.current || null,
+        date_to: previewDateToRef.current || null,
+        location_codes: loc ? [loc] : [],
+        scope_mode: loc ? 'SELECTED' : 'ALL',
+        runtime_values: {},
+      })
+      setRecordsPayload(data)
+    } catch (err) {
+      toast.error(err.message || 'Unable to load the underlying records for this visual.')
+    } finally {
+      setRecordsLoading(false)
     }
   }, [toast])
 
@@ -367,7 +419,7 @@ function AnalyticsBuilder({ loggedInUser }) {
       try {
         const [catalogData, lookupData, existing] = await Promise.all([
           getAnalyticsCatalog(),
-          getAnalyticsLookups().catch(() => ({ users: [], roles: [], locations: [], asset_types: [] })),
+          getAnalyticsLookups().catch(() => ({ users: [], roles: [], locations: [], asset_types: [], operation_types: [], templates: [], statuses: [], products: [], assets: [] })),
           isNew ? Promise.resolve(null) : getAnalyticsDefinition(id),
         ])
         if (!active) return
@@ -376,6 +428,12 @@ function AnalyticsBuilder({ loggedInUser }) {
           users: lookupData?.users || [],
           roles: lookupData?.roles || [],
           locations: (lookupData?.locations?.length ? lookupData.locations : catalogData?.locations) || [],
+          // Parity with Report Builder's source restrictions / slicer pickers.
+          operation_types: lookupData?.operation_types || [],
+          templates: lookupData?.templates || [],
+          statuses: lookupData?.statuses || [],
+          products: lookupData?.products || [],
+          assets: lookupData?.assets || [],
         }
         setLookups(resolvedLookups)
         const firstDs = catalogData?.datasets?.find((d) => d.id === 'tank_stock_ledger')?.id
@@ -403,12 +461,12 @@ function AnalyticsBuilder({ loggedInUser }) {
           })) : [])
           const rawDef = existing.definition || existing.definition_json || EMPTY_DEFINITION
           const normLayout = normalizeLayoutForGridStack(rawDef.layout, rawDef.visuals || [])
-          const hydrated = {
+          const hydrated = migrateLoadedDesign({
             ...EMPTY_DEFINITION,
             ...rawDef,
             canvas: { floatMode: false, cellHeight: 64, margin: 14, ...(rawDef.canvas || {}) },
             layout: normLayout,
-          }
+          })
           setDefinition(hydrated)
           definitionRef.current = hydrated
           if (hydrated.visuals?.length) {
@@ -481,11 +539,15 @@ function AnalyticsBuilder({ loggedInUser }) {
         if (String(v.id) !== String(visualId)) return v
         return typeof updater === 'function' ? updater(v) : { ...v, ...updater }
       })
-      return {
+      const next = {
         ...prev,
         visuals: nextVisuals,
         layout: normalizeLayoutForGridStack(prev.layout, nextVisuals),
       }
+      // Keep the ref used by preview/save in lockstep with state, otherwise a
+      // save issued right after an inspector edit persisted the stale design.
+      definitionRef.current = next
+      return next
     })
   }, [])
 
@@ -496,7 +558,7 @@ function AnalyticsBuilder({ loggedInUser }) {
       return
     }
     const ds = allDatasets.find((d) => d.id === activeDatasetId || d.kind === activeDatasetId) || allDatasets[0]
-    const idStr = `vis_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`
+    const idStr = makeAnalyticsId('vis')
     const visualSkeleton = buildQueryFromDataset(ds, visualType)
     if (ds?.kind === 'material_balance' && visualSkeleton.type !== String(visualType || '').toUpperCase()) {
       toast.info('Material Balance visuals render as Table, Pivot Grid, or Matrix. Switched to Pivot Grid.')
@@ -535,7 +597,7 @@ function AnalyticsBuilder({ loggedInUser }) {
     const prev = definitionRef.current || EMPTY_DEFINITION
     const orig = (prev.visuals || []).find((v) => String(v.id) === String(visualId))
     if (!orig) return
-    const copyId = `vis_${Date.now().toString(36)}`
+    const copyId = makeAnalyticsId('vis')
     const cloned = JSON.parse(JSON.stringify(orig))
     cloned.id = copyId
     cloned.title = `${orig.title || 'Visual'} (Copy)`
@@ -621,14 +683,29 @@ function AnalyticsBuilder({ loggedInUser }) {
       toast.info('Switch this visual’s data source to a tabular dataset to toggle custom fields.')
       return
     }
-    const colKey = makeSafeKey(rawField.column || rawField.label)
+    const colKey = makeSafeKey(rawField.field || rawField.column || rawField.label)
+    // Virtual fields (payload dates, looked-up names) are addressed by
+    // `{type: 'virtual', field}`; real columns by `{type: 'column', column}`.
+    const sourceSpec = String(rawField.source_type || 'column') === 'virtual'
+      ? { type: 'virtual', field: rawField.field || rawField.column }
+      : {
+        type: rawField.source_type || 'column',
+        column: rawField.column,
+        ...(rawField.template_id ? { template_id: rawField.template_id } : {}),
+      }
+    const matchesField = (c) => (
+      (sourceSpec.type === 'virtual'
+        ? c.source?.type === 'virtual' && c.source?.field === sourceSpec.field
+        : c.source?.column === sourceSpec.column)
+      || c.key === colKey
+    )
     updateVisualById(selectedVisual.id, (v) => {
       const currentCols = Array.isArray(v.query?.columns) ? v.query.columns : []
-      const exists = currentCols.some((c) => c.source?.column === rawField.column || c.key === colKey)
+      const exists = currentCols.some(matchesField)
       let nextCols
       if (exists) {
         if (currentCols.length <= 1) return v
-        nextCols = currentCols.filter((c) => c.source?.column !== rawField.column && c.key !== colKey)
+        nextCols = currentCols.filter((c) => !matchesField(c))
       } else {
         nextCols = [
           ...currentCols,
@@ -636,11 +713,7 @@ function AnalyticsBuilder({ loggedInUser }) {
             key: colKey,
             label: rawField.label || rawField.column,
             kind: 'data',
-            source: {
-              type: rawField.source_type || 'column',
-              column: rawField.column,
-              template_id: rawField.template_id,
-            },
+            source: sourceSpec,
             data_type: rawField.data_type || 'text',
             aggregate: rawField.data_type === 'number' ? 'SUM' : 'FIRST',
             show_total: rawField.data_type === 'number',
@@ -718,10 +791,24 @@ function AnalyticsBuilder({ loggedInUser }) {
     }
     setSaving(true)
     try {
-      const cleanDefinition = {
+      // Normalise before saving: unique ids, migrated date bases, pinned report
+      // schema. A save must never fail with "needs a unique id" or "unknown date
+      // basis" for a state the Studio itself can repair.
+      const normalizedDesign = ensureUniqueDesignIds({
         ...definition,
         schema_version: 2,
-        layout: normalizeLayoutForGridStack(definition.layout, definition.visuals || []),
+        visuals: (definition.visuals || []).map(normalizeVisualForSave),
+        slicers: (definition.slicers || []).map(normalizeSlicerForSave),
+      })
+      const cleanDefinition = {
+        ...normalizedDesign,
+        schema_version: 2,
+        layout: normalizeLayoutForGridStack(normalizedDesign.layout, normalizedDesign.visuals || []),
+      }
+      if (JSON.stringify(normalizedDesign.visuals) !== JSON.stringify(definition.visuals)
+        || JSON.stringify(normalizedDesign.slicers) !== JSON.stringify(definition.slicers)) {
+        setDefinition((prev) => ({ ...prev, visuals: normalizedDesign.visuals, slicers: normalizedDesign.slicers }))
+        definitionRef.current = { ...(definitionRef.current || {}), visuals: normalizedDesign.visuals, slicers: normalizedDesign.slicers }
       }
       const nextPublished = publishAfterSave !== null && canPublish
         ? Boolean(publishAfterSave)
@@ -806,11 +893,11 @@ function AnalyticsBuilder({ loggedInUser }) {
     try {
       const restored = await revertAnalyticsDefinition(id, { version_id: ver.id })
       const rawDef = restored.definition || restored.definition_json || EMPTY_DEFINITION
-      const hydrated = {
+      const hydrated = migrateLoadedDesign({
         ...EMPTY_DEFINITION,
         ...rawDef,
         layout: normalizeLayoutForGridStack(rawDef.layout, rawDef.visuals || []),
-      }
+      })
       setDefinition(hydrated)
       definitionRef.current = hydrated
       setVersionNum(Number(restored.version) || versionNum + 1)
@@ -822,16 +909,63 @@ function AnalyticsBuilder({ loggedInUser }) {
     }
   }
 
-  // Filtered dataset fields for the Left Field Explorer
+  // Filtered dataset fields for the Left Field Explorer.
+  // Includes the dataset's virtual fields (payload dates, looked-up names) so
+  // Studio matches Report Builder's explorer sections instead of offering only
+  // the raw table columns.
   const filteredDatasetFields = useMemo(() => {
     const cols = Array.isArray(selectedDataset?.columns) ? selectedDataset.columns : []
+    const virtuals = (Array.isArray(selectedDataset?.virtual_fields) ? selectedDataset.virtual_fields : [])
+      .map((field) => ({
+        column: field.field,
+        field: field.field,
+        source_type: 'virtual',
+        label: field.label || field.field,
+        data_type: field.data_type || 'text',
+        group: field.group || 'Derived fields',
+        help: field.help || '',
+      }))
+    const all = [...virtuals, ...cols]
     const q = fieldSearch.trim().toLowerCase()
-    if (!q) return cols
-    return cols.filter((c) => (
+    if (!q) return all
+    return all.filter((c) => (
       String(c.label || '').toLowerCase().includes(q)
       || String(c.column || '').toLowerCase().includes(q)
+      || String(c.group || '').toLowerCase().includes(q)
     ))
   }, [fieldSearch, selectedDataset])
+
+  /**
+   * Date bases offered in the inspector. Prefer the API catalog (single source
+   * of truth with the engine) and fall back to the local mirror when the
+   * catalog is old or the call failed — either way the list can never contain a
+   * value the save path rejects.
+   */
+  const dateBasisChoices = useMemo(() => {
+    const fromCatalog = (catalog?.date_bases || []).filter((basis) => basis?.value)
+    if (!fromCatalog.length) return DATE_BASIS_CHOICES
+    const allowed = Array.isArray(catalog?.date_basis_values) && catalog.date_basis_values.length
+      ? new Set(catalog.date_basis_values.map((value) => canonicalDateBasis(value)))
+      : null
+    const filtered = allowed
+      ? fromCatalog.filter((basis) => allowed.has(canonicalDateBasis(basis.value)))
+      : fromCatalog
+    return filtered.length ? filtered : DATE_BASIS_CHOICES
+  }, [catalog])
+
+  /** Selected dataset fields grouped exactly like Report Builder's explorer. */
+  const groupedDatasetFields = useMemo(() => {
+    const groups = new Map()
+    filteredDatasetFields.forEach((col) => {
+      const isVirtual = String(col.source_type || '') === 'virtual'
+      const group = isVirtual
+        ? (col.group || 'Derived fields')
+        : (col.is_json ? 'JSON / payload columns' : 'Data columns')
+      if (!groups.has(group)) groups.set(group, [])
+      groups.get(group).push(col)
+    })
+    return [...groups.entries()]
+  }, [filteredDatasetFields])
 
   const selectedVisualColumns = useMemo(
     () => (Array.isArray(selectedVisual?.query?.columns) ? selectedVisual.query.columns : []),
@@ -871,15 +1005,61 @@ function AnalyticsBuilder({ loggedInUser }) {
     return fields
   }, [selectedDataset, selectedVisual])
 
+  /** Existing payload column references, so the picker can mark them as added. */
+  const existingPayloadPaths = useMemo(() => {
+    const refs = new Set()
+    ;(selectedVisualColumns || []).forEach((col) => {
+      const spec = col?.source
+      if (!spec || !['payload_path', 'json_path'].includes(String(spec.type || ''))) return
+      const ref = spec.field_code || spec.json_column || ''
+      if (spec.path) refs.add(`${ref}::${spec.path}`)
+      refs.add(String(spec.path || ''))
+    })
+    return refs
+  }, [selectedVisualColumns])
+
+  const handleAddPayloadColumns = useCallback((columns) => {
+    if (!selectedVisual || !Array.isArray(columns) || !columns.length) return
+    updateVisualById(selectedVisual.id, (v) => {
+      const currentCols = Array.isArray(v.query?.columns) ? v.query.columns : []
+      const existingKeys = new Set(currentCols.map((c) => String(c.key || '')))
+      const additions = columns
+        .filter((col) => col?.key && !existingKeys.has(String(col.key)))
+        .map((col) => ({ ...col, hidden: false }))
+      if (!additions.length) return v
+      const nextCols = [...currentCols, ...additions]
+      const firstMeasure = additions.find((c) => c.data_type === 'number')?.key
+        || v.query?.measure_key
+        || nextCols.find((c) => c.data_type === 'number')?.key
+        || ''
+      return {
+        ...v,
+        query: {
+          ...v.query,
+          columns: nextCols,
+          measure_key: firstMeasure,
+          metric_key: firstMeasure,
+        },
+      }
+    })
+    toast.success(`Added ${columns.length} payload column${columns.length === 1 ? '' : 's'}. Click Run Preview to evaluate.`)
+  }, [selectedVisual, toast, updateVisualById])
+
   const getSlicerFieldOptions = (targetVisualIds = []) => {
     const targets = (definition.visuals || []).filter((v) => (targetVisualIds || []).includes(v.id) && v.type !== 'TEXT')
     const seen = new Set()
     const options = []
-    const pushOption = (key, label, dataType, sourceLabel) => {
+    const pushOption = (key, label, dataType, sourceLabel, source = null) => {
       const normalizedKey = String(key || '').trim()
       if (!normalizedKey || seen.has(normalizedKey)) return
       seen.add(normalizedKey)
-      options.push({ key: normalizedKey, label: label || normalizedKey, dataType: dataType || 'text', sourceLabel })
+      options.push({
+        key: normalizedKey,
+        label: label || normalizedKey,
+        dataType: dataType || 'text',
+        sourceLabel,
+        source: source || null,
+      })
     }
 
     for (const visual of targets) {
@@ -887,20 +1067,44 @@ function AnalyticsBuilder({ loggedInUser }) {
       const ds = allDatasets.find((d) => d.id === dsId)
       for (const col of (ds?.columns || [])) {
         const key = col.column || col.key || col.field
-        if (!key) continue
-        pushOption(key, col.label || key, col.data_type || 'text', ds?.name || dsId)
+        if (!key || col.is_json) continue
+        pushOption(key, col.label || key, col.data_type || 'text', ds?.name || dsId, {
+          type: col.source_type || 'column',
+          column: key,
+        })
       }
-      // Also include columns already in the visual query (calculated/virtual/custom)
+      // Virtual fields (payload dates, looked-up names) are bindable too.
+      for (const field of (ds?.virtual_fields || [])) {
+        const key = field.field
+        if (!key) continue
+        pushOption(key, field.label || key, field.data_type || 'text', `${ds?.name || dsId} · ${field.group || 'Derived'}`, {
+          type: 'virtual',
+          field: key,
+        })
+      }
+      // Columns already on the visual (calculated / virtual / payload splits)
       for (const col of (visual?.query?.columns || [])) {
         if (!col?.key) continue
-        pushOption(col.key, col.label || col.key, col.data_type || 'text', 'Visual column')
+        const isPayload = ['payload_path', 'json_path'].includes(String(col?.source?.type || ''))
+        pushOption(
+          col.key,
+          col.label || col.key,
+          col.data_type || 'text',
+          isPayload ? 'Payload column' : 'Visual column',
+          col.source || null,
+        )
       }
     }
     // Fallback: if no targets, show active dataset columns
     if (!options.length) {
       for (const col of (selectedDataset?.columns || [])) {
         const key = col.column || col.key || col.field
-        if (key) pushOption(key, col.label || key, col.data_type || 'text', selectedDataset?.name || 'Dataset')
+        if (key && !col.is_json) {
+          pushOption(key, col.label || key, col.data_type || 'text', selectedDataset?.name || 'Dataset', {
+            type: col.source_type || 'column',
+            column: key,
+          })
+        }
       }
     }
     return options.sort((a, b) => String(a.label).localeCompare(String(b.label)))
@@ -1215,24 +1419,36 @@ function AnalyticsBuilder({ loggedInUser }) {
               )}
 
               <div className="analytics-field-list">
-                {filteredDatasetFields.map((col) => {
-                  const checked = selectedVisualColumns.some(
-                    (c) => c.source?.column === col.column || c.key === makeSafeKey(col.column)
-                  )
-                  return (
-                    <label key={`${col.source_type || 'col'}-${col.column}`} className={`analytics-field-row ${checked ? 'is-checked' : ''}`}>
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => toggleFieldOnSelectedVisual(col)}
-                      />
-                      <span className="analytics-field-name">{col.label || col.column}</span>
-                      <small className={`analytics-dtype-badge dtype-${col.data_type || 'text'}`}>
-                        {col.data_type === 'number' ? '#' : (col.data_type === 'date' ? '📅' : 'Abc')}
-                      </small>
-                    </label>
-                  )
-                })}
+                {groupedDatasetFields.map(([group, entries]) => (
+                  <div key={group} className="analytics-field-group">
+                    <h5 className="analytics-field-group-title">{group}</h5>
+                    {entries.map((col) => {
+                      const isVirtual = String(col.source_type || '') === 'virtual'
+                      const checked = selectedVisualColumns.some((c) => (
+                        isVirtual
+                          ? c.source?.type === 'virtual' && c.source?.field === (col.field || col.column)
+                          : c.source?.column === col.column || c.key === makeSafeKey(col.column)
+                      ))
+                      return (
+                        <label
+                          key={`${col.source_type || 'col'}-${col.column}`}
+                          className={`analytics-field-row ${checked ? 'is-checked' : ''}`}
+                          title={col.help || ''}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleFieldOnSelectedVisual(col)}
+                          />
+                          <span className="analytics-field-name">{col.label || col.column}</span>
+                          <small className={`analytics-dtype-badge dtype-${col.data_type || 'text'}`}>
+                            {col.data_type === 'number' ? '#' : (col.data_type === 'date' ? '📅' : 'Abc')}
+                          </small>
+                        </label>
+                      )
+                    })}
+                  </div>
+                ))}
                 {!filteredDatasetFields.length && (
                   <p className="analytics-muted-hint">
                     {['tank_snapshot','material_balance','tracking_status'].includes(selectedDataset?.kind)
@@ -1243,6 +1459,19 @@ function AnalyticsBuilder({ loggedInUser }) {
                   </p>
                 )}
               </div>
+
+              <AnalyticsJsonPanel
+                sourceKind={selectedDataset?.kind || 'tank_stock_ledger'}
+                table={selectedDataset?.table}
+                jsonColumns={(selectedDataset?.columns || []).filter((c) => c.is_json).map((c) => c.column)}
+                operationTypeCodes={selectedVisual?.query?.source?.operation_type_codes || []}
+                templateIds={selectedVisual?.query?.source?.template_ids || []}
+                existingPaths={existingPayloadPaths}
+                disabled={!selectedVisual
+                  || selectedVisual.type === 'TEXT'
+                  || ['tank_snapshot', 'material_balance', 'tracking_status'].includes(selectedDataset?.kind)}
+                onAddColumns={handleAddPayloadColumns}
+              />
             </div>
           )}
         </aside>
@@ -1298,6 +1527,7 @@ function AnalyticsBuilder({ loggedInUser }) {
                   onDeleteVisual={handleDeleteVisual}
                   onToggleLock={handleToggleLock}
                   onExplorerChange={(nextExp) => updateVisualById(visual.id, { explorer: nextExp })}
+                  onInspectRecords={handleInspectRecords}
                 />
               )}
             />
@@ -1355,10 +1585,26 @@ function AnalyticsBuilder({ loggedInUser }) {
                     className="btn-secondary btn-sm"
                     onClick={() => {
                       const firstVis = definition.visuals?.[0]
-                      const defaultCol = firstVis?.query?.columns?.[0]?.key || 'product_name'
+                      const candidateCols = (selectedDataset?.columns || []).filter((c) => !c.is_json)
+                      const preferred = candidateCols.find((c) => c.column === 'product_name')
+                        || candidateCols.find((c) => c.column === 'tank_asset_code')
+                        || candidateCols.find((c) => c.data_type !== 'number')
+                        || candidateCols[0]
+                      const defaultCol = firstVis?.query?.columns?.find((c) => c.data_type !== 'number' && !c.hidden)?.key
+                        || preferred?.column
+                        || 'product_name'
+                      // Keys must be unique even when two slicers are added in the
+                      // same millisecond, otherwise the save fails validation.
+                      const existingKeys = new Set((definition.slicers || []).map((s) => String(s.key || '')))
+                      let candidateKey = `s_${makeSafeKey(defaultCol)}_${(definition.slicers?.length || 0) + 1}`
+                      let suffix = 2
+                      while (existingKeys.has(candidateKey)) {
+                        candidateKey = `s_${makeSafeKey(defaultCol)}_${suffix}`
+                        suffix += 1
+                      }
                       const newSlicer = {
-                        id: `slicer_${Date.now().toString(36)}`,
-                        key: `s_${makeSafeKey(defaultCol)}_${(definition.slicers?.length || 0) + 1}`,
+                        id: makeAnalyticsId('slicer'),
+                        key: candidateKey,
                         label: 'Product / Tank Filter',
                         type: 'SELECT',
                         column_key: defaultCol,
@@ -1424,12 +1670,24 @@ function AnalyticsBuilder({ loggedInUser }) {
                         return (
                           <select
                             value={currentKey}
-                            onChange={(e) => setDefinition((prev) => ({
-                              ...prev,
-                              slicers: prev.slicers.map((s, i) => (
-                                i === idx ? { ...s, column_key: e.target.value, field: e.target.value } : s
-                              )),
-                            }))}
+                            onChange={(e) => {
+                              const nextKey = e.target.value
+                              const chosen = fieldOptions.find((opt) => opt.key === nextKey)
+                              const isPayload = ['payload_path', 'json_path'].includes(String(chosen?.source?.type || ''))
+                              setDefinition((prev) => ({
+                                ...prev,
+                                slicers: prev.slicers.map((s, i) => {
+                                  if (i !== idx) return s
+                                  // Only payload-sourced fields keep a `source`
+                                  // descriptor; a DB/virtual column is resolved
+                                  // from column_key alone by the engine.
+                                  const next = { ...s, column_key: nextKey, field: nextKey }
+                                  if (isPayload) next.source = chosen.source
+                                  else delete next.source
+                                  return next
+                                }),
+                              }))
+                            }}
                           >
                             <option value="">Select a column…</option>
                             {!hasCurrent && <option value={currentKey}>{currentKey} (current)</option>}
@@ -1587,6 +1845,90 @@ function AnalyticsBuilder({ loggedInUser }) {
                     </select>
                   </label>
                 )}
+
+                {!['TEXT', 'TANK_VISUAL'].includes(selectedVisual.type)
+                  && !['tank_snapshot', 'material_balance', 'tracking_status'].includes(String(selectedVisual.query?.source?.kind || ''))
+                  && (
+                    <div className="analytics-inspector-subbox">
+                      <div className="analytics-section-head">
+                        <span>Source Restrictions</span>
+                      </div>
+                      <p className="analytics-muted-hint">
+                        Which tickets this visual reads. The Studio used to hard-code “Approved” and offer no choice,
+                        so a dashboard could never include draft or non-approved tickets (Report Builder always could).
+                      </p>
+                      <label>
+                        Ticket Statuses
+                        <select
+                          multiple
+                          size={Math.min(6, Math.max(3, (lookups.statuses || []).length))}
+                          value={selectedVisual.query?.source?.statuses || []}
+                          onChange={(e) => {
+                            const chosen = Array.from(e.target.selectedOptions).map((opt) => opt.value)
+                            updateVisualById(selectedVisual.id, {
+                              query: {
+                                ...selectedVisual.query,
+                                source: { ...(selectedVisual.query?.source || {}), statuses: chosen },
+                              },
+                            })
+                          }}
+                        >
+                          {(lookups.statuses?.length ? lookups.statuses : ['Approved', 'Submitted', 'Draft', 'Rejected', 'Cancelled']).map((status) => (
+                            <option key={status} value={status}>{status}</option>
+                          ))}
+                        </select>
+                        <span className="analytics-muted-hint">
+                          Leave empty for every status. Hold Ctrl/Cmd to pick several.
+                        </span>
+                      </label>
+                      <label>
+                        Operation Types
+                        <select
+                          multiple
+                          size={Math.min(8, Math.max(3, (lookups.operation_types || []).length))}
+                          value={selectedVisual.query?.source?.operation_type_codes || []}
+                          onChange={(e) => {
+                            const chosen = Array.from(e.target.selectedOptions).map((opt) => opt.value)
+                            updateVisualById(selectedVisual.id, {
+                              query: {
+                                ...selectedVisual.query,
+                                source: { ...(selectedVisual.query?.source || {}), operation_type_codes: chosen },
+                              },
+                            })
+                          }}
+                        >
+                          {(lookups.operation_types || []).map((op) => (
+                            <option key={op.operation_type_code} value={op.operation_type_code}>
+                              {op.operation_type_name || op.operation_type_code}
+                            </option>
+                          ))}
+                        </select>
+                        <span className="analytics-muted-hint">Leave empty for every operation type.</span>
+                      </label>
+                      <label>
+                        Entry Forms (Templates)
+                        <select
+                          multiple
+                          size={Math.min(8, Math.max(3, (lookups.templates || []).length))}
+                          value={(selectedVisual.query?.source?.template_ids || []).map(String)}
+                          onChange={(e) => {
+                            const chosen = Array.from(e.target.selectedOptions).map((opt) => Number(opt.value)).filter((n) => Number.isFinite(n))
+                            updateVisualById(selectedVisual.id, {
+                              query: {
+                                ...selectedVisual.query,
+                                source: { ...(selectedVisual.query?.source || {}), template_ids: chosen },
+                              },
+                            })
+                          }}
+                        >
+                          {(lookups.templates || []).map((tpl) => (
+                            <option key={tpl.id} value={tpl.id}>{tpl.template_name}</option>
+                          ))}
+                        </select>
+                        <span className="analytics-muted-hint">Leave empty for every entry form.</span>
+                      </label>
+                    </div>
+                  )}
 
                 {selectedVisual.type === 'TEXT' ? (
                   <label>
@@ -1839,15 +2181,38 @@ function AnalyticsBuilder({ loggedInUser }) {
                     <label>
                       Date Basis
                       <select
-                        value={selectedVisual.query?.date_basis || 'ACCOUNTING_DATE'}
+                        value={canonicalDateBasis(selectedVisual.query?.date_basis)}
                         onChange={(e) => updateVisualById(selectedVisual.id, {
-                          query: { ...selectedVisual.query, date_basis: e.target.value },
+                          query: { ...selectedVisual.query, date_basis: canonicalDateBasis(e.target.value) },
                         })}
                       >
-                        <option value="ACCOUNTING_DATE">Accounting Date</option>
-                        <option value="OPERATIONAL_DATE">Operational / Reading Date</option>
+                        {/* Only bases the engine accepts — the old list offered
+                            OPERATIONAL_DATE, which previewed fine and then failed
+                            the save with "Unknown date basis". */}
+                        {dateBasisChoices.map((basis) => (
+                          <option key={basis.value} value={basis.value}>{basis.label}</option>
+                        ))}
                       </select>
+                      <span className="analytics-muted-hint">
+                        {dateBasisChoices.find((b) => canonicalDateBasis(b.value) === canonicalDateBasis(selectedVisual.query?.date_basis))?.help || ''}
+                      </span>
                     </label>
+                    {canonicalDateBasis(selectedVisual.query?.date_basis) === 'COLUMN' && (
+                      <label>
+                        Date Column
+                        <select
+                          value={selectedVisual.query?.date_column || ''}
+                          onChange={(e) => updateVisualById(selectedVisual.id, {
+                            query: { ...selectedVisual.query, date_column: e.target.value },
+                          })}
+                        >
+                          <option value="">(Choose a date column)</option>
+                          {selectedVisualColumns.filter((c) => c.data_type === 'date' || c.data_type === 'datetime').map((c) => (
+                            <option key={c.key} value={c.key}>{c.label || c.key}</option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
 
                     <label>
                       Category / X-Axis Dimension
@@ -2047,6 +2412,99 @@ function AnalyticsBuilder({ loggedInUser }) {
                           )}
                         </div>
                       ))}
+                    </div>
+
+                    <div className="analytics-inspector-subbox">
+                      <div className="analytics-section-head">
+                        <span>Sort &amp; Hidden Columns</span>
+                      </div>
+                      <p className="analytics-muted-hint">
+                        Sort order and hidden columns are saved into the report definition, exactly like Report Builder.
+                      </p>
+                      <div className="analytics-sort-editor">
+                        {(selectedVisual.query?.sort || []).map((srt, sIdx) => (
+                          <div key={`srt-${sIdx}`} className="analytics-gb-item">
+                            <select
+                              aria-label={`Sort column ${sIdx + 1}`}
+                              value={srt.key || ''}
+                              onChange={(e) => {
+                                const next = (selectedVisual.query?.sort || []).map((item, i) => (
+                                  i === sIdx ? { ...item, key: e.target.value } : item
+                                ))
+                                updateVisualById(selectedVisual.id, { query: { ...selectedVisual.query, sort: next } })
+                              }}
+                            >
+                              <option value="">Select column…</option>
+                              {selectedVisualColumns.map((c) => (
+                                <option key={c.key} value={c.key}>{c.label || c.key}</option>
+                              ))}
+                            </select>
+                            <select
+                              aria-label={`Sort direction ${sIdx + 1}`}
+                              value={String(srt.direction || 'ASC').toUpperCase()}
+                              onChange={(e) => {
+                                const next = (selectedVisual.query?.sort || []).map((item, i) => (
+                                  i === sIdx ? { ...item, direction: e.target.value } : item
+                                ))
+                                updateVisualById(selectedVisual.id, { query: { ...selectedVisual.query, sort: next } })
+                              }}
+                            >
+                              <option value="ASC">A → Z / 0 → 9</option>
+                              <option value="DESC">Z → A / 9 → 0</option>
+                            </select>
+                            <button
+                              type="button"
+                              className="btn-link is-danger"
+                              aria-label={`Remove sort ${sIdx + 1}`}
+                              onClick={() => updateVisualById(selectedVisual.id, {
+                                query: {
+                                  ...selectedVisual.query,
+                                  sort: (selectedVisual.query?.sort || []).filter((_, i) => i !== sIdx),
+                                },
+                              })}
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ))}
+                        <button
+                          type="button"
+                          className="btn-link"
+                          onClick={() => {
+                            const firstKey = selectedVisualColumns[0]?.key
+                            if (!firstKey) return
+                            const cur = selectedVisual.query?.sort || []
+                            if (cur.length >= 3) {
+                              toast.info('A visual can be sorted by at most three columns.')
+                              return
+                            }
+                            if (cur.some((item) => item.key === firstKey)) return
+                            updateVisualById(selectedVisual.id, {
+                              query: { ...selectedVisual.query, sort: [...cur, { key: firstKey, direction: 'ASC' }] },
+                            })
+                          }}
+                        >
+                          + Add Sort
+                        </button>
+                      </div>
+                      <div className="analytics-mini-check-list">
+                        {selectedVisualColumns.map((col, cIdx) => (
+                          <label key={`hidden-${col.key}`} className="analytics-mini-check">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(col.hidden)}
+                              onChange={(e) => {
+                                const nextCols = selectedVisualColumns.map((item, i) => (
+                                  i === cIdx ? { ...item, hidden: e.target.checked } : item
+                                ))
+                                updateVisualById(selectedVisual.id, { query: { ...selectedVisual.query, columns: nextCols } })
+                              }}
+                            />
+                            <span>{col.label || col.key}</span>
+                          </label>
+                        ))}
+                      </div>
+                      <span className="analytics-muted-hint">Tick to hide a column from the visual (it stays available for filters and slicers).</span>
                     </div>
 
                     <div className="analytics-inspector-subbox">
@@ -2744,6 +3202,84 @@ function AnalyticsBuilder({ loggedInUser }) {
               {!grants.length && <p className="analytics-muted-hint">No explicit role, user, or location grants added (private to creator &amp; admins).</p>}
             </div>
           </div>
+        </div>
+      </Modal>
+
+      {/* Studio drill-through: underlying rows of the previewed visual */}
+      <Modal
+        open={Boolean(recordsModalVisual)}
+        onClose={() => {
+          setRecordsModalVisual(null)
+          setRecordsPayload(null)
+        }}
+        title={recordsModalVisual ? `Underlying Records — ${recordsModalVisual.title}` : 'Underlying Source Records'}
+        size="xl"
+        footer={(
+          <div className="analytics-modal-footer-bar">
+            <div className="analytics-modal-footer-left">
+              {recordsPayload?.rows?.length > 0 && (
+                <ExportMenu
+                  label="Export Records"
+                  title={`${recordsModalVisual?.title || 'Visual'} — Underlying Records`}
+                  fileName="analytics_preview_underlying_records"
+                  columns={(recordsPayload.columns || []).map((c) => ({ key: c.key, label: c.label || c.key }))}
+                  rows={recordsPayload.rows}
+                />
+              )}
+            </div>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => {
+                setRecordsModalVisual(null)
+                setRecordsPayload(null)
+              }}
+            >
+              Close
+            </button>
+          </div>
+        )}
+      >
+        <div className="analytics-expanded-modal-body">
+          {recordsLoading ? (
+            <div className="analytics-visual-loading">Fetching ungrouped underlying source records…</div>
+          ) : recordsPayload ? (
+            <>
+              {(recordsPayload.meta?.warnings || []).map((warning, idx) => (
+                <AlertMessage key={`preview-records-warning-${idx}`} tone="warning" compact message={warning} />
+              ))}
+              {recordsPayload.meta?.applied_filters?.length > 0 && (
+                <div className="analytics-records-applied-filters">
+                  Applied filters: {recordsPayload.meta.applied_filters.join(' · ')}
+                </div>
+              )}
+              {!recordsPayload.rows?.length && recordsPayload.meta?.filter_breakdown && (
+                <div className="analytics-records-applied-filters">
+                  Candidates: {recordsPayload.meta.filter_breakdown.candidates ?? 0} · with stock evidence:{' '}
+                  {recordsPayload.meta.filter_breakdown.with_stock_evidence ?? 0} · after type filter:{' '}
+                  {recordsPayload.meta.filter_breakdown.after_type_filter ?? 0} · after slicers:{' '}
+                  {recordsPayload.meta.filter_breakdown.after_slicer_filters ?? 0} · after fixed filters:{' '}
+                  {recordsPayload.meta.filter_breakdown.after_fixed_filters ?? 0}
+                </div>
+              )}
+              <PerspectiveGrid
+                visual={{
+                  id: `preview_records_${recordsModalVisual?.id}`,
+                  type: 'TABLE',
+                  explorer: { showShelfByDefault: true },
+                  style: { table: { dataBars: true, showSummaryBar: true, stickyHeader: true, striped: true } },
+                }}
+                columns={(recordsPayload.columns || []).filter((c) => !c.hidden)}
+                rows={recordsPayload.rows || []}
+                totals={recordsPayload.totals || {}}
+                expanded
+                shelfOpen
+                containerWidth={1100}
+              />
+            </>
+          ) : (
+            <AlertMessage tone="info" message="No underlying records available." />
+          )}
         </div>
       </Modal>
 
