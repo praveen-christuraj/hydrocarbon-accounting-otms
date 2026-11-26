@@ -967,6 +967,7 @@ def _resolve_slicer_values(
             date_from=parsed_dates["date_from"],
             date_to=parsed_dates["date_to"],
             location_codes=payload.get("location_codes") or [],
+            scope_mode=str(payload.get("scope_mode") or "SELECTED").upper(),
             runtime_values=payload.get("runtime_values") or {},
         )
         params = _runner_params(db, current_user, dashboard, fake_req)

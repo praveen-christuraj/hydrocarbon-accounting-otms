@@ -143,6 +143,7 @@ function AnalyticsVisual({
   visual,
   result,
   loading = false,
+  placeholderMessage = 'Apply filters and click Apply & Refresh to load data.',
   editable = false,
   isLocked = false,
   activeSelection = null,
@@ -234,7 +235,7 @@ function AnalyticsVisual({
       return <AlertMessage tone="error" compact message={result.error} />
     }
     if (!result) {
-      return <div className="analytics-visual-loading">Waiting for query execution…</div>
+      return <div className="analytics-visual-loading">{placeholderMessage}</div>
     }
 
     if (effectiveType === 'KPI_CARD') {

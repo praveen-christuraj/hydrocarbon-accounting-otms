@@ -36,6 +36,7 @@ import {
   VISUAL_GROUPS,
   buildStarterTemplates,
   defaultLayoutForVisualType,
+  getPreviousDayIso,
   getVisualMeta,
   makeSafeKey,
   normalizeLayoutForGridStack,
@@ -303,19 +304,22 @@ function AnalyticsBuilder({ loggedInUser }) {
   const [fieldSearch, setFieldSearch] = useState('')
   const [activeDatasetId, setActiveDatasetId] = useState('tank_stock_ledger')
 
-  // Preview Execution State
-  const [previewDateFrom, setPreviewDateFrom] = useState('')
-  const [previewDateTo, setPreviewDateTo] = useState('')
+  // Preview Execution State — defaults to previous calendar day; runs only on explicit user query
+  const [previewDateFrom, setPreviewDateFrom] = useState(() => getPreviousDayIso())
+  const [previewDateTo, setPreviewDateTo] = useState(() => getPreviousDayIso())
+  const [previewSingleDate, setPreviewSingleDate] = useState(() => getPreviousDayIso())
   const [previewResults, setPreviewResults] = useState({})
 
   // Refs to keep executePreview stable and avoid resetting unsaved work on date/location changes
   const locationCodeRef = useRef(locationCode)
   const previewDateFromRef = useRef(previewDateFrom)
   const previewDateToRef = useRef(previewDateTo)
+  const previewSingleDateRef = useRef(previewSingleDate)
   const definitionRef = useRef(definition)
   useEffect(() => { locationCodeRef.current = locationCode }, [locationCode])
   useEffect(() => { previewDateFromRef.current = previewDateFrom }, [previewDateFrom])
   useEffect(() => { previewDateToRef.current = previewDateTo }, [previewDateTo])
+  useEffect(() => { previewSingleDateRef.current = previewSingleDate }, [previewSingleDate])
   useEffect(() => { definitionRef.current = definition }, [definition])
 
   // Modals: FormulaBuilder, RBAC Sharing, Version History
@@ -365,9 +369,17 @@ function AnalyticsBuilder({ loggedInUser }) {
       setPreviewResults({})
       return
     }
-    const fromDate = overrides.date_from !== undefined ? overrides.date_from : previewDateFromRef.current
-    const toDate = overrides.date_to !== undefined ? overrides.date_to : previewDateToRef.current
+    const singleDateVal = overrides.single_date !== undefined ? overrides.single_date : previewSingleDateRef.current
+    const fromDate = overrides.date_from !== undefined
+      ? overrides.date_from
+      : (singleDateVal || previewDateFromRef.current)
+    const toDate = overrides.date_to !== undefined
+      ? overrides.date_to
+      : (singleDateVal || previewDateToRef.current)
     const loc = overrides.location_code !== undefined ? overrides.location_code : locationCodeRef.current
+    const visualIds = Array.isArray(overrides.visual_ids) && overrides.visual_ids.length
+      ? overrides.visual_ids
+      : null
     setPreviewing(true)
     try {
       const response = await runAnalyticsPreview(defToRun, {
@@ -378,8 +390,12 @@ function AnalyticsBuilder({ loggedInUser }) {
         // not "nothing" — state that explicitly (see analytics_engine tank scope).
         scope_mode: loc ? 'SELECTED' : 'ALL',
         runtime_values: {},
-      })
-      setPreviewResults(response?.results || {})
+      }, visualIds)
+      if (visualIds) {
+        setPreviewResults((prev) => ({ ...prev, ...(response?.results || {}) }))
+      } else {
+        setPreviewResults(response?.results || {})
+      }
     } catch (err) {
       toast.error(err.message || 'Unable to execute studio preview.')
     } finally {
@@ -392,13 +408,14 @@ function AnalyticsBuilder({ loggedInUser }) {
     const design = definitionRef.current
     if (!design?.visuals?.length) return
     const loc = locationCodeRef.current
+    const singleDateVal = previewSingleDateRef.current
     setRecordsModalVisual(visual)
     setRecordsLoading(true)
     setRecordsPayload(null)
     try {
       const data = await getAnalyticsPreviewVisualRecords(design, visual.id, {
-        date_from: previewDateFromRef.current || null,
-        date_to: previewDateToRef.current || null,
+        date_from: (singleDateVal || previewDateFromRef.current) || null,
+        date_to: (singleDateVal || previewDateToRef.current) || null,
         location_codes: loc ? [loc] : [],
         scope_mode: loc ? 'SELECTED' : 'ALL',
         runtime_values: {},
@@ -416,6 +433,14 @@ function AnalyticsBuilder({ loggedInUser }) {
     const load = async () => {
       setLoading(true)
       setError('')
+      const prevDay = getPreviousDayIso()
+      setPreviewDateFrom(prevDay)
+      setPreviewDateTo(prevDay)
+      setPreviewSingleDate(prevDay)
+      previewDateFromRef.current = prevDay
+      previewDateToRef.current = prevDay
+      previewSingleDateRef.current = prevDay
+      setPreviewResults({})
       try {
         const [catalogData, lookupData, existing] = await Promise.all([
           getAnalyticsCatalog(),
@@ -469,10 +494,7 @@ function AnalyticsBuilder({ loggedInUser }) {
           })
           setDefinition(hydrated)
           definitionRef.current = hydrated
-          if (hydrated.visuals?.length) {
-            setSelectedVisualId(hydrated.visuals[0].id)
-            executePreview(hydrated, { location_code: existingLoc })
-          }
+          setSelectedVisualId(hydrated.visuals?.[0]?.id || null)
         } else {
           // Initialize sensible defaults for a new dashboard so first-click Save works cleanly
           const isAdmin = Boolean(catalogData?.is_admin)
@@ -498,10 +520,7 @@ function AnalyticsBuilder({ loggedInUser }) {
             setDescription(matchedTpl.description)
             setDefinition(built)
             definitionRef.current = built
-            if (built.visuals?.length) {
-              setSelectedVisualId(built.visuals[0].id)
-              executePreview(built, { location_code: initLoc })
-            }
+            setSelectedVisualId(built.visuals?.[0]?.id || null)
           } else {
             setName('')
             setDescription('')
@@ -519,7 +538,7 @@ function AnalyticsBuilder({ loggedInUser }) {
     }
     load()
     return () => { active = false }
-  }, [executePreview, id, isNew, starterTemplates, templateParam])
+  }, [id, isNew, starterTemplates, templateParam])
 
   const selectedVisual = useMemo(
     () => (definition.visuals || []).find((v) => String(v.id) === String(selectedVisualId)) || null,
@@ -590,8 +609,7 @@ function AnalyticsBuilder({ loggedInUser }) {
     setDefinition(nextDef)
     setSelectedVisualId(idStr)
     setInspectorTab('data')
-    executePreview(nextDef)
-  }, [activeDatasetId, allDatasets, executePreview, toast])
+  }, [activeDatasetId, allDatasets, toast])
 
   const handleDuplicateVisual = useCallback((visualId) => {
     const prev = definitionRef.current || EMPTY_DEFINITION
@@ -613,8 +631,10 @@ function AnalyticsBuilder({ loggedInUser }) {
     definitionRef.current = nextDef
     setDefinition(nextDef)
     setSelectedVisualId(copyId)
-    executePreview(nextDef)
-  }, [executePreview])
+    setPreviewResults((prevResults) => (
+      prevResults[orig.id] ? { ...prevResults, [copyId]: prevResults[orig.id] } : prevResults
+    ))
+  }, [])
 
   const handleDeleteVisual = useCallback(async (visualId) => {
     const target = (definition.visuals || []).find((v) => String(v.id) === String(visualId))
@@ -670,7 +690,7 @@ function AnalyticsBuilder({ loggedInUser }) {
     definitionRef.current = built
     setDefinition(built)
     setSelectedVisualId(built.visuals?.[0]?.id || null)
-    executePreview(built)
+    setPreviewResults({})
   }
 
   // Toggle dataset column on the currently selected tabular/report visual
@@ -902,8 +922,8 @@ function AnalyticsBuilder({ loggedInUser }) {
       definitionRef.current = hydrated
       setVersionNum(Number(restored.version) || versionNum + 1)
       setHistoryModalOpen(false)
-      toast.success(`Reverted dashboard to v${vNum}.`)
-      executePreview(hydrated)
+      setPreviewResults({})
+      toast.success(`Reverted dashboard to v${vNum}. Click Run Preview to load data.`)
     } catch (err) {
       toast.error(err.message || 'Unable to revert dashboard version.')
     }
@@ -1017,6 +1037,19 @@ function AnalyticsBuilder({ loggedInUser }) {
     })
     return refs
   }, [selectedVisualColumns])
+
+  const selectedJsonColumns = useMemo(
+    () => (selectedDataset?.columns || []).filter((c) => c.is_json).map((c) => c.column),
+    [selectedDataset]
+  )
+  const selectedOperationTypeCodes = useMemo(
+    () => selectedVisual?.query?.source?.operation_type_codes || [],
+    [selectedVisual?.query?.source?.operation_type_codes]
+  )
+  const selectedTemplateIds = useMemo(
+    () => selectedVisual?.query?.source?.template_ids || [],
+    [selectedVisual?.query?.source?.template_ids]
+  )
 
   const handleAddPayloadColumns = useCallback((columns) => {
     if (!selectedVisual || !Array.isArray(columns) || !columns.length) return
@@ -1183,19 +1216,39 @@ function AnalyticsBuilder({ loggedInUser }) {
                 type="date"
                 aria-label="Preview from date"
                 value={previewDateFrom}
-                onChange={(e) => setPreviewDateFrom(e.target.value)}
+                onChange={(e) => {
+                  setPreviewSingleDate('')
+                  setPreviewDateFrom(e.target.value)
+                }}
               />
               <span>–</span>
               <input
                 type="date"
                 aria-label="Preview to date"
                 value={previewDateTo}
-                onChange={(e) => setPreviewDateTo(e.target.value)}
+                onChange={(e) => {
+                  setPreviewSingleDate('')
+                  setPreviewDateTo(e.target.value)
+                }}
+              />
+              <span>Single Date:</span>
+              <input
+                type="date"
+                aria-label="Preview single date"
+                value={previewSingleDate}
+                onChange={(e) => {
+                  const val = e.target.value
+                  setPreviewSingleDate(val)
+                  if (val) {
+                    setPreviewDateFrom('')
+                    setPreviewDateTo('')
+                  }
+                }}
               />
               <button
                 type="button"
                 className="btn-secondary btn-sm"
-                onClick={() => executePreview(definition)}
+                onClick={() => executePreview(definitionRef.current)}
                 disabled={previewing}
               >
                 <Icon name="refresh" size={14} /> {previewing ? 'Running…' : 'Run Preview'}
@@ -1463,9 +1516,9 @@ function AnalyticsBuilder({ loggedInUser }) {
               <AnalyticsJsonPanel
                 sourceKind={selectedDataset?.kind || 'tank_stock_ledger'}
                 table={selectedDataset?.table}
-                jsonColumns={(selectedDataset?.columns || []).filter((c) => c.is_json).map((c) => c.column)}
-                operationTypeCodes={selectedVisual?.query?.source?.operation_type_codes || []}
-                templateIds={selectedVisual?.query?.source?.template_ids || []}
+                jsonColumns={selectedJsonColumns}
+                operationTypeCodes={selectedOperationTypeCodes}
+                templateIds={selectedTemplateIds}
                 existingPaths={existingPayloadPaths}
                 disabled={!selectedVisual
                   || selectedVisual.type === 'TEXT'
@@ -1517,6 +1570,7 @@ function AnalyticsBuilder({ loggedInUser }) {
                   visual={visual}
                   result={previewResults[visual.id]}
                   loading={previewing}
+                  placeholderMessage="Click Run Preview (or Apply & Refresh Visual) to load data."
                   editable
                   isLocked={Boolean(layoutItem?.locked)}
                   onEditVisual={(vid) => {
@@ -1814,8 +1868,13 @@ function AnalyticsBuilder({ loggedInUser }) {
                       }
                       definitionRef.current = nextDef
                       setDefinition(nextDef)
-                      if (nextType !== 'TEXT') {
-                        executePreview(nextDef)
+                      if (patch.query !== undefined) {
+                        setPreviewResults((prevResults) => {
+                          if (!prevResults[selectedVisual.id]) return prevResults
+                          const copy = { ...prevResults }
+                          delete copy[selectedVisual.id]
+                          return copy
+                        })
                       }
                     }}
                   >
@@ -2128,7 +2187,7 @@ function AnalyticsBuilder({ loggedInUser }) {
                     <button
                       type="button"
                       className="btn-primary btn-sm"
-                      onClick={() => executePreview(definitionRef.current)}
+                      onClick={() => executePreview(definitionRef.current, { visual_ids: [selectedVisual.id] })}
                       disabled={previewing}
                     >
                       <Icon name="refresh" size={14} /> Apply &amp; Refresh Tank Levels
@@ -2621,7 +2680,7 @@ function AnalyticsBuilder({ loggedInUser }) {
                     <button
                       type="button"
                       className="btn-primary btn-sm"
-                      onClick={() => executePreview(definition)}
+                      onClick={() => executePreview(definitionRef.current, { visual_ids: [selectedVisual.id] })}
                       disabled={previewing}
                     >
                       <Icon name="refresh" size={14} /> Apply &amp; Refresh Visual

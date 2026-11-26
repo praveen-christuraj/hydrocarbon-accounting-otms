@@ -24,7 +24,7 @@ import {
   runAnalyticsDashboard,
 } from '../api/analyticsApi'
 import { logUiAction } from '../utils/actionLogger'
-import { normalizeLayoutForGridStack } from '../utils/analyticsEngine'
+import { getPreviousDayIso, normalizeLayoutForGridStack } from '../utils/analyticsEngine'
 import '../styles/analytics.css'
 
 function getSessionLayoutKey(dashboardId) {
@@ -58,13 +58,16 @@ function AnalyticsViewer({ loggedInUser }) {
   const [printMode, setPrintMode] = useState(false)
 
   // Separate Date Range vs Single Date + Locations + Slicers + Cross-Filters
-  const [dateFrom, setDateFrom] = useState('')
-  const [dateTo, setDateTo] = useState('')
-  const [singleDate, setSingleDate] = useState('')
+  // Both default to the previous calendar day; data loads only when the user queries.
+  const [dateFrom, setDateFrom] = useState(() => getPreviousDayIso())
+  const [dateTo, setDateTo] = useState(() => getPreviousDayIso())
+  const [singleDate, setSingleDate] = useState(() => getPreviousDayIso())
   const [activePreset, setActivePreset] = useState('')
   const [selectedLocations, setSelectedLocations] = useState([])
   const [runtimeValues, setRuntimeValues] = useState({})
   const [slicerOptions, setSlicerOptions] = useState({})
+  const [slicerLoading, setSlicerLoading] = useState({})
+  const slicerCacheSigRef = useRef({})
   const [selectionFilters, setSelectionFilters] = useState([])
   const selectionFiltersRef = useRef([])
   useEffect(() => { selectionFiltersRef.current = selectionFilters }, [selectionFilters])
@@ -137,28 +140,33 @@ function AnalyticsViewer({ loggedInUser }) {
     }
   }, [])
 
-  const fetchSlicerOptions = useCallback(async (targetId, defSlicers, locationCodes = []) => {
-    const selectSlicers = (defSlicers || []).filter((s) => String(s.type || 'SELECT').toUpperCase() === 'SELECT')
-    if (!selectSlicers.length) return {}
-    const entries = await Promise.all(
-      selectSlicers.map(async (slicer) => {
-        const sKey = slicer.key || slicer.id
-        try {
-          const res = await getAnalyticsSlicerValues(targetId, {
-            slicer_key: sKey,
-            location_codes: Array.isArray(locationCodes) ? locationCodes : [],
-            scope_mode: Array.isArray(locationCodes) && locationCodes.length ? 'SELECTED' : 'ALL',
-          })
-          return [sKey, res?.values || []]
-        } catch {
-          return [sKey, []]
-        }
+  // Lazy-load distinct options for a SELECT slicer only when the user opens its dropdown.
+  const handleSlicerOpen = useCallback(async (slicer) => {
+    if (!dashboard?.id || !slicer) return
+    const sKey = slicer.key || slicer.id
+    if (!sKey) return
+    const codes = Array.isArray(selectedLocations) ? selectedLocations : []
+    const sig = `${dashboard.id}|${sKey}|${effectiveDateWindow.from || ''}|${effectiveDateWindow.to || ''}|${codes.join(',')}`
+    if (slicerCacheSigRef.current[sKey] === sig) return
+    setSlicerLoading((prev) => ({ ...prev, [sKey]: true }))
+    try {
+      const res = await getAnalyticsSlicerValues(dashboard.id, {
+        slicer_key: sKey,
+        date_from: effectiveDateWindow.from,
+        date_to: effectiveDateWindow.to,
+        location_codes: codes,
+        scope_mode: dashboardScopeMode(codes),
       })
-    )
-    return Object.fromEntries(entries)
-  }, [])
+      slicerCacheSigRef.current[sKey] = sig
+      setSlicerOptions((prev) => ({ ...prev, [sKey]: res?.values || [] }))
+    } catch {
+      setSlicerOptions((prev) => ({ ...prev, [sKey]: prev[sKey] || [] }))
+    } finally {
+      setSlicerLoading((prev) => ({ ...prev, [sKey]: false }))
+    }
+  }, [dashboard?.id, dashboardScopeMode, effectiveDateWindow.from, effectiveDateWindow.to, selectedLocations])
 
-  // Load dashboard definition, slicer options, and auto-execute queries immediately
+  // Load dashboard definition only (no automatic heavy data queries on initial page open).
   useEffect(() => {
     if (!dashboardId) {
       setLoading(false)
@@ -178,15 +186,21 @@ function AnalyticsViewer({ loggedInUser }) {
         setAvailableLocations(locs)
 
         const initLocations = item.location_code ? [item.location_code] : []
+        const prevDay = getPreviousDayIso()
         locationIntentRef.current = initLocations.length ? 'SELECTED' : 'ALL'
         setSelectedLocations(initLocations)
         setSelectionFilters([])
         selectionFiltersRef.current = []
         setRuntimeValues({})
-        setDateFrom('')
-        setDateTo('')
-        setSingleDate('')
+        setDateFrom(prevDay)
+        setDateTo(prevDay)
+        setSingleDate(prevDay)
         setActivePreset('')
+        setResults({})
+        setLastExecutedAt('')
+        setSlicerOptions({})
+        setSlicerLoading({})
+        slicerCacheSigRef.current = {}
         appliedRunnerPayloadRef.current = null
         setAppliedPayload(null)
 
@@ -206,22 +220,6 @@ function AnalyticsViewer({ loggedInUser }) {
         } catch {
           setSessionLayout(null)
         }
-
-        // Auto-execute initial batch run immediately
-        const initialPayload = {
-          date_from: null,
-          date_to: null,
-          location_codes: initLocations,
-          scope_mode: initLocations.length ? 'SELECTED' : 'ALL',
-          runtime_values: {},
-          selection_filters: [],
-        }
-        runBatch(item.id, initialPayload)
-
-        // Load distinct options for SELECT slicers in parallel
-        const defObj = item.definition || item.definition_json || {}
-        const opts = await fetchSlicerOptions(item.id, defObj.slicers || [], initLocations)
-        if (active) setSlicerOptions(opts)
       } catch (err) {
         if (active) setError(err.message || 'Unable to load analytics dashboard.')
       } finally {
@@ -230,7 +228,7 @@ function AnalyticsViewer({ loggedInUser }) {
     }
     loadDashboard()
     return () => { active = false }
-  }, [dashboardId, fetchSlicerOptions, runBatch])
+  }, [dashboardId])
 
   const definition = useMemo(
     () => dashboard?.definition || dashboard?.definition_json || {},
@@ -317,35 +315,27 @@ function AnalyticsViewer({ loggedInUser }) {
     const codes = Array.isArray(nextLocations) ? nextLocations : []
     locationIntentRef.current = codes.length ? 'SELECTED' : 'ALL'
     setSelectedLocations(codes)
-    if (dashboard?.id && slicers.some((s) => String(s.type || 'SELECT').toUpperCase() === 'SELECT')) {
-      fetchSlicerOptions(dashboard.id, slicers, codes).then((opts) => setSlicerOptions(opts))
-    }
   }
 
   const handleClearAllFilters = () => {
     const defaultLocs = dashboard?.location_code ? [dashboard.location_code] : []
+    const prevDay = getPreviousDayIso()
     locationIntentRef.current = defaultLocs.length ? 'SELECTED' : 'ALL'
-    setDateFrom('')
-    setDateTo('')
-    setSingleDate('')
+    setDateFrom(prevDay)
+    setDateTo(prevDay)
+    setSingleDate(prevDay)
     setActivePreset('')
     setSelectedLocations(defaultLocs)
     setRuntimeValues({})
     selectionFiltersRef.current = []
     setSelectionFilters([])
-    if (dashboard?.id) {
-      runBatch(dashboard.id, {
-        date_from: null,
-        date_to: null,
-        location_codes: defaultLocs,
-        scope_mode: defaultLocs.length ? 'SELECTED' : 'ALL',
-        runtime_values: {},
-        selection_filters: [],
-      })
-      if (slicers.some((s) => String(s.type || 'SELECT').toUpperCase() === 'SELECT')) {
-        fetchSlicerOptions(dashboard.id, slicers, defaultLocs).then((opts) => setSlicerOptions(opts))
-      }
-    }
+    setResults({})
+    setLastExecutedAt('')
+    setSlicerOptions({})
+    setSlicerLoading({})
+    slicerCacheSigRef.current = {}
+    appliedRunnerPayloadRef.current = null
+    setAppliedPayload(null)
   }
 
   const handleInspectRecords = async (visual) => {
@@ -442,6 +432,7 @@ function AnalyticsViewer({ loggedInUser }) {
         visual={visual}
         result={results[visual.id]}
         loading={running}
+        placeholderMessage="Apply filters above and click Apply & Refresh to load data."
         editable={arrangeMode && !options.printMode}
         isLocked={Boolean(layoutItem?.locked)}
         activeSelection={activeSelForOthers}
@@ -604,20 +595,22 @@ function AnalyticsViewer({ loggedInUser }) {
             }
           }}
           onApplyPreset={(presetKey, range) => {
-            setSingleDate('')
+            setSingleDate(presetKey === 'PREV_DAY' ? range.from : '')
             setActivePreset(presetKey)
             setDateFrom(range.from)
             setDateTo(range.to)
-            runBatch(dashboard.id, buildRunnerPayload({ date_from: range.from, date_to: range.to }))
           }}
           availableLocations={availableLocations}
           selectedLocations={selectedLocations}
           locationLocked={locationLocked}
           fixedLocationCode={dashboard.location_code || ''}
           pendingFilters={pendingFilters}
+          hasQueried={Boolean(appliedPayload)}
           onLocationsChange={handleLocationsChange}
           slicers={slicers}
           slicerOptions={slicerOptions}
+          slicerLoading={slicerLoading}
+          onSlicerOpen={handleSlicerOpen}
           runtimeValues={runtimeValues}
           onRuntimeValueChange={(key, val) => setRuntimeValues((prev) => ({ ...prev, [key]: val }))}
           selectionFilters={selectionFilters}
