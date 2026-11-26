@@ -49,6 +49,7 @@ from app.services.analytics_engine import (
     run_visual,
     run_visual_records,
     validate_analytics_definition,
+    visual_execution_params,
 )
 from app.services.audit_service import create_audit_log
 from app.services.report_catalog import (
@@ -1036,12 +1037,16 @@ def get_visual_underlying_records(
 ):
     dashboard = _get_dashboard_or_404(db, dashboard_id)
     _require_run_access(db, current_user, dashboard)
-    visual = next((item for item in (dashboard.definition_json or {}).get("visuals", []) if item.get("id") == visual_id), None)
-    if not visual:
-        raise HTTPException(status_code=404, detail="Dashboard visual not found")
+    definition = dashboard.definition_json or {}
     params = _runner_params(db, current_user, dashboard, payload)
     try:
-        result = run_visual_records(db, current_user, visual, dashboard.definition_json or {}, params)
+        # Match the dashboard batch path: normalise the definition first so
+        # legacy or partially saved visuals execute with the same shape.
+        normalized = validate_analytics_definition(definition, strict_visuals=False)
+        visual = next((item for item in normalized.get("visuals", []) if item.get("id") == visual_id), None)
+        if not visual:
+            raise HTTPException(status_code=404, detail="Dashboard visual not found")
+        result = run_visual_records(db, current_user, visual, normalized, params)
     except ReportDefinitionError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     _audit(db, current_user, "Inspect Analytics Visual Records", dashboard, {"visual_id": visual_id})

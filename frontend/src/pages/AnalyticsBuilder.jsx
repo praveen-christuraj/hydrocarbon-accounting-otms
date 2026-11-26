@@ -1619,7 +1619,7 @@ function AnalyticsBuilder({ loggedInUser }) {
                     </label>
 
                     <label>
-                      Location Override (optional)
+                      Restrict This Visual to Location (optional)
                       <select
                         value={selectedVisual.query?.source?.location_code || ''}
                         onChange={(e) => updateVisualById(selectedVisual.id, {
@@ -1658,7 +1658,7 @@ function AnalyticsBuilder({ loggedInUser }) {
                           )}
                         </div>
                         <p className="analytics-muted-hint">
-                          Leave unchecked to automatically show active shore tanks with stock or tank calibration.
+                          Leave unchecked to automatically show active shore tanks with stock or tank calibration. Selected types narrow the rows shown and never suppress stock/calibration discovery.
                         </p>
                         <div className="analytics-slicer-targets">
                           {(lookups.asset_types || []).map((at) => {
@@ -2375,6 +2375,16 @@ function AnalyticsBuilder({ loggedInUser }) {
                         })}
                       />
                       <span>Compact Number Notation (1.2M / 45K)</span>
+                    </label>
+                    <label className="analytics-mini-check">
+                      <input
+                        type="checkbox"
+                        checked={selectedVisual.style?.kpi?.showDelta !== false}
+                        onChange={(e) => updateVisualById(selectedVisual.id, {
+                          style: { ...(selectedVisual.style || {}), kpi: { ...(selectedVisual.style?.kpi || {}), showDelta: e.target.checked } },
+                        })}
+                      />
+                      <span>Show Comparison Delta % (green / red)</span>
                     </label>
                     <label className="analytics-mini-check">
                       <input

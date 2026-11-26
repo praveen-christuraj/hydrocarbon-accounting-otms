@@ -5,6 +5,7 @@ import ExportMenu from '../components/common/ExportMenu'
 import Icon from '../components/common/Icon'
 import Modal from '../components/common/Modal'
 import { useToast } from '../components/common/Toast'
+import AnalyticsPrintCanvas from '../components/analytics/AnalyticsPrintCanvas'
 import AnalyticsVisual from '../components/analytics/AnalyticsVisual'
 import GridStackCanvas from '../components/analytics/GridStackCanvas'
 import PerspectiveGrid from '../components/analytics/PerspectiveGrid'
@@ -49,6 +50,9 @@ function AnalyticsViewer({ loggedInUser }) {
   const [exportingWorkbook, setExportingWorkbook] = useState(false)
   const [error, setError] = useState('')
   const [lastExecutedAt, setLastExecutedAt] = useState('')
+  const [appliedPayload, setAppliedPayload] = useState(null)
+  const appliedRunnerPayloadRef = useRef(null)
+  const [printMode, setPrintMode] = useState(false)
 
   // Separate Date Range vs Single Date + Locations + Slicers + Cross-Filters
   const [dateFrom, setDateFrom] = useState('')
@@ -95,6 +99,18 @@ function AnalyticsViewer({ loggedInUser }) {
     try {
       const response = await runAnalyticsDashboard(targetId, payload)
       setResults(response?.results || {})
+      // Freeze the exact payload that produced these results. Drill-through,
+      // exports and print must use this, never unsaved slicer state.
+      const applied = {
+        ...payload,
+        location_codes: Array.isArray(payload.location_codes) ? [...payload.location_codes] : [],
+        runtime_values: { ...(payload.runtime_values || {}) },
+        selection_filters: Array.isArray(payload.selection_filters)
+          ? payload.selection_filters.map((item) => ({ ...item }))
+          : [],
+      }
+      appliedRunnerPayloadRef.current = applied
+      setAppliedPayload(applied)
       const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
       setLastExecutedAt(nowStr)
     } catch (err) {
@@ -152,6 +168,8 @@ function AnalyticsViewer({ loggedInUser }) {
         setDateTo('')
         setSingleDate('')
         setActivePreset('')
+        appliedRunnerPayloadRef.current = null
+        setAppliedPayload(null)
 
         // Restore optional browser-session custom arrangement if valid
         try {
@@ -208,7 +226,32 @@ function AnalyticsViewer({ loggedInUser }) {
 
   const dashboardName = dashboard?.dashboard_name || dashboard?.name || 'Analytics Dashboard'
   const scopeLabel = dashboard?.scope_type || 'LOCATION'
+  const locationLocked = String(scopeLabel).toUpperCase() === 'LOCATION'
   const canEdit = canEditDefinition && (dashboard?.my_access === 'OWNER' || dashboard?.my_access === 'EDIT')
+
+  // Compare the live slicer state with the payload behind the visible results.
+  // This prevents drill-through/export/print from silently using unapplied filters.
+  const currentPayloadSignature = useMemo(() => JSON.stringify(buildRunnerPayload()), [buildRunnerPayload])
+  const appliedPayloadSignature = useMemo(() => JSON.stringify(appliedPayload || {}), [appliedPayload])
+  const pendingFilters = Boolean(appliedPayload) && currentPayloadSignature !== appliedPayloadSignature
+
+  const appliedDateWindow = useMemo(() => {
+    if (!appliedPayload) return effectiveDateWindow
+    return { from: appliedPayload.date_from || null, to: appliedPayload.date_to || null }
+  }, [appliedPayload, effectiveDateWindow])
+
+  const appliedLocationLabel = useMemo(() => {
+    if (locationLocked && dashboard?.location_code) return `Location: ${dashboard.location_code}`
+    const codes = appliedPayload?.location_codes || []
+    return codes.length
+      ? `Location${codes.length > 1 ? 's' : ''}: ${codes.slice(0, 3).join(', ')}${codes.length > 3 ? ` +${codes.length - 3}` : ''}`
+      : 'All Scoped Locations'
+  }, [appliedPayload, dashboard?.location_code, locationLocked])
+
+  const getRunnerPayload = useCallback(
+    () => appliedRunnerPayloadRef.current || buildRunnerPayload(),
+    [buildRunnerPayload]
+  )
 
   const handleToggleCrossFilter = useCallback((sourceVisualId, filterItem) => {
     const prev = selectionFiltersRef.current
@@ -247,6 +290,7 @@ function AnalyticsViewer({ loggedInUser }) {
   }, [buildRunnerPayload, dashboard, runBatch])
 
   const handleLocationsChange = (nextLocations) => {
+    if (locationLocked) return
     setSelectedLocations(nextLocations)
     if (dashboard?.id && slicers.some((s) => String(s.type || 'SELECT').toUpperCase() === 'SELECT')) {
       fetchSlicerOptions(dashboard.id, slicers, nextLocations).then((opts) => setSlicerOptions(opts))
@@ -283,7 +327,7 @@ function AnalyticsViewer({ loggedInUser }) {
     setRecordsLoading(true)
     setRecordsPayload(null)
     try {
-      const data = await getAnalyticsVisualRecords(dashboard.id, visual.id, buildRunnerPayload())
+      const data = await getAnalyticsVisualRecords(dashboard.id, visual.id, getRunnerPayload())
       setRecordsPayload(data)
       logUiAction('Analytics', 'Inspect Visual Underlying Records', {
         dashboardId: dashboard.id,
@@ -300,7 +344,7 @@ function AnalyticsViewer({ loggedInUser }) {
   const handleExportVisual = async (visual, format = 'xlsx') => {
     if (!dashboard?.id) return
     try {
-      await exportAnalyticsVisual(dashboard.id, visual.id, buildRunnerPayload(), format)
+      await exportAnalyticsVisual(dashboard.id, visual.id, getRunnerPayload(), format)
       toast.success(`Exported "${visual.title}" (${format.toUpperCase()}).`)
     } catch (err) {
       toast.error(err.message || 'Unable to export visual.')
@@ -311,7 +355,7 @@ function AnalyticsViewer({ loggedInUser }) {
     if (!dashboard?.id) return
     setExportingWorkbook(true)
     try {
-      await exportAnalyticsWorkbook(dashboard.id, buildRunnerPayload())
+      await exportAnalyticsWorkbook(dashboard.id, getRunnerPayload())
       logUiAction('Analytics', 'Export Dashboard Workbook', {
         dashboardId: dashboard.id,
         dashboardName,
@@ -321,6 +365,23 @@ function AnalyticsViewer({ loggedInUser }) {
       toast.error(err.message || 'Unable to export dashboard workbook.')
     } finally {
       setExportingWorkbook(false)
+    }
+  }
+
+  const handleClearDrillThroughFilters = async () => {
+    if (!dashboard?.id || !recordsModalVisual?.id) return
+    const payload = { ...getRunnerPayload(), selection_filters: [] }
+    selectionFiltersRef.current = []
+    setSelectionFilters([])
+    setRecordsLoading(true)
+    try {
+      const data = await getAnalyticsVisualRecords(dashboard.id, recordsModalVisual.id, payload)
+      setRecordsPayload(data)
+      runBatch(dashboard.id, payload)
+    } catch (err) {
+      toast.error(err.message || 'Unable to reload records.')
+    } finally {
+      setRecordsLoading(false)
     }
   }
 
@@ -347,6 +408,24 @@ function AnalyticsViewer({ loggedInUser }) {
     toast.info('Restored canonical published layout.')
   }
 
+  const renderVisualForCanvas = useCallback((visual, layoutItem, options = {}) => {
+    const activeSelForOthers = selectionFilters.find((sf) => sf.source_visual_id === visual.id) || selectionFilters[0] || null
+    return (
+      <AnalyticsVisual
+        visual={visual}
+        result={results[visual.id]}
+        loading={running}
+        editable={arrangeMode && !options.printMode}
+        isLocked={Boolean(layoutItem?.locked)}
+        activeSelection={activeSelForOthers}
+        onCrossFilter={options.printMode ? null : (filterSpec) => handleToggleCrossFilter(visual.id, filterSpec)}
+        onInspectRecords={options.printMode ? null : handleInspectRecords}
+        onExport={options.printMode ? null : (canExport ? handleExportVisual : null)}
+        printMode={Boolean(options.printMode)}
+      />
+    )
+  }, [arrangeMode, canExport, handleExportVisual, handleInspectRecords, handleToggleCrossFilter, results, running, selectionFilters])
+
   if (loading) {
     return (
       <div className="page-shell analytics-page">
@@ -365,17 +444,28 @@ function AnalyticsViewer({ loggedInUser }) {
 
   return (
     <div className="page-shell analytics-page analytics-viewer-page">
-      <div className="printable-report">
+      {/* Single printable surface: header + same visual arrangement + footer. */}
+      <div className="printable-report analytics-print-report">
         <CompanyPrintHeader
           profile={profile}
           defaultSubtitle={[
             dashboardName,
-            dashboard.location_code ? `Location: ${dashboard.location_code}` : 'All Scoped Locations',
-            effectiveDateWindow.from || effectiveDateWindow.to
-              ? `Period: ${effectiveDateWindow.from || 'Start'} to ${effectiveDateWindow.to || 'Latest'}`
+            appliedLocationLabel,
+            appliedDateWindow.from || appliedDateWindow.to
+              ? `Period: ${appliedDateWindow.from || 'Start'} to ${appliedDateWindow.to || 'Latest'}`
               : 'Period: All Dates',
           ].join(' · ')}
         />
+        {printMode && visuals.length > 0 && (
+          <AnalyticsPrintCanvas
+            visuals={visuals}
+            results={results}
+            layout={activeLayout}
+            canvas={definition.canvas || {}}
+            renderVisual={renderVisualForCanvas}
+          />
+        )}
+        <CompanyPrintFooter profile={profile} />
       </div>
 
       <div className="page-header analytics-header no-print">
@@ -422,7 +512,26 @@ function AnalyticsViewer({ loggedInUser }) {
           <button
             type="button"
             className="btn-secondary"
-            onClick={() => requestPrint({ module: 'Analytics', reportName: dashboardName })}
+            onClick={() => requestPrint({
+              module: 'Analytics',
+              reportName: dashboardName,
+              onBeforePrint: async () => {
+                setPrintMode(true)
+                // Let the print canvas (and its charts) size before print().
+                // The timer keeps a backgrounded tab from hanging the dialog.
+                await new Promise((resolve) => {
+                  let settled = false
+                  const finish = () => {
+                    if (settled) return
+                    settled = true
+                    resolve()
+                  }
+                  window.setTimeout(finish, 350)
+                  window.requestAnimationFrame(() => window.requestAnimationFrame(finish))
+                })
+              },
+              onAfterPrint: () => setPrintMode(false),
+            })}
           >
             <Icon name="print" size={15} /> Print
           </button>
@@ -476,6 +585,9 @@ function AnalyticsViewer({ loggedInUser }) {
           }}
           availableLocations={availableLocations}
           selectedLocations={selectedLocations}
+          locationLocked={locationLocked}
+          fixedLocationCode={dashboard.location_code || ''}
+          pendingFilters={pendingFilters}
           onLocationsChange={handleLocationsChange}
           slicers={slicers}
           slicerOptions={slicerOptions}
@@ -511,29 +623,9 @@ function AnalyticsViewer({ loggedInUser }) {
           cellHeight={Number(definition.canvas?.cellHeight) || 64}
           margin={Number(definition.canvas?.margin) || 14}
           onLayoutChange={arrangeMode ? handleSessionLayoutChange : null}
-          renderVisual={(visual, layoutItem) => {
-            const activeSelForOthers = selectionFilters.find((sf) => sf.source_visual_id === visual.id) || selectionFilters[0] || null
-            return (
-              <AnalyticsVisual
-                visual={visual}
-                result={results[visual.id]}
-                loading={running}
-                editable={arrangeMode}
-                isLocked={Boolean(layoutItem?.locked)}
-                activeSelection={activeSelForOthers}
-                onCrossFilter={(filterSpec) => handleToggleCrossFilter(visual.id, filterSpec)}
-                onInspectRecords={handleInspectRecords}
-                onExport={canExport ? handleExportVisual : null}
-              />
-            )
-          }}
+          renderVisual={renderVisualForCanvas}
         />
       )}
-
-      {/* Print Footer */}
-      <div className="printable-report">
-        <CompanyPrintFooter profile={profile} />
-      </div>
 
       {/* Underlying Source Records Modal */}
       <Modal
@@ -547,6 +639,15 @@ function AnalyticsViewer({ loggedInUser }) {
         footer={(
           <div className="analytics-modal-footer-bar">
             <div className="analytics-modal-footer-left">
+              {selectionFilters.length > 0 && (
+                <button
+                  type="button"
+                  className="btn-secondary btn-sm"
+                  onClick={handleClearDrillThroughFilters}
+                >
+                  Clear drill-through filters <Icon name="close" size={13} />
+                </button>
+              )}
               {recordsPayload?.rows?.length > 0 && (
                 <ExportMenu
                   label="Export Records"
@@ -592,20 +693,39 @@ function AnalyticsViewer({ loggedInUser }) {
           {recordsLoading ? (
             <div className="analytics-visual-loading">Fetching ungrouped underlying source records…</div>
           ) : recordsPayload ? (
-            <PerspectiveGrid
-              visual={{
-                id: `records_${recordsModalVisual?.id}`,
-                type: 'TABLE',
-                explorer: { showShelfByDefault: true },
-                style: { table: { dataBars: true, showSummaryBar: true, stickyHeader: true, striped: true } },
-              }}
-              columns={(recordsPayload.columns || []).filter((c) => !c.hidden)}
-              rows={recordsPayload.rows || []}
-              totals={recordsPayload.totals || {}}
-              expanded
-              shelfOpen
-              containerWidth={1100}
-            />
+            <>
+              {(recordsPayload.meta?.warnings || []).map((warning, idx) => (
+                <AlertMessage key={`records-warning-${idx}`} tone="warning" compact message={warning} />
+              ))}
+              {recordsPayload.meta?.applied_filters?.length > 0 && (
+                <div className="analytics-records-applied-filters">
+                  Applied filters: {recordsPayload.meta.applied_filters.join(' · ')}
+                </div>
+              )}
+              {!recordsPayload.rows?.length && recordsPayload.meta?.filter_breakdown && (
+                <div className="analytics-records-applied-filters">
+                  Candidates: {recordsPayload.meta.filter_breakdown.candidates ?? 0} · with stock evidence:{' '}
+                  {recordsPayload.meta.filter_breakdown.with_stock_evidence ?? 0} · after type filter:{' '}
+                  {recordsPayload.meta.filter_breakdown.after_type_filter ?? 0} · after slicers:{' '}
+                  {recordsPayload.meta.filter_breakdown.after_slicer_filters ?? 0} · after fixed filters:{' '}
+                  {recordsPayload.meta.filter_breakdown.after_fixed_filters ?? 0}
+                </div>
+              )}
+              <PerspectiveGrid
+                visual={{
+                  id: `records_${recordsModalVisual?.id}`,
+                  type: 'TABLE',
+                  explorer: { showShelfByDefault: true },
+                  style: { table: { dataBars: true, showSummaryBar: true, stickyHeader: true, striped: true } },
+                }}
+                columns={(recordsPayload.columns || []).filter((c) => !c.hidden)}
+                rows={recordsPayload.rows || []}
+                totals={recordsPayload.totals || {}}
+                expanded
+                shelfOpen
+                containerWidth={1100}
+              />
+            </>
           ) : (
             <AlertMessage tone="info" message="No underlying records available." />
           )}
