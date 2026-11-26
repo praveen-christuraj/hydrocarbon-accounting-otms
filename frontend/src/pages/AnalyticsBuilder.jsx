@@ -24,6 +24,7 @@ import {
 import { logUiAction } from '../utils/actionLogger'
 import { FILTER_OPERATORS } from '../utils/reportBuilder'
 import {
+  BLUEPRINT_CATEGORIES,
   BUCKET_OPTIONS,
   ECHARTS_VISUAL_TYPES,
   PLOTLY_VISUAL_TYPES,
@@ -60,12 +61,8 @@ function getDatasetIdForSource(source, fallbackId = 'tank_stock_ledger') {
 
 function buildQueryFromDataset(dataset, visualType, customTitle = '') {
   const requestedType = String(visualType || 'COLUMN').toUpperCase()
-  const type = dataset?.kind === 'material_balance' && !MATERIAL_BALANCE_VISUAL_TYPES.has(requestedType)
-    ? 'PIVOT_GRID'
-    : requestedType
-  const meta = getVisualMeta(type)
 
-  if (type === 'TEXT') {
+  if (requestedType === 'TEXT') {
     return {
       title: customTitle || 'Executive Operating Note',
       type: 'TEXT',
@@ -77,20 +74,33 @@ function buildQueryFromDataset(dataset, visualType, customTitle = '') {
     }
   }
 
-  if (type === 'TANK_VISUAL' || dataset?.kind === 'tank_snapshot') {
+  if (requestedType === 'TANK_VISUAL' || dataset?.kind === 'tank_snapshot') {
+    const resolvedTankType = requestedType === 'TANK_VISUAL' ? 'TANK_VISUAL' : requestedType
+    const isChartLike = ['BAR', 'COLUMN', 'LINE', 'AREA', 'PIE', 'DONUT', 'KPI_CARD'].includes(resolvedTankType)
     return {
       title: customTitle || 'Shore Tank Live Stock & Ullage',
-      type: type === 'TANK_VISUAL' ? 'TANK_VISUAL' : type,
-      query: { source: { kind: 'tank_snapshot' }, unit: 'nsv' },
+      type: resolvedTankType,
+      query: {
+        source: { kind: 'tank_snapshot' },
+        unit: 'nsv',
+        filters: [],
+        filter_logic: 'AND',
+        ...(isChartLike ? { dimension_key: 'tank_asset_code', measure_key: 'current_stock', metric_key: 'current_stock' } : {}),
+      },
       style: {},
-      explorer: { allowViewSwitch: type !== 'TANK_VISUAL' },
+      explorer: { allowViewSwitch: resolvedTankType !== 'TANK_VISUAL' },
       interactions: { crossFilter: true, drillThrough: { enabled: true, mode: 'RECORDS' } },
     }
   }
 
+  const type = dataset?.kind === 'material_balance' && !MATERIAL_BALANCE_VISUAL_TYPES.has(requestedType)
+    ? 'PIVOT_GRID'
+    : requestedType
+  const meta = getVisualMeta(type)
+
   if (dataset?.kind === 'tracking_status' || String(dataset?.kind || '').includes('tracking_status')) {
     const defaultDim = 'current_status'
-    const defaultMeasure = 'quantity_gsv_bbl'
+    const defaultMeasure = 'movement_count'
     return {
       title: customTitle || 'Vessel & Barge Tracking Status',
       type: ['KPI_CARD', 'TABLE', 'PIVOT_GRID', 'MATRIX', 'BAR', 'COLUMN', 'LINE', 'AREA', 'PIE', 'DONUT'].includes(type) ? type : 'TABLE',
@@ -108,6 +118,7 @@ function buildQueryFromDataset(dataset, visualType, customTitle = '') {
           { key: 'current_status', label: 'Current Status', kind: 'data', source: { type: 'column', column: 'current_status' }, data_type: 'text', aggregate: 'FIRST', format: {} },
           { key: 'last_event_at', label: 'Last Event Date/Time', kind: 'data', source: { type: 'column', column: 'last_event_at' }, data_type: 'datetime', aggregate: 'MAX', format: {} },
           { key: 'quantity_gsv_bbl', label: 'Last Qty GSV (BBL)', kind: 'data', source: { type: 'column', column: 'quantity_gsv_bbl' }, data_type: 'number', aggregate: 'SUM', show_total: true, format: { decimals: 2 } },
+          { key: 'movement_count', label: 'Movements', kind: 'data', source: { type: 'column', column: 'movement_count' }, data_type: 'number', aggregate: 'SUM', show_total: true, format: { decimals: 0 } },
         ],
         filters: [],
         filter_logic: 'AND',
@@ -247,11 +258,12 @@ function AnalyticsBuilder({ loggedInUser }) {
   const starterTemplates = useMemo(() => buildStarterTemplates(), [])
 
   const [catalog, setCatalog] = useState({ is_admin: false, datasets: [], tables: [], locations: [] })
-  const [lookups, setLookups] = useState({ users: [], roles: [], locations: [] })
+  const [lookups, setLookups] = useState({ users: [], roles: [], locations: [], asset_types: [] })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [previewing, setPreviewing] = useState(false)
   const [error, setError] = useState('')
+  const lastExternalDropRef = useRef(0)
 
   // Dashboard Metadata & Access (canonical backend fields)
   const [name, setName] = useState('')
@@ -355,7 +367,7 @@ function AnalyticsBuilder({ loggedInUser }) {
       try {
         const [catalogData, lookupData, existing] = await Promise.all([
           getAnalyticsCatalog(),
-          getAnalyticsLookups().catch(() => ({ users: [], roles: [], locations: [] })),
+          getAnalyticsLookups().catch(() => ({ users: [], roles: [], locations: [], asset_types: [] })),
           isNew ? Promise.resolve(null) : getAnalyticsDefinition(id),
         ])
         if (!active) return
@@ -478,6 +490,11 @@ function AnalyticsBuilder({ loggedInUser }) {
   }, [])
 
   const addVisualToCanvas = useCallback((visualType, dropCoords = null) => {
+    if (dropCoords) {
+      lastExternalDropRef.current = Date.now()
+    } else if (Date.now() - lastExternalDropRef.current < 450) {
+      return
+    }
     const ds = allDatasets.find((d) => d.id === activeDatasetId || d.kind === activeDatasetId) || allDatasets[0]
     const idStr = `vis_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`
     const visualSkeleton = buildQueryFromDataset(ds, visualType)
@@ -930,10 +947,18 @@ function AnalyticsBuilder({ loggedInUser }) {
               value=""
               onChange={(e) => applyBlueprint(e.target.value)}
             >
-              <option value="">Load Blueprint…</option>
-              {starterTemplates.map((tpl) => (
-                <option key={tpl.id} value={tpl.id}>{tpl.name}</option>
-              ))}
+              <option value="">Load Blueprint ({starterTemplates.length})…</option>
+              {BLUEPRINT_CATEGORIES.map((category) => {
+                const items = starterTemplates.filter((tpl) => tpl.category === category)
+                if (!items.length) return null
+                return (
+                  <optgroup key={category} label={category}>
+                    {items.map((tpl) => (
+                      <option key={tpl.id} value={tpl.id}>{tpl.name}</option>
+                    ))}
+                  </optgroup>
+                )
+              })}
             </select>
 
             <label className="analytics-canvas-mode-toggle" title="Float mode lets widgets sit anywhere vertically without auto-compacting upward">
@@ -1481,15 +1506,59 @@ function AnalyticsBuilder({ loggedInUser }) {
                     onChange={(e) => {
                       const nextType = e.target.value
                       const defaults = defaultLayoutForVisualType(nextType)
-                      updateVisualById(selectedVisual.id, { type: nextType })
-                      setDefinition((prev) => ({
-                        ...prev,
-                        layout: normalizeLayoutForGridStack(prev.layout, prev.visuals).map((l) => (
+                      const prevType = String(selectedVisual.type || '').toUpperCase()
+                      const prevKind = String(selectedVisual.query?.source?.kind || '')
+
+                      let patch = { type: nextType }
+                      if (nextType === 'TANK_VISUAL' && prevKind !== 'tank_snapshot') {
+                        patch = {
+                          type: 'TANK_VISUAL',
+                          query: {
+                            source: { kind: 'tank_snapshot' },
+                            unit: selectedVisual.query?.unit || 'nsv',
+                            filters: [],
+                            filter_logic: 'AND',
+                          },
+                          explorer: { ...(selectedVisual.explorer || {}), allowViewSwitch: false },
+                        }
+                      } else if (nextType === 'TEXT') {
+                        patch = {
+                          type: 'TEXT',
+                          text: selectedVisual.text || 'Enter terminal reconciliation context, operating notes, or threshold commentary here.',
+                          query: {},
+                          explorer: { allowViewSwitch: false },
+                        }
+                      } else if ((prevType === 'TEXT' || prevType === 'TANK_VISUAL') && nextType !== 'TANK_VISUAL') {
+                        const fallbackDs = allDatasets.find((d) => d.id === activeDatasetId || d.kind === activeDatasetId)
+                          || allDatasets.find((d) => d.kind === 'tank_stock_ledger')
+                          || allDatasets[0]
+                        if (fallbackDs) {
+                          const rebuilt = buildQueryFromDataset(fallbackDs, nextType, selectedVisual.title)
+                          patch = {
+                            type: rebuilt.type,
+                            query: rebuilt.query,
+                            explorer: rebuilt.explorer,
+                          }
+                        }
+                      }
+
+                      const nextVisuals = (definitionRef.current?.visuals || []).map((v) => (
+                        String(v.id) === String(selectedVisual.id) ? { ...v, ...patch } : v
+                      ))
+                      const nextDef = {
+                        ...(definitionRef.current || EMPTY_DEFINITION),
+                        visuals: nextVisuals,
+                        layout: normalizeLayoutForGridStack(definitionRef.current?.layout, nextVisuals).map((l) => (
                           String(l.i) === String(selectedVisual.id)
                             ? { ...l, w: Math.max(l.w, defaults.minW), h: Math.max(l.h, defaults.minH), minW: defaults.minW, minH: defaults.minH }
                             : l
                         )),
-                      }))
+                      }
+                      definitionRef.current = nextDef
+                      setDefinition(nextDef)
+                      if (nextType !== 'TEXT') {
+                        executePreview(nextDef)
+                      }
                     }}
                   >
                     {(selectedVisual.query?.source?.kind === 'material_balance'
@@ -1529,20 +1598,200 @@ function AnalyticsBuilder({ loggedInUser }) {
                     />
                   </label>
                 ) : selectedVisual.query?.source?.kind === 'tank_snapshot' || selectedVisual.type === 'TANK_VISUAL' ? (
-                  <label>
-                    Stock &amp; Capacity Basis
-                    <select
-                      value={selectedVisual.query?.unit || 'nsv'}
-                      onChange={(e) => updateVisualById(selectedVisual.id, {
-                        query: { ...selectedVisual.query, unit: e.target.value },
-                      })}
+                  <>
+                    <label>
+                      Stock &amp; Capacity Basis
+                      <select
+                        value={selectedVisual.query?.unit || 'nsv'}
+                        onChange={(e) => updateVisualById(selectedVisual.id, {
+                          query: {
+                            ...(selectedVisual.query || {}),
+                            source: { ...(selectedVisual.query?.source || {}), kind: 'tank_snapshot' },
+                            unit: e.target.value,
+                          },
+                        })}
+                      >
+                        <option value="nsv">Net Standard Volume (NSV BBL)</option>
+                        <option value="gsv">Gross Standard Volume (GSV BBL)</option>
+                        <option value="lt">Long Tons (LT)</option>
+                        <option value="mt">Metric Tons (MT)</option>
+                      </select>
+                    </label>
+
+                    <label>
+                      Location Override (optional)
+                      <select
+                        value={selectedVisual.query?.source?.location_code || ''}
+                        onChange={(e) => updateVisualById(selectedVisual.id, {
+                          query: {
+                            ...(selectedVisual.query || {}),
+                            source: {
+                              kind: 'tank_snapshot',
+                              ...(e.target.value ? { location_code: e.target.value } : {}),
+                            },
+                          },
+                        })}
+                      >
+                        <option value="">Use Dashboard / Slicer Location</option>
+                        {(lookups.locations || []).map((loc) => (
+                          <option key={loc.location_code} value={loc.location_code}>
+                            {loc.location_code} — {loc.location_name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    {(lookups.asset_types || []).length > 0 && (
+                      <div className="analytics-inspector-subbox">
+                        <div className="analytics-section-head">
+                          <span>Tank Asset Types (optional)</span>
+                          {(selectedVisual.query?.asset_type_codes || []).length > 0 && (
+                            <button
+                              type="button"
+                              className="btn-link"
+                              onClick={() => updateVisualById(selectedVisual.id, {
+                                query: { ...(selectedVisual.query || {}), asset_type_codes: [] },
+                              })}
+                            >
+                              Reset
+                            </button>
+                          )}
+                        </div>
+                        <p className="analytics-muted-hint">
+                          Leave unchecked to automatically show active shore tanks with stock or tank calibration.
+                        </p>
+                        <div className="analytics-slicer-targets">
+                          {(lookups.asset_types || []).map((at) => {
+                            const selectedTypes = selectedVisual.query?.asset_type_codes || []
+                            const isChecked = selectedTypes.includes(at.asset_type_code)
+                            return (
+                              <label key={at.asset_type_code} className="analytics-check-row">
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={() => {
+                                    const nextTypes = isChecked
+                                      ? selectedTypes.filter((c) => c !== at.asset_type_code)
+                                      : [...selectedTypes, at.asset_type_code]
+                                    updateVisualById(selectedVisual.id, {
+                                      query: { ...(selectedVisual.query || {}), asset_type_codes: nextTypes },
+                                    })
+                                  }}
+                                />
+                                <span>{at.asset_type_name || at.asset_type_code}</span>
+                              </label>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="analytics-inspector-subbox">
+                      <div className="analytics-section-head">
+                        <span>Tank Filters</span>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                          <select
+                            aria-label="Tank filter logic"
+                            value={selectedVisual.query?.filter_logic || 'AND'}
+                            onChange={(e) => updateVisualById(selectedVisual.id, {
+                              query: { ...(selectedVisual.query || {}), filter_logic: e.target.value },
+                            })}
+                          >
+                            <option value="AND">AND</option>
+                            <option value="OR">OR</option>
+                          </select>
+                          <button
+                            type="button"
+                            className="btn-link"
+                            onClick={() => {
+                              const nextFilters = [...(selectedVisual.query?.filters || []), {
+                                column_key: 'product_name',
+                                operator: 'eq',
+                                value: '',
+                              }]
+                              updateVisualById(selectedVisual.id, {
+                                query: { ...(selectedVisual.query || {}), filters: nextFilters },
+                              })
+                            }}
+                          >
+                            + Filter
+                          </button>
+                        </div>
+                      </div>
+                      {(selectedVisual.query?.filters || []).length === 0 && (
+                        <p className="analytics-muted-hint">Filter specific shore tanks by tank code, product, location, or fill %.</p>
+                      )}
+                      {(selectedVisual.query?.filters || []).map((flt, fIdx) => (
+                        <div key={`tank-flt-${fIdx}`} className="analytics-filter-row" style={{ display: 'grid', gap: 6, marginBottom: 8 }}>
+                          <select
+                            aria-label={`Tank filter column ${fIdx + 1}`}
+                            value={flt.column_key || 'product_name'}
+                            onChange={(e) => {
+                              const nextFilters = (selectedVisual.query?.filters || []).map((item, i) => (
+                                i === fIdx ? { ...item, column_key: e.target.value } : item
+                              ))
+                              updateVisualById(selectedVisual.id, { query: { ...(selectedVisual.query || {}), filters: nextFilters } })
+                            }}
+                          >
+                            <option value="tank_asset_code">Tank Code</option>
+                            <option value="tank_asset_name">Tank Name</option>
+                            <option value="asset_type_code">Asset Type</option>
+                            <option value="location_code">Location</option>
+                            <option value="product_name">Product</option>
+                            <option value="fill_pct">Fill %</option>
+                            <option value="current_stock">Current Stock</option>
+                          </select>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 6 }}>
+                            <select
+                              aria-label={`Tank filter operator ${fIdx + 1}`}
+                              value={flt.operator || 'eq'}
+                              onChange={(e) => {
+                                const nextFilters = (selectedVisual.query?.filters || []).map((item, i) => (
+                                  i === fIdx ? { ...item, operator: e.target.value } : item
+                                ))
+                                updateVisualById(selectedVisual.id, { query: { ...(selectedVisual.query || {}), filters: nextFilters } })
+                              }}
+                            >
+                              {FILTER_OPERATORS.map((op) => <option key={op.value} value={op.value}>{op.label}</option>)}
+                            </select>
+                            {!['is_blank', 'is_not_blank'].includes(flt.operator) && (
+                              <input
+                                aria-label={`Tank filter value ${fIdx + 1}`}
+                                value={flt.value ?? ''}
+                                placeholder="Value"
+                                onChange={(e) => {
+                                  const nextFilters = (selectedVisual.query?.filters || []).map((item, i) => (
+                                    i === fIdx ? { ...item, value: e.target.value } : item
+                                  ))
+                                  updateVisualById(selectedVisual.id, { query: { ...(selectedVisual.query || {}), filters: nextFilters } })
+                                }}
+                              />
+                            )}
+                            <button
+                              type="button"
+                              className="btn-link is-danger"
+                              aria-label={`Remove tank filter ${fIdx + 1}`}
+                              onClick={() => {
+                                const nextFilters = (selectedVisual.query?.filters || []).filter((_, i) => i !== fIdx)
+                                updateVisualById(selectedVisual.id, { query: { ...(selectedVisual.query || {}), filters: nextFilters } })
+                              }}
+                            >
+                              ×
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <button
+                      type="button"
+                      className="btn-primary btn-sm"
+                      onClick={() => executePreview(definitionRef.current)}
+                      disabled={previewing}
                     >
-                      <option value="nsv">Net Standard Volume (NSV BBL)</option>
-                      <option value="gsv">Gross Standard Volume (GSV BBL)</option>
-                      <option value="lt">Long Tons (LT)</option>
-                      <option value="mt">Metric Tons (MT)</option>
-                    </select>
-                  </label>
+                      <Icon name="refresh" size={14} /> Apply &amp; Refresh Tank Levels
+                    </button>
+                  </>
                 ) : selectedVisual.query?.source?.kind === 'material_balance' ? (
                   <>
                     <label>

@@ -1,6 +1,18 @@
 import { useEffect, useId, useMemo, useState } from 'react'
 import AlertMessage from '../common/AlertMessage'
 
+const UNIT_META = {
+  nsv: { short: 'NSV', suffix: 'BBL', isVolume: true },
+  gsv: { short: 'GSV', suffix: 'BBL', isVolume: true },
+  lt: { short: 'LT', suffix: 'LT', isVolume: false },
+  mt: { short: 'MT', suffix: 'MT', isVolume: false },
+}
+
+function normalizeUnit(value) {
+  const key = String(value || 'nsv').toLowerCase()
+  return UNIT_META[key] ? key : 'nsv'
+}
+
 function TankVisualRenderer({
   visual,
   rows = [],
@@ -8,50 +20,72 @@ function TankVisualRenderer({
   onCrossFilter = null,
 }) {
   const clipPrefix = useId().replace(/[^a-zA-Z0-9_-]/g, '')
-  const [unit, setUnit] = useState(() => String(visual?.query?.unit || 'nsv').toLowerCase())
+  const [unit, setUnit] = useState(() => normalizeUnit(visual?.query?.unit))
 
   useEffect(() => {
-    const nextUnit = String(visual?.query?.unit || 'nsv').toLowerCase()
-    if (nextUnit === 'nsv' || nextUnit === 'gsv') {
-      setUnit(nextUnit)
-    }
+    setUnit(normalizeUnit(visual?.query?.unit))
   }, [visual?.query?.unit])
 
-  const tanks = useMemo(() => {
-    if (!Array.isArray(rows) || !rows.length) return []
-    const byTank = new Map()
+  const unitMeta = UNIT_META[unit] || UNIT_META.nsv
+
+  const { tanks, hasMultipleLocations } = useMemo(() => {
+    if (!Array.isArray(rows) || !rows.length) {
+      return { tanks: [], hasMultipleLocations: false }
+    }
+    const byKey = new Map()
+    const locs = new Set()
     for (const r of rows) {
       const code = String(r.tank_asset_code || r.asset_code || r.tank || 'TANK')
-      if (!byTank.has(code)) {
+      const loc = String(r.location_code || '').trim()
+      if (loc) locs.add(loc.toUpperCase())
+      const dedupeKey = `${loc.toUpperCase()}::${code.toUpperCase()}`
+      if (!byKey.has(dedupeKey)) {
         const fallbackStock = Number(r.current_stock ?? 0)
         const nsv = Number(r.stock_nsv_bbl ?? r.current_stock ?? r.movement_nsv_bbl ?? 0)
         const gsv = Number(r.stock_gsv_bbl ?? r.current_stock ?? r.movement_gsv_bbl ?? nsv)
+        const lt = Number(r.stock_lt ?? 0)
+        const mt = Number(r.stock_mt ?? 0)
+        const stockByUnit = { nsv, gsv, lt, mt }
+        const stock = Number.isFinite(stockByUnit[unit]) ? stockByUnit[unit] : fallbackStock
+
         const capBase = Number(r.capacity ?? 0)
         const capNsv = Number(r.capacity_nsv_bbl ?? capBase)
         const capGsv = Number(r.capacity_gsv_bbl ?? capNsv)
-        const stock = unit === 'gsv' ? gsv : (unit === 'nsv' ? nsv : fallbackStock)
-        const cap = unit === 'gsv' ? capGsv : capNsv
-        const pct = cap > 0
+        const rawCap = unit === 'gsv' ? capGsv : capNsv
+        const cap = unitMeta.isVolume && Number.isFinite(rawCap) && rawCap > 0 ? rawCap : null
+
+        const pct = cap !== null
           ? Math.max(0, Math.min(100, (stock / cap) * 100))
-          : (r.fill_pct != null ? Math.max(0, Math.min(100, Number(r.fill_pct))) : null)
-        const ullage = cap > 0
+          : (unitMeta.isVolume && r.fill_pct != null && Number.isFinite(Number(r.fill_pct))
+            ? Math.max(0, Math.min(100, Number(r.fill_pct)))
+            : null)
+
+        const ullage = cap !== null
           ? Math.max(0, cap - stock)
-          : (r.ullage != null && Number.isFinite(Number(r.ullage)) ? Math.max(0, Number(r.ullage)) : null)
-        byTank.set(code, {
+          : (unitMeta.isVolume && r.ullage != null && Number.isFinite(Number(r.ullage))
+            ? Math.max(0, Number(r.ullage))
+            : null)
+
+        byKey.set(dedupeKey, {
+          key: dedupeKey,
           code,
           name: r.tank_asset_name || r.tank_name || code,
-          location: r.location_code || '',
+          assetType: r.asset_type_code || '',
+          location: loc,
           product: r.product_name || 'Unassigned',
           stock,
-          capacity: cap > 0 ? cap : null,
+          capacity: cap,
           ullage,
           fillPct: pct,
           lastDate: r.accounting_date || '',
         })
       }
     }
-    return [...byTank.values()]
-  }, [rows, unit])
+    return {
+      tanks: [...byKey.values()],
+      hasMultipleLocations: locs.size > 1,
+    }
+  }, [rows, unit, unitMeta.isVolume])
 
   if (!tanks.length) {
     return (
@@ -65,51 +99,60 @@ function TankVisualRenderer({
 
   const totalStock = tanks.reduce((acc, t) => acc + (Number(t.stock) || 0), 0)
   const totalCap = tanks.reduce((acc, t) => acc + (Number(t.capacity) || 0), 0)
-  const farmUtilPct = totalCap > 0 ? ((totalStock / totalCap) * 100).toFixed(1) : null
+  const maxStock = Math.max(...tanks.map((x) => Number(x.stock) || 0), 0)
+  const farmUtilPct = unitMeta.isVolume && totalCap > 0 ? ((totalStock / totalCap) * 100).toFixed(1) : null
 
   return (
     <div className="analytics-tank-farm">
       <div className="analytics-tank-farm-bar">
         <div className="analytics-tank-farm-summary">
-          <span><strong>{tanks.length}</strong> Shore Tanks</span>
-          <span>Stock ({unit.toUpperCase()}): <strong>{totalStock.toLocaleString(undefined, { maximumFractionDigits: 0 })} BBL</strong></span>
-          {totalCap > 0 && (
-            <span>Utilization: <strong>{farmUtilPct}%</strong> ({(totalCap - totalStock).toLocaleString(undefined, { maximumFractionDigits: 0 })} BBL ullage)</span>
+          <span><strong>{tanks.length}</strong> Shore {tanks.length === 1 ? 'Tank' : 'Tanks'}</span>
+          <span>
+            Stock ({unitMeta.short}): <strong>{totalStock.toLocaleString(undefined, { maximumFractionDigits: 0 })} {unitMeta.suffix}</strong>
+          </span>
+          {farmUtilPct !== null && (
+            <span>
+              Utilization: <strong>{farmUtilPct}%</strong> ({Math.max(0, totalCap - totalStock).toLocaleString(undefined, { maximumFractionDigits: 0 })} {unitMeta.suffix} ullage)
+            </span>
           )}
         </div>
-        <div className="analytics-unit-pill-group" role="group" aria-label="Volume basis">
-          <button
-            type="button"
-            className={unit === 'nsv' ? 'is-active' : ''}
-            onClick={() => setUnit('nsv')}
-          >
-            NSV
-          </button>
-          <button
-            type="button"
-            className={unit === 'gsv' ? 'is-active' : ''}
-            onClick={() => setUnit('gsv')}
-          >
-            GSV
-          </button>
+        <div className="analytics-unit-pill-group" role="group" aria-label="Volume or mass basis">
+          {Object.entries(UNIT_META).map(([uKey, uInfo]) => (
+            <button
+              key={uKey}
+              type="button"
+              className={unit === uKey ? 'is-active' : ''}
+              onClick={() => setUnit(uKey)}
+            >
+              {uInfo.short}
+            </button>
+          ))}
         </div>
       </div>
 
       <div className="analytics-tank-grid">
         {tanks.map((tank) => {
-          const pct = tank.fillPct != null ? tank.fillPct : (totalStock > 0 ? Math.min(92, Math.max(12, (tank.stock / Math.max(...tanks.map((x) => x.stock), 1)) * 85)) : 0)
-          const levelTone = pct >= 92 ? 'danger' : (pct >= 82 ? 'warning' : (pct <= 8 ? 'muted' : 'normal'))
+          const visualPct = tank.fillPct != null
+            ? tank.fillPct
+            : (maxStock > 0 && tank.stock > 0
+              ? Math.min(92, Math.max(12, (tank.stock / maxStock) * 85))
+              : 0)
+          const levelTone = tank.fillPct != null
+            ? (tank.fillPct >= 92 ? 'danger' : (tank.fillPct >= 82 ? 'warning' : (tank.fillPct <= 8 ? 'muted' : 'normal')))
+            : (tank.stock > 0 ? 'normal' : 'muted')
           const isSelected = activeSelection?.column_key === 'tank_asset_code' && String(activeSelection.value) === tank.code
-          const liquidHeight = Math.max(0, Math.min(72, (pct / 100) * 72))
+          const liquidHeight = Math.max(0, Math.min(72, (visualPct / 100) * 72))
           const liquidY = 90 - liquidHeight
 
           const fillHex = levelTone === 'danger'
             ? '#b42318'
             : (levelTone === 'warning' ? '#b36b00' : (levelTone === 'muted' ? '#64748b' : '#2f63b3'))
 
+          const safeClipId = `clip-${clipPrefix}-${tank.key.replace(/[^a-zA-Z0-9]/g, '_')}`
+
           return (
             <button
-              key={tank.code}
+              key={tank.key}
               type="button"
               className={`analytics-tank-card tone-${levelTone} ${isSelected ? 'is-selected' : ''}`}
               onClick={() => {
@@ -121,10 +164,15 @@ function TankVisualRenderer({
                   })
                 }
               }}
-              title={`${tank.code} (${tank.product}) — Click to cross-filter dashboard`}
+              title={`${tank.code}${tank.location ? ` · ${tank.location}` : ''} (${tank.product}) — Click to cross-filter dashboard`}
             >
               <div className="analytics-tank-card-top">
-                <strong className="analytics-tank-code">{tank.code}</strong>
+                <div className="analytics-tank-code-wrap">
+                  <strong className="analytics-tank-code">{tank.code}</strong>
+                  {hasMultipleLocations && tank.location && (
+                    <span className="analytics-tank-loc-badge">{tank.location}</span>
+                  )}
+                </div>
                 <span className="analytics-tank-product-chip">{tank.product}</span>
               </div>
 
@@ -135,7 +183,7 @@ function TankVisualRenderer({
                   aria-hidden="true"
                 >
                   <defs>
-                    <clipPath id={`clip-${clipPrefix}-${tank.code.replace(/[^a-zA-Z0-9]/g, '_')}`}>
+                    <clipPath id={safeClipId}>
                       <rect x="14" y="18" width="60" height="72" rx="4" />
                     </clipPath>
                   </defs>
@@ -144,7 +192,7 @@ function TankVisualRenderer({
                   {/* Tank cylinder body */}
                   <rect x="14" y="18" width="60" height="72" rx="3" className="tank-svg-body" />
                   {/* Liquid fill */}
-                  <g clipPath={`url(#clip-${clipPrefix}-${tank.code.replace(/[^a-zA-Z0-9]/g, '_')})`}>
+                  <g clipPath={`url(#${safeClipId})`}>
                     <rect
                       x="14"
                       y={liquidY}
@@ -179,16 +227,24 @@ function TankVisualRenderer({
 
                 <div className="analytics-tank-metrics">
                   <div>
-                    <small>Stock ({unit.toUpperCase()})</small>
-                    <strong>{tank.stock.toLocaleString(undefined, { maximumFractionDigits: 1 })} BBL</strong>
+                    <small>Stock ({unitMeta.short})</small>
+                    <strong>{tank.stock.toLocaleString(undefined, { maximumFractionDigits: 1 })} {unitMeta.suffix}</strong>
                   </div>
                   <div>
                     <small>Capacity</small>
-                    <span>{tank.capacity ? `${tank.capacity.toLocaleString(undefined, { maximumFractionDigits: 0 })} BBL` : 'Unstrapped'}</span>
+                    <span>
+                      {unitMeta.isVolume
+                        ? (tank.capacity ? `${tank.capacity.toLocaleString(undefined, { maximumFractionDigits: 0 })} ${unitMeta.suffix}` : 'Unstrapped')
+                        : 'Vol. basis only'}
+                    </span>
                   </div>
                   <div>
                     <small>Ullage</small>
-                    <span>{tank.ullage != null ? `${tank.ullage.toLocaleString(undefined, { maximumFractionDigits: 0 })} BBL` : '—'}</span>
+                    <span>
+                      {tank.ullage != null
+                        ? `${tank.ullage.toLocaleString(undefined, { maximumFractionDigits: 0 })} ${unitMeta.suffix}`
+                        : '—'}
+                    </span>
                   </div>
                 </div>
               </div>

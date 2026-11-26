@@ -17,7 +17,7 @@ import {
   publishAnalyticsDefinition,
 } from '../api/analyticsApi'
 import { logUiAction } from '../utils/actionLogger'
-import { buildStarterTemplates } from '../utils/analyticsEngine'
+import { BLUEPRINT_CATEGORIES, buildStarterTemplates } from '../utils/analyticsEngine'
 import '../styles/analytics.css'
 
 function AnalyticsHome({ loggedInUser }) {
@@ -46,8 +46,14 @@ function AnalyticsHome({ loggedInUser }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [page, setPage] = useState(1)
+  const [blueprintCategory, setBlueprintCategory] = useState('ALL')
 
   const starterTemplates = useMemo(() => buildStarterTemplates(), [])
+  const visibleBlueprints = useMemo(() => (
+    blueprintCategory === 'ALL'
+      ? starterTemplates
+      : starterTemplates.filter((tpl) => tpl.category === blueprintCategory)
+  ), [blueprintCategory, starterTemplates])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -211,15 +217,44 @@ function AnalyticsHome({ loggedInUser }) {
       {/* Starter Blueprint Strip for Builders */}
       {canCreate && (
         <section className="analytics-blueprints-strip" aria-label="Quick-start dashboard blueprints">
-          <div className="analytics-blueprints-title">
-            <Icon name="compass" size={16} />
-            <div>
-              <strong>Quick-Start Terminal Blueprints</strong>
-              <span>Launch pre-wired GridStack + Perspective + ECharts + Plotly dashboards in Studio</span>
+          <div className="analytics-blueprints-header">
+            <div className="analytics-blueprints-title">
+              <Icon name="compass" size={16} />
+              <div>
+                <strong>Quick-Start Terminal Blueprints ({starterTemplates.length})</strong>
+                <span>Launch pre-wired GridStack + Perspective + ECharts + Plotly dashboards across terminal, fleet, export, book stock, and metering modules</span>
+              </div>
+            </div>
+            <div className="analytics-blueprint-pills" role="tablist" aria-label="Blueprint categories">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={blueprintCategory === 'ALL'}
+                className={`analytics-blueprint-pill ${blueprintCategory === 'ALL' ? 'is-active' : ''}`}
+                onClick={() => setBlueprintCategory('ALL')}
+              >
+                All ({starterTemplates.length})
+              </button>
+              {BLUEPRINT_CATEGORIES.map((category) => {
+                const count = starterTemplates.filter((t) => t.category === category).length
+                if (!count) return null
+                return (
+                  <button
+                    key={category}
+                    type="button"
+                    role="tab"
+                    aria-selected={blueprintCategory === category}
+                    className={`analytics-blueprint-pill ${blueprintCategory === category ? 'is-active' : ''}`}
+                    onClick={() => setBlueprintCategory(category)}
+                  >
+                    {category} ({count})
+                  </button>
+                )
+              })}
             </div>
           </div>
           <div className="analytics-blueprints-cards">
-            {starterTemplates.map((tpl) => (
+            {visibleBlueprints.map((tpl) => (
               <button
                 key={tpl.id}
                 type="button"
@@ -227,6 +262,9 @@ function AnalyticsHome({ loggedInUser }) {
                 onClick={() => navigate(`/analytics/builder?template=${encodeURIComponent(tpl.id)}`)}
               >
                 <div>
+                  {tpl.category && (
+                    <span className="analytics-blueprint-cat-chip">{tpl.category}</span>
+                  )}
                   <strong>{tpl.name}</strong>
                   <p>{tpl.description}</p>
                 </div>

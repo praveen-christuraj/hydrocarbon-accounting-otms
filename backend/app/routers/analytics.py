@@ -24,6 +24,7 @@ from app.models import (
     AnalyticsDashboardDefinition,
     AnalyticsDashboardGrant,
     AnalyticsDashboardVersion,
+    AssetType,
     Location,
     Role,
     User,
@@ -37,6 +38,10 @@ from app.schemas import (
 from app.services.analytics_engine import (
     ReportDefinitionError,
     TRACKING_STATUS_KINDS,
+    _TANK_SNAPSHOT_COLS,
+    _TRACKING_STATUS_COLS,
+    _is_tank_snapshot_visual,
+    _resolve_missing_slicer_column,
     _run_tank_snapshot_visual,
     _run_tracking_status_visual,
     export_dashboard_workbook_bytes,
@@ -330,6 +335,7 @@ def get_analytics_catalog(
         "columns": [
             {"column": "tank_asset_code", "label": "Tank Code", "data_type": "text"},
             {"column": "tank_asset_name", "label": "Tank Name", "data_type": "text"},
+            {"column": "asset_type_code", "label": "Asset Type", "data_type": "text"},
             {"column": "location_code", "label": "Location", "data_type": "text", "is_location": True},
             {"column": "product_name", "label": "Product", "data_type": "text"},
             {"column": "current_stock", "label": "Current Stock", "data_type": "number"},
@@ -378,6 +384,7 @@ def get_analytics_catalog(
             {"column": "product_name", "label": "Product", "data_type": "text"},
             {"column": "quantity_gsv_bbl", "label": "Last Qty GSV (BBL)", "data_type": "number"},
             {"column": "quantity_nsv_bbl", "label": "Last Qty NSV (BBL)", "data_type": "number"},
+            {"column": "movement_count", "label": "Movements", "data_type": "number"},
             {"column": "remarks", "label": "Remarks / Status Detail", "data_type": "text"},
         ],
         "virtual_fields": [], "supports_template_fields": False,
@@ -396,6 +403,7 @@ def get_analytics_lookups(
     users = db.query(User).order_by(User.full_name.asc(), User.username.asc()).limit(500).all()
     roles = db.query(Role).order_by(Role.role_name.asc()).all()
     locations = db.query(Location).filter(Location.status == "Active").order_by(Location.location_name.asc()).all()
+    asset_types = db.query(AssetType).filter(AssetType.status == "Active").order_by(AssetType.asset_type_name.asc()).all()
     return {
         "users": [{"id": u.id, "username": u.username, "full_name": u.full_name} for u in users],
         "roles": [{"id": r.id, "role_name": r.role_name} for r in roles],
@@ -403,6 +411,10 @@ def get_analytics_lookups(
             {"location_code": loc.location_code, "location_name": loc.location_name}
             for loc in locations
             if visible_scope is None or normalize_location_code(loc.location_code) in visible_scope
+        ],
+        "asset_types": [
+            {"asset_type_code": at.asset_type_code, "asset_type_name": at.asset_type_name}
+            for at in asset_types
         ],
     }
 
@@ -604,14 +616,21 @@ def run_preview(
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=f"{key} must be an ISO date.") from exc
     try:
-        normalized = validate_analytics_definition(definition)
+        normalized = validate_analytics_definition(definition, strict_visuals=False)
         if scope is not None:
             for visual in normalized.get("visuals", []):
                 source = ((visual.get("query") or {}).get("source") or {})
-                source_location = source.get("location_code") if source.get("kind") == "material_balance" else None
+                source_location = source.get("location_code") if source.get("kind") in {"material_balance", "tank_snapshot"} else None
                 if source_location and normalize_location_code(source_location) not in scope:
-                    raise HTTPException(status_code=403, detail="The Material Balance visual location is outside your reporting scope.")
-        result = run_dashboard(db, current_user, normalized, params, payload.get("visual_ids"))
+                    raise HTTPException(status_code=403, detail="The selected visual location is outside your reporting scope.")
+        result = run_dashboard(
+            db,
+            current_user,
+            normalized,
+            params,
+            payload.get("visual_ids"),
+            isolate_errors=True,
+        )
     except ReportDefinitionError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return result
@@ -686,14 +705,23 @@ def _resolve_slicer_values(
     use_runner_scope: bool,
 ) -> dict:
     slicer_key = str(payload.get("slicer_key") or payload.get("slicer_id") or "").strip()
+    inline_slicer = payload.get("slicer") if isinstance(payload.get("slicer"), dict) else None
+    if not slicer_key and inline_slicer:
+        slicer_key = str(inline_slicer.get("key") or inline_slicer.get("id") or "").strip()
     if not slicer_key:
         raise HTTPException(status_code=400, detail="slicer_key is required.")
-    definition = dashboard.definition_json or {}
+    definition = (
+        payload.get("definition")
+        if (not use_runner_scope and isinstance(payload.get("definition"), dict))
+        else (dashboard.definition_json or {})
+    )
     slicers = definition.get("slicers") or []
     slicer = next(
         (item for item in slicers if str(item.get("key")) == slicer_key or str(item.get("id")) == slicer_key),
         None,
     )
+    if not slicer and inline_slicer and not use_runner_scope:
+        slicer = inline_slicer
     if not slicer:
         raise HTTPException(status_code=404, detail="Slicer not found.")
     canonical_key = str(slicer.get("key") or slicer.get("id") or slicer_key)
@@ -709,20 +737,18 @@ def _resolve_slicer_values(
     # Prefer standard report_engine visuals that explicitly expose the bound column
     def _is_standard(v):
         kind = (((v.get("query") or {}).get("source") or {}).get("kind") or "")
-        return kind not in {"material_balance", "tank_snapshot"} and not (
-            str(v.get("type") or "").upper() == "TANK_VISUAL" and not ((v.get("query") or {}).get("columns"))
-        )
+        return kind not in {"material_balance", "tank_snapshot"} | TRACKING_STATUS_KINDS and not _is_tank_snapshot_visual(v)
 
     target_visual = next(
         (v for v in targeted_visuals if _is_standard(v) and any(str(c.get("key")) == column_key for c in ((v.get("query") or {}).get("columns") or []))),
         None,
     )
+    if target_visual is None and column_key in _TANK_SNAPSHOT_COLS:
+        target_visual = next((v for v in targeted_visuals if _is_tank_snapshot_visual(v)), None)
+    if target_visual is None and column_key in _TRACKING_STATUS_COLS:
+        target_visual = next((v for v in targeted_visuals if (((v.get("query") or {}).get("source") or {}).get("kind") or "") in TRACKING_STATUS_KINDS), None)
     if target_visual is None:
         target_visual = next((v for v in targeted_visuals if _is_standard(v)), None)
-    if target_visual is None:
-        target_visual = next((v for v in targeted_visuals if (((v.get("query") or {}).get("source") or {}).get("kind") or "") == "tank_snapshot"), None)
-    if target_visual is None:
-        target_visual = next((v for v in targeted_visuals if (((v.get("query") or {}).get("source") or {}).get("kind") or "") in TRACKING_STATUS_KINDS), None)
     if target_visual is None:
         target_visual = targeted_visuals[0] if targeted_visuals else None
     if target_visual is None:
@@ -767,9 +793,7 @@ def _resolve_slicer_values(
             params["location_codes"] = requested
     params["page_size"] = 200
 
-    if source.get("kind") == "tank_snapshot" or (
-        str(target_visual.get("type") or "").upper() == "TANK_VISUAL" and not (query.get("columns"))
-    ):
+    if _is_tank_snapshot_visual(target_visual):
         result = _run_tank_snapshot_visual(db, current_user, target_visual, params)
     elif source.get("kind") in TRACKING_STATUS_KINDS:
         result = _run_tracking_status_visual(db, current_user, target_visual, params)
@@ -787,25 +811,49 @@ def _resolve_slicer_values(
             else:
                 meta = table_cols.get(column_key) or {}
                 col = {"key": column_key, "label": slicer.get("label") or meta.get("label") or column_key, "kind": "data", "source": {"type": "column", "column": column_key}, "data_type": meta.get("data_type") or str(slicer.get("data_type") or "text")}
+        primary_key = str(col.get("key"))
+        distinct_columns = [{
+            "key": primary_key,
+            "label": col.get("label") or primary_key,
+            "kind": col.get("kind", "data"),
+            "source": col.get("source"),
+            "data_type": col.get("data_type", "text"),
+            "format": col.get("format") or {"decimals": 2},
+        }]
+        distinct_keys = {primary_key}
+        distinct_filters = copy.deepcopy(list(query.get("filters") or []))
+        probe_query = {"source": source, "group_by": [{"key": primary_key, "bucket": "VALUE"}]}
+        for flt in distinct_filters:
+            if not isinstance(flt, dict) or not flt.get("column_key"):
+                continue
+            fkey = str(flt["column_key"])
+            if fkey in distinct_keys:
+                continue
+            existing = next((c for c in columns if isinstance(c, dict) and str(c.get("key")) == fkey), None)
+            if existing:
+                cloned_col = copy.deepcopy(existing)
+                cloned_col["hidden"] = True
+                cloned_col["aggregate"] = cloned_col.get("aggregate") or "FIRST"
+                distinct_columns.append(cloned_col)
+                distinct_keys.add(fkey)
+            else:
+                injected = _resolve_missing_slicer_column(probe_query, fkey, {"label": fkey}, allow_ticket_field=True)
+                if injected and injected.get("key") not in distinct_keys:
+                    distinct_columns.append(injected)
+                    distinct_keys.add(str(injected["key"]))
+                    flt["column_key"] = str(injected["key"])
         distinct_query = {
             "schema_version": 1,
             "report_type": "TABULAR",
             "source": source,
             "date_basis": query.get("date_basis", "ACCOUNTING_DATE"),
             "date_column": query.get("date_column"),
-            "columns": [{
-                "key": str(col.get("key")),
-                "label": col.get("label") or col.get("key"),
-                "kind": col.get("kind", "data"),
-                "source": col.get("source"),
-                "data_type": col.get("data_type", "text"),
-                "format": col.get("format") or {"decimals": 2},
-            }],
-            "filters": list(query.get("filters") or []),
+            "columns": distinct_columns,
+            "filters": distinct_filters,
             "filter_logic": query.get("filter_logic", "AND"),
             "runtime_filters": [],
-            "group_by": [{"key": str(col.get("key")), "bucket": "VALUE"}],
-            "sort": [{"key": str(col.get("key")), "direction": "ASC"}],
+            "group_by": [{"key": primary_key, "bucket": "VALUE"}],
+            "sort": [{"key": primary_key, "direction": "ASC"}],
             "options": {"show_totals": False, "page_size": 200},
         }
         try:
